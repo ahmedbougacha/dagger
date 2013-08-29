@@ -75,6 +75,12 @@ typedef struct LLVMOpaqueTargetLibraryInfotData *LLVMTargetLibraryInfoRef;
 #include "llvm/Config/Disassemblers.def"
 #undef LLVM_DISASSEMBLER  /* Explicit undef to make SWIG happier */
 
+/* Declare all of the available target DC initialization functions. */
+#define LLVM_TARGETDC(TargetName) \
+  void LLVMInitialize##TargetName##TargetDC(void);
+#include "llvm/Config/TargetDCs.def"
+#undef LLVM_TARGETDC  /* Explicit undef to make SWIG happier */
+
 /** LLVMInitializeAllTargetInfos - The main program should call this function if
     it wants access to all available targets that LLVM is configured to
     support. */
@@ -128,6 +134,16 @@ static inline void LLVMInitializeAllDisassemblers(void) {
   LLVMInitialize##TargetName##Disassembler();
 #include "llvm/Config/Disassemblers.def"
 #undef LLVM_DISASSEMBLER  /* Explicit undef to make SWIG happier */
+}
+
+/** LLVMInitializeAllTargetDCs - The main program should call this function
+    if it wants all target DC that LLVM is configured to support, to make
+    them available via the TargetRegistry. */
+static inline void LLVMInitializeAllTargetDCs(void) {
+#define LLVM_TARGETDC(TargetName) \
+  LLVMInitialize##TargetName##TargetDC();
+#include "llvm/Config/TargetDCs.def"
+#undef LLVM_TARGETDC  /* Explicit undef to make SWIG happier */
 }
 
 /** LLVMInitializeNativeTarget - The main program should call this function to

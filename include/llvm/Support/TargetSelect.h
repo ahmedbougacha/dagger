@@ -42,6 +42,11 @@ extern "C" {
 #define LLVM_DISASSEMBLER(TargetName) \
   void LLVMInitialize##TargetName##Disassembler();
 #include "llvm/Config/Disassemblers.def"
+
+  // Declare all of the available target DC initialization functions.
+#define LLVM_TARGETDC(TargetName) \
+  void LLVMInitialize##TargetName##TargetDC();
+#include "llvm/Config/TargetDCs.def"
 }
 
 namespace llvm {
@@ -108,6 +113,16 @@ namespace llvm {
 #include "llvm/Config/Disassemblers.def"
   }
   
+  /// InitializeAllTargetDCs - The main program should call this function if
+  /// it wants all target DCs that LLVM is configured to support, to make
+  /// them available via the TargetRegistry.
+  ///
+  /// It is legal for a client to make multiple calls to this function.
+  inline void InitializeAllTargetDCs() {
+#define LLVM_TARGETDC(TargetName) LLVMInitialize##TargetName##TargetDC();
+#include "llvm/Config/TargetDCs.def"
+  }
+
   /// InitializeNativeTarget - The main program should call this function to
   /// initialize the native target corresponding to the host.  This is useful 
   /// for JIT applications to ensure that the target gets linked in correctly.

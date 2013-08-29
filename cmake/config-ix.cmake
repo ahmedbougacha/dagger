@@ -405,6 +405,11 @@ else ()
   if (EXISTS ${CMAKE_SOURCE_DIR}/lib/Target/${LLVM_NATIVE_ARCH}/Disassembler/CMakeLists.txt)
     set(LLVM_NATIVE_DISASSEMBLER LLVMInitialize${LLVM_NATIVE_ARCH}Disassembler)
   endif ()
+
+  # We don't have DC info for all architectures yet.
+  if (EXISTS ${CMAKE_SOURCE_DIR}/lib/Target/${LLVM_NATIVE_ARCH}/DC/CMakeLists.txt)
+    set(LLVM_NATIVE_TARGETDC LLVMInitialize${LLVM_NATIVE_ARCH}TargetDC)
+  endif ()
 endif ()
 
 if( MINGW )
