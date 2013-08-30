@@ -251,6 +251,7 @@ For API clients and LLVM developers.
    Statepoints
    MergeFunctions
    BitSets
+   SemanticsEmitterTableGen
 
 :doc:`WritingAnLLVMPass`
    Information on how to write LLVM transformations and analyses.
@@ -352,6 +353,10 @@ For API clients and LLVM developers.
 
 :doc:`InAlloca`
   Description of the ``inalloca`` argument attribute.
+
+:doc:`SemanticsEmitterTableGen`
+   This document describes the SemanticsEmitter TableGen backend used to
+   translate MCInst's to IR.
 
 Development Process Documentation
 =================================
