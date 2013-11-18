@@ -29,6 +29,8 @@
 namespace llvm {
   class AsmPrinter;
   class Module;
+  class DCInstrSema;
+  class DCRegisterSema;
   class MCAssembler;
   class MCAsmBackend;
   class MCAsmInfo;
@@ -146,6 +148,13 @@ namespace llvm {
         StringRef TT, LLVMOpInfoCallback GetOpInfo,
         LLVMSymbolLookupCallback SymbolLookUp, void *DisInfo, MCContext *Ctx,
         std::unique_ptr<MCRelocationInfo> &&RelInfo);
+    typedef DCRegisterSema *(*DCRegisterSemaCtorTy)(StringRef TT,
+                                                    const MCRegisterInfo &MRI,
+                                                    const MCInstrInfo &MII);
+    typedef DCInstrSema *(*DCInstrSemaCtorTy)(StringRef TT,
+                                              DCRegisterSema &DRS,
+                                              const MCRegisterInfo &MRI,
+                                              const MCInstrInfo &MII);
 
   private:
     /// Next - The next registered target in the linked list, maintained by the
@@ -235,6 +244,14 @@ namespace llvm {
     /// MCSymbolizerCtorFn - Construction function for this target's
     /// MCSymbolizer, if registered (default = llvm::createMCSymbolizer)
     MCSymbolizerCtorTy MCSymbolizerCtorFn;
+
+    /// DCInstrSemaCtorFn - Construction function for this target's
+    /// DCInstrSema, if registered.
+    DCInstrSemaCtorTy DCInstrSemaCtorFn;
+
+    /// DCRegisterSemaCtorFn - Construction function for this target's
+    /// DCRegisterSema, if registered.
+    DCRegisterSemaCtorTy DCRegisterSemaCtorFn;
 
   public:
     Target()
@@ -489,6 +506,27 @@ namespace llvm {
       MCSymbolizerCtorTy Fn =
           MCSymbolizerCtorFn ? MCSymbolizerCtorFn : llvm::createMCSymbolizer;
       return Fn(TT, GetOpInfo, SymbolLookUp, DisInfo, Ctx, std::move(RelInfo));
+    }
+
+    /// createDCRegisterSema - Create a target specific DCRegisterSema.
+    ///
+    /// \param TT The target triple.
+    DCRegisterSema *
+    createDCRegisterSema(StringRef TT,
+                         const MCRegisterInfo &MRI,
+                         const MCInstrInfo &MII) const {
+      return DCRegisterSemaCtorFn(TT, MRI, MII);
+    }
+
+    /// createDCInstrSema - Create a target specific DCInstrSema.
+    ///
+    /// \param TT The target triple.
+    DCInstrSema *
+    createDCInstrSema(StringRef TT,
+                      DCRegisterSema &DRS,
+                      const MCRegisterInfo &MRI,
+                      const MCInstrInfo &MII) const {
+      return DCInstrSemaCtorFn(TT, DRS, MRI, MII);
     }
 
     /// @}
@@ -817,6 +855,36 @@ namespace llvm {
     static void RegisterMCSymbolizer(Target &T,
                                      Target::MCSymbolizerCtorTy Fn) {
       T.MCSymbolizerCtorFn = Fn;
+    }
+
+    /// RegisterDCRegisterSema - Register an DCRegisterSema
+    /// implementation for the given target.
+    ///
+    /// Clients are responsible for ensuring that registration doesn't occur
+    /// while another thread is attempting to access the registry. Typically
+    /// this is done by initializing all targets at program startup.
+    ///
+    /// @param T - The target being registered.
+    /// @param Fn - A function to construct a DCRegisterSema for the target.
+    static void RegisterDCRegisterSema(Target &T,
+                                       Target::DCRegisterSemaCtorTy Fn) {
+      if (!T.DCRegisterSemaCtorFn)
+        T.DCRegisterSemaCtorFn = Fn;
+    }
+
+    /// RegisterDCInstrSema - Register an DCInstrSema
+    /// implementation for the given target.
+    ///
+    /// Clients are responsible for ensuring that registration doesn't occur
+    /// while another thread is attempting to access the registry. Typically
+    /// this is done by initializing all targets at program startup.
+    ///
+    /// @param T - The target being registered.
+    /// @param Fn - A function to construct a DCInstrSema for the target.
+    static void RegisterDCInstrSema(Target &T,
+                                    Target::DCInstrSemaCtorTy Fn) {
+      if (!T.DCInstrSemaCtorFn)
+        T.DCInstrSemaCtorFn = Fn;
     }
 
     /// @}
