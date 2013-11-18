@@ -42,6 +42,10 @@ TripleName("triple", cl::desc("Target triple to disassemble for, "
                               "see -version for available targets"),
            cl::Required);
 
+static cl::opt<bool>
+AnnotateIROutput("annot", cl::desc("Enable IR output anotations"),
+                 cl::init(false));
+
 static cl::opt<unsigned>
 TransOptLevel("O",
               cl::desc("Optimization level. [-O0, -O1, -O2, or -O3] "
@@ -172,7 +176,8 @@ int main(int argc, char **argv) {
 
   std::unique_ptr<DCTranslator> DT(new DCTranslator(getGlobalContext(), TOLvl,
                                                     *DIS, *DRS, *MIP,
-                                                    *MCM, /* MCOD= */ 0));
+                                                    *MCM, /* MCOD= */ 0,
+                                                    AnnotateIROutput));
 
   DT->print(outs());
   return 0;
