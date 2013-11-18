@@ -54,6 +54,7 @@ set(LLVM_TEST_DEPENDS
           not
           yaml2obj
           obj2yaml
+          llvm-dc
           verify-uselistorder
         )
 

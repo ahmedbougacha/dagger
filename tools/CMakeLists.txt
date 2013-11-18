@@ -59,6 +59,8 @@ add_llvm_tool_subdirectory(llvm-c-test)
 add_llvm_tool_subdirectory(obj2yaml)
 add_llvm_tool_subdirectory(yaml2obj)
 
+add_llvm_tool_subdirectory(llvm-dc)
+
 add_llvm_tool_subdirectory(llvm-go)
 
 add_llvm_tool_subdirectory(llvm-pdbdump)
