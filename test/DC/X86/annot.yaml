@@ -1,0 +1,33 @@
+#RUN: llvm-dc -triple x86_64 -annot %s | FileCheck %s
+#
+# Assembly source:
+#   mul:
+#   imul QWORD PTR [rsp + 8]
+#   ret
+
+Atoms:
+
+# CHECK-LABEL: bb_0:
+  - StartAddress:    0x0000000000000000
+    Size:            6
+    Type:            Text
+    Content:
+      - Inst:            IMUL64m
+        Size:            5
+        Ops:             [ RRSP, I1, R, I8, R ]
+# CHECK: [[RAX0:%RAX_[0-9]+]] = load i64* %RAX                  ; imp-use RAX    @0: imulq 8(%rsp)
+# CHECK: [[RSP0:%RSP_[0-9]+]] = load i64* %RSP
+# CHECK: [[RSPADD:%[0-9]+]]   = add i64 [[RSP0]], 8
+# CHECK:                      = inttoptr i64 [[RSPADD]] to i64* ; op-use 8(%rsp) @0: imulq 8(%rsp)
+# CHECK: [[MUL:%[0-9]+]]      = mul i128
+# CHECK: [[RAX1:%RAX_[0-9]+]] = trunc i128 [[MUL]] to i64       ; imp-def RAX    @0: imulq 8(%rsp)
+# CHECK: [[RDX1:%RDX_[0-9]+]] = trunc i128 %{{[0-9]+}} to i64   ; imp-def RDX    @0: imulq 8(%rsp)
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [  ]
