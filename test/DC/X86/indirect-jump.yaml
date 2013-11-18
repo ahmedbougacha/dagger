@@ -1,0 +1,41 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+#   indbr:
+#   jmp rdi
+
+Atoms:
+
+# CHECK-LABEL: bb_0:
+  - StartAddress:    0x0000000000000000
+    Size:            2
+    Type:            Text
+    Content:
+      - Inst:            JMP64r
+        Size:            2
+        Ops:             [ RRDI ]
+# CHECK: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK: [[RDIPTR:%[0-9]+]] = inttoptr i64 [[RDI0]] to i8*
+
+## FIXME: The function should be better defined than this.
+# CHECK: [[FUNPTR:%[0-9]+]] = call void (%regset*)* (i8*)* @__llvm_dc_translate_at(i8* [[RDIPTR]])
+
+# CHECK: store i64 [[RDI0]], i64* %RDI
+# CHECK: br label %bb_0_call
+
+# CHECK-LABEL: bb_0_call:
+# CHECK-DAG: [[RDISAVE:%[0-9]+]] = load i64* %RDI
+# CHECK-DAG: store i64 [[RDISAVE]],  i64* %RDI
+# CHECK-DAG: [[RIPSAVE:%[0-9]+]] = load i64* %RIP
+# CHECK-DAG: store i64 [[RIPSAVE]],  i64* %RIP
+# CHECK: call void [[FUNPTR]](%regset* %0)
+# CHECK: br label %bb_c0
+# CHECK-LABEL: bb_c0:
+# CHECK: br label %exit_fn_0
+
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [  ]

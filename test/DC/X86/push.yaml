@@ -1,0 +1,26 @@
+#RUN: llvm-dc -O1 -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+#   f:
+#   push rax
+
+# CHECK-LABEL:  bb_0
+# CHECK-DAG:      [[SPSUB:%[0-9]+]] = sub i64 %RSP_init, 8
+# CHECK-DAG:      [[SPTR:%[0-9]+]] = inttoptr i64 [[SPSUB]] to i64*
+# CHECK-DAG:      store i64 %RAX_init, i64* [[SPTR]]
+# CHECK-DAG:      %RSP_1 = sub i64 %RSP_init, 8
+
+Atoms:
+  - StartAddress:    0x0000000000000000
+    Size:            1
+    Type:            Text
+    Content:
+      - Inst:            PUSH64r
+        Size:            1
+        Ops:             [ RRAX ]
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [  ]

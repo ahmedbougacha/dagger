@@ -1,0 +1,61 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+#   indbr:
+#   mov rax, 0
+#   cmp rdi, 42
+#   jne Lend
+#   add rax, 1
+#   Lend:
+#   ret
+
+Atoms:
+
+# CHECK-DAGGER: bb_0:
+  - StartAddress:    0x0000000000000000
+    Size:            13
+    Type:            Text
+    Content:
+      - Inst:            MOV64ri32
+        Size:            7
+        Ops:             [ RRAX, I0 ]
+      - Inst:            CMP64ri8
+        Size:            4
+        Ops:             [ RRDI, I42 ]
+      - Inst:            JNE_1
+        Size:            2
+        Ops:             [ I4 ]
+# CHECK: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK: [[CC_NE0:%CC_NE_[0-9]+]] = icmp ne i64 [[RDI0]], 42
+# CHECK: br i1 [[CC_NE0]], label %bb_11, label %bb_D
+
+# CHECK-DAGGER: bb_D:
+  - StartAddress:    0x000000000000000D
+    Size:            4
+    Type:            Text
+    Content:
+      - Inst:            ADD64ri8
+        Size:            4
+        Ops:             [ RRAX, RRAX, I1 ]
+
+# CHECK-DAGGER: bb_11:
+  - StartAddress:    0x0000000000000011
+    Size:            1
+    Type:            Text
+    Content:
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [ 0x0000000000000011, 0x000000000000000D ]
+      - Address:         0x0000000000000011
+        Preds:           [ 0x0000000000000000, 0x000000000000000D ]
+        Succs:           [  ]
+      - Address:         0x000000000000000D
+        Preds:           [ 0x0000000000000000 ]
+        Succs:           [ 0x0000000000000011 ]

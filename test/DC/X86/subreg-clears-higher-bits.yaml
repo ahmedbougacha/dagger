@@ -1,0 +1,55 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+#   mov rax, 1234
+#   jne .Lrest
+#   .Lrest:
+#   add eax, 42
+#   ret
+
+Atoms:
+  - StartAddress:    0x0000000000000000
+    Size:            13
+    Type:            Text
+    Content:
+      - Inst:            MOV64ri32
+        Size:            7
+        Ops:             [ RRAX, I1234 ]
+      - Inst:            JNE_4
+        Size:            6
+        Ops:             [ I0 ]
+
+# CHECK-LABEL: bb_D:
+  - StartAddress:    0x000000000000000D
+    Size:            4
+    Type:            Text
+    Content:
+      - Inst:            ADD32ri8
+        Size:            3
+        Ops:             [ REAX, REAX, I42 ]
+# CHECK: [[EAX0:%EAX_[0-9]+]] = load i32* %EAX
+# CHECK: [[EAX1:%EAX_[0-9]+]] = add i32 [[EAX0]], 42
+# CHECK: [[RAX0:%RAX_[0-9]+]] = zext i32 [[EAX1]] to i64
+# CHECK-DAG: store i32 [[EAX1]], i32* %EAX
+# CHECK-DAG: store i64 [[RAX0]], i64* %RAX
+
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [ 0x000000000000000D ]
+      - Address:         0x000000000000000D
+        Preds:           [ 0x0000000000000000 ]
+        Succs:           [  ]
+  - Name:            __text:D
+    BasicBlocks:
+      - Address:         0x000000000000000D
+        Preds:           [ 0x0000000000000000 ]
+        Succs:           [  ]
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [ 0x000000000000000D ]

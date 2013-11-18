@@ -1,0 +1,132 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+#   add_ri:
+#   add rdi, 2
+#   ret
+#
+#   add_rr:
+#   add rdi, rsi
+#   ret
+#
+#   add_rr_samereg:
+#   add rdi, rdi
+#   ret
+#
+#   add_rm:
+#   add rdi, [12345]
+#   ret
+#
+#   add_mr:
+#   add [12345], rdi
+#   ret
+
+Atoms:
+
+# CHECK-LABEL: bb_0:
+  - StartAddress:    0x0000000000000000
+    Size:            5
+    Type:            Text
+    Content:
+      - Inst:            ADD64ri8
+        Size:            4
+        Ops:             [ RRDI, RRDI, I2 ]
+# CHECK: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK: [[RDI1:%RDI_[0-9]+]] = add i64 [[RDI0]], 2
+# CHECK: store i64 [[RDI1]], i64* %RDI
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_5:
+  - StartAddress:    0x0000000000000005
+    Size:            4
+    Type:            Text
+    Content:
+      - Inst:            ADD64rr
+        Size:            3
+        Ops:             [ RRDI, RRDI, RRSI ]
+# CHECK-DAG: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK-DAG: [[RSI0:%RSI_[0-9]+]] = load i64* %RSI
+# CHECK:     [[RDI1:%RDI_[0-9]+]] = add i64 [[RDI0]], [[RSI0]]
+# CHECK:     store i64 [[RDI1]], i64* %RDI
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_9:
+  - StartAddress:    0x0000000000000009
+    Size:            4
+    Type:            Text
+    Content:
+      - Inst:            ADD64rr
+        Size:            3
+        Ops:             [ RRDI, RRDI, RRDI ]
+# CHECK: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK: [[RDI1:%RDI_[0-9]+]] = add i64 [[RDI0]], [[RDI0]]
+# CHECK: store i64 [[RDI1]], i64* %RDI
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_D:
+  - StartAddress:    0x000000000000000D
+    Size:            9
+    Type:            Text
+    Content:
+      - Inst:            ADD64rm
+        Size:            8
+        Ops:             [ RRDI, RRDI, R, I1, R, I12345, R ]
+# CHECK-DAG: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK-DAG: [[PTR:%[0-9]+]] = inttoptr i64 12345 to i64*
+# CHECK-DAG: [[LOAD:%[0-9]+]] = load i64* [[PTR]]
+# CHECK:     [[RDI1:%RDI_[0-9]+]] = add i64 [[RDI0]], [[LOAD]]
+# CHECK:     store i64 [[RDI1]], i64* %RDI
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_16:
+  - StartAddress:    0x0000000000000016
+    Size:            9
+    Type:            Text
+    Content:
+      - Inst:            ADD64mr
+        Size:            8
+        Ops:             [ R, I1, R, I12345, R, RRDI ]
+# CHECK-DAG: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK-DAG: [[PTR:%[0-9]+]] = inttoptr i64 12345 to i64*
+# CHECK-DAG: [[LOAD:%[0-9]+]] = load i64* [[PTR]]
+# CHECK-DAG: [[RES:%[0-9]+]] = add i64 [[LOAD]], [[RDI0]]
+# CHECK-DAG: store i64 [[RES]], i64* [[PTR]]
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:5
+    BasicBlocks:
+      - Address:         0x0000000000000005
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:9
+    BasicBlocks:
+      - Address:         0x0000000000000009
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:D
+    BasicBlocks:
+      - Address:         0x000000000000000D
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:16
+    BasicBlocks:
+      - Address:         0x0000000000000016
+        Preds:           [  ]
+        Succs:           [  ]

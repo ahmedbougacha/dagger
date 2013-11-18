@@ -1,0 +1,101 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source (executable, x86_64-apple-macosx10.9.0)
+#   adds_1:
+#   add [12345], rdi
+#   add rdi, 2
+#   jmp adds_2
+#   nop
+#   adds_2:
+#   add rdi, rsi
+#   add rdi, [12345]
+#   ret
+#
+#   .global _main
+#   _main:
+#   ret
+
+Atoms:
+
+# CHECK-LABEL: bb_100000F99:
+  - StartAddress:    0x0000000100000F99
+    Size:            17
+    Type:            Text
+    Content:
+      - Inst:            ADD64mr
+        Size:            8
+## The initial RIP value is a constant 0x100000F99 (4294971289).
+# CHECK: [[RIP1:%RIP_[0-9]+]] = add i64 4294971289, 8
+        Ops:             [ R, I1, R, I12345, R, RRDI ]
+      - Inst:            ADD64ri8
+        Size:            4
+# CHECK: [[RIP2:%RIP_[0-9]+]] = add i64 [[RIP1]], 4
+        Ops:             [ RRDI, RRDI, I2 ]
+      - Inst:            JMP_4
+        Size:            5
+## The PC always points to the next instruction, so we update it before jmps.
+# CHECK: [[RIP3:%RIP_[0-9]+]] = add i64 [[RIP2]], 5
+        Ops:             [ I1 ]
+  - StartAddress:    0x0000000100000FAB
+    Size:            12
+    Type:            Text
+    Content:
+      - Inst:            ADD64rr
+        Size:            3
+# CHECK: [[RIP1:%RIP_[0-9]+]] = add i64 4294971307, 3
+        Ops:             [ RRDI, RRDI, RRSI ]
+      - Inst:            ADD64rm
+        Size:            8
+# CHECK: [[RIP2:%RIP_[0-9]+]] = add i64 [[RIP1]], 8
+        Ops:             [ RRDI, RRDI, R, I1, R, I12345, R ]
+      - Inst:            RETQ
+        Size:            1
+## Again, this doesn't check that RET pops the new PC, but only that the PC
+## is correctly updated prior to RET's execution.
+# CHECK: [[RIP3:%RIP_[0-9]+]] = add i64 [[RIP2]], 1
+        Ops:             [  ]
+
+
+  - StartAddress:    0x0000000100000FB7
+    Size:            1
+    Type:            Text
+    Content:
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+  - StartAddress:    0x0000000100000FAA
+    Size:            1
+    Type:            Text
+    Content:
+      - Inst:            NOOP
+        Size:            1
+        Ops:             [  ]
+
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000100000F99
+        Preds:           [  ]
+        Succs:           [ 0x0000000100000FAB ]
+      - Address:         0x0000000100000FAB
+        Preds:           [ 0x0000000100000F99, 0x0000000100000FAA ]
+        Succs:           [  ]
+      - Address:         0x0000000100000FAA
+        Preds:           [  ]
+        Succs:           [ 0x0000000100000FAB ]
+  - Name:            __text:100000FAB
+    BasicBlocks:
+      - Address:         0x0000000100000FAB
+        Preds:           [ 0x0000000100000F99, 0x0000000100000FAA ]
+        Succs:           [  ]
+      - Address:         0x0000000100000F99
+        Preds:           [  ]
+        Succs:           [ 0x0000000100000FAB ]
+      - Address:         0x0000000100000FAA
+        Preds:           [  ]
+        Succs:           [ 0x0000000100000FAB ]
+  - Name:            __text:100000FB7
+    BasicBlocks:
+      - Address:         0x0000000100000FB7
+        Preds:           [  ]
+        Succs:           [  ]

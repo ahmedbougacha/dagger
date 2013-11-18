@@ -1,0 +1,164 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+#   am_base:
+#   add rdi, [rsi]
+#   ret
+#
+#   am_base_index:
+#   add rdi, [rsi + rcx]
+#   ret
+#
+#   am_base_offset:
+#   add rdi, [rsi + 12]
+#   ret
+#
+#   am_base_index_scale:
+#   add rdi, [rsi + rcx * 8]
+#   ret
+#
+#   am_index_scale:
+#   add rdi, [rcx * 8]
+#   ret
+#
+#   am_base_index_scale_offset:
+#   add rdi, [rsi + rcx * 8 + 12]
+#   ret
+
+Atoms:
+
+# CHECK-LABEL: bb_0:
+  - StartAddress:    0x0000000000000000
+    Size:            4
+    Type:            Text
+    Content:
+      - Inst:            ADD64rm
+        Size:            3
+        Ops:             [ RRDI, RRDI, RRSI, I1, R, I0, R ]
+##   add rdi, [rsi]
+# CHECK: [[PTR:%[0-9]+]] = inttoptr i64 {{%RSI_[0-9]+}} to i64*
+# CHECK: [[LOAD:%[0-9]+]] = load i64* [[PTR]]
+# CHECK: add i64 {{%RDI_[0-9]+}}, [[LOAD]]
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_4:
+  - StartAddress:    0x0000000000000004
+    Size:            5
+    Type:            Text
+    Content:
+      - Inst:            ADD64rm
+        Size:            4
+        Ops:             [ RRDI, RRDI, RRSI, I1, RRCX, I0, R ]
+##   add rdi, [rsi + rcx]
+# CHECK: [[AM:%[0-9]+]] = add i64 {{%RSI_[0-9]+}}, {{%RCX_[0-9]+}}
+# CHECK: [[PTR:%[0-9]+]] = inttoptr i64 [[AM]] to i64*
+# CHECK: [[LOAD:%[0-9]+]] = load i64* [[PTR]]
+# CHECK: add i64 {{%RDI_[0-9]+}}, [[LOAD]]
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_9:
+  - StartAddress:    0x0000000000000009
+    Size:            5
+    Type:            Text
+    Content:
+      - Inst:            ADD64rm
+        Size:            4
+        Ops:             [ RRDI, RRDI, RRSI, I1, R, I12, R ]
+##   add rdi, [rsi + 12]
+# CHECK: [[AM:%[0-9]+]] = add i64 {{%RSI_[0-9]+}}, 12
+# CHECK: [[PTR:%[0-9]+]] = inttoptr i64 [[AM]] to i64*
+# CHECK: [[LOAD:%[0-9]+]] = load i64* [[PTR]]
+# CHECK: add i64 {{%RDI_[0-9]+}}, [[LOAD]]
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_E:
+  - StartAddress:    0x000000000000000E
+    Size:            5
+    Type:            Text
+    Content:
+      - Inst:            ADD64rm
+        Size:            4
+        Ops:             [ RRDI, RRDI, RRSI, I8, RRCX, I0, R ]
+##   add rdi, [rsi + rcx * 8]
+# CHECK: [[SCALED:%[0-9]+]] = mul i64 {{%RCX_[0-9]+}}, 8
+# CHECK: [[AM:%[0-9]+]] = add i64 {{%RSI_[0-9]+}}, [[SCALED]]
+# CHECK: [[PTR:%[0-9]+]] = inttoptr i64 [[AM]] to i64*
+# CHECK: [[LOAD:%[0-9]+]] = load i64* [[PTR]]
+# CHECK: add i64 {{%RDI_[0-9]+}}, [[LOAD]]
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_13:
+  - StartAddress:    0x0000000000000013
+    Size:            9
+    Type:            Text
+    Content:
+      - Inst:            ADD64rm
+        Size:            8
+        Ops:             [ RRDI, RRDI, R, I8, RRCX, I0, R ]
+##   add rdi, [rcx * 8]
+# CHECK: [[SCALED:%[0-9]+]] = mul i64 {{%RCX_[0-9]+}}, 8
+# CHECK: [[PTR:%[0-9]+]] = inttoptr i64 [[SCALED]] to i64*
+# CHECK: [[LOAD:%[0-9]+]] = load i64* [[PTR]]
+# CHECK: add i64 {{%RDI_[0-9]+}}, [[LOAD]]
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_1C:
+  - StartAddress:    0x000000000000001C
+    Size:            6
+    Type:            Text
+    Content:
+      - Inst:            ADD64rm
+        Size:            5
+        Ops:             [ RRDI, RRDI, RRSI, I8, RRCX, I12, R ]
+##   add rdi, [rsi + rcx * 8 + 12]
+# CHECK: [[SCALED:%[0-9]+]] = mul i64 {{%RCX_[0-9]+}}, 8
+# CHECK: [[OFFSET:%[0-9]+]] = add i64 [[SCALED]], 12
+# CHECK: [[AM:%[0-9]+]] = add i64 {{%RSI_[0-9]+}}, [[OFFSET]]
+# CHECK: [[PTR:%[0-9]+]] = inttoptr i64 [[AM]] to i64*
+# CHECK: [[LOAD:%[0-9]+]] = load i64* [[PTR]]
+# CHECK: add i64 {{%RDI_[0-9]+}}, [[LOAD]]
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:4
+    BasicBlocks:
+      - Address:         0x0000000000000004
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:9
+    BasicBlocks:
+      - Address:         0x0000000000000009
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:E
+    BasicBlocks:
+      - Address:         0x000000000000000E
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:13
+    BasicBlocks:
+      - Address:         0x0000000000000013
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:1C
+    BasicBlocks:
+      - Address:         0x000000000000001C
+        Preds:           [  ]
+        Succs:           [  ]

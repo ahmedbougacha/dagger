@@ -1,0 +1,75 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+#   adds_1:
+#   add rdi, 10
+#   jmp Ladds_2
+#   nop
+#   Ladds_2:
+#   add rdi, [12345]
+#   Lloop:
+#   add rdi, 1
+#   jmp Lloop
+
+Atoms:
+# CHECK-LABEL: define void @fn_0
+# CHECK-LABEL: bb_0:
+  - StartAddress:    0x0000000000000000
+    Size:            6
+    Type:            Text
+    Content:
+      - Inst:            ADD64ri8
+        Size:            4
+        Ops:             [ RRDI, RRDI, I10 ]
+# CHECK: br label %bb_7
+      - Inst:            JMP_1
+        Size:            2
+        Ops:             [ I1 ]
+
+  - StartAddress:    0x0000000000000006
+    Size:            1
+    Type:            Text
+    Content:
+      - Inst:            NOOP
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: bb_7:
+  - StartAddress:    0x0000000000000007
+    Size:            8
+    Type:            Text
+    Content:
+      - Inst:            ADD64rm
+        Size:            8
+        Ops:             [ RRDI, RRDI, R, I1, R, I12345, R ]
+## Fall-through:
+# CHECK: br label %bb_F
+
+# CHECK-LABEL: bb_F:
+  - StartAddress:    0x000000000000000F
+    Size:            6
+    Type:            Text
+    Content:
+      - Inst:            ADD64ri8
+        Size:            4
+        Ops:             [ RRDI, RRDI, I1 ]
+# CHECK: br label %bb_F
+      - Inst:            JMP_1
+        Size:            2
+        Ops:             [ I-6 ]
+
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [ 0x0000000000000007 ]
+      - Address:         0x0000000000000007
+        Preds:           [ 0x0000000000000000, 0x0000000000000006 ]
+        Succs:           [ 0x000000000000000F ]
+      - Address:         0x000000000000000F
+        Preds:           [ 0x0000000000000007, 0x000000000000000F ]
+        Succs:           [ 0x000000000000000F ]
+      - Address:         0x0000000000000006
+        Preds:           [  ]
+        Succs:           [ 0x0000000000000007 ]

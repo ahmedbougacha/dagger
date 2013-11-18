@@ -1,0 +1,22 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+# f:
+# ret
+
+# CHECK:          %regset = type { {{i[0-9]+[, i[0-9]+]*}} }
+
+Atoms:
+  - StartAddress:    0x0000000000000000
+    Size:            1
+    Type:            Text
+    Content:
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [  ]

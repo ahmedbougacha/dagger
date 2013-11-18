@@ -1,0 +1,148 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+#   cmov_condcodes:
+#   cmp rdi, 42
+#   cmovo   rax, rdi
+#   cmovno  rax, rdi
+#   cmovb   rax, rdi
+#   cmovae  rax, rdi
+#   cmove   rax, rdi
+#   cmovne  rax, rdi
+#   cmovna  rax, rdi
+#   cmova   rax, rdi
+#   cmovs   rax, rdi
+#   cmovns  rax, rdi
+#   cmovp   rax, rdi
+#   cmovnp  rax, rdi
+#   cmovl   rax, rdi
+#   cmovge  rax, rdi
+#   cmovle  rax, rdi
+#   cmovg   rax, rdi
+#   ret
+
+Atoms:
+
+# CHECK-LABEL: bb_0:
+  - StartAddress:    0x0000000000000000
+    Size:            69
+    Type:            Text
+    Content:
+# CHECK-DAG: [[RAX0:%RAX_[0-9]+]] = load i64* %RAX
+# CHECK-DAG: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+      - Inst:            CMP64ri8
+        Size:            4
+        Ops:             [ RRDI, I42 ]
+# CHECK-DAG: [[CMPSUB:%[0-9]+]] = sub i64 [[RDI0]], [[OP2:42]]
+# CHECK-DAG: [[CC_A:%CC_A_[0-9]+]]   = icmp ugt i64 [[RDI0]], [[OP2]]
+# CHECK-DAG: [[CC_AE:%CC_AE_[0-9]+]] = icmp uge i64 [[RDI0]], [[OP2]]
+# CHECK-DAG: [[CC_B:%CC_B_[0-9]+]]   = icmp ult i64 [[RDI0]], [[OP2]]
+# CHECK-DAG: [[CC_BE:%CC_BE_[0-9]+]] = icmp ule i64 [[RDI0]], [[OP2]]
+# CHECK-DAG: [[CC_L:%CC_L_[0-9]+]]   = icmp slt i64 [[RDI0]], [[OP2]]
+# CHECK-DAG: [[CC_LE:%CC_LE_[0-9]+]] = icmp sle i64 [[RDI0]], [[OP2]]
+# CHECK-DAG: [[CC_G:%CC_G_[0-9]+]]   = icmp sgt i64 [[RDI0]], [[OP2]]
+# CHECK-DAG: [[CC_GE:%CC_GE_[0-9]+]] = icmp sge i64 [[RDI0]], [[OP2]]
+# CHECK-DAG: [[CC_E:%CC_E_[0-9]+]]   = icmp eq  i64 [[RDI0]], [[OP2]]
+# CHECK-DAG: [[CC_NE:%CC_NE_[0-9]+]] = icmp ne  i64 [[RDI0]], [[OP2]]
+
+## CC_O is the same as OF.
+# CHECK-DAG: [[CC_O:%OF_[0-9]+]]      = extractvalue { i64, i1 } {{%[0-9]+}}, 1
+# CHECK-DAG: [[CC_NO:%CC_NO_[0-9]+]]  = xor i1 [[CC_O]], true
+## CC_S is the same as SF.
+# CHECK-DAG: [[CC_S:%SF_[0-9]+]]      = icmp slt i64 [[CMPSUB]], 0
+# CHECK-DAG: [[CC_NS:%CC_NS_[0-9]+]]  = xor i1 [[CC_S]], true
+## CC_P is the same as PF.
+# CHECK-DAG: [[CC_P:%PF_[0-9]+]]
+# CHECK-DAG: [[CC_NP:%CC_NP_[0-9]+]]  = xor i1 [[CC_P]], true
+
+      - Inst:            CMOVO64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX1:%RAX_[0-9]+]] = select i1 [[CC_O]], i64 [[RDI0]], i64 [[RAX0]]
+
+      - Inst:            CMOVNO64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX2:%RAX_[0-9]+]] = select i1 [[CC_NO]], i64 [[RDI0]], i64 [[RAX1]]
+
+      - Inst:            CMOVB64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX3:%RAX_[0-9]+]] = select i1 [[CC_B]], i64 [[RDI0]], i64 [[RAX2]]
+
+      - Inst:            CMOVAE64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX4:%RAX_[0-9]+]] = select i1 [[CC_AE]], i64 [[RDI0]], i64 [[RAX3]]
+
+      - Inst:            CMOVE64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX5:%RAX_[0-9]+]] = select i1 [[CC_E]], i64 [[RDI0]], i64 [[RAX4]]
+
+      - Inst:            CMOVNE64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX6:%RAX_[0-9]+]] = select i1 [[CC_NE]], i64 [[RDI0]], i64 [[RAX5]]
+
+      - Inst:            CMOVBE64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX7:%RAX_[0-9]+]] = select i1 [[CC_BE]], i64 [[RDI0]], i64 [[RAX6]]
+
+      - Inst:            CMOVA64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX8:%RAX_[0-9]+]] = select i1 [[CC_A]], i64 [[RDI0]], i64 [[RAX7]]
+
+      - Inst:            CMOVS64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX9:%RAX_[0-9]+]] = select i1 [[CC_S]], i64 [[RDI0]], i64 [[RAX8]]
+
+      - Inst:            CMOVNS64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX10:%RAX_[0-9]+]] = select i1 [[CC_NS]], i64 [[RDI0]], i64 [[RAX9]]
+
+      - Inst:            CMOVP64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX11:%RAX_[0-9]+]] = select i1 [[CC_P]], i64 [[RDI0]], i64 [[RAX10]]
+
+      - Inst:            CMOVNP64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX12:%RAX_[0-9]+]] = select i1 [[CC_NP]], i64 [[RDI0]], i64 [[RAX11]]
+
+      - Inst:            CMOVL64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX13:%RAX_[0-9]+]] = select i1 [[CC_L]], i64 [[RDI0]], i64 [[RAX12]]
+
+      - Inst:            CMOVGE64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX14:%RAX_[0-9]+]] = select i1 [[CC_GE]], i64 [[RDI0]], i64 [[RAX13]]
+
+      - Inst:            CMOVLE64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX15:%RAX_[0-9]+]] = select i1 [[CC_LE]], i64 [[RDI0]], i64 [[RAX14]]
+
+      - Inst:            CMOVG64rr
+        Size:            4
+        Ops:             [ RRAX, RRAX, RRDI ]
+# CHECK-DAG: [[RAX16:%RAX_[0-9]+]] = select i1 [[CC_G]], i64 [[RDI0]], i64 [[RAX15]]
+
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+# CHECK: store i64 [[RAX16]], i64* %RAX
+
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [  ]

@@ -1,0 +1,34 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+# f:
+# mov rax, rax
+# ret
+
+# CHECK-LABEL:  fn_0
+# CHECK-LABEL:  entry_fn_0
+# CHECK:          %RAX_ptr = getelementptr inbounds %regset* %0
+# CHECK:          %RAX_init = load i64* %RAX_ptr
+# CHECK-DAG:      %EAX_init = trunc i64 %RAX_init to i32
+# CHECK-DAG:      %AX_init = trunc i64 %RAX_init to i16
+# CHECK-DAG:      %AL_init = trunc i64 %RAX_init to i8
+# CHECK-DAG:      [[AH64:%[0-9]+]] = lshr i64 %RAX_init, 8
+# CHECK-DAG:      %AH_init = trunc i64 [[AH64]] to i8
+
+Atoms:
+  - StartAddress:    0x0000000000000000
+    Size:            4
+    Type:            Text
+    Content:
+      - Inst:            MOV64rr
+        Size:            3
+        Ops:             [ RRAX, RRAX ]
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [  ]

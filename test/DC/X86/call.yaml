@@ -1,0 +1,82 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source (executable, x86_64-apple-macosx10.9.0)
+#   callee_add8:
+#   add rdi, 8
+#   mov rax, rdi
+#   ret
+#
+#   .global _main
+#   _main:
+#   mov rdi, 42
+#   call callee_add8
+#   add rax, 10
+#   ret
+
+Atoms:
+
+# CHECK-LABEL: define void @fn_100000F9F
+  - StartAddress:    0x0000000100000F9F
+    Size:            8
+    Type:            Text
+    Content:
+      - Inst:            ADD64ri8
+        Size:            4
+        Ops:             [ RRDI, RRDI, I8 ]
+# CHECK: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK: [[RDI1:%RDI_[0-9]+]] = add i64 [[RDI0]], 8
+      - Inst:            MOV64rr
+        Size:            3
+        Ops:             [ RRAX, RRDI ]
+# CHECK-DAG: store i64 [[RDI1]], i64* %RDI
+# CHECK-DAG: store i64 [[RDI1]], i64* %RAX
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+
+# CHECK-LABEL: define void @fn_100000FA7
+# CHECK-LABEL: bb_100000FA7:
+  - StartAddress:    0x0000000100000FA7
+    Size:            17
+    Type:            Text
+    Content:
+      - Inst:            MOV64ri32
+        Size:            7
+        Ops:             [ RRDI, I42 ]
+# CHECK: store i64 42, i64* %RDI
+# CHECK: br label %bb_100000FA7_call
+
+
+# CHECK-LABEL: bb_100000FA7_call:
+# CHECK: [[RDI_save:%[0-9]+]] = load i64* %RDI
+# CHECK: store i64 [[RDI_save]], i64* %RDI_ptr
+      - Inst:            CALL64pcrel32
+        Size:            5
+        Ops:             [ I-20 ]
+# CHECK: call void @fn_100000F9F(%regset* %0)
+# CHECK-DAG: [[RDI_reload:%RDI_[0-9]+]] = load i64* %RDI_ptr
+# CHECK-DAG: store i64 [[RDI_reload]], i64* %RDI
+
+## Also check that the subregister was extracted.
+# CHECK-DAG: [[EDI_trunc:%EDI_[0-9]+]] = trunc i64 [[RDI_reload]] to i32
+# CHECK-DAG: store i32 [[EDI_trunc]], i32* %EDI
+# CHECK: br label %bb_c100000FAE
+
+# CHECK-LABEL: bb_c100000FAE:
+      - Inst:            ADD64ri8
+        Size:            4
+        Ops:             [ RRAX, RRAX, I10 ]
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000100000F9F
+        Preds:           [  ]
+        Succs:           [  ]
+  - Name:            __text:100000FA7
+    BasicBlocks:
+      - Address:         0x0000000100000FA7
+        Preds:           [  ]
+        Succs:           [  ]

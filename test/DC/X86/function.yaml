@@ -1,0 +1,28 @@
+#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
+#
+# Assembly source:
+# f:
+# ret
+
+# CHECK-LABEL:  define void @fn_0(%regset* noalias nocapture)
+# CHECK-LABEL:  entry_fn_0:
+# CHECK:          br label %bb_0
+# CHECK-LABEL:  exit_fn_0:
+# CHECK:          ret void
+# CHECK-LABEL:  bb_0:
+# CHECK:          br label %exit_fn_0
+
+Atoms:
+  - StartAddress:    0x0000000000000000
+    Size:            1
+    Type:            Text
+    Content:
+      - Inst:            RETQ
+        Size:            1
+        Ops:             [  ]
+Functions:
+  - Name:            __text
+    BasicBlocks:
+      - Address:         0x0000000000000000
+        Preds:           [  ]
+        Succs:           [  ]
