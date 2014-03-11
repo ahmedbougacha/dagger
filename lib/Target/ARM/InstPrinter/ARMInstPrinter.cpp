@@ -24,6 +24,7 @@ using namespace llvm;
 
 #define DEBUG_TYPE "asm-printer"
 
+#define PRINT_MACHINE_OPERAND
 #include "ARMGenAsmWriter.inc"
 
 /// translateShiftImm - Convert shift immediate from 0-31 to 1-32 for printing.

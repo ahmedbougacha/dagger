@@ -31,6 +31,7 @@ using namespace llvm;
 
 // Include the auto-generated portion of the assembly writer.
 #define PRINT_ALIAS_INSTR
+#define PRINT_MACHINE_OPERAND
 #include "X86GenAsmWriter.inc"
 
 void X86ATTInstPrinter::printRegName(raw_ostream &OS,

@@ -26,6 +26,7 @@ using namespace llvm;
 
 #define DEBUG_TYPE "asm-printer"
 
+#define PRINT_MACHINE_OPERAND
 #include "X86GenAsmWriter1.inc"
 
 void X86IntelInstPrinter::printRegName(raw_ostream &OS, unsigned RegNo) const {

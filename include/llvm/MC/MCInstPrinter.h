@@ -78,6 +78,11 @@ public:
   /// printRegName - Print the assembler register name.
   virtual void printRegName(raw_ostream &OS, unsigned RegNo) const;
 
+  /// printMachineOperand - Print the complete operand, of type \p OpType,
+  /// starting at MC operand \p OpNo in the specified MCInst.
+  virtual void printMachineOperand(const MCInst *MI, unsigned OpType,
+                                   unsigned OpNo, raw_ostream &OS);
+
   uint64_t getAvailableFeatures() const { return AvailableFeatures; }
   void setAvailableFeatures(uint64_t Value) { AvailableFeatures = Value; }
 

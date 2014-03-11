@@ -29,6 +29,11 @@ void MCInstPrinter::printRegName(raw_ostream &OS, unsigned RegNo) const {
   llvm_unreachable("Target should implement this");
 }
 
+void MCInstPrinter::printMachineOperand(const MCInst *MI, unsigned OpType,
+                                        unsigned OpNo, raw_ostream &OS) {
+  llvm_unreachable("Target should generate this");
+}
+
 void MCInstPrinter::printAnnotation(raw_ostream &OS, StringRef Annot) {
   if (!Annot.empty()) {
     if (CommentStream) {

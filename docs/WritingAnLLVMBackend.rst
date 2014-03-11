@@ -1653,6 +1653,31 @@ instruction with a memory address operand, the ``printMemOperand`` method
 should be implemented to generate the proper output.  Similarly,
 ``printCCOperand`` should be used to print a conditional operand.
 
+The ``printMachineOperand`` method is also optionally provided: given an
+``MCInst``, an operand index and an operand type, the implementation calls the
+print method associated with the operand type.
+To be able to use the method in your backend, you will need to make a few
+additions to XXXInstPrinter.cpp and XXXInstPrinter.h
+For example:
+
+XXXInstPrinter.cpp:
+
+.. code-block:: c++
+
+  #define PRINT_MACHINE_OPERAND
+  #include "XXXGenAsmWriter.inc"
+
+XXXInstPrinter.h:
+
+.. code-block:: c++
+
+  class XXXInstPrinter : public MCInstPrinter {
+    ...
+    void printMachineOperand(const MCInst *MI, unsigned OpType, unsigned OpNo,
+                             raw_ostream &OS) LLVM_OVERRIDE;
+    ...
+  };
+
 ``doFinalization`` should be overridden in ``XXXAsmPrinter``, and it should be
 called to shut down the assembly printer.  During ``doFinalization``, global
 variables and constants are printed to output.

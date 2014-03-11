@@ -112,6 +112,7 @@ MCRelocationInfo *createARMMachORelocationInfo(MCContext &Ctx);
 // Defines symbolic names for the ARM instructions.
 //
 #define GET_INSTRINFO_ENUM
+#define GET_INSTRINFO_OPERAND_TYPES_ENUM
 #include "ARMGenInstrInfo.inc"
 
 #define GET_SUBTARGETINFO_ENUM
