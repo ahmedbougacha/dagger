@@ -28,7 +28,7 @@ DCTranslator::DCTranslator(LLVMContext &Ctx, TransOpt::Level TransOptLevel,
                            MCInstPrinter &IP, MCModule &MCM,
                            MCObjectDisassembler *MCOD)
     : TheModule("output", Ctx), MCOD(MCOD), MCM(MCM), FPM(&TheModule),
-      DIS(DIS), OptLevel(TransOptLevel) {
+      DTIT(), DIS(DIS), OptLevel(TransOptLevel) {
 
   if (OptLevel >= TransOpt::Less)
     FPM.add(createPromoteMemoryToRegisterPass());
@@ -129,11 +129,13 @@ void DCTranslator::translateFunction(
          ++II) {
       DEBUG(dbgs() << "Translating instruction:\n ";
             dbgs() << II->Inst << "\n";);
-      if (!DIS.translateInst(*II)) {
+      DCTranslatedInst TI(*II);
+      if (!DIS.translateInst(*II, TI)) {
         errs() << "Cannot translate instruction: \n  ";
         errs() << II->Inst << "\n";
         llvm_unreachable("Couldn't translate instruction\n");
       }
+      DTIT.trackInst(TI);
     }
     DIS.FinalizeBasicBlock();
   }

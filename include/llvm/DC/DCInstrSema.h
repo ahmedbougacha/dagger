@@ -22,12 +22,14 @@ class MCContext;
 }
 
 namespace llvm {
+class DCTranslatedInst;
 
 class DCInstrSema {
 public:
   virtual ~DCInstrSema();
 
-  bool translateInst(const MCDecodedInst &DecodedInst);
+  bool translateInst(const MCDecodedInst &DecodedInst,
+                     DCTranslatedInst &TranslatedInst);
 
   void SwitchToModule(Module *TheModule);
   void SwitchToFunction(uint64_t StartAddress);

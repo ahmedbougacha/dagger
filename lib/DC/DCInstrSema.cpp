@@ -3,6 +3,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/DC/DCRegisterSema.h"
+#include "llvm/DC/DCTranslatedInstTracker.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -253,7 +254,8 @@ void DCInstrSema::translateCastOp(Instruction::CastOps Opc) {
 }
 
 bool
-DCInstrSema::translateInst(const MCDecodedInst &DecodedInst) {
+DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
+                           DCTranslatedInst &TranslatedInst) {
   CurrentInst = &DecodedInst;
   DRS.SwitchToInst(DecodedInst);
 
@@ -416,11 +418,13 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst) {
         Res = DRS.insertBitsInValue(getReg(RegNo), Res);
       assert(Res->getType() == RegType);
       setReg(RegNo, Res);
+      TranslatedInst.addRegOpDef(MIOperandNo, Res);
       break;
     }
     case DCINS::PUT_REG: {
       unsigned RegNo = Next(), Res = Next();
       setReg(RegNo, Vals[Res]);
+      TranslatedInst.addImpDef(RegNo, Vals[Res]);
       break;
     }
     case DCINS::GET_RC: {
@@ -435,15 +439,18 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst) {
         Reg = Builder->CreateBitCast(Reg, ResType);
       Vals.push_back(Reg);
       break;
+      TranslatedInst.addRegOpUse(MIOperandNo, Reg);
     }
     case DCINS::GET_REG: {
       unsigned RegNo = Next();
       Vals.push_back(getReg(RegNo));
+      TranslatedInst.addImpUse(RegNo, Vals.back());
       break;
     }
     case DCINS::CUSTOM_OP: {
       unsigned OperandType = Next(), MIOperandNo = Next();
       translateOperand(OperandType, MIOperandNo);
+      TranslatedInst.addOpUse(MIOperandNo, OperandType, Vals.back());
       break;
     }
     case DCINS::CONSTANT_OP: {
@@ -451,6 +458,7 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst) {
       Type *ResType = ResEVT.getTypeForEVT(*Ctx);
       Vals.push_back(
           ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOperandNo)));
+      TranslatedInst.addImmOpUse(MIOperandNo, Vals.back());
       break;
     }
     case DCINS::MOV_CONSTANT: {

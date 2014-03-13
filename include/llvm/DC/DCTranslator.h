@@ -1,6 +1,7 @@
 #ifndef DCTRANSLATOR_H
 #define DCTRANSLATOR_H
 
+#include "llvm/DC/DCTranslatedInstTracker.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -34,6 +35,9 @@ class DCTranslator {
   MCObjectDisassembler *MCOD;
   MCModule &MCM;
   FunctionPassManager FPM;
+
+  // FIXME: This should only be used in a single function.
+  DCTranslatedInstTracker DTIT;
 
   DCInstrSema &DIS;
 
