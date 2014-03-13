@@ -26,9 +26,13 @@ using namespace object;
 DCTranslator::DCTranslator(LLVMContext &Ctx, TransOpt::Level TransOptLevel,
                            DCInstrSema &DIS, DCRegisterSema &DRS,
                            MCInstPrinter &IP, MCModule &MCM,
-                           MCObjectDisassembler *MCOD)
+                           MCObjectDisassembler *MCOD, bool EnableIRAnnotation)
     : TheModule("output", Ctx), MCOD(MCOD), MCM(MCM), FPM(&TheModule),
-      DTIT(), DIS(DIS), OptLevel(TransOptLevel) {
+      DTIT(), AnnotWriter(), DIS(DIS), OptLevel(TransOptLevel) {
+
+  // FIXME: now this can move to print, we don't need to keep it around
+  if (EnableIRAnnotation)
+    AnnotWriter.reset(new DCAnnotationWriter(DTIT, DRS.MRI, IP));
 
   if (OptLevel >= TransOpt::Less)
     FPM.add(createPromoteMemoryToRegisterPass());
@@ -156,5 +160,5 @@ void DCTranslator::translateFunction(
 }
 
 void DCTranslator::print(raw_ostream &OS) {
-  TheModule.print(OS, 0);
+  TheModule.print(OS, AnnotWriter.get());
 }

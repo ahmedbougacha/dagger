@@ -5,7 +5,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/IR/ValueMap.h"
-#include "llvm/MC/MCAtom.h"
+#include "llvm/MC/MCAnalysis/MCAtom.h"
 
 namespace llvm {
 

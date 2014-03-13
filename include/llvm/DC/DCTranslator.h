@@ -1,6 +1,7 @@
 #ifndef DCTRANSLATOR_H
 #define DCTRANSLATOR_H
 
+#include "llvm/DC/DCAnnotationWriter.h"
 #include "llvm/DC/DCTranslatedInstTracker.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/LLVMContext.h"
@@ -39,6 +40,8 @@ class DCTranslator {
   // FIXME: This should only be used in a single function.
   DCTranslatedInstTracker DTIT;
 
+  std::unique_ptr<DCAnnotationWriter> AnnotWriter;
+
   DCInstrSema &DIS;
 
   TransOpt::Level OptLevel;
@@ -46,7 +49,7 @@ class DCTranslator {
 public:
   DCTranslator(LLVMContext &Ctx, TransOpt::Level OptLevel, DCInstrSema &DIS,
                DCRegisterSema &DRS, MCInstPrinter &IP, MCModule &MCM,
-               MCObjectDisassembler *MCOD = 0);
+               MCObjectDisassembler *MCOD = 0, bool EnableIRAnnotation = false);
   ~DCTranslator();
 
   Module *getModule() { return &TheModule; }
