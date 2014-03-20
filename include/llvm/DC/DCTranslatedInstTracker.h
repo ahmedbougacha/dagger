@@ -77,8 +77,8 @@ public:
 
 class DCTranslatedInstTracker {
   typedef ValueMap<
-      const Value *, SmallVector<DCTranslatedInst::ValueInfo, 2> > AddrByInstMapTy;
-  AddrByInstMapTy AddrByInst;
+      const Value *, SmallVector<DCTranslatedInst::ValueInfo, 2> > ValInfoMapTy;
+  ValInfoMapTy ValInfo;
 
   typedef std::vector<DCTranslatedInst> TranslatedInstListTy;
   // All translated instruction info, sorted by decoded inst address.
@@ -89,6 +89,8 @@ public:
 
   void getInstsForValue(const Value &V,
     const SmallVectorImpl<DCTranslatedInst::ValueInfo> *&TrackedInsts) const;
+
+  const DCTranslatedInst *getTrackedInfo(const MCDecodedInst &MCDI) const;
 };
 
 } // end namespace llvm
