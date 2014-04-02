@@ -17,7 +17,7 @@ DCRegisterSema::DCRegisterSema(const MCRegisterInfo &MRI,
     : MRI(MRI), MII(MII), NumRegs(MRI.getNumRegs()), NumLargest(0),
       RegSizes(NumRegs), RegLargestSupers(NumRegs),
       RegOffsetsInSet(NumRegs, -1), LargestRegs(), TheModule(0), Ctx(0),
-      RegSetType(0), Builder(0), RegPtrs(NumRegs), RegAllocas(NumRegs),
+      RegSetType(0), Builder(), RegPtrs(NumRegs), RegAllocas(NumRegs),
       RegInits(NumRegs), RegAssignments(NumRegs), TheFunction(0),
       RegVals(NumRegs), CurrentInst(0) {
 
@@ -76,7 +76,7 @@ DCRegisterSema::~DCRegisterSema() {}
 void DCRegisterSema::SwitchToModule(Module *Mod) {
   TheModule = Mod;
   Ctx = &TheModule->getContext();
-  Builder = new IRBuilder(*Ctx);
+  Builder.reset(new DCIRBuilder(*Ctx));
 
   std::vector<Type *> LargestRegTypes(getNumLargest() - 1);
   for (unsigned I = 1, E = getNumLargest(); I != E; ++I)
@@ -100,7 +100,7 @@ void DCRegisterSema::SwitchToInst(const MCDecodedInst &DecodedInst) {
 }
 
 void DCRegisterSema::saveAllLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
-  IRBuilder LocalBuilder(BB, IP);
+  DCIRBuilder LocalBuilder(BB, IP);
 
   for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
     if (!RegAllocas[RI])

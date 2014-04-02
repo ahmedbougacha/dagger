@@ -93,6 +93,7 @@ static StringRef getSFName(X86::StatusFlag SF) {
   case X86::ZF: return "ZF";
   case X86::OF: return "OF";
   }
+  llvm_unreachable("Unknown status flag.");
 }
 
 static StringRef getCCName(X86::CondCode CC) {
@@ -425,7 +426,7 @@ extern "C" void __extwrap(char *regset, void *fn) {
 void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
                                                Function *ExtFn) {
 
-  IRBuilder WBuilder(WrapperBB);
+  DCIRBuilder WBuilder(WrapperBB);
 
   Type *ArgTypes[2] = { RegSetType->getPointerTo(), ExtFn->getType() };
   Function *EWFn =

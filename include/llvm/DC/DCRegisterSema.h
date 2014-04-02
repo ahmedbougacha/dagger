@@ -64,8 +64,8 @@ protected:
   Module *TheModule;
   LLVMContext *Ctx;
   StructType *RegSetType;
-  typedef IRBuilder<true, NoFolder> IRBuilder;
-  IRBuilder *Builder;
+  typedef IRBuilder<true, NoFolder> DCIRBuilder;
+  std::unique_ptr<DCIRBuilder> Builder;
 
   // Valid only inside a Function.
   std::vector<Value *> RegPtrs;

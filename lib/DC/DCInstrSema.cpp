@@ -115,7 +115,7 @@ void DCInstrSema::SwitchToModule(Module *M) {
   DRS.SwitchToModule(TheModule);
   FuncType = FunctionType::get(Type::getVoidTy(*Ctx),
                                DRS.getRegSetType()->getPointerTo(), false);
-  Builder.reset(new IRBuilder(*Ctx));
+  Builder.reset(new DCIRBuilder(*Ctx));
 
   // Create the init/fini functions.
   StructType *RegSetType = DRS.getRegSetType();
@@ -190,9 +190,10 @@ BasicBlock *DCInstrSema::getOrCreateBasicBlock(uint64_t Addr) {
   BasicBlock *&BB = BBByAddr[Addr];
   if (!BB) {
     BB = BasicBlock::Create(*Ctx, "bb_" + utohexstr(Addr), TheFunction);
-    IRBuilder(BB)
+    DCIRBuilder BBBuilder(BB);
+    BBBuilder
         .CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
-    IRBuilder(BB).CreateUnreachable();
+    BBBuilder.CreateUnreachable();
   }
   return BB;
 }
@@ -201,7 +202,7 @@ BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
   BasicBlock *CallBB =
       BasicBlock::Create(*Ctx, TheBB->getName() + "_call", TheFunction);
   Value *RegSetArg = &TheFunction->getArgumentList().front();
-  IRBuilder CallBuilder(CallBB);
+  DCIRBuilder CallBuilder(CallBB);
   CallBuilder.CreateCall(Target, RegSetArg);
   Builder->CreateBr(CallBB);
   assert(Builder->GetInsertPoint() == TheBB->end() &&
