@@ -26,7 +26,9 @@ set(SOURCES
   )
 
 add_llvm_library(DYN SHARED ${SOURCES})
-target_link_libraries(DYN PUBLIC
-  ${ALL_LIBRARIES_DEP}
-  LLVMDYNCore
-  )
+
+if(CMAKE_VERSION VERSION_LESS 2.8.12)
+  target_link_libraries(DYN ${ALL_LIBRARIES_DEP} LLVMDYNCore)
+else()
+  target_link_libraries(DYN PUBLIC ${ALL_LIBRARIES_DEP} LLVMDYNCore)
+endif()
