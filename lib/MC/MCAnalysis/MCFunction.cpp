@@ -20,16 +20,21 @@ MCFunction::MCFunction(StringRef Name, MCModule *Parent)
   : Name(Name), ParentModule(Parent)
 {}
 
+MCFunction::~MCFunction() {
+  for (auto BB : Blocks)
+    delete BB;
+}
+
 MCBasicBlock &MCFunction::createBlock(const MCTextAtom &TA) {
-  std::unique_ptr<MCBasicBlock> MCBB(new MCBasicBlock(TA, this));
-  Blocks.push_back(std::move(MCBB));
+  MCBasicBlock *MCBB(new MCBasicBlock(TA, this));
+  Blocks.push_back(MCBB);
   return *Blocks.back();
 }
 
 MCBasicBlock *MCFunction::find(uint64_t StartAddr) {
-  for (const_iterator I = begin(), E = end(); I != E; ++I)
-    if ((*I)->getInsts()->getBeginAddr() == StartAddr)
-      return I->get();
+  for (auto BB : *this)
+    if (BB->getInsts()->getBeginAddr() == StartAddr)
+      return BB;
   return nullptr;
 }
 

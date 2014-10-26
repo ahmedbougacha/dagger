@@ -194,20 +194,18 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
          && "Module already has a CFG!");
 
   // First, determine the basic block boundaries and call targets.
-  for (MCModule::atom_iterator AI = Module->atom_begin(),
-                               AE = Module->atom_end();
-       AI != AE; ++AI) {
-    MCTextAtom *TA = dyn_cast<MCTextAtom>(*AI);
+  for (MCAtom *Atom : Module->atoms()) {
+    MCTextAtom *TA = dyn_cast<MCTextAtom>(Atom);
     if (!TA) continue;
     Calls.push_back(TA->getBeginAddr());
     BBInfos[TA->getBeginAddr()].Atom = TA;
-    for (MCTextAtom::const_iterator II = TA->begin(), IE = TA->end();
-         II != IE; ++II) {
-      if (MIA.isTerminator(II->Inst))
-        Splits.push_back(II->Address + II->Size);
+    for (auto DecodedInst : *TA) {
+      if (MIA.isTerminator(DecodedInst.Inst))
+        Splits.push_back(DecodedInst.Address + DecodedInst.Size);
       uint64_t Target;
-      if (MIA.evaluateBranch(II->Inst, II->Address, II->Size, Target)) {
-        if (MIA.isCall(II->Inst))
+      if (MIA.evaluateBranch(DecodedInst.Inst, DecodedInst.Address,
+                             DecodedInst.Size, Target)) {
+        if (MIA.isCall(DecodedInst.Inst))
           Calls.push_back(Target);
         Splits.push_back(Target);
       }
@@ -218,25 +216,22 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
   RemoveDupsFromAddressVector(Calls);
 
   // Split text atoms into basic block atoms.
-  for (AddressSetTy::const_iterator SI = Splits.begin(), SE = Splits.end();
-       SI != SE; ++SI) {
-    MCAtom *A = Module->findAtomContaining(*SI);
+  for (uint64_t Address : Splits) {
+    MCAtom *A = Module->findAtomContaining(Address);
     if (!A) continue;
     MCTextAtom *TA = cast<MCTextAtom>(A);
-    if (TA->getBeginAddr() == *SI)
+    if (TA->getBeginAddr() == Address)
       continue;
-    MCTextAtom *NewAtom = TA->split(*SI);
+    MCTextAtom *NewAtom = TA->split(Address);
     BBInfos[NewAtom->getBeginAddr()].Atom = NewAtom;
     StringRef BBName = TA->getName();
     BBName = BBName.substr(0, BBName.find_last_of(':'));
-    NewAtom->setName((BBName + ":" + utohexstr(*SI)).str());
+    NewAtom->setName((BBName + ":" + utohexstr(Address)).str());
   }
 
   // Compute succs/preds.
-  for (MCModule::atom_iterator AI = Module->atom_begin(),
-                               AE = Module->atom_end();
-                               AI != AE; ++AI) {
-    MCTextAtom *TA = dyn_cast<MCTextAtom>(*AI);
+  for (MCAtom *Atom : Module->atoms()) {
+    MCTextAtom *TA = dyn_cast<MCTextAtom>(Atom);
     if (!TA) continue;
     BBInfo &CurBB = BBInfos[TA->getBeginAddr()];
     const MCDecodedInst &LI = TA->back();
@@ -252,9 +247,8 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
 
 
   // Create functions and basic blocks.
-  for (AddressSetTy::const_iterator CI = Calls.begin(), CE = Calls.end();
-       CI != CE; ++CI) {
-    BBInfo &BBI = BBInfos[*CI];
+  for (uint64_t Address : Calls) {
+    BBInfo &BBI = BBInfos[Address];
     if (!BBI.Atom) continue;
 
     MCFunction &MCFN = *Module->createFunction(BBI.Atom->getName());
@@ -268,12 +262,10 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
         continue;
       BBI->BB = &MCFN.createBlock(*BBI->Atom);
       // Add all predecessors and successors to the worklist.
-      for (BBInfoSetTy::iterator SI = BBI->Succs.begin(), SE = BBI->Succs.end();
-                                 SI != SE; ++SI)
-        Worklist.insert(*SI);
-      for (BBInfoSetTy::iterator PI = BBI->Preds.begin(), PE = BBI->Preds.end();
-                                 PI != PE; ++PI)
-        Worklist.insert(*PI);
+      for (auto S : BBI->Succs)
+        Worklist.insert(S);
+      for (auto P : BBI->Preds)
+        Worklist.insert(P);
     }
 
     // Set preds/succs.
@@ -282,14 +274,12 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
       MCBasicBlock *MCBB = BBI->BB;
       if (!MCBB)
         continue;
-      for (BBInfoSetTy::iterator SI = BBI->Succs.begin(), SE = BBI->Succs.end();
-           SI != SE; ++SI)
-        if ((*SI)->BB)
-          MCBB->addSuccessor((*SI)->BB);
-      for (BBInfoSetTy::iterator PI = BBI->Preds.begin(), PE = BBI->Preds.end();
-           PI != PE; ++PI)
-        if ((*PI)->BB)
-          MCBB->addPredecessor((*PI)->BB);
+      for (auto S : BBI->Succs)
+        if (S->BB)
+          MCBB->addSuccessor(S->BB);
+      for (auto P : BBI->Preds)
+        if (P->BB)
+          MCBB->addPredecessor(P->BB);
     }
   }
 }
@@ -337,11 +327,11 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
         MCTextAtom *NewTA = TA->split(BeginAddr);
 
         // Look for an already encountered basic block that needs splitting
-        BBInfoByAddrTy::iterator It = BBInfos.find(TA->getBeginAddr());
-        if (It != BBInfos.end() && It->second.Atom) {
-          BBI->SuccAddrs = It->second.SuccAddrs;
-          It->second.SuccAddrs.clear();
-          It->second.SuccAddrs.push_back(BeginAddr);
+        auto SplitBBIt = BBInfos.find(TA->getBeginAddr());
+        if (SplitBBIt != BBInfos.end() && SplitBBIt->second.Atom) {
+          BBI->SuccAddrs = SplitBBIt->second.SuccAddrs;
+          SplitBBIt->second.SuccAddrs.clear();
+          SplitBBIt->second.SuccAddrs.push_back(BeginAddr);
         }
         TA = NewTA;
       }
@@ -444,10 +434,8 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
     MCBasicBlock *BB = BBI->BB;
 
     RemoveDupsFromAddressVector(BBI->SuccAddrs);
-    for (AddressSetTy::const_iterator SI = BBI->SuccAddrs.begin(),
-         SE = BBI->SuccAddrs.end();
-         SI != SE; ++SI) {
-      MCBasicBlock *Succ = BBInfos[*SI].BB;
+    for (uint64_t Address : BBI->SuccAddrs) {
+      MCBasicBlock *Succ = BBInfos[Address].BB;
       BB->addSuccessor(Succ);
       Succ->addPredecessor(BB);
     }
@@ -471,14 +459,12 @@ MCObjectDisassembler::createFunction(MCModule *Module, uint64_t BeginAddr,
     return Module->createFunction(ExtFnName);
 
   // If it's not, look for an existing function.
-  for (MCModule::func_iterator FI = Module->func_begin(),
-                               FE = Module->func_end();
-       FI != FE; ++FI) {
-    if ((*FI)->empty())
+  for (auto &Fn : Module->funcs()) {
+    if (Fn->empty())
       continue;
     // FIXME: MCModule should provide a findFunctionByAddr()
-    if ((*FI)->getEntryBlock()->getInsts()->getBeginAddr() == BeginAddr)
-      return FI->get();
+    if (Fn->getEntryBlock()->getInsts()->getBeginAddr() == BeginAddr)
+      return Fn.get();
   }
 
   // Finally, just create a new one.

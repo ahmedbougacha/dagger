@@ -17,7 +17,6 @@
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCInst.h"
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -89,7 +88,7 @@ class MCFunction {
 
   std::string Name;
   MCModule *ParentModule;
-  typedef std::vector<std::unique_ptr<MCBasicBlock>> BasicBlockListTy;
+  typedef std::vector<MCBasicBlock *> BasicBlockListTy;
   BasicBlockListTy Blocks;
 
   // MCModule owns the function.
@@ -97,6 +96,8 @@ class MCFunction {
   MCFunction(StringRef Name, MCModule *Parent);
 
 public:
+  ~MCFunction();
+
   /// \brief Create an MCBasicBlock backed by Insts and add it to this function.
   /// \param Insts Sequence of straight-line code backing the basic block.
   /// \returns The newly created basic block.
@@ -118,6 +119,7 @@ public:
         MCBasicBlock *getEntryBlock()       { return front(); }
 
   bool empty() const { return Blocks.empty(); }
+  size_t size() const { return Blocks.size(); }
 
   typedef BasicBlockListTy::const_iterator const_iterator;
   typedef BasicBlockListTy::      iterator       iterator;
@@ -126,10 +128,10 @@ public:
   const_iterator   end() const { return Blocks.end(); }
         iterator   end()       { return Blocks.end(); }
 
-  const MCBasicBlock* front() const { return Blocks.front().get(); }
-        MCBasicBlock* front()       { return Blocks.front().get(); }
-  const MCBasicBlock*  back() const { return Blocks.back().get(); }
-        MCBasicBlock*  back()       { return Blocks.back().get(); }
+  const MCBasicBlock* front() const { return Blocks.front(); }
+        MCBasicBlock* front()       { return Blocks.front(); }
+  const MCBasicBlock*  back() const { return Blocks.back(); }
+        MCBasicBlock*  back()       { return Blocks.back(); }
 
   /// \brief Find the basic block, if any, that starts at \p StartAddr.
   const MCBasicBlock *find(uint64_t StartAddr) const;

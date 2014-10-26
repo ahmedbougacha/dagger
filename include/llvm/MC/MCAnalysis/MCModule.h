@@ -16,6 +16,7 @@
 #define LLVM_MC_MCANALYSIS_MCMODULE_H
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/DataTypes.h"
 #include <memory>
@@ -110,6 +111,14 @@ public:
         atom_iterator atom_begin()       { return Atoms.begin(); }
   const_atom_iterator atom_end()   const { return Atoms.end(); }
         atom_iterator atom_end()         { return Atoms.end(); }
+  typedef iterator_range<atom_iterator> atom_iterator_range;
+  typedef iterator_range<const_atom_iterator> const_atom_iterator_range;
+  atom_iterator_range atoms() {
+    return atom_iterator_range(atom_begin(), atom_end());
+  }
+  const_atom_iterator_range atoms() const {
+    return const_atom_iterator_range(atom_begin(), atom_end());
+  }
   /// @}
 
   /// \brief Create a new MCFunction.
@@ -123,6 +132,14 @@ public:
         func_iterator func_begin()       { return Functions.begin(); }
   const_func_iterator func_end()   const { return Functions.end(); }
         func_iterator func_end()         { return Functions.end(); }
+  typedef iterator_range<func_iterator> func_iterator_range;
+  typedef iterator_range<const_func_iterator> const_func_iterator_range;
+  func_iterator_range funcs() {
+    return func_iterator_range(func_begin(), func_end());
+  }
+  const_func_iterator_range funcs() const {
+    return const_func_iterator_range(func_begin(), func_end());
+  }
   /// @}
 
   /// \brief Get the address of the entrypoint function, or 0 if there is none.
