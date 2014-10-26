@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInstrAnalysis.h"
 using namespace llvm;
 
@@ -15,8 +16,16 @@ bool MCInstrAnalysis::evaluateBranch(const MCInst &Inst, uint64_t Addr,
   if (Inst.getNumOperands() == 0 ||
       Info->get(Inst.getOpcode()).OpInfo[0].OperandType != MCOI::OPERAND_PCREL)
     return false;
-
-  int64_t Imm = Inst.getOperand(0).getImm();
-  Target = Addr+Size+Imm;
+  const MCOperand &Op = Inst.getOperand(0);
+  if (Op.isImm()) {
+    int64_t Imm = Inst.getOperand(0).getImm();
+    Target = Addr+Size+Imm;
+    return true;
+  }
+  const MCExpr *Expr = Op.getExpr();
+  int64_t Absolute;
+  if (!Expr->EvaluateAsAbsolute(Absolute))
+    return false;
+  Addr = Absolute;
   return true;
 }
