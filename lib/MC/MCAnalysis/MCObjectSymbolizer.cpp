@@ -152,8 +152,53 @@ tryAddingSymbolicOperand(MCInst &MI, raw_ostream &cStream,
   // Interpret Value as a branch target.
   if (IsBranch == false)
     return false;
-  uint64_t UValue = Value;
-  // FIXME: map instead of looping each time?
+
+  uint64_t SymbolOffset;
+  MCSymbol *Sym = findContainingFunction(Value, SymbolOffset);
+
+  if (!Sym)
+    return false;
+  const MCExpr *Expr = MCSymbolRefExpr::Create(Sym, Ctx);
+  if (SymbolOffset) {
+    const MCExpr *Off = MCConstantExpr::Create(SymbolOffset, Ctx);
+    Expr = MCBinaryExpr::CreateAdd(Expr, Off, Ctx);
+  }
+  MI.addOperand(MCOperand::CreateExpr(Expr));
+  return true;
+}
+
+MCSymbol *MCObjectSymbolizer::
+findContainingFunction(uint64_t Addr, uint64_t &Offset)
+{
+  if (AddrToFunctionSymbol.empty())
+    buildAddrToFunctionSymbolMap();
+
+  const FunctionSymbol FS(Addr);
+  AddrToFunctionSymbolMap::iterator SB = AddrToFunctionSymbol.begin();
+  AddrToFunctionSymbolMap::iterator SI;
+  SI = std::upper_bound(SB, AddrToFunctionSymbol.end(), FS);
+
+  if (SI == AddrToFunctionSymbol.begin())
+    return 0;
+
+  // Iterate backwards until we find the first symbol in the list that
+  // covers Addr. This doesn't work if [SI->Addr, SI->Addr+SI->Size)
+  // overlap, but it does work for symbols that have the same address
+  // and zero size.
+  --SI;
+  const uint64_t SymAddr = SI->Addr;
+  MCSymbol *Sym = 0;
+  Offset = Addr - SymAddr;
+  do {
+    if (SymAddr == Addr || SymAddr + SI->Size > Addr)
+      Sym = SI->Sym;
+  } while (SI != SB && (--SI)->Addr == SymAddr);
+
+  return Sym;
+}
+
+void MCObjectSymbolizer::buildAddrToFunctionSymbolMap()
+{
   for (const SymbolRef &Symbol : Obj->symbols()) {
     uint64_t SymAddr;
     Symbol.getAddress(SymAddr);
@@ -167,19 +212,10 @@ tryAddingSymbolicOperand(MCInst &MI, raw_ostream &cStream,
         SymName.empty() || SymType != SymbolRef::ST_Function)
       continue;
 
-    if ( SymAddr == UValue ||
-        (SymAddr <= UValue && SymAddr + SymSize > UValue)) {
-      MCSymbol *Sym = Ctx.GetOrCreateSymbol(SymName);
-      const MCExpr *Expr = MCSymbolRefExpr::Create(Sym, Ctx);
-      if (SymAddr != UValue) {
-        const MCExpr *Off = MCConstantExpr::Create(UValue - SymAddr, Ctx);
-        Expr = MCBinaryExpr::CreateAdd(Expr, Off, Ctx);
-      }
-      MI.addOperand(MCOperand::CreateExpr(Expr));
-      return true;
-    }
+    MCSymbol *Sym = Ctx.GetOrCreateSymbol(SymName);
+    AddrToFunctionSymbol.push_back(FunctionSymbol(SymAddr, SymSize, Sym));
   }
-  return false;
+  std::stable_sort(AddrToFunctionSymbol.begin(), AddrToFunctionSymbol.end());
 }
 
 void MCObjectSymbolizer::

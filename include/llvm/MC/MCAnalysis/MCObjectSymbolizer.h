@@ -25,6 +25,7 @@ namespace llvm {
 class MCExpr;
 class MCInst;
 class MCRelocationInfo;
+class MCSymbol;
 class raw_ostream;
 
 /// \brief An ObjectFile-backed symbolizer.
@@ -69,13 +70,26 @@ public:
                          const object::ObjectFile *Obj);
 
 private:
+  struct FunctionSymbol {
+    uint64_t Addr;
+    uint64_t Size;
+    MCSymbol *Sym;
+    FunctionSymbol(uint64_t Addr, uint64_t Size = 0, MCSymbol *Sym = 0) :
+      Addr(Addr), Size(Size), Sym(Sym) { }
+    bool operator<(const FunctionSymbol &RHS) const { return Addr < RHS.Addr; }
+  };
+
   typedef DenseMap<uint64_t, object::RelocationRef> AddrToRelocMap;
   typedef std::vector<object::SectionRef> SortedSectionList;
+  typedef std::vector<FunctionSymbol> AddrToFunctionSymbolMap;
   SortedSectionList SortedSections;
   AddrToRelocMap AddrToReloc;
+  AddrToFunctionSymbolMap AddrToFunctionSymbol;
 
   void buildSectionList();
   void buildRelocationByAddrMap();
+  void buildAddrToFunctionSymbolMap();
+  MCSymbol *findContainingFunction(uint64_t Addr, uint64_t &Offset);
 };
 
 }
