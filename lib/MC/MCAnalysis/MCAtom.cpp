@@ -107,8 +107,7 @@ MCTextAtom *MCTextAtom::split(uint64_t SplitPt) {
   assert(I->Address == SplitPt &&
          "Split point does not fall on instruction boundary!");
 
-  std::copy(I, Insts.end(), std::back_inserter(RightAtom->Insts));
-  Insts.erase(I, Insts.end());
+  RightAtom->Insts.splice(RightAtom->Insts.end(), Insts, I, Insts.end());
   Parent->splitBasicBlocksForAtom(this, RightAtom);
   return RightAtom;
 }

@@ -237,8 +237,10 @@ static void emitDOTFile(const char *FileName, const MCFunction &f,
 
     Out << '"' << (*i)->getInsts()->getBeginAddr() << "\" [ label=\"<a>";
     // Print instructions.
-    for (unsigned ii = 0, ie = (*i)->getInsts()->size(); ii != ie;
-        ++ii) {
+    size_t ii = 0;
+    const size_t ie = (*i)->getInsts()->size();
+    for (MCTextAtom::const_iterator I = (*i)->getInsts()->begin(),
+         E = (*i)->getInsts()->end(); I != E; ++I, ++ii) {
       if (ii != 0) // Not the first line, start a new row.
         Out << '|';
       if (ii + 1 == ie) // Last line, add an end id.
@@ -247,7 +249,7 @@ static void emitDOTFile(const char *FileName, const MCFunction &f,
       // Escape special chars and print the instruction in mnemonic form.
       std::string Str;
       raw_string_ostream OS(Str);
-      IP->printInst(&(*i)->getInsts()->at(ii).Inst, OS, "");
+      IP->printInst(&I->Inst, OS, "");
       Out << DOT::EscapeString(OS.str());
     }
     Out << "\" shape=\"record\" ];\n";

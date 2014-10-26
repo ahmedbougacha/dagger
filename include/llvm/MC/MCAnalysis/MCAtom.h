@@ -19,7 +19,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/Support/DataTypes.h"
-#include <vector>
+#include <list>
 
 namespace llvm {
 
@@ -122,7 +122,7 @@ public:
 /// \brief An atom consisting of disassembled instructions.
 class MCTextAtom : public MCAtom {
 private:
-  typedef std::vector<MCDecodedInst> InstListTy;
+  typedef std::list<MCDecodedInst> InstListTy;
   InstListTy Insts;
 
   /// \brief The address of the next appended instruction, i.e., the
@@ -139,7 +139,6 @@ public:
   const_iterator end()   const { return Insts.end(); }
 
   const MCDecodedInst &back() const { return Insts.back(); }
-  const MCDecodedInst &at(size_t n) const { return Insts.at(n); }
   size_t size() const { return Insts.size(); }
   /// @}
 
