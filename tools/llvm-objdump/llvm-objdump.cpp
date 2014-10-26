@@ -214,18 +214,83 @@ static const Target *getTarget(const ObjectFile *Obj = nullptr) {
   return TheTarget;
 }
 
+struct DOTMCFunction {
+  const MCFunction &Fn;
+  MCInstPrinter &IP;
+
+  DOTMCFunction(const MCFunction &Fn, MCInstPrinter &IP) : Fn(Fn), IP(IP) {}
+};
+
+template<>
+struct GraphTraits<DOTMCFunction> {
+  typedef const MCBasicBlock NodeType;
+  typedef MCBasicBlock::succ_const_iterator ChildIteratorType;
+  static NodeType *getEntryNode(const DOTMCFunction &MCFN) {
+    return MCFN.Fn.getEntryBlock();
+  }
+  //    Return iterators that point to the beginning and ending of the child
+  //    node list for the specified node.
+  static ChildIteratorType child_begin(const MCBasicBlock *MCBB) {
+    return MCBB->succ_begin();
+  }
+  static ChildIteratorType child_end(const MCBasicBlock *MCBB) {
+    return MCBB->succ_end();
+  }
+
+  //    nodes_iterator/begin/end - Allow iteration over all nodes in the graph
+  typedef MCFunction::const_iterator nodes_iterator;
+  static nodes_iterator nodes_begin(const DOTMCFunction &MCFN) {
+    return MCFN.Fn.begin();
+  }
+  static nodes_iterator nodes_end(const DOTMCFunction &MCFN) {
+    return MCFN.Fn.end();
+  }
+
+  static unsigned size(const DOTMCFunction &MCFN) {
+    return MCFN.Fn.size();
+  }
+};
+
+template <>
+struct DOTGraphTraits<DOTMCFunction> : public DefaultDOTGraphTraits {
+  DOTGraphTraits(bool simple=false) : DefaultDOTGraphTraits(simple) {}
+
+  std::string getNodeLabel(const MCBasicBlock *BB, const DOTMCFunction &MCFN) {
+    std::string OutStr;
+    raw_string_ostream Out(OutStr);
+    Out << BB->getInsts()->getBeginAddr();
+    return Out.str();
+  }
+  std::string getNodeDescription(const MCBasicBlock *BB,
+                                 const DOTMCFunction &MCFN) {
+    std::string OutStr;
+    raw_string_ostream Out(OutStr);
+    for (auto DInst : *BB->getInsts()) {
+      MCFN.IP.printInst(&DInst.Inst, Out, "");
+      Out << '\n';
+    }
+    return Out.str();
+  }
+};
+
+
 // Write a graphviz file for the CFG inside an MCFunction.
 // FIXME: Use GraphWriter
 static void emitDOTFile(const char *FileName, const MCFunction &f,
                         MCInstPrinter *IP) {
   // Start a new dot file.
   std::error_code EC;
+
+
   raw_fd_ostream Out(FileName, EC, sys::fs::F_Text);
   if (EC) {
-    errs() << "llvm-objdump: warning: " << EC.message() << '\n';
+    errs() << ToolName << ": warning: " << EC.message() << '\n';
     return;
   }
+  DOTMCFunction DOTFn(f, *IP);
+  WriteGraph(Out, DOTFn);
 
+#if 0
   Out << "digraph \"" << f.getName() << "\" {\n";
   Out << "graph [ rankdir = \"LR\" ];\n";
   for (MCFunction::const_iterator i = f.begin(), e = f.end(); i != e; ++i) {
@@ -261,6 +326,7 @@ static void emitDOTFile(const char *FileName, const MCFunction &f,
           << (*si)->getInsts()->getBeginAddr() << ":a\n";
   }
   Out << "}\n";
+#endif
 }
 
 void llvm::DumpBytes(StringRef bytes) {
