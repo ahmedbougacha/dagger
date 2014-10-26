@@ -9,7 +9,7 @@
 
 LEVEL = ../..
 TESTNAME = MC
-LINK_COMPONENTS := all-targets MCDisassembler Object
+LINK_COMPONENTS := all-targets MCDisassembler Object MCAnalysis
 
 include $(LEVEL)/Makefile.config
 include $(LLVM_SRC_ROOT)/unittests/Makefile.unittest

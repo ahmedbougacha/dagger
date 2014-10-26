@@ -1,4 +1,4 @@
-##===- tools/llvm-objdump/Makefile -------------------------*- Makefile -*-===##
+##===- lib/MC/MCAnalysys/Makefile --------------------------*- Makefile -*-===##
 #
 #                     The LLVM Compiler Infrastructure
 #
@@ -7,11 +7,8 @@
 #
 ##===----------------------------------------------------------------------===##
 
-LEVEL := ../..
-TOOLNAME := llvm-objdump
-LINK_COMPONENTS := all-targets DebugInfoDWARF MC MCAnalysis MCParser MCDisassembler Object
-
-# This tool has no plugins, optimize startup time.
-TOOL_NO_EXPORTS := 1
+LEVEL = ../../..
+LIBRARYNAME = LLVMMCAnalysis
+BUILD_ARCHIVE := 1
 
 include $(LEVEL)/Makefile.common

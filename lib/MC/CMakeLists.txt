@@ -51,5 +51,6 @@ add_llvm_library(LLVMMC
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/MC
   )
 
+add_subdirectory(MCAnalysis)
 add_subdirectory(MCParser)
 add_subdirectory(MCDisassembler)
