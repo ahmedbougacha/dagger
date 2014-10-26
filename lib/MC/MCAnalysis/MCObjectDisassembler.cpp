@@ -89,17 +89,13 @@ MCModule *MCObjectDisassembler::buildModule(bool withCFG) {
 
 void MCObjectDisassembler::buildSectionAtoms(MCModule *Module) {
   for (const SectionRef &Section : Obj.sections()) {
-    bool isText;
-    Section.isText(isText);
-    bool isData;
-    Section.isData(isData);
+    bool isText = Section.isText();
+    bool isData = Section.isData();
     if (!isData && !isText)
       continue;
 
-    uint64_t StartAddr;
-    Section.getAddress(StartAddr);
-    uint64_t SecSize;
-    Section.getSize(SecSize);
+    uint64_t StartAddr = Section.getAddress();
+    uint64_t SecSize = Section.getSize();
     if (StartAddr == UnknownAddressOrSize || SecSize == UnknownAddressOrSize)
       continue;
     StartAddr = getEffectiveLoadAddr(StartAddr);

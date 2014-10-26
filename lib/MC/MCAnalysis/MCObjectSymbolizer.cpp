@@ -66,8 +66,8 @@ MCMachObjectSymbolizer::MCMachObjectSymbolizer(
         StubSize = S.reserved2;
       }
       assert(StubSize && "Mach-O stub entry size can't be zero!");
-      StubsSec.getAddress(StubsStart);
-      StubsSec.getSize(StubsCount);
+      StubsStart = StubsSec.getAddress();
+      StubsCount = StubsSec.getSize();
       StubsCount /= StubSize;
     }
   }
@@ -107,7 +107,7 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
   uint64_t Addr = Value;
   if (const SectionRef *S = findSectionContaining(Addr)) {
     StringRef Name; S->getName(Name);
-    uint64_t SAddr; S->getAddress(SAddr);
+    uint64_t SAddr = S->getAddress();
     if (Name == "__cstring") {
       StringRef Contents;
       S->getContents(Contents);
@@ -202,7 +202,7 @@ MCObjectSymbolizer *MCObjectSymbolizer::createObjectSymbolizer(
 // SortedSections implementation.
 
 static bool SectionStartsBefore(const SectionRef &S, uint64_t Addr) {
-  uint64_t SAddr; S.getAddress(SAddr);
+  uint64_t SAddr = S.getAddress();
   return SAddr < Addr;
 }
 
@@ -216,8 +216,8 @@ const SectionRef *MCObjectSymbolizer::findSectionContaining(uint64_t Addr) {
                           Addr, SectionStartsBefore);
   if (It == EndIt)
     return nullptr;
-  uint64_t SAddr; It->getAddress(SAddr);
-  uint64_t SSize; It->getSize(SSize);
+  uint64_t SAddr = It->getAddress();
+  uint64_t SSize = It->getSize();
   if (Addr >= SAddr + SSize)
     return nullptr;
   return &*It;
@@ -235,19 +235,15 @@ const RelocationRef *MCObjectSymbolizer::findRelocationAt(uint64_t Addr) {
 
 void MCObjectSymbolizer::buildSectionList() {
   for (const SectionRef &Section : Obj->sections()) {
-    bool RequiredForExec;
-    Section.isRequiredForExecution(RequiredForExec);
-    if (RequiredForExec == false)
+    if (!Section.isRequiredForExecution())
       continue;
-    uint64_t SAddr;
-    Section.getAddress(SAddr);
-    uint64_t SSize;
-    Section.getSize(SSize);
+    uint64_t SAddr = Section.getAddress();
+    uint64_t SSize = Section.getSize();
     SortedSectionList::iterator It =
         std::lower_bound(SortedSections.begin(), SortedSections.end(), SAddr,
                          SectionStartsBefore);
     if (It != SortedSections.end()) {
-      uint64_t FoundSAddr; It->getAddress(FoundSAddr);
+      uint64_t FoundSAddr = It->getAddress();
       if (FoundSAddr < SAddr + SSize)
         llvm_unreachable("Inserting overlapping sections");
     }
