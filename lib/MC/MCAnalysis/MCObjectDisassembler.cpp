@@ -218,8 +218,12 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
   // Split text atoms into basic block atoms.
   for (uint64_t Address : Splits) {
     MCAtom *A = Module->findAtomContaining(Address);
-    if (!A) continue;
-    MCTextAtom *TA = cast<MCTextAtom>(A);
+    if (!A)
+      continue;
+    MCTextAtom *TA = dyn_cast<MCTextAtom>(A);
+    // FIXME: when do we get data atoms here?
+    if (!TA)
+      continue;
     if (TA->getBeginAddr() == Address)
       continue;
     MCTextAtom *NewAtom = TA->split(Address);
