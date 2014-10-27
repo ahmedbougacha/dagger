@@ -69,7 +69,7 @@ public:
                          std::unique_ptr<MCRelocationInfo> RelInfo,
                          const object::ObjectFile *Obj);
 
-private:
+protected:
   struct FunctionSymbol {
     uint64_t Addr;
     uint64_t Size;
@@ -86,9 +86,9 @@ private:
   AddrToRelocMap AddrToReloc;
   AddrToFunctionSymbolMap AddrToFunctionSymbol;
 
+  virtual void buildAddrToFunctionSymbolMap();
   void buildSectionList();
   void buildRelocationByAddrMap();
-  void buildAddrToFunctionSymbolMap();
   MCSymbol *findContainingFunction(uint64_t Addr, uint64_t &Offset);
 };
 

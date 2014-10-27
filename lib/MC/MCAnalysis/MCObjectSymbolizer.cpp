@@ -33,6 +33,11 @@ class MCMachObjectSymbolizer final : public MCObjectSymbolizer {
   uint64_t StubSize;
   uint64_t StubsIndSymIndex;
 
+  // MachOObjectFile::getSymbolSize is *super* expensive, because it needs to
+  // search through the entire symtab for the next symbol, to determine size.
+  // Keep track of all symbols to be able to efficiently provide size.
+  std::vector<DataRefImpl> SortedSymbolRefs;
+
 public:
   MCMachObjectSymbolizer(MCContext &Ctx,
                          std::unique_ptr<MCRelocationInfo> RelInfo,
@@ -42,6 +47,20 @@ public:
 
   void tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
                                        uint64_t Address) override;
+  void buildAddrToFunctionSymbolMap() override;
+};
+
+struct SymbolRefAddressComparator {
+  const MachOObjectFile *MOOF;
+
+  SymbolRefAddressComparator(const MachOObjectFile *MOOF) : MOOF(MOOF) {}
+
+  bool operator()(DataRefImpl &LHS, DataRefImpl &RHS) {
+    uint64_t LHSSize, RHSSize;
+    MOOF->getSymbolAddress(LHS, LHSSize);
+    MOOF->getSymbolAddress(RHS, RHSSize);
+    return LHSSize < RHSSize;
+  }
 };
 } // End unnamed namespace
 
@@ -71,6 +90,12 @@ MCMachObjectSymbolizer::MCMachObjectSymbolizer(
       StubsCount /= StubSize;
     }
   }
+
+  for (const SymbolRef &Symbol : MOOF->symbols())
+    SortedSymbolRefs.push_back(Symbol.getRawDataRefImpl());
+
+  std::sort(SortedSymbolRefs.begin(), SortedSymbolRefs.end(),
+            SymbolRefAddressComparator(MOOF));
 }
 
 StringRef MCMachObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
@@ -117,6 +142,40 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
     }
   }
 }
+
+void MCMachObjectSymbolizer::buildAddrToFunctionSymbolMap() {
+  for (size_t SymI = 0; SymI != SortedSymbolRefs.size(); ++SymI) {
+  //for (auto SymbolDRI : SortedSymbolRefs) {
+    const DataRefImpl &SymbolDRI = SortedSymbolRefs[SymI];
+    const SymbolRef Symbol(SymbolDRI, MOOF);
+    uint64_t SymAddr;
+    Symbol.getAddress(SymAddr);
+    uint64_t SymSize;
+
+    if (SymI+1 != SortedSymbolRefs.size()) {
+      const DataRefImpl &NextSymbolDRI = SortedSymbolRefs[SymI+1];
+      uint64_t SymSize, NextSymSize;
+      MOOF->getSymbolAddress(SymbolDRI, SymSize);
+      MOOF->getSymbolAddress(NextSymbolDRI, NextSymSize);
+      SymSize = NextSymSize - SymSize;
+    } else {
+      Symbol.getSize(SymSize);
+    }
+
+    StringRef SymName;
+    Symbol.getName(SymName);
+    SymbolRef::Type SymType;
+    Symbol.getType(SymType);
+    if (SymAddr == UnknownAddressOrSize || SymSize == UnknownAddressOrSize ||
+        SymName.empty() || SymType != SymbolRef::ST_Function)
+      continue;
+
+    MCSymbol *Sym = Ctx.GetOrCreateSymbol(SymName);
+    AddrToFunctionSymbol.push_back(FunctionSymbol(SymAddr, SymSize, Sym));
+  }
+  std::stable_sort(AddrToFunctionSymbol.begin(), AddrToFunctionSymbol.end());
+}
+
 
 //===- MCObjectSymbolizer -------------------------------------------------===//
 
