@@ -59,8 +59,22 @@ ArrayRef<uint64_t> MCObjectDisassembler::getStaticExitFunctions() {
   return None;
 }
 
+static bool SectionRegionComparator(std::unique_ptr<MemoryObject> &L,
+                                    std::unique_ptr<MemoryObject> &R) {
+  return L->getBase() < R->getBase();
+}
+
+static bool SectionRegionAddrComparator(std::unique_ptr<MemoryObject> &L,
+                                    uint64_t Addr) {
+  return L->getBase() + L->getExtent() <= Addr;
+}
+
 MemoryObject *MCObjectDisassembler::getRegionFor(uint64_t Addr) {
   // FIXME: Keep track of object sections.
+  auto Region = std::lower_bound(SectionRegions.begin(), SectionRegions.end(),
+                                 Addr, SectionRegionAddrComparator);
+  if (Region != SectionRegions.end())
+    return Region->get();
   return FallbackRegion.get();
 }
 
@@ -82,6 +96,30 @@ MCModule *MCObjectDisassembler::buildModule(bool withCFG) {
   MCModule *Module = buildEmptyModule();
 
   buildSectionAtoms(Module);
+  if (SectionRegions.empty()) {
+    for (const SectionRef &Section : Obj.sections()) {
+    bool isText = Section.isText();
+    bool isData = Section.isData();
+      uint64_t StartAddr = Section.getAddress();
+      uint64_t SecSize = Section.getSize();
+
+      // FIXME
+      if (StartAddr == UnknownAddressOrSize || SecSize == UnknownAddressOrSize)
+        continue;
+      StartAddr = getEffectiveLoadAddr(StartAddr);
+    StringRef Name; Section.getName(Name);
+      errs() << "found section " << Name << " starting at " << StartAddr << " and size " << SecSize << "\n";
+    if (!isText)
+      continue;
+
+      StringRef Contents;
+      Section.getContents(Contents);
+      SectionRegions.push_back(std::unique_ptr<MemoryObject>(new StringRefMemoryObject(Contents, StartAddr)));
+    }
+    std::sort(SectionRegions.begin(), SectionRegions.end(),
+              SectionRegionComparator);
+  }
+
   if (withCFG)
     buildCFG(Module);
   return Module;

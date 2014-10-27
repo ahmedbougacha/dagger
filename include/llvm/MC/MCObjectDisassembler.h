@@ -114,6 +114,8 @@ protected:
   /// \brief The fallback memory region, outside the object file.
   std::unique_ptr<MemoryObject> FallbackRegion;
 
+  std::vector<std::unique_ptr<MemoryObject>> SectionRegions;
+
   /// \brief Return a memory region suitable for reading starting at \p Addr.
   /// In most cases, this returns a StringRefMemoryObject backed by the
   /// containing section. When no section was found, this returns the
