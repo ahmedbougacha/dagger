@@ -25,7 +25,7 @@ using namespace object;
 //===- MCMachObjectSymbolizer ---------------------------------------------===//
 
 namespace {
-class MCMachObjectSymbolizer : public MCObjectSymbolizer {
+class MCMachObjectSymbolizer final : public MCObjectSymbolizer {
   const MachOObjectFile *MOOF;
   // __TEXT;__stubs support.
   uint64_t StubsStart;
@@ -197,8 +197,7 @@ findContainingFunction(uint64_t Addr, uint64_t &Offset)
   return Sym;
 }
 
-void MCObjectSymbolizer::buildAddrToFunctionSymbolMap()
-{
+void MCObjectSymbolizer::buildAddrToFunctionSymbolMap() {
   for (const SymbolRef &Symbol : Obj->symbols()) {
     uint64_t SymAddr;
     Symbol.getAddress(SymAddr);
