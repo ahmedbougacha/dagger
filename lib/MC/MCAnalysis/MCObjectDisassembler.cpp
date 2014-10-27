@@ -95,7 +95,6 @@ MCModule *MCObjectDisassembler::buildEmptyModule() {
 MCModule *MCObjectDisassembler::buildModule(bool withCFG) {
   MCModule *Module = buildEmptyModule();
 
-  buildSectionAtoms(Module);
   if (SectionRegions.empty()) {
     for (const SectionRef &Section : Obj.sections()) {
     bool isText = Section.isText();
@@ -122,6 +121,8 @@ MCModule *MCObjectDisassembler::buildModule(bool withCFG) {
 
   if (withCFG)
     buildCFG(Module);
+  else
+    buildSectionAtoms(Module);
   return Module;
 }
 
@@ -211,6 +212,43 @@ static void RemoveDupsFromAddressVector(MCObjectDisassembler::AddressSetTy &V) {
 }
 
 void MCObjectDisassembler::buildCFG(MCModule *Module) {
+  AddressSetTy CallTargets;
+  AddressSetTy TailCallTargets;
+
+  for (const SymbolRef &Symbol : Obj.symbols()) {
+    SymbolRef::Type SymType;
+    Symbol.getType(SymType);
+    if (SymType == SymbolRef::ST_Function) {
+      uint64_t SymAddr;
+      Symbol.getAddress(SymAddr);
+      SymAddr = getEffectiveLoadAddr(SymAddr);
+      //MCFunction *MCFN = Module->createFunction("");
+      //getBBAt(Module, MCFN, SymAddr, CallTargets, TailCallTargets);
+      createFunction(Module, SymAddr, CallTargets, TailCallTargets);
+    }
+  }
+
+  RemoveDupsFromAddressVector(CallTargets);
+  RemoveDupsFromAddressVector(TailCallTargets);
+
+  AddressSetTy NewCallTargets;
+
+  while (!NewCallTargets.empty()) {
+    // First, create functions for all the previously found targets
+    for (uint64_t CallTarget : CallTargets) {
+      CallTarget = getEffectiveLoadAddr(CallTarget);
+      //MCFunction *MCFN = Module->createFunction("");
+      //getBBAt(Module, MCFN, CallTarget, NewCallTargets, TailCallTargets);
+      createFunction(Module, CallTarget, NewCallTargets, TailCallTargets);
+    }
+    // Next, forget about those targets, since we just handled them.
+    CallTargets.clear();
+    RemoveDupsFromAddressVector(NewCallTargets);
+    CallTargets = NewCallTargets;
+  }
+
+
+#if 0
   typedef std::map<uint64_t, BBInfo> BBInfoByAddrTy;
   BBInfoByAddrTy BBInfos;
   AddressSetTy Splits;
@@ -324,6 +362,7 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
           MCBB->addPredecessor(P->BB);
     }
   }
+#endif
 }
 
 // Basic idea of the disassembly + discovery:
