@@ -111,7 +111,8 @@ MCModule *MCObjectDisassembler::buildModule(bool withCFG) {
       continue;
 
       StringRef Contents;
-      Section.getContents(Contents);
+      if (Section.getContents(Contents))
+        continue;
       SectionRegions.push_back(std::unique_ptr<MemoryObject>(new StringRefMemoryObject(Contents, StartAddr)));
     }
     std::sort(SectionRegions.begin(), SectionRegions.end(),
@@ -216,11 +217,16 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
 
   for (const SymbolRef &Symbol : Obj.symbols()) {
     SymbolRef::Type SymType;
-    Symbol.getType(SymType);
+    uint64_t SymAddr;
+    std::error_code ec;
+    if (Symbol.getType(SymType))
+      continue;
     if (SymType == SymbolRef::ST_Function) {
-      uint64_t SymAddr;
-      Symbol.getAddress(SymAddr);
+      if (Symbol.getAddress(SymAddr))
+        continue;
       SymAddr = getEffectiveLoadAddr(SymAddr);
+      if (!getRegionFor(SymAddr))
+        continue;
       //MCFunction *MCFN = Module->createFunction("");
       //getBBAt(Module, MCFN, SymAddr, CallTargets, TailCallTargets);
       createFunction(Module, SymAddr, CallTargets, TailCallTargets);
