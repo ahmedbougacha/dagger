@@ -65,12 +65,11 @@ static bool SectionRegionComparator(std::unique_ptr<MemoryObject> &L,
 }
 
 static bool SectionRegionAddrComparator(std::unique_ptr<MemoryObject> &L,
-                                    uint64_t Addr) {
+                                        uint64_t Addr) {
   return L->getBase() + L->getExtent() <= Addr;
 }
 
 MemoryObject *MCObjectDisassembler::getRegionFor(uint64_t Addr) {
-  // FIXME: Keep track of object sections.
   auto Region = std::lower_bound(SectionRegions.begin(), SectionRegions.end(),
                                  Addr, SectionRegionAddrComparator);
   if (Region != SectionRegions.end())
