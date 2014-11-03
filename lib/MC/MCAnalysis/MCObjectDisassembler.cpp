@@ -550,13 +550,8 @@ MCObjectDisassembler::createFunction(MCModule *Module, uint64_t BeginAddr,
     return Module->createFunction(ExtFnName);
 
   // If it's not, look for an existing function.
-  for (auto &Fn : Module->funcs()) {
-    if (Fn->empty())
-      continue;
-    // FIXME: MCModule should provide a findFunctionByAddr()
-    if (Fn->getEntryBlock()->getInsts()->getBeginAddr() == BeginAddr)
-      return Fn.get();
-  }
+  if (MCFunction *Fn = Module->findFunctionAt(BeginAddr))
+    return Fn;
 
   // Finally, just create a new one.
   MCFunction *MCFN = Module->createFunction("");

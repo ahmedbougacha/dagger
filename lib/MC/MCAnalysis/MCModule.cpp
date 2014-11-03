@@ -105,6 +105,18 @@ MCFunction *MCModule::createFunction(StringRef Name) {
   return Functions.back().get();
 }
 
+MCFunction *MCModule::findFunctionAt(uint64_t BeginAddr) {
+  auto FnIt = FunctionsByAddr.find(BeginAddr);
+  if (FnIt == FunctionsByAddr.end())
+    return nullptr;
+  return FnIt->second;
+}
+
+void MCModule::registerFunctionEntryAddress(MCFunction *Fn,
+                                            uint64_t EntryBlockAddr) {
+  FunctionsByAddr.insert(std::make_pair(EntryBlockAddr, Fn));
+}
+
 static bool CompBBToAtom(MCBasicBlock *BB, const MCTextAtom *Atom) {
   return BB->getInsts() < Atom;
 }

@@ -15,6 +15,7 @@
 #ifndef LLVM_MC_MCANALYSIS_MCMODULE_H
 #define LLVM_MC_MCANALYSIS_MCMODULE_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Compiler.h"
@@ -77,6 +78,7 @@ class MCModule {
   /// @{
   typedef std::vector<std::unique_ptr<MCFunction>> FunctionListTy;
   FunctionListTy Functions;
+  DenseMap<uint64_t, MCFunction *> FunctionsByAddr;
   /// @}
 
   /// The address of the entrypoint function.
@@ -123,6 +125,9 @@ public:
 
   /// \brief Create a new MCFunction.
   MCFunction *createFunction(StringRef Name);
+
+  MCFunction *findFunctionAt(uint64_t BeginAddr);
+  void registerFunctionEntryAddress(MCFunction *Fn, uint64_t EntryBlockAddr);
 
   /// \name Access to the owned function list.
   /// @{

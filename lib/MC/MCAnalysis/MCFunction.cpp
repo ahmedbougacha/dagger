@@ -27,6 +27,8 @@ MCFunction::~MCFunction() {
 
 MCBasicBlock &MCFunction::createBlock(const MCTextAtom &TA) {
   MCBasicBlock *MCBB(new MCBasicBlock(TA, this));
+  if (Blocks.empty())
+    ParentModule->registerFunctionEntryAddress(this, TA.getBeginAddr());
   Blocks.push_back(MCBB);
   return *Blocks.back();
 }
