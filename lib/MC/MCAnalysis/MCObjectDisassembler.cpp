@@ -73,7 +73,8 @@ MemoryObject *MCObjectDisassembler::getRegionFor(uint64_t Addr) {
   auto Region = std::lower_bound(SectionRegions.begin(), SectionRegions.end(),
                                  Addr, SectionRegionAddrComparator);
   if (Region != SectionRegions.end())
-    return Region->get();
+    if ((*Region)->getBase() <= Addr)
+      return Region->get();
   return FallbackRegion.get();
 }
 
