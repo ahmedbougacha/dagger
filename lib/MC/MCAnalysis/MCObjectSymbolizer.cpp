@@ -110,11 +110,9 @@ StringRef MCMachObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
 
   uint32_t SymtabIdx =
     MOOF->getIndirectSymbolTableEntry(MOOF->getDysymtabLoadCommand(), StubIdx);
+  symbol_iterator SI = MOOF->getSymbolByIndex(SymtabIdx);
 
   StringRef SymName;
-  symbol_iterator SI = MOOF->symbol_begin();
-  for (uint32_t i = 0; i != SymtabIdx; ++i)
-    ++SI;
   SI->getName(SymName);
   assert(SI != MOOF->symbol_end() && "Stub wasn't found in the symbol table!");
   assert(SymName.front() == '_' && "Mach-O symbol doesn't start with '_'!");
