@@ -266,7 +266,7 @@ struct DOTGraphTraits<DOTMCFunction> : public DefaultDOTGraphTraits {
     std::string OutStr;
     raw_string_ostream Out(OutStr);
     for (auto DInst : *BB->getInsts()) {
-      MCFN.IP.printInst(&DInst.Inst, Out, "");
+      //MCFN.IP.printInst(&DInst.Inst, Out, "");
       Out << '\n';
     }
     return Out.str();
@@ -454,7 +454,7 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
         for (MCTextAtom::const_iterator II = TA->begin(), IE = TA->end();
              II != IE;
              ++II) {
-          IP->printInst(&II->Inst, outs(), "");
+          //IP->printInst(&II->Inst, outs(), "");
           outs() << "\n";
         }
       }

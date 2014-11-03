@@ -398,6 +398,7 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
     const uint64_t BeginAddr = Worklist[wi];
     BBInfo *BBI = &BBInfos[BeginAddr];
     bool FailedDisassembly = false;
+    MCInst LastInst;
 
     MCTextAtom *&TA = BBI->Atom;
     assert(!TA && "Discovered basic block already has an associated atom!");
@@ -445,6 +446,7 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
           if (!TA)
             TA = Module->createTextAtom(Addr, Addr);
           TA->addInst(Inst, InstSize);
+          LastInst = Inst;
         } else {
           // We don't care about splitting mixed atoms either.
           FailedDisassembly = true;
@@ -475,17 +477,17 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
     if (FailedDisassembly) {
       // Now we have a basic block atom, add successors.
       // Add the fallthrough block.
-      if ((MIA.isConditionalBranch(TA->back().Inst) ||
-           !MIA.isTerminator(TA->back().Inst)) &&
+      if ((MIA.isConditionalBranch(LastInst) ||
+           !MIA.isTerminator(LastInst)) &&
           (TA->getEndAddr() + 1 < EndRegion)) {
         BBI->SuccAddrs.push_back(TA->getEndAddr() + 1);
         Worklist.insert(TA->getEndAddr() + 1);
       }
 
       // If the terminator is a branch, add the target block.
-      if (MIA.isBranch(TA->back().Inst)) {
+      if (MIA.isBranch(LastInst)) {
         uint64_t BranchTarget;
-        if (MIA.evaluateBranch(TA->back().Inst, TA->back().Address,
+        if (MIA.evaluateBranch(LastInst, TA->back().Address,
                                TA->back().Size, BranchTarget)) {
           StringRef ExtFnName;
           if (MOS)

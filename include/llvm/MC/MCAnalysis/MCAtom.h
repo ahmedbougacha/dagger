@@ -112,11 +112,11 @@ protected:
 /// instead of stored in the atom, which would replace this class.
 class MCDecodedInst {
 public:
-  MCInst Inst;
+  //MCInst Inst;
   uint64_t Address;
   uint64_t Size;
   MCDecodedInst(const MCInst &Inst, uint64_t Address, uint64_t Size)
-    : Inst(Inst), Address(Address), Size(Size) {}
+    : /*Inst(Inst),*/ Address(Address), Size(Size) {}
 };
 
 /// \brief An atom consisting of disassembled instructions.
