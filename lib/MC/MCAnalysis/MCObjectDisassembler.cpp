@@ -7,6 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Support/Format.h"
+
 #include "llvm/MC/MCObjectDisassembler.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -36,7 +38,7 @@ using namespace object;
 MCObjectDisassembler::MCObjectDisassembler(const ObjectFile &Obj,
                                            const MCDisassembler &Dis,
                                            const MCInstrAnalysis &MIA)
-    : Obj(Obj), Dis(Dis), MIA(MIA), MOS(nullptr) {}
+    : Obj(Obj), Dis(Dis), MIA(MIA), MOS(nullptr), LongestCachedRawBytes(0), Uniqued(0), Translated(0) {}
 
 uint64_t MCObjectDisassembler::getEntrypoint() {
   for (const SymbolRef &Symbol : Obj.symbols()) {
@@ -369,6 +371,141 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
 #endif
 }
 
+bool MCObjectDisassembler::findCachedInstruction(MCInst &Inst,
+                                                 uint64_t &InstSize,
+                                                 MemoryObject &Region,
+                                                 uint64_t Addr) {
+  if (Region.getBase() + Region.getExtent() < Addr)
+    return false;
+
+  // FIXME
+  StringRefMemoryObject *SRRegion = static_cast<StringRefMemoryObject*>(&Region);
+
+  StringRef RawBytes = SRRegion->getByteRange(Addr, LongestCachedRawBytes);
+  auto CachedIt =
+      std::lower_bound(CachedInsts.begin(), CachedInsts.end(),
+                       RawBytes);
+  if (CachedIt != CachedInsts.end()) {
+    if (RawBytes.startswith(CachedIt->RawBytes)) {
+    Inst = CachedIt->Inst;
+    InstSize = CachedIt->RawBytes.size();
+    return true;
+  }
+  //    errs() << "  Raw bytes:";
+  //    for (auto C : RawBytes) {
+  //      errs() << " " << format_hex((uint8_t)C, 2);
+  //    }
+  //    errs() << " ---- ";
+  //    for (auto C : CachedIt->RawBytes) {
+  //      errs() << " " << format_hex((uint8_t)C, 2);
+  //    }
+  //    errs() << "\n";
+  //  //errs() << " different?\n";
+  }
+  return false;
+}
+
+void MCObjectDisassembler::addTempInstruction(const MCInst &Inst,
+                                              StringRef RawBytes) {
+  //if (Inst.getOpcode() == 2231) {
+  //  errs() << "Transd " ; Inst.dump(); errs() << "\n";
+  //    errs() << "  Raw bytes:";
+  //    for (auto C : RawBytes) {
+  //      errs() << " " << format_hex((uint8_t)C, 2);
+  //    }
+  //    errs() << "\n";
+  //}
+  TempInstKeys.push_back(TempInstKey());
+  TempInstKeys.back().RawBytes = RawBytes;
+  TempInstKeys.back().ValueIdx = TempInstValues.size();
+
+  TempInstValues.push_back(Inst);
+
+  if (TempInstValues.size() > 5000) {
+    uniqueTempInstructions();
+  }
+}
+
+void MCObjectDisassembler::uniqueTempInstructions() {
+
+  errs() << " Trying to unique \n";
+  errs() << " uniqued " << Uniqued << " and translated " << Translated << " \n";
+
+
+  for (auto CachedInst : CachedInsts) {
+    TempInstKeys.push_back(TempInstKey());
+    TempInstKeys.back().RawBytes = CachedInst.RawBytes;
+    TempInstKeys.back().ValueIdx = TempInstValues.size();
+
+    TempInstValues.push_back(CachedInst.Inst);
+  }
+
+
+  std::sort(TempInstKeys.begin(), TempInstKeys.end());
+
+  struct TempInstKeyCount {
+    unsigned KeyIdx;
+    unsigned Count;
+    bool operator<(const TempInstKeyCount &RHS) const {
+      return RHS.Count < Count;
+    }
+  };
+  std::vector<TempInstKeyCount> DuplicateKeys;
+
+  StringRef *LastKeyBytes = nullptr;
+
+  for (size_t KI = 0, KE = TempInstKeys.size(); KI != KE; ++KI) {
+    TempInstKey& Key = TempInstKeys[KI];
+    if (!LastKeyBytes || !LastKeyBytes->equals(Key.RawBytes)) {
+      DuplicateKeys.push_back(TempInstKeyCount());
+      DuplicateKeys.back().KeyIdx = KI;
+    }
+    ++DuplicateKeys.back().Count;
+    LastKeyBytes = &Key.RawBytes;
+  }
+
+  std::sort(DuplicateKeys.begin(), DuplicateKeys.end());
+
+  //for (auto &KeyCount : DuplicateKeys) {
+  //  MCInst &I = TempInstValues[TempInstKeys[KeyCount.KeyIdx].ValueIdx];
+  //  errs() << " Found " << KeyCount.Count << " instances of ";
+  //  I.dump();
+  //  errs() << "\n";
+  //}
+
+  // FIXME: we should keep track of cachedinst->tempinst mapping when merging,
+  // so that we don't need to copy everything again, but only what changed
+  CachedInsts.clear();
+  CachedInsts.reserve(2000);
+  for (size_t DI = 0, DE = DuplicateKeys.size(); DI != DE && DI < 2000; ++DI) {
+    TempInstKeyCount& KeyCount = DuplicateKeys[DI];
+    TempInstKey& Key = TempInstKeys[KeyCount.KeyIdx];
+    MCInst& Value = TempInstValues[Key.ValueIdx];
+    CachedInsts.push_back(CachedInstEntry());
+    CachedInsts.back().RawBytes = Key.RawBytes;
+    CachedInsts.back().Inst = Value;
+    LongestCachedRawBytes = std::max(Key.RawBytes.size(), LongestCachedRawBytes);
+    //if (Value.getOpcode() == 2231) {
+    //  errs() << "Cached " ; CachedInsts.back().Inst.dump();
+    //  errs() << "  Raw bytes:";
+    //  for (auto C : CachedInsts.back().RawBytes) {
+    //    errs() << " " << format_hex((uint8_t)C, 2);
+    //  }
+    //  errs() << "\n";
+    //}
+  }
+
+  // FIXME: insert them already sorted?
+  std::sort(CachedInsts.begin(), CachedInsts.end());
+  errs() << " Cached " << CachedInsts.size() <<  " \n";
+
+  TempInstKeys.clear();
+  TempInstValues.clear();
+  TempInstKeys.reserve(7000);
+  TempInstValues.reserve(7000);
+}
+
+
 // Basic idea of the disassembly + discovery:
 //
 // start with the wanted address, insert it in the worklist
@@ -440,11 +577,21 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
 
       for (uint64_t Addr = BeginAddr; Addr < EndAddr; Addr += InstSize) {
         MCInst Inst;
-        if (Dis.getInstruction(Inst, InstSize, *Region, Addr, nulls(),
-                               nulls())) {
+        if (findCachedInstruction(Inst, InstSize, *Region, Addr)) {
           if (!TA)
             TA = Module->createTextAtom(Addr, Addr);
           TA->addInst(Inst, InstSize);
+    ++Uniqued;
+        }  else
+        if (Dis.getInstruction(Inst, InstSize, *Region, Addr, nulls(),
+                               nulls())) {
+  ++Translated;
+          if (!TA)
+            TA = Module->createTextAtom(Addr, Addr);
+          TA->addInst(Inst, InstSize);
+
+          StringRefMemoryObject *SRRegion = static_cast<StringRefMemoryObject*>(Region);
+          addTempInstruction(Inst, SRRegion->getByteRange(Addr, InstSize));
         } else {
           // We don't care about splitting mixed atoms either.
           FailedDisassembly = true;
