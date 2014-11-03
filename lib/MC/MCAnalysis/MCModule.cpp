@@ -138,9 +138,11 @@ void MCModule::trackBBForAtom(const MCTextAtom *Atom, MCBasicBlock *BB) {
   BBsByAtomTy::iterator I = std::lower_bound(BBsByAtom.begin(),
                                              BBsByAtom.end(),
                                              Atom, CompBBToAtom);
-  for (; I != BBsByAtom.end() && (*I)->getInsts() == Atom; ++I)
-    if (*I == BB)
-      return;
+  // FIXME: should we check that this BB was already inserted? This doesn't
+  // seem useful, since trackBBForAtom is only called from the MCBB ctor.
+  //for (; I != BBsByAtom.end() && (*I)->getInsts() == Atom; ++I)
+  //  if (*I == BB)
+  //    return;
   BBsByAtom.insert(I, BB);
 }
 
