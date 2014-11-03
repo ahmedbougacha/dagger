@@ -105,15 +105,14 @@ MCModule *MCObjectDisassembler::buildModule(bool withCFG) {
       if (StartAddr == UnknownAddressOrSize || SecSize == UnknownAddressOrSize)
         continue;
       StartAddr = getEffectiveLoadAddr(StartAddr);
-    StringRef Name; Section.getName(Name);
-      errs() << "found section " << Name << " starting at " << StartAddr << " and size " << SecSize << "\n";
-    if (!isText)
-      continue;
+      if (!isText)
+        continue;
 
       StringRef Contents;
       if (Section.getContents(Contents))
         continue;
-      SectionRegions.push_back(std::unique_ptr<MemoryObject>(new StringRefMemoryObject(Contents, StartAddr)));
+      SectionRegions.push_back(std::unique_ptr<MemoryObject>(
+          new StringRefMemoryObject(Contents, StartAddr)));
     }
     std::sort(SectionRegions.begin(), SectionRegions.end(),
               SectionRegionComparator);
