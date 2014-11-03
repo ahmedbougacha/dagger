@@ -398,6 +398,7 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
   for (size_t wi = 0; wi < Worklist.size(); ++wi) {
     const uint64_t BeginAddr = Worklist[wi];
     BBInfo *BBI = &BBInfos[BeginAddr];
+    bool FailedDisassembly = false;
 
     MCTextAtom *&TA = BBI->Atom;
     assert(!TA && "Discovered basic block already has an associated atom!");
@@ -447,6 +448,9 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
           TA->addInst(Inst, InstSize);
         } else {
           // We don't care about splitting mixed atoms either.
+          FailedDisassembly = true;
+          // FIXME: maybe we should return 0 here, and just fail the function creation? this would need a MCModule::deleteFunction
+          break;
           llvm_unreachable("Couldn't disassemble instruction in atom.");
         }
 
@@ -469,30 +473,32 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
     assert(Region && "Couldn't find region for already disassembled code!");
     uint64_t EndRegion = Region->getBase() + Region->getExtent();
 
-    // Now we have a basic block atom, add successors.
-    // Add the fallthrough block.
-    if ((MIA.isConditionalBranch(TA->back().Inst) ||
-         !MIA.isTerminator(TA->back().Inst)) &&
-        (TA->getEndAddr() + 1 < EndRegion)) {
-      BBI->SuccAddrs.push_back(TA->getEndAddr() + 1);
-      Worklist.insert(TA->getEndAddr() + 1);
-    }
+    if (FailedDisassembly) {
+      // Now we have a basic block atom, add successors.
+      // Add the fallthrough block.
+      if ((MIA.isConditionalBranch(TA->back().Inst) ||
+           !MIA.isTerminator(TA->back().Inst)) &&
+          (TA->getEndAddr() + 1 < EndRegion)) {
+        BBI->SuccAddrs.push_back(TA->getEndAddr() + 1);
+        Worklist.insert(TA->getEndAddr() + 1);
+      }
 
-    // If the terminator is a branch, add the target block.
-    if (MIA.isBranch(TA->back().Inst)) {
-      uint64_t BranchTarget;
-      if (MIA.evaluateBranch(TA->back().Inst, TA->back().Address,
-                             TA->back().Size, BranchTarget)) {
-        StringRef ExtFnName;
-        if (MOS)
-          ExtFnName =
+      // If the terminator is a branch, add the target block.
+      if (MIA.isBranch(TA->back().Inst)) {
+        uint64_t BranchTarget;
+        if (MIA.evaluateBranch(TA->back().Inst, TA->back().Address,
+                               TA->back().Size, BranchTarget)) {
+          StringRef ExtFnName;
+          if (MOS)
+            ExtFnName =
               MOS->findExternalFunctionAt(getOriginalLoadAddr(BranchTarget));
-        if (!ExtFnName.empty()) {
-          TailCallTargets.push_back(BranchTarget);
-          CallTargets.push_back(BranchTarget);
-        } else {
-          BBI->SuccAddrs.push_back(BranchTarget);
-          Worklist.insert(BranchTarget);
+          if (!ExtFnName.empty()) {
+            TailCallTargets.push_back(BranchTarget);
+            CallTargets.push_back(BranchTarget);
+          } else {
+            BBI->SuccAddrs.push_back(BranchTarget);
+            Worklist.insert(BranchTarget);
+          }
         }
       }
     }
