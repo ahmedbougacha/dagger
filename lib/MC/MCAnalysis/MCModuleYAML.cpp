@@ -319,12 +319,12 @@ void MCModule2YAML::dumpAtom(const MCAtom *MCA) {
     for (MCTextAtom::const_iterator I = TA->begin(), E = TA->end(); I != E;
          ++I, ++N) {
       const MCDecodedInst &MCDI = *I;
-      //A.Insts[N].Opcode = MCDI.Inst.getOpcode();
+      A.Insts[N].Opcode = MCDI.Inst.getOpcode();
       A.Insts[N].Size = MCDI.Size;
-      //const unsigned OpCount = MCDI.Inst.getNumOperands();
-      //A.Insts[N].Operands.resize(OpCount);
-      //for (unsigned oi = 0; oi != OpCount; ++oi)
-      //  A.Insts[N].Operands[oi].MCOp = MCDI.Inst.getOperand(oi);
+      const unsigned OpCount = MCDI.Inst.getNumOperands();
+      A.Insts[N].Operands.resize(OpCount);
+      for (unsigned oi = 0; oi != OpCount; ++oi)
+        A.Insts[N].Operands[oi].MCOp = MCDI.Inst.getOperand(oi);
     }
   } else if (const MCDataAtom *DA = dyn_cast<MCDataAtom>(MCA)) {
     A.Data = DA->getData();
