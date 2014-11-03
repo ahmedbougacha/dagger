@@ -97,8 +97,7 @@ MCModule *MCObjectDisassembler::buildModule(bool withCFG) {
 
   if (SectionRegions.empty()) {
     for (const SectionRef &Section : Obj.sections()) {
-    bool isText = Section.isText();
-    bool isData = Section.isData();
+      bool isText = Section.isText();
       uint64_t StartAddr = Section.getAddress();
       uint64_t SecSize = Section.getSize();
 
