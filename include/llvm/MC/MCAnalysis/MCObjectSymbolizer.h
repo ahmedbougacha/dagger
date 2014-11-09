@@ -82,8 +82,7 @@ protected:
   struct SectionInfo {
     SectionInfo(object::SectionRef S) : Section(S) {}
     object::SectionRef Section;
-    // FIXME: Why not a vector too?
-    DenseMap<uint64_t, object::RelocationRef> Relocs;
+    std::vector<object::RelocationRef> Relocs;
     bool operator<(uint64_t Addr) const {
       return Section.getAddress() + Section.getSize() <= Addr;
     }

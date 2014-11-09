@@ -22,6 +22,31 @@
 using namespace llvm;
 using namespace object;
 
+//===- Helpers ------------------------------------------------------------===//
+
+static bool RelocRelocAddrComparator(const object::RelocationRef &LHS,
+                                     const object::RelocationRef &RHS) {
+  uint64_t LHSAddr, RHSAddr;
+  // First sanity check that we can get the addresses; this is ensured by
+  // buildRelocationByAddrMap.
+  assert((!LHS.getAddress(LHSAddr) && !RHS.getAddress(RHSAddr)) &&
+         "No longer able to get relocation address");
+  LHS.getAddress(LHSAddr);
+  RHS.getAddress(RHSAddr);
+  return LHSAddr < RHSAddr;
+}
+
+static bool RelocU64AddrComparator(const object::RelocationRef &LHS,
+                                   uint64_t RHSAddr) {
+  uint64_t LHSAddr;
+  // First sanity check that we can get the address; this is ensured by
+  // buildRelocationByAddrMap.
+  assert(!LHS.getAddress(LHSAddr) &&
+         "No longer able to get relocation address");
+  LHS.getAddress(LHSAddr);
+  return LHSAddr < RHSAddr;
+}
+
 //===- MCMachObjectSymbolizer ---------------------------------------------===//
 
 namespace {
@@ -324,10 +349,11 @@ const RelocationRef *MCObjectSymbolizer::findRelocationAt(uint64_t Addr) const {
   const SectionInfo *SecInfo = findSectionInfoContaining(Addr);
   if (!SecInfo)
     return nullptr;
-  auto RI = SecInfo->Relocs.find(Addr);
+  auto RI = std::lower_bound(SecInfo->Relocs.begin(), SecInfo->Relocs.end(),
+                             Addr, RelocU64AddrComparator);
   if (RI == SecInfo->Relocs.end())
     return nullptr;
-  return &RI->second;
+  return &*RI;
 }
 
 void MCObjectSymbolizer::buildSectionList() {
@@ -352,13 +378,13 @@ void MCObjectSymbolizer::buildSectionList() {
 
 void MCObjectSymbolizer::buildRelocationByAddrMap(
   MCObjectSymbolizer::SectionInfo &SecInfo) {
-  auto &AddrToReloc = SecInfo.Relocs;
   for (const RelocationRef &Reloc : SecInfo.Section.relocations()) {
     uint64_t Address;
-    Reloc.getAddress(Address);
-    // FIXME: why not keep all of them, if we do a sorted vector instead?
-    // At a specific address, only keep the first relocation.
-    if (AddrToReloc.find(Address) == AddrToReloc.end())
-      AddrToReloc[Address] = Reloc;
+    // Don't insert relocations without an address.
+    if (Reloc.getAddress(Address))
+      continue;
+    SecInfo.Relocs.push_back(Reloc);
   }
+  std::stable_sort(SecInfo.Relocs.begin(), SecInfo.Relocs.end(),
+                   RelocRelocAddrComparator);
 }
