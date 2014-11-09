@@ -90,10 +90,9 @@ protected:
       return Section.getAddress() < RHS.Section.getAddress();
     }
   };
-  std::vector<SectionInfo> SortedSections;
 
-  typedef std::vector<FunctionSymbol> AddrToFunctionSymbolMap;
-  AddrToFunctionSymbolMap AddrToFunctionSymbol;
+  std::vector<SectionInfo> SortedSections;
+  std::vector<FunctionSymbol> AddrToFunctionSymbol;
 
   virtual void buildAddrToFunctionSymbolMap();
   void buildSectionList();

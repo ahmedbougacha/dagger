@@ -257,9 +257,8 @@ findContainingFunction(uint64_t Addr, uint64_t &Offset)
     buildAddrToFunctionSymbolMap();
 
   const FunctionSymbol FS(Addr);
-  AddrToFunctionSymbolMap::iterator SB = AddrToFunctionSymbol.begin();
-  AddrToFunctionSymbolMap::iterator SI;
-  SI = std::upper_bound(SB, AddrToFunctionSymbol.end(), FS);
+  auto SB = AddrToFunctionSymbol.begin();
+  auto SI = std::upper_bound(SB, AddrToFunctionSymbol.end(), FS);
 
   if (SI == AddrToFunctionSymbol.begin())
     return 0;
