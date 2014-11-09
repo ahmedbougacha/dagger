@@ -168,7 +168,6 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
 
 void MCMachObjectSymbolizer::buildAddrToFunctionSymbolMap() {
   for (size_t SymI = 0; SymI != SortedSymbolRefs.size(); ++SymI) {
-  //for (auto SymbolDRI : SortedSymbolRefs) {
     const DataRefImpl &SymbolDRI = SortedSymbolRefs[SymI];
     const SymbolRef Symbol(SymbolDRI, MOOF);
     uint64_t SymAddr;
