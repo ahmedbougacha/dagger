@@ -180,8 +180,9 @@ void MCMachObjectSymbolizer::buildAddrToFunctionSymbolMap() {
 MCObjectSymbolizer::MCObjectSymbolizer(
   MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
   const ObjectFile *Obj)
-  : MCSymbolizer(Ctx, std::move(RelInfo)), Obj(Obj), SortedSections(),
-    AddrToReloc() {}
+  : MCSymbolizer(Ctx, std::move(RelInfo)), Obj(Obj) {
+  buildSectionList();
+}
 
 bool MCObjectSymbolizer::
 tryAddingSymbolicOperand(MCInst &MI, raw_ostream &cStream,
@@ -293,64 +294,71 @@ MCObjectSymbolizer *MCObjectSymbolizer::createObjectSymbolizer(
 
 // SortedSections implementation.
 
-static bool SectionStartsBefore(const SectionRef &S, uint64_t Addr) {
-  uint64_t SAddr = S.getAddress();
-  return SAddr < Addr;
+const SectionRef *
+MCObjectSymbolizer::findSectionContaining(uint64_t Addr) const {
+  const SectionInfo *SecInfo = findSectionInfoContaining(Addr);
+  if (!SecInfo)
+    return nullptr;
+  return &SecInfo->Section;
 }
 
-const SectionRef *MCObjectSymbolizer::findSectionContaining(uint64_t Addr) {
-  if (SortedSections.empty())
-    buildSectionList();
+const MCObjectSymbolizer::SectionInfo *
+MCObjectSymbolizer::findSectionInfoContaining(uint64_t Addr) const {
+  return const_cast<MCObjectSymbolizer*>(this)->findSectionInfoContaining(Addr);
+}
 
-  SortedSectionList::iterator
-    EndIt = SortedSections.end(),
-    It = std::lower_bound(SortedSections.begin(), EndIt,
-                          Addr, SectionStartsBefore);
+MCObjectSymbolizer::SectionInfo *
+MCObjectSymbolizer::findSectionInfoContaining(uint64_t Addr) {
+  auto EndIt = SortedSections.end(),
+       It = std::lower_bound(SortedSections.begin(), EndIt, Addr);
   if (It == EndIt)
     return nullptr;
-  uint64_t SAddr = It->getAddress();
-  uint64_t SSize = It->getSize();
-  if (Addr >= SAddr + SSize)
+  uint64_t SAddr = It->Section.getAddress();
+  uint64_t SSize = It->Section.getSize();
+  if (Addr >= SAddr + SSize || Addr < SAddr)
     return nullptr;
   return &*It;
 }
 
-const RelocationRef *MCObjectSymbolizer::findRelocationAt(uint64_t Addr) {
-  if (AddrToReloc.empty())
-    buildRelocationByAddrMap();
-
-  AddrToRelocMap::const_iterator RI = AddrToReloc.find(Addr);
-  if (RI == AddrToReloc.end())
+const RelocationRef *MCObjectSymbolizer::findRelocationAt(uint64_t Addr) const {
+  const SectionInfo *SecInfo = findSectionInfoContaining(Addr);
+  if (!SecInfo)
+    return nullptr;
+  auto RI = SecInfo->Relocs.find(Addr);
+  if (RI == SecInfo->Relocs.end())
     return nullptr;
   return &RI->second;
 }
 
 void MCObjectSymbolizer::buildSectionList() {
+  // FIXME: change to insert then sort, rather than .inserting in the middle
   for (const SectionRef &Section : Obj->sections()) {
     if (!Section.isRequiredForExecution())
       continue;
     uint64_t SAddr = Section.getAddress();
     uint64_t SSize = Section.getSize();
     SortedSectionList::iterator It =
-        std::lower_bound(SortedSections.begin(), SortedSections.end(), SAddr,
-                         SectionStartsBefore);
+        std::lower_bound(SortedSections.begin(), SortedSections.end(), SAddr);
     if (It != SortedSections.end()) {
-      uint64_t FoundSAddr = It->getAddress();
+      uint64_t FoundSAddr = It->Section.getAddress();
       if (FoundSAddr < SAddr + SSize)
         llvm_unreachable("Inserting overlapping sections");
     }
     SortedSections.insert(It, Section);
   }
+  for (auto &SecInfo : SortedSections)
+    buildRelocationByAddrMap(SecInfo);
 }
 
-void MCObjectSymbolizer::buildRelocationByAddrMap() {
-  for (const SectionRef &Section : Obj->sections()) {
-    for (const RelocationRef &Reloc : Section.relocations()) {
-      uint64_t Address;
-      Reloc.getAddress(Address);
-      // At a specific address, only keep the first relocation.
-      if (AddrToReloc.find(Address) == AddrToReloc.end())
-        AddrToReloc[Address] = Reloc;
-    }
+void MCObjectSymbolizer::buildRelocationByAddrMap(
+  MCObjectSymbolizer::SectionInfo &SecInfo) {
+  auto &AddrToReloc = SecInfo.Relocs;
+  for (const RelocationRef &Reloc : SecInfo.Section.relocations()) {
+    uint64_t Address;
+    Reloc.getAddress(Address);
+    // FIXME: why not keep all of them, if we do a sorted vector instead?
+    // At a specific address, only keep the first relocation.
+    if (AddrToReloc.find(Address) == AddrToReloc.end())
+      AddrToReloc[Address] = Reloc;
   }
 }

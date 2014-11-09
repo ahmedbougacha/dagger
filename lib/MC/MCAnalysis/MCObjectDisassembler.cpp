@@ -61,12 +61,12 @@ ArrayRef<uint64_t> MCObjectDisassembler::getStaticExitFunctions() {
   return None;
 }
 
-static bool SectionRegionComparator(std::unique_ptr<MemoryObject> &L,
-                                    std::unique_ptr<MemoryObject> &R) {
+static bool SectionRegionComparator(const std::unique_ptr<MemoryObject> &L,
+                                    const std::unique_ptr<MemoryObject> &R) {
   return L->getBase() < R->getBase();
 }
 
-static bool SectionRegionAddrComparator(std::unique_ptr<MemoryObject> &L,
+static bool SectionRegionAddrComparator(const std::unique_ptr<MemoryObject> &L,
                                         uint64_t Addr) {
   return L->getBase() + L->getExtent() <= Addr;
 }

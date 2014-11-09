@@ -39,8 +39,8 @@ protected:
   // the relocation table. For instance, on x86-64 mach-o, a SUBTRACTOR
   // relocation (referencing the minuend symbol) is followed by an UNSIGNED
   // relocation (referencing the subtrahend symbol).
-  const object::RelocationRef *findRelocationAt(uint64_t Addr);
-  const object::SectionRef *findSectionContaining(uint64_t Addr);
+  const object::RelocationRef *findRelocationAt(uint64_t Addr) const;
+  const object::SectionRef *findSectionContaining(uint64_t Addr) const;
 
   MCObjectSymbolizer(MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
                      const object::ObjectFile *Obj);
@@ -79,17 +79,27 @@ protected:
     bool operator<(const FunctionSymbol &RHS) const { return Addr < RHS.Addr; }
   };
 
-  typedef DenseMap<uint64_t, object::RelocationRef> AddrToRelocMap;
-  typedef std::vector<object::SectionRef> SortedSectionList;
+  struct SectionInfo {
+    SectionInfo(object::SectionRef S) : Section(S) {}
+    object::SectionRef Section;
+    // FIXME: Why not a vector too?
+    DenseMap<uint64_t, object::RelocationRef> Relocs;
+    bool operator<(uint64_t Addr) const {
+      return Section.getAddress() + Section.getSize() <= Addr;
+    }
+  };
+  typedef std::vector<SectionInfo> SortedSectionList;
   typedef std::vector<FunctionSymbol> AddrToFunctionSymbolMap;
   SortedSectionList SortedSections;
-  AddrToRelocMap AddrToReloc;
   AddrToFunctionSymbolMap AddrToFunctionSymbol;
 
   virtual void buildAddrToFunctionSymbolMap();
   void buildSectionList();
-  void buildRelocationByAddrMap();
+  void buildRelocationByAddrMap(SectionInfo &SecInfo);
   MCSymbol *findContainingFunction(uint64_t Addr, uint64_t &Offset);
+
+  const SectionInfo *findSectionInfoContaining(uint64_t Addr) const;
+  SectionInfo *findSectionInfoContaining(uint64_t Addr);
 };
 
 }
