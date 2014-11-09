@@ -160,8 +160,9 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
       StringRef Contents;
       S->getContents(Contents);
       Contents = Contents.substr(Addr - SAddr);
-      cStream << " ## literal pool for: "
-              << Contents.substr(0, Contents.find_first_of(0));
+      cStream << " ## literal pool for: \"";
+      cStream.write_escaped(Contents.substr(0, Contents.find_first_of(0)));
+      cStream << "\"";
     }
   }
 }
