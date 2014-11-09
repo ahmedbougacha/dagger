@@ -357,23 +357,25 @@ const RelocationRef *MCObjectSymbolizer::findRelocationAt(uint64_t Addr) const {
 }
 
 void MCObjectSymbolizer::buildSectionList() {
-  // FIXME: change to insert then sort, rather than .inserting in the middle
   for (const SectionRef &Section : Obj->sections()) {
     if (!Section.isRequiredForExecution())
       continue;
-    uint64_t SAddr = Section.getAddress();
-    uint64_t SSize = Section.getSize();
-    SortedSectionList::iterator It =
-        std::lower_bound(SortedSections.begin(), SortedSections.end(), SAddr);
-    if (It != SortedSections.end()) {
-      uint64_t FoundSAddr = It->Section.getAddress();
-      if (FoundSAddr < SAddr + SSize)
-        llvm_unreachable("Inserting overlapping sections");
-    }
-    SortedSections.insert(It, Section);
+    SortedSections.push_back(Section);
   }
-  for (auto &SecInfo : SortedSections)
+  std::sort(SortedSections.begin(), SortedSections.end());
+
+  uint64_t PrevSecEnd = 0;
+  for (auto &SecInfo : SortedSections) {
+    // First build the relocation map for this section.
     buildRelocationByAddrMap(SecInfo);
+
+    // Also, sanity check that we don't have overlapping sections.
+    uint64_t SAddr = SecInfo.Section.getAddress();
+    uint64_t SSize = SecInfo.Section.getSize();
+    if (PrevSecEnd > SAddr)
+      llvm_unreachable("Inserting overlapping sections");
+    PrevSecEnd = std::max(PrevSecEnd, SAddr + SSize);
+  }
 }
 
 void MCObjectSymbolizer::buildRelocationByAddrMap(

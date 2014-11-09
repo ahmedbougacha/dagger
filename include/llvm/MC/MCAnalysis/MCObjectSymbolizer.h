@@ -86,10 +86,13 @@ protected:
     bool operator<(uint64_t Addr) const {
       return Section.getAddress() + Section.getSize() <= Addr;
     }
+    bool operator<(const SectionInfo &RHS) const {
+      return Section.getAddress() < RHS.Section.getAddress();
+    }
   };
-  typedef std::vector<SectionInfo> SortedSectionList;
+  std::vector<SectionInfo> SortedSections;
+
   typedef std::vector<FunctionSymbol> AddrToFunctionSymbolMap;
-  SortedSectionList SortedSections;
   AddrToFunctionSymbolMap AddrToFunctionSymbol;
 
   virtual void buildAddrToFunctionSymbolMap();
