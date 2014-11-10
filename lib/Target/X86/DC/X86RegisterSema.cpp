@@ -20,7 +20,8 @@ static void X86InitSpecialRegSizes(DCRegisterSema::RegSizeTy &RegSizes) {
 X86RegisterSema::X86RegisterSema(const MCRegisterInfo &MRI,
                                  const MCInstrInfo &MII)
     : DCRegisterSema(MRI, MII, X86InitSpecialRegSizes),
-      LastEFLAGSChangingDef(0), LastEFLAGSDef(0), SFVals(X86::MAX_FLAGS + 1),
+      LastEFLAGSChangingDef(0), LastEFLAGSDef(0),
+      LastEFLAGSDefWasPartialINCDEC(false), SFVals(X86::MAX_FLAGS + 1),
       SFAssignments(X86::MAX_FLAGS + 1), CCVals(X86::COND_INVALID),
       CCAssignments(X86::COND_INVALID) {}
 
@@ -54,10 +55,12 @@ void X86RegisterSema::onRegisterGet(unsigned RegNo) {
     return;
 
   Value *EFLAGSDef =
-    computeEFLAGSForDef(LastEFLAGSChangingDef, getRegNoCallback(RegNo));
+    computeEFLAGSForDef(LastEFLAGSChangingDef, getRegNoCallback(RegNo),
+                        LastEFLAGSDefWasPartialINCDEC);
   setRegValWithName(RegNo, EFLAGSDef);
   LastEFLAGSDef = EFLAGSDef;
   LastEFLAGSChangingDef = 0;
+  LastEFLAGSDefWasPartialINCDEC = false;
 }
 
 void X86RegisterSema::onRegisterSet(unsigned RegNo, Value *RV) {
@@ -202,19 +205,22 @@ Value *X86RegisterSema::getEFLAGSforCMP(Value *LHS, Value *RHS) {
   }
 }
 
-void X86RegisterSema::updateEFLAGS(Value *Def) {
+void X86RegisterSema::updateEFLAGS(Value *Def, bool IsINCDEC) {
   // FIXME: we only really need the alloca here.
   LastEFLAGSChangingDef = 0;
   getReg(X86::EFLAGS);
   LastEFLAGSChangingDef = Def;
   LastEFLAGSDef = 0;
+  LastEFLAGSDefWasPartialINCDEC = IsINCDEC;
 }
 
-Value *X86RegisterSema::computeEFLAGSForDef(Value *Def, Value *OldEFLAGS) {
+Value *X86RegisterSema::computeEFLAGSForDef(Value *Def, Value *OldEFLAGS,
+                                            bool DontUpdateCF) {
   // FIXME: This describes the general semantics of EFLAGS update, but this
   // needs to handle the differences between instructions.
   // This would be done by keeping more information on the instruction with
   // LastEFLAGSChangingDef.
+  // For now we only do DontUpdateCF, for INC/DEC instructions.
 
   setSF(X86::ZF, Builder->CreateIsNull(Def));
 
@@ -244,14 +250,16 @@ Value *X86RegisterSema::computeEFLAGSForDef(Value *Def, Value *OldEFLAGS) {
                                TheModule, OverflowIntrinsic, BinOp->getType()),
                            Args),
                        1));
-    setSF(X86::CF, Builder->CreateExtractValue(
-                       Builder->CreateCall(
-                           Intrinsic::getDeclaration(TheModule, CarryIntrinsic,
-                                                     BinOp->getType()),
-                           Args),
-                       1));
+    if (!DontUpdateCF)
+      setSF(X86::CF, Builder->CreateExtractValue(
+                         Builder->CreateCall(
+                             Intrinsic::getDeclaration(
+                                 TheModule, CarryIntrinsic, BinOp->getType()),
+                             Args),
+                         1));
   } else {
-    setSF(X86::CF, Builder->getFalse());
+    if (!DontUpdateCF)
+      setSF(X86::CF, Builder->getFalse());
     setSF(X86::OF, Builder->getFalse());
   }
 

@@ -30,7 +30,7 @@ public:
   // If they are float values, this is an unordered comparison (UCOMI).
   Value *getEFLAGSforCMP(Value *LHS, Value *RHS);
 
-  void updateEFLAGS(Value *Def);
+  void updateEFLAGS(Value *Def, bool IsINCDEC = false);
   Value *testCondCode(unsigned CondCode);
 
   void insertInitFiniRegsetCode(Function *InitFn,
@@ -53,6 +53,8 @@ private:
   // needed.
   Value *LastEFLAGSChangingDef;
   Value *LastEFLAGSDef;
+  // Whether the last EFLAGS def was an INC/DEC, and shouldn't update CF.
+  bool LastEFLAGSDefWasPartialINCDEC;
   SmallVector<Value *, 16> SFVals;
   SmallVector<unsigned, 16> SFAssignments;
   SmallVector<Value *, 16> CCVals;
@@ -64,7 +66,8 @@ private:
   void setCC(X86::CondCode CC, Value *Val);
   Value *getCC(X86::CondCode CC);
 
-  Value *computeEFLAGSForDef(Value *Def, Value *OldEFLAGS);
+  Value *computeEFLAGSForDef(Value *Def, Value *OldEFLAGS,
+                             bool DontUpdateCF = false);
   Value *createEFLAGSFromSFs(Value *OldEFLAGS);
 
   void insertExternalWrapperAsm(BasicBlock *WrapperBB,
