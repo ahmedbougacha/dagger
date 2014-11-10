@@ -400,6 +400,10 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
       Builder->CreateBr(getOrCreateBasicBlock(Target));
       break;
     }
+    case ISD::TRAP: {
+      Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+      break;
+    }
     case DCINS::PUT_RC: {
       unsigned MIOperandNo = Next(), Op1 = Next();
       unsigned RegNo = getRegOp(MIOperandNo);
