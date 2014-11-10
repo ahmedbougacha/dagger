@@ -147,6 +147,9 @@ void DCTranslator::translateFunction(
     // TheModule.getFunctionList().push_back(OrigFn);
     FPM.run(*Fn);
   }
+
+  if (!AnnotWriter)
+    DTIT.clear();
 }
 
 void DCTranslator::print(raw_ostream &OS) {

@@ -37,7 +37,6 @@ class DCTranslator {
   MCModule &MCM;
   FunctionPassManager FPM;
 
-  // FIXME: This should only be used in a single function.
   DCTranslatedInstTracker DTIT;
 
   std::unique_ptr<DCAnnotationWriter> AnnotWriter;

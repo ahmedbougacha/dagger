@@ -46,3 +46,8 @@ const DCTranslatedInst *DCTranslatedInstTracker::getTrackedInfo(const MCDecodedI
     return 0;
   return &*I;
 }
+
+void DCTranslatedInstTracker::clear() {
+  ValInfo.clear();
+  TranslatedInsts.clear();
+}

@@ -91,6 +91,8 @@ public:
     const SmallVectorImpl<DCTranslatedInst::ValueInfo> *&TrackedInsts) const;
 
   const DCTranslatedInst *getTrackedInfo(const MCDecodedInst &MCDI) const;
+
+  void clear();
 };
 
 } // end namespace llvm
