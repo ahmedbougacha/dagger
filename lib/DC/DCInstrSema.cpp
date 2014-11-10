@@ -465,12 +465,40 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
     }
     case DCINS::MOV_CONSTANT: {
       uint64_t ValIdx = Next();
-      Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+      Type *ResType = nullptr;
+      if (ResEVT.getSimpleVT() == MVT::iPTR)
+        // FIXME: what should we do here? Maybe use DL's intptr type?
+        ResType = Builder->getInt64Ty();
+      else
+        ResType = ResEVT.getTypeForEVT(*Ctx);
       Vals.push_back(ConstantInt::get(ResType, ConstantArray[ValIdx]));
       break;
     }
     case DCINS::IMPLICIT: {
       translateImplicit(Next());
+      break;
+    }
+    case ISD::INTRINSIC_VOID: {
+      unsigned ValIdx = Next();
+      Value *IndexV = Vals[ValIdx];
+      // FIXME: the intrinsics sdnodes have variable numbers of arguments.
+      // FIXME: handle overloaded intrinsics, but how?
+      if (ConstantInt *IndexCI = dyn_cast<ConstantInt>(IndexV)) {
+        uint64_t IntID = IndexCI->getZExtValue();
+        Value *IntDecl =
+            Intrinsic::getDeclaration(TheModule, Intrinsic::ID(IntID));
+        Vals.push_back(Builder->CreateCall(IntDecl));
+      } else {
+        llvm_unreachable("Unable to translate non-constant intrinsic ID");
+      }
+      break;
+    }
+    case ISD::BSWAP: {
+      Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+      Value *Op = Vals[Next()];
+      Value *IntDecl =
+            Intrinsic::getDeclaration(TheModule, Intrinsic::bswap, ResType);
+      Vals.push_back(Builder->CreateCall(IntDecl, Op));
       break;
     }
     default:
