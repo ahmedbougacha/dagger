@@ -34,15 +34,12 @@ DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
 DCInstrSema::~DCInstrSema() {}
 
 Function *DCInstrSema::FinalizeFunction() {
-  for (std::vector<BasicBlock *>::iterator CBBI = CallBBs.begin(),
-                                           CBBE = CallBBs.end();
-       CBBI != CBBE; ++CBBI) {
-    BasicBlock *CBB = *CBBI;
-    assert(CBB->size() == 2 &&
+  for (auto *CallBB : CallBBs) {
+    assert(CallBB->size() == 2 &&
            "Call basic block has wrong number of instructions!");
-    BasicBlock::iterator CallI = CBB->begin();
-    DRS.saveAllLocalRegs(CBB, CallI);
-    DRS.restoreLocalRegs(CBB, ++CallI);
+    auto CallI = CallBB->begin();
+    DRS.saveAllLocalRegs(CallBB, CallI);
+    DRS.restoreLocalRegs(CallBB, ++CallI);
   }
   DRS.FinalizeFunction(ExitBB);
   CallBBs.clear();

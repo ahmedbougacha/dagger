@@ -25,14 +25,12 @@ DCRegisterSema::DCRegisterSema(const MCRegisterInfo &MRI,
   // FIXME: the best (only) way to know the size of a reg is to find a
   // containing RC.
   // FIXME: What about using the VTs?
-  for (MCRegisterInfo::regclass_iterator RCI = MRI.regclass_begin(),
-                                         RCE = MRI.regclass_end();
+  for (auto RCI = MRI.regclass_begin(), RCE = MRI.regclass_end();
        RCI != RCE; ++RCI) {
     unsigned SizeInBits = RCI->getSize() * 8;
-    for (MCRegisterClass::iterator RI = RCI->begin(), RE = RCI->end(); RI != RE;
-         ++RI) {
-      if (SizeInBits > RegSizes[*RI])
-        RegSizes[*RI] = SizeInBits;
+    for (auto Reg : *RCI) {
+      if (SizeInBits > RegSizes[Reg])
+        RegSizes[Reg] = SizeInBits;
     }
   }
 

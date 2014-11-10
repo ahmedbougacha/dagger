@@ -17,7 +17,6 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include <algorithm>
-#include <iterator>
 #include <vector>
 
 using namespace llvm;
@@ -93,10 +92,8 @@ Function *DCTranslator::getFunctionAt(uint64_t Addr) {
     }
 
     translateFunction(MCFN, TailCallTargets);
-    typedef MCObjectDisassembler::AddressSetTy::iterator It;
-    for (It CTI = CallTargets.begin(), CTE = CallTargets.end(); CTI != CTE;
-         ++CTI)
-      WorkList.insert(*CTI);
+    for (auto CallTarget : CallTargets)
+      WorkList.insert(CallTarget);
   }
   return TheModule.getFunction("fn_" + utohexstr(Addr));
 }
@@ -113,30 +110,25 @@ void DCTranslator::translateFunction(
   DIS.SwitchToFunction(StartAddr);
 
   // First, make sure all basic blocks are created, and sorted.
-  typedef std::vector<const MCBasicBlock *> BasicBlockListTy;
-  BasicBlockListTy BasicBlocks;
+  std::vector<const MCBasicBlock *> BasicBlocks;
   std::copy(MCFN->begin(), MCFN->end(), std::back_inserter(BasicBlocks));
   std::sort(BasicBlocks.begin(), BasicBlocks.end(), BBBeginAddrLess);
-  for (BasicBlockListTy::const_iterator BBI = BasicBlocks.begin(),
-                                        BBE = BasicBlocks.end();
-       BBI != BBE; ++BBI)
-    DIS.getOrCreateBasicBlock((*BBI)->getInsts()->getBeginAddr());
+  for (auto &BB : BasicBlocks)
+    DIS.getOrCreateBasicBlock(BB->getInsts()->getBeginAddr());
 
-  for (MCFunction::const_iterator BBI = MCFN->begin(), BBE = MCFN->end();
-       BBI != BBE; ++BBI) {
-    const MCTextAtom *TA = (*BBI)->getInsts();
+  for (auto &BB : *MCFN) {
+    const MCTextAtom *TA = BB->getInsts();
     DEBUG(dbgs() << "Translating atom " << TA->getName() << ", size "
                  << TA->size() << ", address " << utohexstr(TA->getBeginAddr())
                  << "\n");
     DIS.SwitchToBasicBlock(TA->getBeginAddr(), TA->getEndAddr());
-    for (MCTextAtom::const_iterator II = TA->begin(), IE = TA->end(); II != IE;
-         ++II) {
+    for (auto &I : *TA) {
       DEBUG(dbgs() << "Translating instruction:\n ";
-            dbgs() << II->Inst << "\n";);
-      DCTranslatedInst TI(*II);
-      if (!DIS.translateInst(*II, TI)) {
+            dbgs() << I.Inst << "\n";);
+      DCTranslatedInst TI(I);
+      if (!DIS.translateInst(I, TI)) {
         errs() << "Cannot translate instruction: \n  ";
-        errs() << II->Inst << "\n";
+        errs() << I.Inst << "\n";
         llvm_unreachable("Couldn't translate instruction\n");
       }
       DTIT.trackInst(TI);
@@ -144,10 +136,8 @@ void DCTranslator::translateFunction(
     DIS.FinalizeBasicBlock();
   }
 
-  typedef MCObjectDisassembler::AddressSetTy::const_iterator AddrIt;
-  for (AddrIt TCI = TailCallTargets.begin(), TCE = TailCallTargets.end();
-       TCI != TCE; ++TCI)
-    DIS.createExternalTailCallBB(*TCI);
+  for (auto TailCallTarget : TailCallTargets)
+    DIS.createExternalTailCallBB(TailCallTarget);
 
   Function *Fn = DIS.FinalizeFunction();
   {
