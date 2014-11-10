@@ -255,259 +255,266 @@ bool
 DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
                            DCTranslatedInst &TranslatedInst) {
   CurrentInst = &DecodedInst;
+  CurrentTInst = &TranslatedInst;
   DRS.SwitchToInst(DecodedInst);
 
   Idx = OpcodeToSemaIdx[CurrentInst->Inst.getOpcode()];
-  if (translateTargetInst())
-    return true;
-  if (Idx == 0)
-    return false;
+  if (!translateTargetInst()) {
+    if (Idx == 0)
+      return false;
 
-  {
-    // Increment the PC before anything.
-    Value *OldPC = getReg(DRS.MRI.getProgramCounter());
-    setReg(DRS.MRI.getProgramCounter(),
-           Builder->CreateAdd(
-               OldPC, ConstantInt::get(OldPC->getType(), CurrentInst->Size)));
+    {
+      // Increment the PC before anything.
+      Value *OldPC = getReg(DRS.MRI.getProgramCounter());
+      setReg(DRS.MRI.getProgramCounter(),
+             Builder->CreateAdd(
+                 OldPC, ConstantInt::get(OldPC->getType(), CurrentInst->Size)));
+    }
+
+    while ((Opcode = Next()) != DCINS::END_OF_INSTRUCTION)
+      translateOpcode(Opcode);
   }
 
-  while ((Opcode = Next()) != DCINS::END_OF_INSTRUCTION) {
-    ResEVT = NextVT();
-    if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START) {
-      translateTargetOpcode();
-      continue;
-    }
-    switch(Opcode) {
-    case ISD::ADD  : translateBinOp(Instruction::Add ); break;
-    case ISD::FADD : translateBinOp(Instruction::FAdd); break;
-    case ISD::SUB  : translateBinOp(Instruction::Sub ); break;
-    case ISD::FSUB : translateBinOp(Instruction::FSub); break;
-    case ISD::MUL  : translateBinOp(Instruction::Mul ); break;
-    case ISD::FMUL : translateBinOp(Instruction::FMul); break;
-    case ISD::UDIV : translateBinOp(Instruction::UDiv); break;
-    case ISD::SDIV : translateBinOp(Instruction::SDiv); break;
-    case ISD::FDIV : translateBinOp(Instruction::FDiv); break;
-    case ISD::UREM : translateBinOp(Instruction::URem); break;
-    case ISD::SREM : translateBinOp(Instruction::SRem); break;
-    case ISD::FREM : translateBinOp(Instruction::FRem); break;
-    case ISD::SHL  : translateBinOp(Instruction::Shl ); break;
-    case ISD::SRL  : translateBinOp(Instruction::LShr); break;
-    case ISD::SRA  : translateBinOp(Instruction::AShr); break;
-    case ISD::AND  : translateBinOp(Instruction::And ); break;
-    case ISD::OR   : translateBinOp(Instruction::Or  ); break;
-    case ISD::XOR  : translateBinOp(Instruction::Xor ); break;
-
-    case ISD::TRUNCATE    : translateCastOp(Instruction::Trunc   ); break;
-    case ISD::BITCAST     : translateCastOp(Instruction::BitCast ); break;
-    case ISD::ZERO_EXTEND : translateCastOp(Instruction::ZExt    ); break;
-    case ISD::SIGN_EXTEND : translateCastOp(Instruction::SExt    ); break;
-    case ISD::FP_TO_UINT  : translateCastOp(Instruction::FPToUI  ); break;
-    case ISD::FP_TO_SINT  : translateCastOp(Instruction::FPToSI  ); break;
-    case ISD::UINT_TO_FP  : translateCastOp(Instruction::UIToFP  ); break;
-    case ISD::SINT_TO_FP  : translateCastOp(Instruction::SIToFP  ); break;
-    case ISD::FP_ROUND    : translateCastOp(Instruction::FPTrunc ); break;
-    case ISD::FP_EXTEND   : translateCastOp(Instruction::FPExt   ); break;
-
-    case ISD::FSQRT: {
-      unsigned Op1 = Next();
-      Value *V = Vals[Op1];
-      Vals.push_back(
-          Builder->CreateCall(Intrinsic::getDeclaration(
-                                  TheModule, Intrinsic::sqrt, V->getType()),
-                              V));
-      break;
-    }
-
-    case ISD::SCALAR_TO_VECTOR: {
-      Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-      unsigned Op1 = Next();
-
-      Type *ResEltType = ResType->getVectorElementType();
-      Value *NullVect = Constant::getNullValue(ResType);
-      Value *Val = Vals[Op1];
-      if (Val->getType()->isFloatingPointTy())
-        Val = Builder->CreateFPCast(Val, ResEltType);
-      else
-        Val = Builder->CreateZExtOrBitCast(Val, ResEltType);
-      Vals.push_back(
-          Builder->CreateInsertElement(NullVect, Val, Builder->getInt32(0)));
-      break;
-    }
-
-    case ISD::SMUL_LOHI: {
-      EVT Re2EVT = NextVT();
-      IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(*Ctx));
-      IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(*Ctx));
-      IntegerType *ResType = IntegerType::get(
-          *Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
-      unsigned Op1 = Next(), Op2 = Next();
-      Value *Full = Builder->CreateMul(Builder->CreateSExt(Vals[Op1], ResType),
-                                       Builder->CreateSExt(Vals[Op2], ResType));
-      Vals.push_back(Builder->CreateTrunc(Full, LoResType));
-      Vals.push_back(
-          Builder->CreateTrunc(
-              Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
-      break;
-    }
-    case ISD::UMUL_LOHI: {
-      EVT Re2EVT = NextVT();
-      IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(*Ctx));
-      IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(*Ctx));
-      IntegerType *ResType = IntegerType::get(
-          *Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
-      unsigned Op1 = Next(), Op2 = Next();
-      Value *Full = Builder->CreateMul(Builder->CreateZExt(Vals[Op1], ResType),
-                                       Builder->CreateZExt(Vals[Op2], ResType));
-      Vals.push_back(Builder->CreateTrunc(Full, LoResType));
-      Vals.push_back(
-          Builder->CreateTrunc(
-              Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
-      break;
-    }
-    case ISD::LOAD: {
-      Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-      Value *Ptr = Vals[Next()];
-      if (!Ptr->getType()->isPointerTy())
-        Ptr = Builder->CreateIntToPtr(Ptr, ResType->getPointerTo());
-      assert(Ptr->getType()->getPointerElementType() == ResType &&
-             "Mismatch between a LOAD's address operand and return type!");
-      Vals.push_back(Builder->CreateLoad(Ptr));
-      break;
-    }
-    case ISD::STORE: {
-      Value *Val = Vals[Next()];
-      Value *Ptr = Vals[Next()];
-      Type *ValPtrTy = Val->getType()->getPointerTo();
-      Type *PtrTy = Ptr->getType();
-      if (!PtrTy->isPointerTy())
-        Ptr = Builder->CreateIntToPtr(Ptr, ValPtrTy);
-      else if (PtrTy != ValPtrTy)
-        Ptr = Builder->CreateBitCast(Ptr, ValPtrTy);
-      Builder->CreateStore(Val, Ptr);
-      break;
-    }
-    case ISD::BRIND: {
-      unsigned Op1 = Next();
-      setReg(DRS.MRI.getProgramCounter(), Vals[Op1]);
-      insertCall(Vals[Op1]);
-      Builder->CreateBr(ExitBB);
-      break;
-    }
-    case ISD::BR: {
-      unsigned Op1 = Next();
-      uint64_t Target = cast<ConstantInt>(Vals[Op1])->getValue().getZExtValue();
-      setReg(DRS.MRI.getProgramCounter(), Vals[Op1]);
-      Builder->CreateBr(getOrCreateBasicBlock(Target));
-      break;
-    }
-    case ISD::TRAP: {
-      Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
-      break;
-    }
-    case DCINS::PUT_RC: {
-      unsigned MIOperandNo = Next(), Op1 = Next();
-      unsigned RegNo = getRegOp(MIOperandNo);
-      Value *Res = Vals[Op1];
-      Type *RegType = DRS.getRegType(RegNo);
-      if (Res->getType()->isPointerTy())
-        Res = Builder->CreatePtrToInt(Res, RegType);
-      if (!Res->getType()->isIntegerTy())
-        Res = Builder->CreateBitCast(
-            Res,
-            IntegerType::get(*Ctx, Res->getType()->getPrimitiveSizeInBits()));
-      if (Res->getType()->getPrimitiveSizeInBits() <
-          RegType->getPrimitiveSizeInBits())
-        Res = DRS.insertBitsInValue(getReg(RegNo), Res);
-      assert(Res->getType() == RegType);
-      setReg(RegNo, Res);
-      TranslatedInst.addRegOpDef(MIOperandNo, Res);
-      break;
-    }
-    case DCINS::PUT_REG: {
-      unsigned RegNo = Next(), Res = Next();
-      setReg(RegNo, Vals[Res]);
-      TranslatedInst.addImpDef(RegNo, Vals[Res]);
-      break;
-    }
-    case DCINS::GET_RC: {
-      unsigned MIOperandNo = Next();
-      Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-      Value *Reg = getReg(getRegOp(MIOperandNo));
-      if (ResType->getPrimitiveSizeInBits() <
-          Reg->getType()->getPrimitiveSizeInBits())
-        Reg = Builder->CreateTrunc(
-            Reg, IntegerType::get(*Ctx, ResType->getPrimitiveSizeInBits()));
-      if (!ResType->isIntegerTy())
-        Reg = Builder->CreateBitCast(Reg, ResType);
-      Vals.push_back(Reg);
-      break;
-      TranslatedInst.addRegOpUse(MIOperandNo, Reg);
-    }
-    case DCINS::GET_REG: {
-      unsigned RegNo = Next();
-      Vals.push_back(getReg(RegNo));
-      TranslatedInst.addImpUse(RegNo, Vals.back());
-      break;
-    }
-    case DCINS::CUSTOM_OP: {
-      unsigned OperandType = Next(), MIOperandNo = Next();
-      translateOperand(OperandType, MIOperandNo);
-      TranslatedInst.addOpUse(MIOperandNo, OperandType, Vals.back());
-      break;
-    }
-    case DCINS::CONSTANT_OP: {
-      unsigned MIOperandNo = Next();
-      Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-      Vals.push_back(
-          ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOperandNo)));
-      TranslatedInst.addImmOpUse(MIOperandNo, Vals.back());
-      break;
-    }
-    case DCINS::MOV_CONSTANT: {
-      uint64_t ValIdx = Next();
-      Type *ResType = nullptr;
-      if (ResEVT.getSimpleVT() == MVT::iPTR)
-        // FIXME: what should we do here? Maybe use DL's intptr type?
-        ResType = Builder->getInt64Ty();
-      else
-        ResType = ResEVT.getTypeForEVT(*Ctx);
-      Vals.push_back(ConstantInt::get(ResType, ConstantArray[ValIdx]));
-      break;
-    }
-    case DCINS::IMPLICIT: {
-      translateImplicit(Next());
-      break;
-    }
-    case ISD::INTRINSIC_VOID: {
-      unsigned ValIdx = Next();
-      Value *IndexV = Vals[ValIdx];
-      // FIXME: the intrinsics sdnodes have variable numbers of arguments.
-      // FIXME: handle overloaded intrinsics, but how?
-      if (ConstantInt *IndexCI = dyn_cast<ConstantInt>(IndexV)) {
-        uint64_t IntID = IndexCI->getZExtValue();
-        Value *IntDecl =
-            Intrinsic::getDeclaration(TheModule, Intrinsic::ID(IntID));
-        Vals.push_back(Builder->CreateCall(IntDecl));
-      } else {
-        llvm_unreachable("Unable to translate non-constant intrinsic ID");
-      }
-      break;
-    }
-    case ISD::BSWAP: {
-      Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-      Value *Op = Vals[Next()];
-      Value *IntDecl =
-            Intrinsic::getDeclaration(TheModule, Intrinsic::bswap, ResType);
-      Vals.push_back(Builder->CreateCall(IntDecl, Op));
-      break;
-    }
-    default:
-      llvm_unreachable(
-          ("Unknown opcode found in semantics: " + utostr(Opcode)).c_str());
-    }
-  }
   Vals.clear();
+  CurrentInst = nullptr;
+  CurrentTInst = nullptr;
   return true;
+}
+
+void DCInstrSema::translateOpcode(unsigned Opcode) {
+  ResEVT = NextVT();
+  if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START) {
+    translateTargetOpcode();
+    return;
+  }
+  switch(Opcode) {
+  case ISD::ADD  : translateBinOp(Instruction::Add ); break;
+  case ISD::FADD : translateBinOp(Instruction::FAdd); break;
+  case ISD::SUB  : translateBinOp(Instruction::Sub ); break;
+  case ISD::FSUB : translateBinOp(Instruction::FSub); break;
+  case ISD::MUL  : translateBinOp(Instruction::Mul ); break;
+  case ISD::FMUL : translateBinOp(Instruction::FMul); break;
+  case ISD::UDIV : translateBinOp(Instruction::UDiv); break;
+  case ISD::SDIV : translateBinOp(Instruction::SDiv); break;
+  case ISD::FDIV : translateBinOp(Instruction::FDiv); break;
+  case ISD::UREM : translateBinOp(Instruction::URem); break;
+  case ISD::SREM : translateBinOp(Instruction::SRem); break;
+  case ISD::FREM : translateBinOp(Instruction::FRem); break;
+  case ISD::SHL  : translateBinOp(Instruction::Shl ); break;
+  case ISD::SRL  : translateBinOp(Instruction::LShr); break;
+  case ISD::SRA  : translateBinOp(Instruction::AShr); break;
+  case ISD::AND  : translateBinOp(Instruction::And ); break;
+  case ISD::OR   : translateBinOp(Instruction::Or  ); break;
+  case ISD::XOR  : translateBinOp(Instruction::Xor ); break;
+
+  case ISD::TRUNCATE    : translateCastOp(Instruction::Trunc   ); break;
+  case ISD::BITCAST     : translateCastOp(Instruction::BitCast ); break;
+  case ISD::ZERO_EXTEND : translateCastOp(Instruction::ZExt    ); break;
+  case ISD::SIGN_EXTEND : translateCastOp(Instruction::SExt    ); break;
+  case ISD::FP_TO_UINT  : translateCastOp(Instruction::FPToUI  ); break;
+  case ISD::FP_TO_SINT  : translateCastOp(Instruction::FPToSI  ); break;
+  case ISD::UINT_TO_FP  : translateCastOp(Instruction::UIToFP  ); break;
+  case ISD::SINT_TO_FP  : translateCastOp(Instruction::SIToFP  ); break;
+  case ISD::FP_ROUND    : translateCastOp(Instruction::FPTrunc ); break;
+  case ISD::FP_EXTEND   : translateCastOp(Instruction::FPExt   ); break;
+
+  case ISD::FSQRT: {
+    unsigned Op1 = Next();
+    Value *V = Vals[Op1];
+    Vals.push_back(
+        Builder->CreateCall(Intrinsic::getDeclaration(
+                                TheModule, Intrinsic::sqrt, V->getType()),
+                            V));
+    break;
+  }
+
+  case ISD::SCALAR_TO_VECTOR: {
+    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    unsigned Op1 = Next();
+
+    Type *ResEltType = ResType->getVectorElementType();
+    Value *NullVect = Constant::getNullValue(ResType);
+    Value *Val = Vals[Op1];
+    if (Val->getType()->isFloatingPointTy())
+      Val = Builder->CreateFPCast(Val, ResEltType);
+    else
+      Val = Builder->CreateZExtOrBitCast(Val, ResEltType);
+    Vals.push_back(
+        Builder->CreateInsertElement(NullVect, Val, Builder->getInt32(0)));
+    break;
+  }
+
+  case ISD::SMUL_LOHI: {
+    EVT Re2EVT = NextVT();
+    IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(*Ctx));
+    IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(*Ctx));
+    IntegerType *ResType = IntegerType::get(
+        *Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
+    unsigned Op1 = Next(), Op2 = Next();
+    Value *Full = Builder->CreateMul(Builder->CreateSExt(Vals[Op1], ResType),
+                                     Builder->CreateSExt(Vals[Op2], ResType));
+    Vals.push_back(Builder->CreateTrunc(Full, LoResType));
+    Vals.push_back(
+        Builder->CreateTrunc(
+            Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
+    break;
+  }
+  case ISD::UMUL_LOHI: {
+    EVT Re2EVT = NextVT();
+    IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(*Ctx));
+    IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(*Ctx));
+    IntegerType *ResType = IntegerType::get(
+        *Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
+    unsigned Op1 = Next(), Op2 = Next();
+    Value *Full = Builder->CreateMul(Builder->CreateZExt(Vals[Op1], ResType),
+                                     Builder->CreateZExt(Vals[Op2], ResType));
+    Vals.push_back(Builder->CreateTrunc(Full, LoResType));
+    Vals.push_back(
+        Builder->CreateTrunc(
+            Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
+    break;
+  }
+  case ISD::LOAD: {
+    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Value *Ptr = Vals[Next()];
+    if (!Ptr->getType()->isPointerTy())
+      Ptr = Builder->CreateIntToPtr(Ptr, ResType->getPointerTo());
+    assert(Ptr->getType()->getPointerElementType() == ResType &&
+           "Mismatch between a LOAD's address operand and return type!");
+    Vals.push_back(Builder->CreateLoad(Ptr));
+    break;
+  }
+  case ISD::STORE: {
+    Value *Val = Vals[Next()];
+    Value *Ptr = Vals[Next()];
+    Type *ValPtrTy = Val->getType()->getPointerTo();
+    Type *PtrTy = Ptr->getType();
+    if (!PtrTy->isPointerTy())
+      Ptr = Builder->CreateIntToPtr(Ptr, ValPtrTy);
+    else if (PtrTy != ValPtrTy)
+      Ptr = Builder->CreateBitCast(Ptr, ValPtrTy);
+    Builder->CreateStore(Val, Ptr);
+    break;
+  }
+  case ISD::BRIND: {
+    unsigned Op1 = Next();
+    setReg(DRS.MRI.getProgramCounter(), Vals[Op1]);
+    insertCall(Vals[Op1]);
+    Builder->CreateBr(ExitBB);
+    break;
+  }
+  case ISD::BR: {
+    unsigned Op1 = Next();
+    uint64_t Target = cast<ConstantInt>(Vals[Op1])->getValue().getZExtValue();
+    setReg(DRS.MRI.getProgramCounter(), Vals[Op1]);
+    Builder->CreateBr(getOrCreateBasicBlock(Target));
+    break;
+  }
+  case ISD::TRAP: {
+    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    break;
+  }
+  case DCINS::PUT_RC: {
+    unsigned MIOperandNo = Next(), Op1 = Next();
+    unsigned RegNo = getRegOp(MIOperandNo);
+    Value *Res = Vals[Op1];
+    Type *RegType = DRS.getRegType(RegNo);
+    if (Res->getType()->isPointerTy())
+      Res = Builder->CreatePtrToInt(Res, RegType);
+    if (!Res->getType()->isIntegerTy())
+      Res = Builder->CreateBitCast(
+          Res,
+          IntegerType::get(*Ctx, Res->getType()->getPrimitiveSizeInBits()));
+    if (Res->getType()->getPrimitiveSizeInBits() <
+        RegType->getPrimitiveSizeInBits())
+      Res = DRS.insertBitsInValue(getReg(RegNo), Res);
+    assert(Res->getType() == RegType);
+    setReg(RegNo, Res);
+    CurrentTInst->addRegOpDef(MIOperandNo, Res);
+    break;
+  }
+  case DCINS::PUT_REG: {
+    unsigned RegNo = Next(), Res = Next();
+    setReg(RegNo, Vals[Res]);
+    CurrentTInst->addImpDef(RegNo, Vals[Res]);
+    break;
+  }
+  case DCINS::GET_RC: {
+    unsigned MIOperandNo = Next();
+    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Value *Reg = getReg(getRegOp(MIOperandNo));
+    if (ResType->getPrimitiveSizeInBits() <
+        Reg->getType()->getPrimitiveSizeInBits())
+      Reg = Builder->CreateTrunc(
+          Reg, IntegerType::get(*Ctx, ResType->getPrimitiveSizeInBits()));
+    if (!ResType->isIntegerTy())
+      Reg = Builder->CreateBitCast(Reg, ResType);
+    Vals.push_back(Reg);
+    break;
+    CurrentTInst->addRegOpUse(MIOperandNo, Reg);
+  }
+  case DCINS::GET_REG: {
+    unsigned RegNo = Next();
+    Vals.push_back(getReg(RegNo));
+    CurrentTInst->addImpUse(RegNo, Vals.back());
+    break;
+  }
+  case DCINS::CUSTOM_OP: {
+    unsigned OperandType = Next(), MIOperandNo = Next();
+    translateOperand(OperandType, MIOperandNo);
+    CurrentTInst->addOpUse(MIOperandNo, OperandType, Vals.back());
+    break;
+  }
+  case DCINS::CONSTANT_OP: {
+    unsigned MIOperandNo = Next();
+    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Vals.push_back(
+        ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOperandNo)));
+    CurrentTInst->addImmOpUse(MIOperandNo, Vals.back());
+    break;
+  }
+  case DCINS::MOV_CONSTANT: {
+    uint64_t ValIdx = Next();
+    Type *ResType = nullptr;
+    if (ResEVT.getSimpleVT() == MVT::iPTR)
+      // FIXME: what should we do here? Maybe use DL's intptr type?
+      ResType = Builder->getInt64Ty();
+    else
+      ResType = ResEVT.getTypeForEVT(*Ctx);
+    Vals.push_back(ConstantInt::get(ResType, ConstantArray[ValIdx]));
+    break;
+  }
+  case DCINS::IMPLICIT: {
+    translateImplicit(Next());
+    break;
+  }
+  case ISD::INTRINSIC_VOID: {
+    unsigned ValIdx = Next();
+    Value *IndexV = Vals[ValIdx];
+    // FIXME: the intrinsics sdnodes have variable numbers of arguments.
+    // FIXME: handle overloaded intrinsics, but how?
+    if (ConstantInt *IndexCI = dyn_cast<ConstantInt>(IndexV)) {
+      uint64_t IntID = IndexCI->getZExtValue();
+      Value *IntDecl =
+          Intrinsic::getDeclaration(TheModule, Intrinsic::ID(IntID));
+      Vals.push_back(Builder->CreateCall(IntDecl));
+    } else {
+      llvm_unreachable("Unable to translate non-constant intrinsic ID");
+    }
+    break;
+  }
+  case ISD::BSWAP: {
+    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Value *Op = Vals[Next()];
+    Value *IntDecl =
+          Intrinsic::getDeclaration(TheModule, Intrinsic::bswap, ResType);
+    Vals.push_back(Builder->CreateCall(IntDecl, Op));
+    break;
+  }
+  default:
+    llvm_unreachable(
+        ("Unknown opcode found in semantics: " + utostr(Opcode)).c_str());
+  }
 }
 
 void DCInstrSema::translateOperand(unsigned OperandType, unsigned MIOperandNo) {

@@ -88,6 +88,7 @@ protected:
   unsigned Opcode;
   SmallVector<Value *, 16> Vals;
   const MCDecodedInst *CurrentInst;
+  DCTranslatedInst *CurrentTInst;
 
   unsigned Next() { return SemanticsArray[Idx++]; }
   EVT NextVT() { return EVT(MVT::SimpleValueType(Next())); }
@@ -106,6 +107,8 @@ protected:
 
   void insertCall(Value *CallTarget);
   Value *insertTranslateAt(Value *OrigTarget);
+
+  void translateOpcode(unsigned Opcode);
 
   virtual void translateTargetOpcode() = 0;
   virtual void translateCustomOperand(unsigned OperandType,
