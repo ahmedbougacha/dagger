@@ -252,10 +252,11 @@ void InstrInfoEmitter::emitOperandNameMappings(raw_ostream &OS,
   OS << "namespace " << Namespace << " {\n";
   OS << "namespace " << OpNameNS << " { \n";
   OS << "enum {\n";
+  OS << "  OPERAND_INVALID = 0,\n";
   for (const auto &Op : Operands)
     OS << "  " << Op.first << " = " << Op.second << ",\n";
 
-  OS << "OPERAND_LAST";
+  OS << "  OPERAND_LAST";
   OS << "\n};\n";
   OS << "} // End namespace OpName\n";
   OS << "} // End namespace " << Namespace << "\n";
@@ -319,6 +320,7 @@ void InstrInfoEmitter::emitOperandTypesEnum(raw_ostream &OS,
   OS << "namespace " << Namespace << " {\n";
   OS << "namespace OpTypes { \n";
   OS << "enum OperandType {\n";
+  OS << "  OPERAND_TYPE_INVALID,\n";
 
   unsigned EnumVal = 0;
   for (const Record *Op : Operands) {
