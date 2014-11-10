@@ -22,6 +22,12 @@ class X86InstrSema : public DCInstrSema {
   // FIXME: This goes away once we have something like TargetMachine.
   X86RegisterSema &X86DRS;
 
+  // Prefix instruction encoutered just before. This changes the behavior
+  // of translateTargetInst to take into account the prefix.
+  // FIXME: Should we instead support this in DCInstrSema, so we can directly
+  // ask for the next instruction?
+  unsigned LastPrefix;
+
 public:
   X86InstrSema(DCRegisterSema &DRS);
 
