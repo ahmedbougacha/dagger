@@ -32,10 +32,60 @@ X86InstrSema::X86InstrSema(DCRegisterSema &DRS)
 
 bool X86InstrSema::translateTargetInst() {
   unsigned Opcode = CurrentInst->Inst.getOpcode();
-  if (Opcode == X86::NOOP ||
-      Opcode == X86::NOOPW ||
-      Opcode == X86::NOOPL)
+  switch (Opcode) {
+  default:
+    break;
+  case X86::XCHG8rr:
+  case X86::XCHG16rr:
+  case X86::XCHG32rr:
+  case X86::XCHG64rr: {
+    unsigned R1 = getRegOp(0);
+    unsigned R2 = getRegOp(1);
+    Value *V1 = getReg(R1);
+    Value *V2 = getReg(R2);
+    setReg(R2, V1);
+    setReg(R1, V2);
     return true;
+  }
+
+  case X86::NOOP:
+  case X86::NOOPW:
+  case X86::NOOPL:
+    return true;
+
+  case X86::CPUID: {
+    // FIXME: Also generate the function.
+    Type *I32Ty = Builder->getInt32Ty();
+    Type *ArgTys[] = { I32Ty, I32Ty };
+    Type *RetTy = StructType::get(I32Ty, I32Ty, I32Ty, I32Ty, nullptr);
+    Function *CPUIDFn = cast<Function>(TheModule->getOrInsertFunction(
+        "__llvm_dc_x86_cpuid", FunctionType::get(RetTy, ArgTys, false)));
+
+    Value *Args[] = { getReg(X86::EAX), getReg(X86::ECX) };
+
+    Value *CPUIDCall = Builder->CreateCall(CPUIDFn, Args);
+    setReg(X86::EAX, Builder->CreateExtractValue(CPUIDCall, 0));
+    setReg(X86::EBX, Builder->CreateExtractValue(CPUIDCall, 1));
+    setReg(X86::ECX, Builder->CreateExtractValue(CPUIDCall, 2));
+    setReg(X86::EDX, Builder->CreateExtractValue(CPUIDCall, 3));
+    return true;
+  }
+  case X86::XGETBV: {
+    // FIXME: Also generate the function.
+    Type *I32Ty = Builder->getInt32Ty();
+    Type *ArgTys[] = { I32Ty };
+    Type *RetTy = StructType::get(I32Ty, I32Ty, nullptr);
+    Function *ECRFn = cast<Function>(TheModule->getOrInsertFunction(
+        "__llvm_dc_x86_xgetbv", FunctionType::get(RetTy, ArgTys, false)));
+
+    Value *Args[] = { getReg(X86::ECX) };
+
+    Value *ECRCall = Builder->CreateCall(ECRFn, Args);
+    setReg(X86::EAX, Builder->CreateExtractValue(ECRCall, 0));
+    setReg(X86::EDX, Builder->CreateExtractValue(ECRCall, 1));
+    return true;
+  }
+  }
   return false;
 }
 
