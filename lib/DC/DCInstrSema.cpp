@@ -26,14 +26,19 @@ DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
                          const unsigned *SemanticsArray,
                          const uint64_t *ConstantArray, DCRegisterSema &DRS)
     : OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
-      ConstantArray(ConstantArray), Ctx(0), TheModule(0), DRS(DRS), FuncType(0),
+      ConstantArray(ConstantArray), DRS(DRS),
+      Currently(UnknownTranslationState),
+      Ctx(0), TheModule(0), FuncType(0), InitFn(0), FiniFn(0), Builder(),
       TheFunction(0), TheMCFunction(0), BBByAddr(), ExitBB(0), CallBBs(),
-      TheBB(0), TheMCBB(0), Builder(), Idx(0), ResEVT(), Opcode(0), Vals(),
-      CurrentInst(0) {}
+      TheBB(0), TheMCBB(0), Idx(0), ResEVT(), Opcode(0), Vals(),
+      CurrentInst(0), CurrentTInst(0) {
+}
 
 DCInstrSema::~DCInstrSema() {}
 
 Function *DCInstrSema::FinalizeFunction() {
+  checkIsCurrently(TranslatingFunction);
+
   for (auto *CallBB : CallBBs) {
     assert(CallBB->size() == 2 &&
            "Call basic block has wrong number of instructions!");
@@ -47,10 +52,13 @@ Function *DCInstrSema::FinalizeFunction() {
   Function *Fn = TheFunction;
   TheFunction = nullptr;
   TheMCFunction = nullptr;
+  Currently = TranslatingModule;
   return Fn;
 }
 
 void DCInstrSema::FinalizeBasicBlock() {
+  checkIsCurrently(TranslatingBasicBlock);
+
   if (!TheBB->getTerminator())
     BranchInst::Create(getOrCreateBasicBlock(getBasicBlockEndAddress() + 1),
                        TheBB);
@@ -59,9 +67,20 @@ void DCInstrSema::FinalizeBasicBlock() {
   TheMCBB = nullptr;
 }
 
-void DCInstrSema::FinalizeModule() {}
+void DCInstrSema::FinalizeModule() {
+  checkIsCurrently(TranslatingModule);
+  Ctx = nullptr;
+  TheModule = nullptr;
+  FuncType = nullptr;
+  InitFn = nullptr;
+  FiniFn = nullptr;
+  Builder.reset(nullptr);
+  Currently = UnknownTranslationState;
+}
 
 Function *DCInstrSema::createMainFunction(Function *EntryFn) {
+  checkIsCurrently(TranslatingModule);
+
   Type *MainArgs[] = { Builder->getInt32Ty(),
                        Builder->getInt8PtrTy()->getPointerTo() };
   Function *IRMain = cast<Function>(
@@ -90,6 +109,8 @@ Function *DCInstrSema::createMainFunction(Function *EntryFn) {
 }
 
 void DCInstrSema::createExternalWrapperFunction(uint64_t Addr, StringRef Name) {
+  checkIsCurrently(TranslatingModule);
+
   Function *ExtFn =
       cast<Function>(TheModule->getOrInsertFunction(
                          Name, FunctionType::get(Builder->getVoidTy(), false)));
@@ -104,6 +125,7 @@ void DCInstrSema::createExternalWrapperFunction(uint64_t Addr, StringRef Name) {
 }
 
 void DCInstrSema::createExternalTailCallBB(uint64_t Addr) {
+  checkIsCurrently(TranslatingFunction);
   // First create a basic block for the tail call.
   SwitchToBasicBlock(Addr);
   // Now do the call to that function.
@@ -113,6 +135,9 @@ void DCInstrSema::createExternalTailCallBB(uint64_t Addr) {
 }
 
 void DCInstrSema::SwitchToModule(Module *M) {
+  checkIsCurrently(UnknownTranslationState);
+  Currently = TranslatingModule;
+
   TheModule = M;
   Ctx = &TheModule->getContext();
   DRS.SwitchToModule(TheModule);
@@ -143,6 +168,9 @@ void DCInstrSema::SwitchToModule(Module *M) {
 }
 
 void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
+  checkIsCurrently(TranslatingModule);
+  Currently = TranslatingFunction;
+
   assert(!MCFN->empty() && "Trying to translate empty MC function");
   const uint64_t StartAddr = MCFN->getEntryBlock()->getInsts()->getBeginAddr();
 
@@ -174,11 +202,16 @@ void DCInstrSema::prepareBasicBlockForInsertion(BasicBlock *BB) {
 }
 
 void DCInstrSema::SwitchToBasicBlock(const MCBasicBlock *MCBB) {
+  checkIsCurrently(TranslatingFunction);
+  Currently = TranslatingBasicBlock;
+
   TheMCBB = MCBB;
   SwitchToBasicBlock(getBasicBlockStartAddress());
 }
 
 void DCInstrSema::SwitchToBasicBlock(uint64_t BeginAddr) {
+  checkIsCurrently(TranslatingFunction);
+
   TheBB = getOrCreateBasicBlock(BeginAddr);
   prepareBasicBlockForInsertion(TheBB);
 
@@ -192,22 +225,24 @@ void DCInstrSema::SwitchToBasicBlock(uint64_t BeginAddr) {
 }
 
 uint64_t DCInstrSema::getBasicBlockStartAddress() const {
-  assert(TheMCBB && "Getting start address without an MC BasicBlock");
+  checkIsCurrently(TranslatingBasicBlock);
   return TheMCBB->getInsts()->getBeginAddr();
 }
 
 uint64_t DCInstrSema::getBasicBlockEndAddress() const {
-  assert(TheMCBB && "Getting end address without an MC BasicBlock");
+  checkIsCurrently(TranslatingBasicBlock);
   return TheMCBB->getInsts()->getEndAddr();
 }
 
 Function *DCInstrSema::getFunction(uint64_t Addr) {
+  checkIsCurrently(TranslatingModule);
   std::string Name = "fn_" + utohexstr(Addr);
   TheModule->getOrInsertFunction(Name, FuncType);
   return TheModule->getFunction(Name);
 }
 
 BasicBlock *DCInstrSema::getOrCreateBasicBlock(uint64_t Addr) {
+  checkIsCurrently(TranslatingFunction);
   BasicBlock *&BB = BBByAddr[Addr];
   if (!BB) {
     BB = BasicBlock::Create(*Ctx, "bb_" + utohexstr(Addr), TheFunction);
@@ -220,6 +255,7 @@ BasicBlock *DCInstrSema::getOrCreateBasicBlock(uint64_t Addr) {
 }
 
 BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
+  checkIsCurrently(TranslatingBasicBlock);
   BasicBlock *CallBB =
       BasicBlock::Create(*Ctx, TheBB->getName() + "_call", TheFunction);
   Value *RegSetArg = &TheFunction->getArgumentList().front();
@@ -243,6 +279,7 @@ BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
 }
 
 Value *DCInstrSema::insertTranslateAt(Value *OrigTarget) {
+  checkIsCurrently(TranslatingBasicBlock);
   FunctionType *CallbackType = FunctionType::get(
       FuncType->getPointerTo(), Builder->getInt8PtrTy(), false);
   Constant *Fn =
@@ -252,6 +289,7 @@ Value *DCInstrSema::insertTranslateAt(Value *OrigTarget) {
 }
 
 void DCInstrSema::insertCall(Value *CallTarget) {
+  checkIsCurrently(TranslatingBasicBlock);
   if (ConstantInt *CI = dyn_cast<ConstantInt>(CallTarget)) {
     uint64_t Target = CI->getValue().getZExtValue();
     CallTarget = getFunction(Target);
@@ -262,14 +300,15 @@ void DCInstrSema::insertCall(Value *CallTarget) {
 }
 
 void DCInstrSema::translateBinOp(Instruction::BinaryOps Opc) {
-  Value *V1 = getNextOperand();
-  Value *V2 = getNextOperand();
+  checkIsCurrently(TranslatingInstruction);
+  Value *V1 = getNextOperand(), *V2 = getNextOperand();
   if (Instruction::isShift(Opc) && V2->getType() != V1->getType())
     V2 = Builder->CreateZExt(V2, V1->getType());
   Vals.push_back(Builder->CreateBinOp(Opc, V1, V2));
 }
 
 void DCInstrSema::translateCastOp(Instruction::CastOps Opc) {
+  checkIsCurrently(TranslatingInstruction);
   Type *ResType = ResEVT.getTypeForEVT(*Ctx);
   Value *Val = getNextOperand();
   Vals.push_back(Builder->CreateCast(Opc, Val, ResType));
@@ -278,6 +317,9 @@ void DCInstrSema::translateCastOp(Instruction::CastOps Opc) {
 bool
 DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
                            DCTranslatedInst &TranslatedInst) {
+  checkIsCurrently(TranslatingBasicBlock);
+  Currently = TranslatingInstruction;
+
   CurrentInst = &DecodedInst;
   CurrentTInst = &TranslatedInst;
   DRS.SwitchToInst(DecodedInst);
@@ -302,10 +344,12 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
   Vals.clear();
   CurrentInst = nullptr;
   CurrentTInst = nullptr;
+  Currently = TranslatingBasicBlock;
   return true;
 }
 
 void DCInstrSema::translateOpcode(unsigned Opcode) {
+  checkIsCurrently(TranslatingInstruction);
   ResEVT = NextVT();
   if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START) {
     translateTargetOpcode();
@@ -539,6 +583,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
 }
 
 void DCInstrSema::translateOperand(unsigned OperandType, unsigned MIOperandNo) {
+  checkIsCurrently(TranslatingInstruction);
   // FIXME: We don't have target-independent operand types yet.
   translateCustomOperand(OperandType, MIOperandNo);
 }
