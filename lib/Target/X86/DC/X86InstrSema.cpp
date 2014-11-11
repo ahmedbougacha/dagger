@@ -217,7 +217,7 @@ void X86InstrSema::translateTargetOpcode() {
     (void)Op4;
     unsigned CC = cast<ConstantInt>(Op3)->getValue().getZExtValue();
     Value *Pred = X86DRS.testCondCode(CC);
-    Vals.push_back(Builder->CreateSelect(Pred, Op2, Op1));
+    registerResult(Builder->CreateSelect(Pred, Op2, Op1));
     break;
   }
   case X86ISD::RET_FLAG: {
@@ -229,7 +229,7 @@ void X86InstrSema::translateTargetOpcode() {
   }
   case X86ISD::CMP: {
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
-    Vals.push_back(X86DRS.getEFLAGSforCMP(Op1, Op2));
+    registerResult(X86DRS.getEFLAGSforCMP(Op1, Op2));
     break;
   }
   case X86ISD::BRCOND: {
@@ -259,7 +259,7 @@ void X86InstrSema::translateTargetOpcode() {
     (void)Op2;
     unsigned CC = cast<ConstantInt>(Op1)->getValue().getZExtValue();
     Value *Pred = X86DRS.testCondCode(CC);
-    Vals.push_back(Builder->CreateZExt(Pred, Builder->getInt8Ty()));
+    registerResult(Builder->CreateZExt(Pred, Builder->getInt8Ty()));
     break;
   }
   case X86ISD::SBB: {
@@ -272,8 +272,8 @@ void X86InstrSema::translateTargetOpcode() {
     Value *Borrow =
         Builder->CreateZExt(X86DRS.testCondCode(X86::CF), Op1->getType());
     Value *Res = Builder->CreateSub(Op1, Op2);
-    Vals.push_back(Builder->CreateSub(Res, Borrow));
-    Vals.push_back(getReg(X86::EFLAGS));
+    registerResult(Builder->CreateSub(Res, Borrow));
+    registerResult(getReg(X86::EFLAGS));
     break;
   }
   case X86ISD::BT: {
@@ -291,7 +291,7 @@ void X86InstrSema::translateTargetOpcode() {
 
     Bit = Builder->CreateZExt(Bit, EFLAGSTy);
     Bit = Builder->CreateLShr(Bit, X86::CF);
-    Vals.push_back(Builder->CreateOr(OldEFLAGS, Bit));
+    registerResult(Builder->CreateOr(OldEFLAGS, Bit));
     break;
   }
 
@@ -314,14 +314,14 @@ void X86InstrSema::translateTargetOpcode() {
     // care about sNaN, since it's really missing from LLVM.
     // The result defaults to the second operand, so we do a backwards
     // fcmp+select.
-    Value *Src1 = Vals[Next()];
-    Value *Src2 = Vals[Next()];
+    Value *Src1 = getNextOperand();
+    Value *Src2 = getNextOperand();
     CmpInst::Predicate Pred;
     if (Opcode == X86ISD::FMAX)
       Pred = CmpInst::FCMP_ULE;
     else
       Pred = CmpInst::FCMP_UGE;
-    Vals.push_back(Builder->CreateSelect(Builder->CreateFCmp(Pred, Src1, Src2),
+    registerResult(Builder->CreateSelect(Builder->CreateFCmp(Pred, Src1, Src2),
                                          Src2, Src1));
     break;
   }
@@ -334,8 +334,8 @@ void X86InstrSema::translateTargetOpcode() {
   case X86ISD::MOVSS:
   case X86ISD::UNPCKH:
   case X86ISD::UNPCKL: {
-    Value *Src1 = Vals[Next()];
-    Value *Src2 = Vals[Next()];
+    Value *Src1 = getNextOperand();
+    Value *Src2 = getNextOperand();
     Type *VecTy = ResEVT.getTypeForEVT(*Ctx);
     assert(VecTy->isVectorTy() && VecTy == Src1->getType() &&
            VecTy == Src2->getType() &&
@@ -381,13 +381,14 @@ void X86InstrSema::translateTargetOpcode() {
       break;
     }
     }
-    Vals.push_back(
+    registerResult(
         Builder->CreateShuffleVector(Src1, Src2, ConstantVector::get(Mask)));
     break;
   }
   case X86ISD::PSHUFD: {
-    Value *Src = Vals[Next()];
-    uint64_t Order = cast<ConstantInt>(Vals[Next()])->getValue().getZExtValue();
+    Value *Src = getNextOperand();
+    uint64_t Order =
+        cast<ConstantInt>(getNextOperand())->getValue().getZExtValue();
     Type *VecTy = ResEVT.getTypeForEVT(*Ctx);
     assert(VecTy->isVectorTy() && VecTy == Src->getType());
     unsigned NumElt = VecTy->getVectorNumElements();
@@ -398,7 +399,7 @@ void X86InstrSema::translateTargetOpcode() {
     // If Src is bigger than v4, this is a VPSHUFD, so clear the upper bits.
     for (; i != NumElt; ++i)
       Mask.push_back(Builder->getInt32(NumElt + i));
-    Vals.push_back(Builder->CreateShuffleVector(Src,
+    registerResult(Builder->CreateShuffleVector(Src,
                                                 Constant::getNullValue(VecTy),
                                                 ConstantVector::get(Mask)));
     break;
@@ -445,7 +446,7 @@ void X86InstrSema::translateCustomOperand(unsigned OperandType,
     // FIXME: use MCInstrAnalysis for this kind of thing?
     uint64_t Target = getImmOp(MIOpNo) +
       CurrentInst->Address + CurrentInst->Size;
-    Vals.push_back(Builder->getInt64(Target));
+    registerResult(Builder->getInt64(Target));
     break;
   }
   }
@@ -495,7 +496,7 @@ void X86InstrSema::translateAddr(unsigned MIOperandNo,
     Res = Builder->CreateIntToPtr(Res, PtrTy);
   }
 
-  Vals.push_back(Res);
+  registerResult(Res);
 }
 
 void X86InstrSema::translatePush(Value *Val) {
@@ -529,8 +530,7 @@ Value *X86InstrSema::translatePop(unsigned OpSize) {
 }
 
 void X86InstrSema::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
-  Value *Src1 = Vals[Next()];
-  Value *Src2 = Vals[Next()];
+  Value *Src1 = getNextOperand(), *Src2 = getNextOperand();
   Type *VecTy = ResEVT.getTypeForEVT(*Ctx);
   assert(VecTy->isVectorTy());
   assert(VecTy == Src1->getType() && VecTy == Src2->getType());
@@ -546,7 +546,7 @@ void X86InstrSema::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
                                          Builder->getInt32(i + opi * NumElt));
     }
   }
-  Vals.push_back(Res);
+  registerResult(Res);
 }
 
 void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
@@ -578,14 +578,14 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
     Divisor = Builder->CreateOr(
         Builder->CreateShl(DivHi, ConstantInt::get(FullType, HalfBits)), DivLo);
   } else {
-    Divisor = Vals[Next()];
+    Divisor = getNextOperand();
   }
 
-  Value *Dividend = Vals[Next()];
+  Value *Dividend = getNextOperand();
   Dividend = Builder->CreateCast(ExtOp, Dividend, Divisor->getType());
 
-  Vals.push_back(Builder->CreateTrunc(
+  registerResult(Builder->CreateTrunc(
                      Builder->CreateBinOp(DivOp, Divisor, Dividend), ResType));
-  Vals.push_back(Builder->CreateTrunc(
+  registerResult(Builder->CreateTrunc(
                      Builder->CreateBinOp(RemOp, Divisor, Dividend), ResType));
 }

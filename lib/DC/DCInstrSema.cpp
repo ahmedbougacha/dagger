@@ -266,13 +266,13 @@ void DCInstrSema::translateBinOp(Instruction::BinaryOps Opc) {
   Value *V2 = getNextOperand();
   if (Instruction::isShift(Opc) && V2->getType() != V1->getType())
     V2 = Builder->CreateZExt(V2, V1->getType());
-  Vals.push_back(Builder->CreateBinOp(Opc, V1, V2));
+  registerResult(Builder->CreateBinOp(Opc, V1, V2));
 }
 
 void DCInstrSema::translateCastOp(Instruction::CastOps Opc) {
   Type *ResType = ResEVT.getTypeForEVT(*Ctx);
   Value *Val = getNextOperand();
-  Vals.push_back(Builder->CreateCast(Opc, Val, ResType));
+  registerResult(Builder->CreateCast(Opc, Val, ResType));
 }
 
 bool
@@ -344,7 +344,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
 
   case ISD::FSQRT: {
     Value *V = getNextOperand();
-    Vals.push_back(
+    registerResult(
         Builder->CreateCall(Intrinsic::getDeclaration(
                                 TheModule, Intrinsic::sqrt, V->getType()),
                             V));
@@ -360,7 +360,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
       Val = Builder->CreateFPCast(Val, ResEltType);
     else
       Val = Builder->CreateZExtOrBitCast(Val, ResEltType);
-    Vals.push_back(
+    registerResult(
         Builder->CreateInsertElement(NullVect, Val, Builder->getInt32(0)));
     break;
   }
@@ -374,8 +374,8 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
     Value *Full = Builder->CreateMul(Builder->CreateSExt(Op1, ResType),
                                      Builder->CreateSExt(Op2, ResType));
-    Vals.push_back(Builder->CreateTrunc(Full, LoResType));
-    Vals.push_back(
+    registerResult(Builder->CreateTrunc(Full, LoResType));
+    registerResult(
         Builder->CreateTrunc(
             Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
     break;
@@ -389,8 +389,8 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
     Value *Full = Builder->CreateMul(Builder->CreateZExt(Op1, ResType),
                                      Builder->CreateZExt(Op2, ResType));
-    Vals.push_back(Builder->CreateTrunc(Full, LoResType));
-    Vals.push_back(
+    registerResult(Builder->CreateTrunc(Full, LoResType));
+    registerResult(
         Builder->CreateTrunc(
             Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
     break;
@@ -402,7 +402,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
       Ptr = Builder->CreateIntToPtr(Ptr, ResType->getPointerTo());
     assert(Ptr->getType()->getPointerElementType() == ResType &&
            "Mismatch between a LOAD's address operand and return type!");
-    Vals.push_back(Builder->CreateLoad(Ptr));
+    registerResult(Builder->CreateLoad(Ptr));
     break;
   }
   case ISD::STORE: {
@@ -471,14 +471,15 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
           Reg, IntegerType::get(*Ctx, ResType->getPrimitiveSizeInBits()));
     if (!ResType->isIntegerTy())
       Reg = Builder->CreateBitCast(Reg, ResType);
-    Vals.push_back(Reg);
+    registerResult(Reg);
     CurrentTInst->addRegOpUse(MIOperandNo, Reg);
     break;
   }
   case DCINS::GET_REG: {
     unsigned RegNo = Next();
-    Vals.push_back(getReg(RegNo));
-    CurrentTInst->addImpUse(RegNo, Vals.back());
+    Value *RegVal = getReg(RegNo);
+    registerResult(RegVal);
+    CurrentTInst->addImpUse(RegNo, RegVal);
     break;
   }
   case DCINS::CUSTOM_OP: {
@@ -490,9 +491,10 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   case DCINS::CONSTANT_OP: {
     unsigned MIOperandNo = Next();
     Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-    Vals.push_back(
-        ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOperandNo)));
-    CurrentTInst->addImmOpUse(MIOperandNo, Vals.back());
+    Value *Cst =
+        ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOperandNo));
+    registerResult(Cst);
+    CurrentTInst->addImmOpUse(MIOperandNo, Cst);
     break;
   }
   case DCINS::MOV_CONSTANT: {
@@ -503,7 +505,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
       ResType = Builder->getInt64Ty();
     else
       ResType = ResEVT.getTypeForEVT(*Ctx);
-    Vals.push_back(ConstantInt::get(ResType, ConstantArray[ValIdx]));
+    registerResult(ConstantInt::get(ResType, ConstantArray[ValIdx]));
     break;
   }
   case DCINS::IMPLICIT: {
@@ -518,7 +520,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
       uint64_t IntID = IndexCI->getZExtValue();
       Value *IntDecl =
           Intrinsic::getDeclaration(TheModule, Intrinsic::ID(IntID));
-      Vals.push_back(Builder->CreateCall(IntDecl));
+      registerResult(Builder->CreateCall(IntDecl));
     } else {
       llvm_unreachable("Unable to translate non-constant intrinsic ID");
     }
@@ -529,7 +531,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     Value *Op = getNextOperand();
     Value *IntDecl =
           Intrinsic::getDeclaration(TheModule, Intrinsic::bswap, ResType);
-    Vals.push_back(Builder->CreateCall(IntDecl, Op));
+    registerResult(Builder->CreateCall(IntDecl, Op));
     break;
   }
   default:

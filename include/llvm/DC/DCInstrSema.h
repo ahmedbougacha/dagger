@@ -100,6 +100,10 @@ protected:
     return Vals[OpIdx];
   }
 
+  void registerResult(Value *ResV) {
+    Vals.push_back(ResV);
+  }
+
   uint64_t getImmOp(unsigned Idx) {
     return CurrentInst->Inst.getOperand(Idx).getImm();
   }
