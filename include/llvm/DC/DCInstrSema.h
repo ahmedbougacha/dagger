@@ -63,29 +63,12 @@ protected:
   DCInstrSema(const unsigned *OpcodeToSemaIdx, const unsigned *SemanticsArray,
               const uint64_t *ConstantArray, DCRegisterSema &DRS);
 
-  DCRegisterSema &DRS;
-
-  enum TranslationState {
-    UnknownTranslationState,
-    TranslatingModule,
-    TranslatingFunction,
-    TranslatingBasicBlock,
-    TranslatingInstruction
-  };
-
-  void checkIsCurrently(DCInstrSema::TranslationState State) const {
-    assert(Currently >= State && "Translation state is unexpected");
-  }
-
-  TranslationState Currently;
-
   LLVMContext *Ctx;
   Module *TheModule;
+  DCRegisterSema &DRS;
   FunctionType *FuncType;
   Function *InitFn;
   Function *FiniFn;
-  typedef IRBuilder<true, NoFolder> DCIRBuilder;
-  std::unique_ptr<DCIRBuilder> Builder;
 
   // Following members are valid only inside a Function
   Function *TheFunction;
@@ -97,6 +80,8 @@ protected:
   // Following members are valid only inside a Basic Block
   BasicBlock *TheBB;
   const MCBasicBlock *TheMCBB;
+  typedef IRBuilder<true, NoFolder> DCIRBuilder;
+  std::unique_ptr<DCIRBuilder> Builder;
 
   // translation vars.
   unsigned Idx;

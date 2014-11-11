@@ -44,12 +44,11 @@ DCTranslator::DCTranslator(LLVMContext &Ctx, TransOpt::Level TransOptLevel,
   MCObjectDisassembler::AddressSetTy DummyTailCallTargets;
   for (auto &F : MCM.funcs())
     translateFunction(&*F, DummyTailCallTargets);
+  DIS.FinalizeModule();
   (void)DRS;
 }
 
-DCTranslator::~DCTranslator() {
-  DIS.FinalizeModule();
-}
+DCTranslator::~DCTranslator() {}
 
 Function *DCTranslator::getMainFunction() {
   return DIS.createMainFunction(getFunctionAt(getEntrypoint()));
