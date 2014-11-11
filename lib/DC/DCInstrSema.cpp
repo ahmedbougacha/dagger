@@ -238,8 +238,8 @@ void DCInstrSema::insertCall(Value *CallTarget) {
 }
 
 void DCInstrSema::translateBinOp(Instruction::BinaryOps Opc) {
-  Value *V1 = Vals[Next()];
-  Value *V2 = Vals[Next()];
+  Value *V1 = getNextOperand();
+  Value *V2 = getNextOperand();
   if (Instruction::isShift(Opc) && V2->getType() != V1->getType())
     V2 = Builder->CreateZExt(V2, V1->getType());
   Vals.push_back(Builder->CreateBinOp(Opc, V1, V2));
@@ -247,7 +247,7 @@ void DCInstrSema::translateBinOp(Instruction::BinaryOps Opc) {
 
 void DCInstrSema::translateCastOp(Instruction::CastOps Opc) {
   Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-  Value *Val = Vals[Next()];
+  Value *Val = getNextOperand();
   Vals.push_back(Builder->CreateCast(Opc, Val, ResType));
 }
 
@@ -319,8 +319,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   case ISD::FP_EXTEND   : translateCastOp(Instruction::FPExt   ); break;
 
   case ISD::FSQRT: {
-    unsigned Op1 = Next();
-    Value *V = Vals[Op1];
+    Value *V = getNextOperand();
     Vals.push_back(
         Builder->CreateCall(Intrinsic::getDeclaration(
                                 TheModule, Intrinsic::sqrt, V->getType()),
@@ -330,11 +329,9 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
 
   case ISD::SCALAR_TO_VECTOR: {
     Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-    unsigned Op1 = Next();
-
     Type *ResEltType = ResType->getVectorElementType();
     Value *NullVect = Constant::getNullValue(ResType);
-    Value *Val = Vals[Op1];
+    Value *Val = getNextOperand();
     if (Val->getType()->isFloatingPointTy())
       Val = Builder->CreateFPCast(Val, ResEltType);
     else
@@ -350,9 +347,9 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(*Ctx));
     IntegerType *ResType = IntegerType::get(
         *Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
-    unsigned Op1 = Next(), Op2 = Next();
-    Value *Full = Builder->CreateMul(Builder->CreateSExt(Vals[Op1], ResType),
-                                     Builder->CreateSExt(Vals[Op2], ResType));
+    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
+    Value *Full = Builder->CreateMul(Builder->CreateSExt(Op1, ResType),
+                                     Builder->CreateSExt(Op2, ResType));
     Vals.push_back(Builder->CreateTrunc(Full, LoResType));
     Vals.push_back(
         Builder->CreateTrunc(
@@ -365,9 +362,9 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(*Ctx));
     IntegerType *ResType = IntegerType::get(
         *Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
-    unsigned Op1 = Next(), Op2 = Next();
-    Value *Full = Builder->CreateMul(Builder->CreateZExt(Vals[Op1], ResType),
-                                     Builder->CreateZExt(Vals[Op2], ResType));
+    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
+    Value *Full = Builder->CreateMul(Builder->CreateZExt(Op1, ResType),
+                                     Builder->CreateZExt(Op2, ResType));
     Vals.push_back(Builder->CreateTrunc(Full, LoResType));
     Vals.push_back(
         Builder->CreateTrunc(
@@ -376,7 +373,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   }
   case ISD::LOAD: {
     Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-    Value *Ptr = Vals[Next()];
+    Value *Ptr = getNextOperand();
     if (!Ptr->getType()->isPointerTy())
       Ptr = Builder->CreateIntToPtr(Ptr, ResType->getPointerTo());
     assert(Ptr->getType()->getPointerElementType() == ResType &&
@@ -385,8 +382,8 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::STORE: {
-    Value *Val = Vals[Next()];
-    Value *Ptr = Vals[Next()];
+    Value *Val = getNextOperand();
+    Value *Ptr = getNextOperand();
     Type *ValPtrTy = Val->getType()->getPointerTo();
     Type *PtrTy = Ptr->getType();
     if (!PtrTy->isPointerTy())
@@ -397,16 +394,16 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::BRIND: {
-    unsigned Op1 = Next();
-    setReg(DRS.MRI.getProgramCounter(), Vals[Op1]);
-    insertCall(Vals[Op1]);
+    Value *Op1 = getNextOperand();
+    setReg(DRS.MRI.getProgramCounter(), Op1);
+    insertCall(Op1);
     Builder->CreateBr(ExitBB);
     break;
   }
   case ISD::BR: {
-    unsigned Op1 = Next();
-    uint64_t Target = cast<ConstantInt>(Vals[Op1])->getValue().getZExtValue();
-    setReg(DRS.MRI.getProgramCounter(), Vals[Op1]);
+    Value *Op1 = getNextOperand();
+    uint64_t Target = cast<ConstantInt>(Op1)->getValue().getZExtValue();
+    setReg(DRS.MRI.getProgramCounter(), Op1);
     Builder->CreateBr(getOrCreateBasicBlock(Target));
     break;
   }
@@ -415,9 +412,9 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   case DCINS::PUT_RC: {
-    unsigned MIOperandNo = Next(), Op1 = Next();
+    unsigned MIOperandNo = Next();
     unsigned RegNo = getRegOp(MIOperandNo);
-    Value *Res = Vals[Op1];
+    Value *Res = getNextOperand();
     Type *RegType = DRS.getRegType(RegNo);
     if (Res->getType()->isPointerTy())
       Res = Builder->CreatePtrToInt(Res, RegType);
@@ -434,9 +431,10 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   case DCINS::PUT_REG: {
-    unsigned RegNo = Next(), Res = Next();
-    setReg(RegNo, Vals[Res]);
-    CurrentTInst->addImpDef(RegNo, Vals[Res]);
+    unsigned RegNo = Next();
+    Value *Res = getNextOperand();
+    setReg(RegNo, Res);
+    CurrentTInst->addImpDef(RegNo, Res);
     break;
   }
   case DCINS::GET_RC: {
@@ -450,8 +448,8 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     if (!ResType->isIntegerTy())
       Reg = Builder->CreateBitCast(Reg, ResType);
     Vals.push_back(Reg);
-    break;
     CurrentTInst->addRegOpUse(MIOperandNo, Reg);
+    break;
   }
   case DCINS::GET_REG: {
     unsigned RegNo = Next();
@@ -489,8 +487,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::INTRINSIC_VOID: {
-    unsigned ValIdx = Next();
-    Value *IndexV = Vals[ValIdx];
+    Value *IndexV = getNextOperand();
     // FIXME: the intrinsics sdnodes have variable numbers of arguments.
     // FIXME: handle overloaded intrinsics, but how?
     if (ConstantInt *IndexCI = dyn_cast<ConstantInt>(IndexV)) {
@@ -505,7 +502,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   }
   case ISD::BSWAP: {
     Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-    Value *Op = Vals[Next()];
+    Value *Op = getNextOperand();
     Value *IntDecl =
           Intrinsic::getDeclaration(TheModule, Intrinsic::bswap, ResType);
     Vals.push_back(Builder->CreateCall(IntDecl, Op));

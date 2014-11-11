@@ -210,13 +210,14 @@ void X86InstrSema::translateTargetOpcode() {
     llvm_unreachable(
         ("Unknown X86 opcode found in semantics: " + utostr(Opcode)).c_str());
   case X86ISD::CMOV: {
-    unsigned Op1 = Next(), Op2 = Next(), Op3 = Next(), Op4 = Next();
-    assert(Vals[Op4] == getReg(X86::EFLAGS) &&
+    Value *Op1 = getNextOperand(), *Op2 = getNextOperand(),
+          *Op3 = getNextOperand(), *Op4 = getNextOperand();
+    assert(Op4 == getReg(X86::EFLAGS) &&
            "Conditional mov predicate register isn't EFLAGS!");
     (void)Op4;
-    unsigned CC = cast<ConstantInt>(Vals[Op3])->getValue().getZExtValue();
+    unsigned CC = cast<ConstantInt>(Op3)->getValue().getZExtValue();
     Value *Pred = X86DRS.testCondCode(CC);
-    Vals.push_back(Builder->CreateSelect(Pred, Vals[Op2], Vals[Op1]));
+    Vals.push_back(Builder->CreateSelect(Pred, Op2, Op1));
     break;
   }
   case X86ISD::RET_FLAG: {
@@ -227,56 +228,58 @@ void X86InstrSema::translateTargetOpcode() {
     break;
   }
   case X86ISD::CMP: {
-    unsigned Op1 = Next(), Op2 = Next();
-    Vals.push_back(X86DRS.getEFLAGSforCMP(Vals[Op1], Vals[Op2]));
+    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
+    Vals.push_back(X86DRS.getEFLAGSforCMP(Op1, Op2));
     break;
   }
   case X86ISD::BRCOND: {
-    unsigned Op1 = Next(), Op2 = Next(), Op3 = Next();
-    assert(Vals[Op3] == getReg(X86::EFLAGS) &&
+    Value *Op1 = getNextOperand(), *Op2 = getNextOperand(),
+          *Op3 = getNextOperand();
+    assert(Op3 == getReg(X86::EFLAGS) &&
            "Conditional branch predicate register isn't EFLAGS!");
     (void)Op3;
-    uint64_t Target = cast<ConstantInt>(Vals[Op1])->getValue().getZExtValue();
-    unsigned CC = cast<ConstantInt>(Vals[Op2])->getValue().getZExtValue();
-    setReg(X86::RIP, Vals[Op1]);
+    uint64_t Target = cast<ConstantInt>(Op1)->getValue().getZExtValue();
+    unsigned CC = cast<ConstantInt>(Op2)->getValue().getZExtValue();
+    setReg(X86::RIP, Op1);
     Builder->CreateCondBr(X86DRS.testCondCode(CC),
                           getOrCreateBasicBlock(Target),
                           getOrCreateBasicBlock(BBEndAddr + 1));
     break;
   }
   case X86ISD::CALL: {
-    unsigned Op1 = Next();
+    Value *Op1 = getNextOperand();
     translatePush(Builder->getInt64(CurrentInst->Address + CurrentInst->Size));
-    insertCall(Vals[Op1]);
+    insertCall(Op1);
     break;
   }
   case X86ISD::SETCC: {
-    unsigned Op1 = Next(), Op2 = Next();
-    assert(Vals[Op2] == getReg(X86::EFLAGS) &&
+    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
+    assert(Op2 == getReg(X86::EFLAGS) &&
            "SetCC predicate register isn't EFLAGS!");
     (void)Op2;
-    unsigned CC = cast<ConstantInt>(Vals[Op1])->getValue().getZExtValue();
+    unsigned CC = cast<ConstantInt>(Op1)->getValue().getZExtValue();
     Value *Pred = X86DRS.testCondCode(CC);
     Vals.push_back(Builder->CreateZExt(Pred, Builder->getInt8Ty()));
     break;
   }
   case X86ISD::SBB: {
     (void)NextVT();
-    unsigned Op1 = Next(), Op2 = Next(), Op3 = Next();
-    assert(Vals[Op3] == getReg(X86::EFLAGS) &&
+    Value *Op1 = getNextOperand(), *Op2 = getNextOperand(),
+          *Op3 = getNextOperand();
+    assert(Op3 == getReg(X86::EFLAGS) &&
            "SBB borrow register isn't EFLAGS!");
     (void)Op3;
     Value *Borrow =
-        Builder->CreateZExt(X86DRS.testCondCode(X86::CF), Vals[Op1]->getType());
-    Value *Res = Builder->CreateSub(Vals[Op1], Vals[Op2]);
+        Builder->CreateZExt(X86DRS.testCondCode(X86::CF), Op1->getType());
+    Value *Res = Builder->CreateSub(Op1, Op2);
     Vals.push_back(Builder->CreateSub(Res, Borrow));
     Vals.push_back(getReg(X86::EFLAGS));
     break;
   }
   case X86ISD::BT: {
-    unsigned Op1 = Next(), Op2 = Next();
-    Value *Base = Vals[Op1];
-    Value *Offset = Builder->CreateZExtOrBitCast(Vals[Op2], Base->getType());
+    Value *Base = getNextOperand();
+    Value *Op2 = getNextOperand();
+    Value *Offset = Builder->CreateZExtOrBitCast(Op2, Base->getType());
     Value *Bit = Builder->CreateTrunc(Builder->CreateShl(Base, Offset),
                                       Builder->getInt1Ty());
 
@@ -566,12 +569,12 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
 
   Value *Divisor;
   if (isThreeOperand) {
-    unsigned Op1 = Next(), Op2 = Next();
+    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
     IntegerType *HalfType = cast<IntegerType>(ResType);
     unsigned HalfBits = HalfType->getPrimitiveSizeInBits();
     IntegerType *FullType = IntegerType::get(*Ctx, HalfBits * 2);
-    Value *DivHi = Builder->CreateCast(ExtOp, Vals[Op1], FullType);
-    Value *DivLo = Builder->CreateCast(ExtOp, Vals[Op2], FullType);
+    Value *DivHi = Builder->CreateCast(ExtOp, Op1, FullType);
+    Value *DivLo = Builder->CreateCast(ExtOp, Op2, FullType);
     Divisor = Builder->CreateOr(
         Builder->CreateShl(DivHi, ConstantInt::get(FullType, HalfBits)), DivLo);
   } else {

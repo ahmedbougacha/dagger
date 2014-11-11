@@ -93,6 +93,12 @@ protected:
   unsigned Next() { return SemanticsArray[Idx++]; }
   EVT NextVT() { return EVT(MVT::SimpleValueType(Next())); }
 
+  Value *getNextOperand() {
+    unsigned OpIdx = Next();
+    assert(OpIdx < Vals.size() && "Trying to access non-existent operand");
+    return Vals[OpIdx];
+  }
+
   uint64_t getImmOp(unsigned Idx) {
     return CurrentInst->Inst.getOperand(Idx).getImm();
   }
