@@ -17,19 +17,19 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
 DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
                          const unsigned *SemanticsArray,
-                         const uint64_t *ConstantArray,
-                         DCRegisterSema &DRS)
+                         const uint64_t *ConstantArray, DCRegisterSema &DRS)
     : OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
       ConstantArray(ConstantArray), Ctx(0), TheModule(0), DRS(DRS), FuncType(0),
-      TheFunction(0), BBByAddr(), ExitBB(0), CallBBs(), TheBB(0),
-      BBStartAddr(0), BBEndAddr(0), Builder(), Idx(0), ResEVT(), Opcode(0),
-      Vals(), CurrentInst(0) {}
+      TheFunction(0), TheMCFunction(0), BBByAddr(), ExitBB(0), CallBBs(),
+      TheBB(0), TheMCBB(0), Builder(), Idx(0), ResEVT(), Opcode(0), Vals(),
+      CurrentInst(0) {}
 
 DCInstrSema::~DCInstrSema() {}
 
@@ -45,15 +45,18 @@ Function *DCInstrSema::FinalizeFunction() {
   CallBBs.clear();
   BBByAddr.clear();
   Function *Fn = TheFunction;
-  TheFunction = 0;
+  TheFunction = nullptr;
+  TheMCFunction = nullptr;
   return Fn;
 }
 
 void DCInstrSema::FinalizeBasicBlock() {
   if (!TheBB->getTerminator())
-    BranchInst::Create(getOrCreateBasicBlock(BBEndAddr + 1), TheBB);
+    BranchInst::Create(getOrCreateBasicBlock(getBasicBlockEndAddress() + 1),
+                       TheBB);
   DRS.FinalizeBasicBlock();
-  TheBB = 0;
+  TheBB = nullptr;
+  TheMCBB = nullptr;
 }
 
 void DCInstrSema::FinalizeModule() {}
@@ -101,8 +104,11 @@ void DCInstrSema::createExternalWrapperFunction(uint64_t Addr, StringRef Name) {
 }
 
 void DCInstrSema::createExternalTailCallBB(uint64_t Addr) {
-  SwitchToBasicBlock(Addr, 0);
+  // First create a basic block for the tail call.
+  SwitchToBasicBlock(Addr);
+  // Now do the call to that function.
   insertCallBB(getFunction(Addr));
+  // Finally, return directly, bypassing the ExitBB.
   Builder->CreateRetVoid();
 }
 
@@ -136,45 +142,63 @@ void DCInstrSema::SwitchToModule(Module *M) {
   DRS.insertInitFiniRegsetCode(InitFn, FiniFn);
 }
 
-void DCInstrSema::SwitchToFunction(uint64_t Addr) {
-  TheFunction = getFunction(Addr);
+void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
+  assert(!MCFN->empty() && "Trying to translate empty MC function");
+  const uint64_t StartAddr = MCFN->getEntryBlock()->getInsts()->getBeginAddr();
+
+  TheFunction = getFunction(StartAddr);
   TheFunction->setDoesNotAlias(1);
   TheFunction->setDoesNotCapture(1);
 
   // Create the entry and exit basic blocks.
-  TheBB = BasicBlock::Create(*Ctx, "entry_fn_" + utohexstr(Addr), TheFunction);
-  ExitBB = BasicBlock::Create(*Ctx, "exit_fn_" + utohexstr(Addr), TheFunction);
+  TheBB =
+      BasicBlock::Create(*Ctx, "entry_fn_" + utohexstr(StartAddr), TheFunction);
+  ExitBB =
+      BasicBlock::Create(*Ctx, "exit_fn_" + utohexstr(StartAddr), TheFunction);
 
   // From now on we insert in the entry basic block.
   Builder->SetInsertPoint(TheBB);
-  // Create a br from the entry basic block to the first basic block, at Addr.
-  Builder->CreateBr(getOrCreateBasicBlock(Addr));
+  // Create a br from the entry basic block to the first basic block, at StartAddr.
+  Builder->CreateBr(getOrCreateBasicBlock(StartAddr));
   // Create a ret void in the exit basic block.
   ReturnInst::Create(*Ctx, ExitBB);
 
   DRS.SwitchToFunction(TheFunction);
 }
 
-void DCInstrSema::removeTrapInstFromEmptyBB(BasicBlock *BB) {
+void DCInstrSema::prepareBasicBlockForInsertion(BasicBlock *BB) {
   assert((BB->size() == 2 && isa<UnreachableInst>(++BB->begin())) &&
          "Several BBs at the same address?");
   BB->begin()->eraseFromParent();
   BB->begin()->eraseFromParent();
 }
 
-void DCInstrSema::SwitchToBasicBlock(uint64_t StartAddr, uint64_t EndAddr) {
-  TheBB = getOrCreateBasicBlock(StartAddr);
-  removeTrapInstFromEmptyBB(TheBB);
+void DCInstrSema::SwitchToBasicBlock(const MCBasicBlock *MCBB) {
+  TheMCBB = MCBB;
+  SwitchToBasicBlock(getBasicBlockStartAddress());
+}
+
+void DCInstrSema::SwitchToBasicBlock(uint64_t BeginAddr) {
+  TheBB = getOrCreateBasicBlock(BeginAddr);
+  prepareBasicBlockForInsertion(TheBB);
 
   Builder->SetInsertPoint(TheBB);
-  BBStartAddr = StartAddr;
-  BBEndAddr = EndAddr;
 
   DRS.SwitchToBasicBlock(TheBB);
 
   // The PC at the start of the basic block is known, just set it.
   unsigned PC = DRS.MRI.getProgramCounter();
-  setReg(PC, ConstantInt::get(DRS.getRegType(PC), StartAddr));
+  setReg(PC, ConstantInt::get(DRS.getRegType(PC), BeginAddr));
+}
+
+uint64_t DCInstrSema::getBasicBlockStartAddress() const {
+  assert(TheMCBB && "Getting start address without an MC BasicBlock");
+  return TheMCBB->getInsts()->getBeginAddr();
+}
+
+uint64_t DCInstrSema::getBasicBlockEndAddress() const {
+  assert(TheMCBB && "Getting end address without an MC BasicBlock");
+  return TheMCBB->getInsts()->getEndAddr();
 }
 
 Function *DCInstrSema::getFunction(uint64_t Addr) {

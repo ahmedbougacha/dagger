@@ -18,7 +18,9 @@
 #include <vector>
 
 namespace llvm {
+class MCBasicBlock;
 class MCContext;
+class MCFunction;
 }
 
 namespace llvm {
@@ -32,8 +34,8 @@ public:
                      DCTranslatedInst &TranslatedInst);
 
   void SwitchToModule(Module *TheModule);
-  void SwitchToFunction(uint64_t StartAddress);
-  void SwitchToBasicBlock(uint64_t StartAddress, uint64_t EndAddress);
+  void SwitchToFunction(const MCFunction *MCFN);
+  void SwitchToBasicBlock(const MCBasicBlock *MCBB);
 
   void FinalizeModule();
   Function *FinalizeFunction();
@@ -70,15 +72,14 @@ protected:
 
   // Following members are valid only inside a Function
   Function *TheFunction;
+  const MCFunction *TheMCFunction;
   std::map<uint64_t, BasicBlock *> BBByAddr;
   BasicBlock *ExitBB;
   std::vector<BasicBlock *> CallBBs;
 
   // Following members are valid only inside a Basic Block
   BasicBlock *TheBB;
-  // FIXME: This should be integrated with MCAtoms
-  uint64_t BBStartAddr;
-  uint64_t BBEndAddr;
+  const MCBasicBlock *TheMCBB;
   typedef IRBuilder<true, NoFolder> DCIRBuilder;
   std::unique_ptr<DCIRBuilder> Builder;
 
@@ -126,6 +127,9 @@ protected:
   // Return true if the translation shouldn't proceed.
   virtual bool translateTargetInst() { return false; }
 
+  uint64_t getBasicBlockStartAddress() const;
+  uint64_t getBasicBlockEndAddress() const;
+
 private:
   void translateOperand(unsigned OperandType, unsigned MIOperandNo);
 
@@ -134,7 +138,9 @@ private:
 
   BasicBlock *insertCallBB(Value *CallTarget);
 
-  void removeTrapInstFromEmptyBB(BasicBlock *BB);
+  void prepareBasicBlockForInsertion(BasicBlock *BB);
+
+  void SwitchToBasicBlock(uint64_t BeginAddr);
 };
 
 DCInstrSema *createDCInstrSema(StringRef Triple, const MCRegisterInfo &MRI,

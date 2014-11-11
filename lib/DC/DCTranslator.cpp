@@ -105,9 +105,8 @@ static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
 void DCTranslator::translateFunction(
     MCFunction *MCFN,
     const MCObjectDisassembler::AddressSetTy &TailCallTargets) {
-  uint64_t StartAddr = MCFN->getEntryBlock()->getInsts()->getBeginAddr();
 
-  DIS.SwitchToFunction(StartAddr);
+  DIS.SwitchToFunction(MCFN);
 
   // First, make sure all basic blocks are created, and sorted.
   std::vector<const MCBasicBlock *> BasicBlocks;
@@ -121,7 +120,7 @@ void DCTranslator::translateFunction(
     DEBUG(dbgs() << "Translating atom " << TA->getName() << ", size "
                  << TA->size() << ", address " << utohexstr(TA->getBeginAddr())
                  << "\n");
-    DIS.SwitchToBasicBlock(TA->getBeginAddr(), TA->getEndAddr());
+    DIS.SwitchToBasicBlock(BB);
     for (auto &I : *TA) {
       DEBUG(dbgs() << "Translating instruction:\n ";
             dbgs() << I.Inst << "\n";);

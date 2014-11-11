@@ -243,7 +243,7 @@ void X86InstrSema::translateTargetOpcode() {
     setReg(X86::RIP, Op1);
     Builder->CreateCondBr(X86DRS.testCondCode(CC),
                           getOrCreateBasicBlock(Target),
-                          getOrCreateBasicBlock(BBEndAddr + 1));
+                          getOrCreateBasicBlock(getBasicBlockEndAddress() + 1));
     break;
   }
   case X86ISD::CALL: {
