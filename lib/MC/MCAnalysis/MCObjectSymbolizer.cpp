@@ -80,7 +80,7 @@ struct SymbolRefAddressComparator {
 
   SymbolRefAddressComparator(const MachOObjectFile *MOOF) : MOOF(MOOF) {}
 
-  bool operator()(DataRefImpl &LHS, DataRefImpl &RHS) {
+  bool operator()(const DataRefImpl &LHS, const DataRefImpl &RHS) {
     uint64_t LHSSize, RHSSize;
     MOOF->getSymbolAddress(LHS, LHSSize);
     MOOF->getSymbolAddress(RHS, RHSSize);
