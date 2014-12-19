@@ -13,6 +13,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
@@ -135,6 +136,31 @@ bool X86InstrSema::translateTargetInst() {
       // FIXME: add support to X86DRS::updateEFLAGS for atomicrmw.
       Result = Builder->CreateBinOp(Opc, Old, Operand2);
       X86DRS.updateEFLAGS(Result, /*DontUpdateCF=*/isINCDEC);
+      return true;
+    } else if (Prefix == X86::REP_PREFIX) {
+      unsigned SizeInBits = 0;
+      switch (Opcode) {
+      default:
+        llvm_unreachable("Unknown rep-prefixed instruction");
+      case X86::MOVSQ: SizeInBits = 64; break;
+      case X86::MOVSL: SizeInBits = 32; break;
+      case X86::MOVSW: SizeInBits = 16; break;
+      case X86::MOVSB: SizeInBits = 8;  break;
+      }
+      Type *MemTy = Type::getIntNPtrTy(Builder->getContext(), SizeInBits);
+      Value *Dst = Builder->CreateIntToPtr(getReg(X86::RDI), MemTy);
+      Value *Src = Builder->CreateIntToPtr(getReg(X86::RSI), MemTy);
+      Value *Len = getReg(X86::RCX);
+      // FIXME: Add support for reverse copying, depending on Direction Flag.
+      // We don't support CLD/STD yet anyway, so this isn't a big deal for now.
+      Type *MemcpyArgTys[] = { Dst->getType(), Src->getType(), Len->getType() };
+      Builder->CreateCall5(
+          Intrinsic::getDeclaration(TheModule, Intrinsic::memcpy, MemcpyArgTys),
+          Dst, Src, Len,
+          /*Align=*/Builder->getInt32(1),
+          /*isVolatile=*/Builder->getInt1(false));
+      Builder->GetInsertBlock()->getParent()->dump();
+
       return true;
     }
     llvm_unreachable("Unable to translate prefixed instruction");
