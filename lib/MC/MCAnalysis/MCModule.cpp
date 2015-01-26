@@ -126,8 +126,12 @@ void MCModule::splitBasicBlocksForAtom(const MCTextAtom *TA,
   BBsByAtomTy::iterator
     I = std::lower_bound(BBsByAtom.begin(), BBsByAtom.end(),
                          TA, CompBBToAtom);
-  for (; I != BBsByAtom.end() && (*I)->getInsts() == TA; ++I) {
-    MCBasicBlock *BB = *I;
+
+  BBsByAtomTy BBsToSplit;
+  for (; I != BBsByAtom.end() && (*I)->getInsts() == TA; ++I)
+    BBsToSplit.push_back(*I);
+
+  for (MCBasicBlock *BB : BBsToSplit) {
     MCBasicBlock *NewBB = &BB->getParent()->createBlock(*NewTA);
     BB->splitBasicBlock(NewBB);
   }
