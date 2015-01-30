@@ -619,7 +619,7 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
     assert(Region && "Couldn't find region for already disassembled code!");
     uint64_t EndRegion = Region->getBase() + Region->getExtent();
 
-    if (FailedDisassembly) {
+    if (!FailedDisassembly) {
       // Now we have a basic block atom, add successors.
       // Add the fallthrough block.
       if ((MIA.isConditionalBranch(TA->back().Inst) ||
