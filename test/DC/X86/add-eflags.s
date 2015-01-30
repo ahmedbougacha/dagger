@@ -1,20 +1,10 @@
-#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
-#
-# Assembly source:
-#   add_ri:
-#   add rdi, 2
-#   ret
+#RUN: llvm-mc -x86-asm-syntax=intel -triple=x86_64-unknown-darwin < %s -filetype=obj -o - | llvm-dec - | FileCheck %s
 
-Atoms:
+add_ri:
+add rdi, 2
+ret
 
 # CHECK-LABEL: bb_0:
-  - StartAddress:    0x0000000000000000
-    Size:            5
-    Type:            Text
-    Content:
-      - Inst:            ADD64ri8
-        Size:            4
-        Ops:             [ RRDI, RRDI, I2 ]
 # CHECK-DAG: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
 # CHECK-DAG: [[RDI1:%RDI_[0-9]+]] = add i64 [[RDI0]], [[OP2:2]]
 # CHECK-DAG: [[EFLAGS0:%EFLAGS_[0-9]+]] = load i32* %EFLAGS
@@ -72,14 +62,4 @@ Atoms:
 
 # CHECK-DAG: store i32 [[EFLAGS1]], i32* %EFLAGS
 # CHECK-DAG: store i64 [[RDI1]], i64* %RDI
-
-      - Inst:            RETQ
-        Size:            1
-        Ops:             [  ]
-
-Functions:
-  - Name:            __text
-    BasicBlocks:
-      - Address:         0x0000000000000000
-        Preds:           [  ]
-        Succs:           [  ]
+# CHECK: br label %exit_fn_0
