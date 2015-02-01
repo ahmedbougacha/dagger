@@ -1,0 +1,29 @@
+#RUN: llvm-dec %p/Inputs/pc-update.macho-x86_64 | FileCheck %s
+#
+# Assembly source:
+#   adds_1:
+#   add [12345], rdi
+#   add rdi, 2
+#   jmp adds_2
+#   nop
+#   adds_2:
+#   add rdi, rsi
+#   add rdi, [12345]
+#   ret
+#
+#   .global _main
+#   _main:
+#   ret
+
+# CHECK-LABEL: bb_100000F99:
+## The initial RIP value is a constant 0x100000F99 (4294971289).
+# CHECK: [[RIP1:%RIP_[0-9]+]] = add i64 4294971289, 8
+# CHECK: [[RIP2:%RIP_[0-9]+]] = add i64 [[RIP1]], 4
+## The PC always points to the next instruction, so we update it before jmps.
+# CHECK: [[RIP3:%RIP_[0-9]+]] = add i64 [[RIP2]], 5
+# CHECK: [[RIP1:%RIP_[0-9]+]] = add i64 4294971307, 3
+# CHECK: [[RIP2:%RIP_[0-9]+]] = add i64 [[RIP1]], 8
+## Again, this doesn't check that RET pops the new PC, but only that the PC
+## is correctly updated prior to RET's execution.
+# CHECK: [[RIP3:%RIP_[0-9]+]] = add i64 [[RIP2]], 1
+# CHECK: br label %exit_fn_100000F99

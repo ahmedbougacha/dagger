@@ -1,30 +1,17 @@
-#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
-#
-# Assembly source:
-#   indbr:
-#   call rdi
-#   add rax, 2
-#   ret
+#RUN: llvm-mc -x86-asm-syntax=intel -triple=x86_64-unknown-darwin < %s -filetype=obj -o - | llvm-dec - | FileCheck %s
 
-Atoms:
+indbr:
+call rdi
+add rax, 2
+ret
 
 # CHECK-LABEL: bb_0:
-  - StartAddress:    0x0000000000000000
-    Size:            7
-    Type:            Text
-    Content:
-      - Inst:            CALL64r
-        Size:            2
-        Ops:             [ RRDI ]
 # CHECK: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
 # CHECK: [[RDIPTR:%[0-9]+]] = inttoptr i64 [[RDI0]] to i8*
-
 ## FIXME: The function should be better defined than this.
 # CHECK: [[FUNPTR:%[0-9]+]] = call void (%regset*)* (i8*)* @__llvm_dc_translate_at(i8* [[RDIPTR]])
-
 # CHECK: store i64 [[RDI0]], i64* %RDI
 # CHECK: br label %bb_0_call
-
 # CHECK-LABEL: bb_0_call:
 # CHECK-DAG: [[RDISAVE:%[0-9]+]] = load i64* %RDI
 # CHECK-DAG: store i64 [[RDISAVE]],  i64* %RDI
@@ -33,21 +20,7 @@ Atoms:
 # CHECK: call void [[FUNPTR]](%regset* %0)
 # CHECK: br label %bb_c0
 # CHECK-LABEL: bb_c0:
-
-      - Inst:            ADD64ri8
-        Size:            4
-        Ops:             [ RRAX, RRAX, I2 ]
 # CHECK: [[RAX0:%RAX_[0-9]+]] = load i64* %RAX
 # CHECK: [[RAX1:%RAX_[0-9]+]] = add i64 [[RAX0]], 2
 # CHECK: store i64 [[RAX1]], i64* %RAX
-
-      - Inst:            RETQ
-        Size:            1
-        Ops:             [  ]
-
-Functions:
-  - Name:            __text
-    BasicBlocks:
-      - Address:         0x0000000000000000
-        Preds:           [  ]
-        Succs:           [  ]
+# CHECK: br label %exit_fn_0

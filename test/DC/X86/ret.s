@@ -1,8 +1,7 @@
-#RUN: llvm-dc -triple x86_64 %s | FileCheck %s
-#
-# Assembly source:
-#   f:
-#   ret
+#RUN: llvm-mc -x86-asm-syntax=intel -triple=x86_64-unknown-darwin < %s -filetype=obj -o - | llvm-dec - | FileCheck %s
+
+f:
+ret
 
 # CHECK-LABEL:  define void @fn_0
 # CHECK-LABEL:  exit_fn_0:
@@ -17,18 +16,4 @@
 # CHECK-DAG:    [[RIP1:%RIP_[0-9]+]] = load i64* [[SPTR]]
 # CHECK-DAG:    store i64 [[RIP1]], i64* %RIP
 # CHECK-DAG:    store i64 [[RSP1]], i64* %RSP
-
-Atoms:
-  - StartAddress:    0x0000000000000000
-    Size:            1
-    Type:            Text
-    Content:
-      - Inst:            RETQ
-        Size:            1
-        Ops:             [  ]
-Functions:
-  - Name:            __text
-    BasicBlocks:
-      - Address:         0x0000000000000000
-        Preds:           [  ]
-        Succs:           [  ]
+# CHECK: br label %exit_fn_0
