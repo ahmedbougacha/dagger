@@ -61,6 +61,7 @@ add_llvm_tool_subdirectory(yaml2obj)
 
 add_llvm_tool_subdirectory(llvm-dc)
 add_llvm_tool_subdirectory(llvm-dec)
+add_llvm_tool_subdirectory(llvm-mccfg)
 #add_llvm_tool_subdirectory(llvm-bintrans)
 ignore_llvm_tool_subdirectory(llvm-bintrans)
 
