@@ -1,0 +1,66 @@
+RUN: llvm-mccfg %p/Inputs/hello.exe.macho-x86_64 | FileCheck %s
+
+CHECK-LABEL: ---
+CHECK-NEXT: Atoms:
+CHECK-NEXT:   - StartAddress:    0x0000000100000F30
+CHECK-NEXT:     Size:            59
+CHECK-NEXT:     Type:            Text
+CHECK-NEXT:     Content:
+CHECK-NEXT:       - Inst:            PUSH64r
+CHECK-NEXT:         Size:            1
+CHECK-NEXT:         Ops:             [ RRBP ]
+CHECK-NEXT:       - Inst:            MOV64rr
+CHECK-NEXT:         Size:            3
+CHECK-NEXT:         Ops:             [ RRBP, RRSP ]
+CHECK-NEXT:       - Inst:            SUB64ri8
+CHECK-NEXT:         Size:            4
+CHECK-NEXT:         Ops:             [ RRSP, RRSP, I32 ]
+CHECK-NEXT:       - Inst:            LEA64r
+CHECK-NEXT:         Size:            7
+CHECK-NEXT:         Ops:             [ RRAX, RRIP, I1, R, I79, R ]
+CHECK-NEXT:       - Inst:            MOV32mi
+CHECK-NEXT:         Size:            7
+CHECK-NEXT:         Ops:             [ RRBP, I1, R, I-4, R, I0 ]
+CHECK-NEXT:       - Inst:            MOV32mr
+CHECK-NEXT:         Size:            3
+CHECK-NEXT:         Ops:             [ RRBP, I1, R, I-8, R, REDI ]
+CHECK-NEXT:       - Inst:            MOV64mr
+CHECK-NEXT:         Size:            4
+CHECK-NEXT:         Ops:             [ RRBP, I1, R, I-16, R, RRSI ]
+CHECK-NEXT:       - Inst:            MOV64mr
+CHECK-NEXT:         Size:            4
+CHECK-NEXT:         Ops:             [ RRBP, I1, R, I-24, R, RRDX ]
+CHECK-NEXT:       - Inst:            MOV64rr
+CHECK-NEXT:         Size:            3
+CHECK-NEXT:         Ops:             [ RRDI, RRAX ]
+CHECK-NEXT:       - Inst:            MOV8ri
+CHECK-NEXT:         Size:            2
+CHECK-NEXT:         Ops:             [ RAL, I0 ]
+CHECK-NEXT:       - Inst:            CALL64pcrel32
+CHECK-NEXT:         Size:            5
+CHECK-NEXT:         Ops:             [ I17 ]
+CHECK-NEXT:       - Inst:            MOV32ri
+CHECK-NEXT:         Size:            5
+CHECK-NEXT:         Ops:             [ RECX, I0 ]
+CHECK-NEXT:       - Inst:            MOV32mr
+CHECK-NEXT:         Size:            3
+CHECK-NEXT:         Ops:             [ RRBP, I1, R, I-28, R, REAX ]
+CHECK-NEXT:       - Inst:            MOV32rr
+CHECK-NEXT:         Size:            2
+CHECK-NEXT:         Ops:             [ REAX, RECX ]
+CHECK-NEXT:       - Inst:            ADD64ri8
+CHECK-NEXT:         Size:            4
+CHECK-NEXT:         Ops:             [ RRSP, RRSP, I32 ]
+CHECK-NEXT:       - Inst:            POP64r
+CHECK-NEXT:         Size:            1
+CHECK-NEXT:         Ops:             [ RRBP ]
+CHECK-NEXT:       - Inst:            RETQ
+CHECK-NEXT:         Size:            1
+CHECK-NEXT:         Ops:             [  ]
+CHECK-NEXT: Functions:
+CHECK-NEXT:   - Name:            ''
+CHECK-NEXT:     BasicBlocks:
+CHECK-NEXT:       - Address:         0x0000000100000F30
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT: ...
