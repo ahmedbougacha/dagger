@@ -1,0 +1,34 @@
+RUN: llvm-mccfg %p/Inputs/jmp.exe.macho-x86_64 | FileCheck %s
+
+CHECK-LABEL: ---
+CHECK-NEXT: Atoms:
+CHECK-NEXT:   - StartAddress:    0x0000000100000FAB
+CHECK-NEXT:     Size:            6
+CHECK-NEXT:     Type:            Text
+CHECK-NEXT:     Content:
+CHECK-NEXT:       - Inst:            ADD64ri8
+CHECK-NEXT:         Size:            4
+CHECK-NEXT:         Ops:             [ RRDI, RRDI, I1 ]
+CHECK-NEXT:       - Inst:            JMP_1
+CHECK-NEXT:         Size:            2
+CHECK-NEXT:         Ops:             [ I2 ]
+CHECK-NEXT:   - StartAddress:    0x0000000100000FB3
+CHECK-NEXT:     Size:            5
+CHECK-NEXT:     Type:            Text
+CHECK-NEXT:     Content:
+CHECK-NEXT:       - Inst:            ADD64ri8
+CHECK-NEXT:         Size:            4
+CHECK-NEXT:         Ops:             [ RRDI, RRDI, I2 ]
+CHECK-NEXT:       - Inst:            RETQ
+CHECK-NEXT:         Size:            1
+CHECK-NEXT:         Ops:             [  ]
+CHECK-NEXT: Functions:
+CHECK-NEXT:   - Name:            ''
+CHECK-NEXT:     BasicBlocks:
+CHECK-NEXT:       - Address:         0x0000000100000FAB
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [ 0x0000000100000FB3 ]
+CHECK-NEXT:       - Address:         0x0000000100000FB3
+CHECK-NEXT:         Preds:           [ 0x0000000100000FAB ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT: ...
