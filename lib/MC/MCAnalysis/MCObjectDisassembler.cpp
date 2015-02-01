@@ -33,7 +33,7 @@
 using namespace llvm;
 using namespace object;
 
-#define DEBUG_TYPE "mc"
+#define DEBUG_TYPE "mccfg"
 
 MCObjectDisassembler::MCObjectDisassembler(const ObjectFile &Obj,
                                            const MCDisassembler &Dis,
@@ -428,9 +428,9 @@ void MCObjectDisassembler::addTempInstruction(const MCInst &Inst,
 
 void MCObjectDisassembler::uniqueTempInstructions() {
 
-  errs() << " Trying to unique \n";
-  errs() << " uniqued " << Uniqued << " and translated " << Translated << " \n";
-
+  DEBUG(dbgs() << " Trying to unique \n");
+  DEBUG(dbgs() << " Uniqued " << Uniqued << " and translated " << Translated
+               << " \n");
 
   for (auto CachedInst : CachedInsts) {
     TempInstKeys.push_back(TempInstKey());
@@ -497,7 +497,7 @@ void MCObjectDisassembler::uniqueTempInstructions() {
 
   // FIXME: insert them already sorted?
   std::sort(CachedInsts.begin(), CachedInsts.end());
-  errs() << " Cached " << CachedInsts.size() <<  " \n";
+  DEBUG(dbgs() << " Cached " << CachedInsts.size() <<  " \n");
 
   TempInstKeys.clear();
   TempInstValues.clear();
@@ -530,6 +530,8 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
   BBInfoByAddrTy BBInfos;
   AddrWorklistTy Worklist;
 
+  DEBUG(dbgs() << "Starting CFG at " << utohexstr(BBBeginAddr) << "\n");
+
   Worklist.insert(BBBeginAddr);
   for (size_t wi = 0; wi < Worklist.size(); ++wi) {
     const uint64_t BeginAddr = Worklist[wi];
@@ -539,13 +541,19 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
     MCTextAtom *&TA = BBI->Atom;
     assert(!TA && "Discovered basic block already has an associated atom!");
 
+    DEBUG(dbgs() << "Looking for block at " << utohexstr(BeginAddr) << "\n");
+
     // Look for an atom at BeginAddr.
     if (MCAtom *A = Module->findAtomContaining(BeginAddr)) {
+      DEBUG(dbgs() << "Found block at " << utohexstr(BeginAddr) << "!\n");
+
       // FIXME: We don't care about mixed atoms, see above.
       TA = cast<MCTextAtom>(A);
 
       // The found atom doesn't begin at BeginAddr, we have to split it.
       if (TA->getBeginAddr() != BeginAddr) {
+        DEBUG(dbgs() << "Block at " << utohexstr(TA->getBeginAddr())
+              << " needs splitting at " << utohexstr(BeginAddr) << "\n");
         // FIXME: Handle overlapping atoms: middle-starting instructions, etc..
         MCTextAtom *NewTA = TA->split(BeginAddr);
 
@@ -561,7 +569,6 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
       BBI->Atom = TA;
     } else {
       // If we didn't find an atom, then we have to disassemble to create one!
-
       MemoryObject *Region = getRegionFor(BeginAddr);
       if (!Region)
         llvm_unreachable(("Couldn't find suitable region for disassembly at " +
@@ -575,39 +582,50 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
               cast_or_null<MCTextAtom>(Module->findFirstAtomAfter(BeginAddr)))
         EndAddr = std::min(EndAddr, NextAtom->getBeginAddr());
 
+      DEBUG(dbgs() << "No block, starting disassembly from "
+                   << utohexstr(BeginAddr) << " to "
+                   << utohexstr(EndAddr) << "\n");
+
       for (uint64_t Addr = BeginAddr; Addr < EndAddr; Addr += InstSize) {
         MCInst Inst;
         if (findCachedInstruction(Inst, InstSize, *Region, Addr)) {
           if (!TA)
             TA = Module->createTextAtom(Addr, Addr);
           TA->addInst(Inst, InstSize);
-    ++Uniqued;
+          ++Uniqued;
         }  else
         if (Dis.getInstruction(Inst, InstSize, *Region, Addr, nulls(),
                                nulls())) {
-  ++Translated;
+          ++Translated;
           if (!TA)
             TA = Module->createTextAtom(Addr, Addr);
           TA->addInst(Inst, InstSize);
 
-          StringRefMemoryObject *SRRegion = static_cast<StringRefMemoryObject*>(Region);
+          StringRefMemoryObject *SRRegion =
+              static_cast<StringRefMemoryObject *>(Region);
           addTempInstruction(Inst, SRRegion->getByteRange(Addr, InstSize));
         } else {
+          DEBUG(dbgs() << "Failed disassembly at "
+                << utohexstr(Addr) << "!\n");
           // We don't care about splitting mixed atoms either.
           FailedDisassembly = true;
-          // FIXME: maybe we should return 0 here, and just fail the function creation? this would need a MCModule::deleteFunction
           break;
-          llvm_unreachable("Couldn't disassemble instruction in atom.");
         }
 
         uint64_t BranchTarget;
         if (MIA.evaluateBranch(Inst, Addr, InstSize, BranchTarget)) {
-          if (MIA.isCall(Inst))
+          DEBUG(dbgs() << "Found branch to " << utohexstr(BranchTarget)
+                       << "!\n");
+          if (MIA.isCall(Inst)) {
+            DEBUG(dbgs() << "Found call!\n");
             CallTargets.push_back(BranchTarget);
+          }
         }
 
-        if (MIA.isTerminator(Inst))
+        if (MIA.isTerminator(Inst)) {
+          DEBUG(dbgs() << "Found terminator!\n");
           break;
+        }
       }
       BBI->Atom = TA;
     }
