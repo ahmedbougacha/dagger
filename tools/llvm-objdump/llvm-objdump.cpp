@@ -20,11 +20,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/MC/MCAnalysis/MCAtom.h"
-#include "llvm/MC/MCAnalysis/MCFunction.h"
-#include "llvm/MC/MCAnalysis/MCModule.h"
-#include "llvm/MC/MCAnalysis/MCModuleYAML.h"
-#include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler.h"
@@ -32,7 +27,6 @@
 #include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCObjectDisassembler.h"
 #include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCRelocationInfo.h"
@@ -153,20 +147,6 @@ static cl::alias
 PrivateHeadersShort("p", cl::desc("Alias for --private-headers"),
                     cl::aliasopt(PrivateHeaders));
 
-static cl::opt<bool>
-Symbolize("symbolize", cl::desc("When disassembling instructions, "
-                                "try to symbolize operands."));
-
-static cl::opt<bool>
-CFG("cfg", cl::desc("Create a CFG for every function found in the object"
-                      " and write it to a graphviz file"));
-
-// FIXME: Does it make sense to have a dedicated tool for yaml cfg output?
-static cl::opt<std::string>
-YAMLCFG("yaml-cfg",
-        cl::desc("Create a CFG and write it as a YAML MCModule."),
-        cl::value_desc("yaml output file"));
-
 static StringRef ToolName;
 static int ReturnValue = EXIT_SUCCESS;
 
@@ -212,121 +192,6 @@ static const Target *getTarget(const ObjectFile *Obj = nullptr) {
   // Update the triple name and return the found target.
   TripleName = TheTriple.getTriple();
   return TheTarget;
-}
-
-struct DOTMCFunction {
-  const MCFunction &Fn;
-  MCInstPrinter &IP;
-
-  DOTMCFunction(const MCFunction &Fn, MCInstPrinter &IP) : Fn(Fn), IP(IP) {}
-};
-
-template<>
-struct GraphTraits<DOTMCFunction> {
-  typedef const MCBasicBlock NodeType;
-  typedef MCBasicBlock::succ_const_iterator ChildIteratorType;
-  static NodeType *getEntryNode(const DOTMCFunction &MCFN) {
-    return MCFN.Fn.getEntryBlock();
-  }
-  //    Return iterators that point to the beginning and ending of the child
-  //    node list for the specified node.
-  static ChildIteratorType child_begin(const MCBasicBlock *MCBB) {
-    return MCBB->succ_begin();
-  }
-  static ChildIteratorType child_end(const MCBasicBlock *MCBB) {
-    return MCBB->succ_end();
-  }
-
-  //    nodes_iterator/begin/end - Allow iteration over all nodes in the graph
-  typedef MCFunction::const_iterator nodes_iterator;
-  static nodes_iterator nodes_begin(const DOTMCFunction &MCFN) {
-    return MCFN.Fn.begin();
-  }
-  static nodes_iterator nodes_end(const DOTMCFunction &MCFN) {
-    return MCFN.Fn.end();
-  }
-
-  static unsigned size(const DOTMCFunction &MCFN) {
-    return MCFN.Fn.size();
-  }
-};
-
-template <>
-struct DOTGraphTraits<DOTMCFunction> : public DefaultDOTGraphTraits {
-  DOTGraphTraits(bool simple=false) : DefaultDOTGraphTraits(simple) {}
-
-  std::string getNodeLabel(const MCBasicBlock *BB, const DOTMCFunction &MCFN) {
-    std::string OutStr;
-    raw_string_ostream Out(OutStr);
-    Out << BB->getInsts()->getBeginAddr();
-    return Out.str();
-  }
-  std::string getNodeDescription(const MCBasicBlock *BB,
-                                 const DOTMCFunction &MCFN) {
-    std::string OutStr;
-    raw_string_ostream Out(OutStr);
-    for (auto DInst : *BB->getInsts()) {
-      MCFN.IP.printInst(&DInst.Inst, Out, "");
-      Out << '\n';
-    }
-    return Out.str();
-  }
-};
-
-
-// Write a graphviz file for the CFG inside an MCFunction.
-// FIXME: Use GraphWriter
-static void emitDOTFile(const char *FileName, const MCFunction &f,
-                        MCInstPrinter *IP) {
-  // Start a new dot file.
-  std::error_code EC;
-
-
-  raw_fd_ostream Out(FileName, EC, sys::fs::F_Text);
-  if (EC) {
-    errs() << ToolName << ": warning: " << EC.message() << '\n';
-    return;
-  }
-  DOTMCFunction DOTFn(f, *IP);
-  WriteGraph(Out, DOTFn);
-
-#if 0
-  Out << "digraph \"" << f.getName() << "\" {\n";
-  Out << "graph [ rankdir = \"LR\" ];\n";
-  for (MCFunction::const_iterator i = f.begin(), e = f.end(); i != e; ++i) {
-    // Only print blocks that have predecessors.
-    bool hasPreds = (*i)->pred_begin() != (*i)->pred_end();
-
-    if (!hasPreds && i != f.begin())
-      continue;
-
-    Out << '"' << (*i)->getInsts()->getBeginAddr() << "\" [ label=\"<a>";
-    // Print instructions.
-    size_t ii = 0;
-    const size_t ie = (*i)->getInsts()->size();
-    for (MCTextAtom::const_iterator I = (*i)->getInsts()->begin(),
-         E = (*i)->getInsts()->end(); I != E; ++I, ++ii) {
-      if (ii != 0) // Not the first line, start a new row.
-        Out << '|';
-      if (ii + 1 == ie) // Last line, add an end id.
-        Out << "<o>";
-
-      // Escape special chars and print the instruction in mnemonic form.
-      std::string Str;
-      raw_string_ostream OS(Str);
-      IP->printInst(&I->Inst, OS, "");
-      Out << DOT::EscapeString(OS.str());
-    }
-    Out << "\" shape=\"record\" ];\n";
-
-    // Add edges.
-    for (MCBasicBlock::succ_const_iterator si = (*i)->succ_begin(),
-        se = (*i)->succ_end(); si != se; ++si)
-      Out << (*i)->getInsts()->getBeginAddr() << ":o -> "
-          << (*si)->getInsts()->getBeginAddr() << ":a\n";
-  }
-  Out << "}\n";
-#endif
 }
 
 void llvm::DumpBytes(StringRef bytes) {
@@ -417,19 +282,6 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
     return;
   }
 
-
-  if (Symbolize) {
-    std::unique_ptr<MCRelocationInfo> RelInfo(
-        TheTarget->createMCRelocationInfo(TripleName, Ctx));
-    if (RelInfo) {
-      std::unique_ptr<MCSymbolizer> Symzer(
-        MCObjectSymbolizer::createObjectSymbolizer(Ctx, std::move(RelInfo),
-                                                   Obj));
-      if (Symzer)
-        DisAsm->setSymbolizer(std::move(Symzer));
-    }
-  }
-
   std::unique_ptr<const MCInstrAnalysis> MIA(
       TheTarget->createMCInstrAnalysis(MII.get()));
 
@@ -440,45 +292,6 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
     errs() << "error: no instruction printer for target " << TripleName
       << '\n';
     return;
-  }
-
-  if (CFG || !YAMLCFG.empty()) {
-    std::unique_ptr<MCObjectDisassembler> OD(
-        new MCObjectDisassembler(*Obj, *DisAsm, *MIA));
-    std::unique_ptr<MCModule> Mod(OD->buildModule(/* withCFG */ true));
-    for (MCModule::const_atom_iterator AI = Mod->atom_begin(),
-                                       AE = Mod->atom_end();
-                                       AI != AE; ++AI) {
-      outs() << "Atom " << (*AI)->getName() << ": \n";
-      if (const MCTextAtom *TA = dyn_cast<MCTextAtom>(*AI)) {
-        for (MCTextAtom::const_iterator II = TA->begin(), IE = TA->end();
-             II != IE;
-             ++II) {
-          IP->printInst(&II->Inst, outs(), "");
-          outs() << "\n";
-        }
-      }
-    }
-    if (CFG) {
-      for (MCModule::const_func_iterator FI = Mod->func_begin(),
-                                         FE = Mod->func_end();
-                                         FI != FE; ++FI) {
-        static int filenum = 0;
-        emitDOTFile((Twine((*FI)->getName()) + "_" +
-                     utostr(filenum) + ".dot").str().c_str(),
-                      **FI, IP.get());
-        ++filenum;
-      }
-    }
-    if (!YAMLCFG.empty()) {
-      std::error_code EC;
-      raw_fd_ostream YAMLOut(YAMLCFG, EC, sys::fs::F_Text);
-      if (EC) {
-        errs() << ToolName << ": warning: " << EC.message() << '\n';
-        return;
-      }
-      mcmodule2yaml(YAMLOut, *Mod, *MII, *MRI);
-    }
   }
 
   StringRef Fmt = Obj->getBytesInAddress() > 4 ? "\t\t%016" PRIx64 ":  " :
