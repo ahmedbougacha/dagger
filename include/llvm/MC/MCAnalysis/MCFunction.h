@@ -46,7 +46,7 @@ class MCBasicBlock {
   InstListTy Insts;
 
   std::string Name;
-  uint64_t StartAddr, Size;
+  uint64_t StartAddr, SizeInBytes;
   uint64_t InstCount;
 
   /// \brief The address of the next appended instruction, i.e., the
@@ -70,8 +70,10 @@ public:
 
   /// \brief Get the start address of the block.
   uint64_t getStartAddr() const { return StartAddr; }
+  /// \brief Get the address one byte past the end of the block.
+  uint64_t getEndAddr() const { return StartAddr + SizeInBytes; }
   /// \brief Get the size of the block.
-  uint64_t getSize() const { return Size; }
+  uint64_t getSizeInBytes() const { return SizeInBytes; }
 
   /// \name Instruction list access
   /// @{

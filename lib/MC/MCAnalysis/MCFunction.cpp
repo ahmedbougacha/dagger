@@ -45,7 +45,7 @@ const MCBasicBlock *MCFunction::find(uint64_t StartAddr) const {
 
 MCBasicBlock *MCFunction::findContaining(uint64_t Addr) {
   for (auto BB : *this)
-    if (BB->getStartAddr() <= Addr && BB->getStartAddr() + BB->getSize() > Addr)
+    if (BB->getStartAddr() <= Addr && BB->getEndAddr() > Addr)
       return BB;
   return nullptr;
 }
@@ -70,7 +70,7 @@ const MCBasicBlock *MCFunction::findFirstAfter(uint64_t Addr) const {
 // MCBasicBlock
 
 MCBasicBlock::MCBasicBlock(uint64_t StartAddr, MCFunction *Parent)
-    : StartAddr(StartAddr), Size(0), InstCount(0),
+    : StartAddr(StartAddr), SizeInBytes(0), InstCount(0),
       NextInstAddress(StartAddr), Parent(Parent) {
 }
 
@@ -96,9 +96,13 @@ bool MCBasicBlock::isPredecessor(const MCBasicBlock *MCBB) const {
 
 MCBasicBlock *MCBasicBlock::split(uint64_t SplitAddr) {
   MCBasicBlock *NewBB = &Parent->createBlock(SplitAddr);
+  uint64_t LHS_SizeInBytes = 0;
 
   InstListTy::iterator I = Insts.begin();
-  while (I != Insts.end() && I->Address < SplitAddr) ++I;
+  while (I != Insts.end() && I->Address < SplitAddr) {
+    LHS_SizeInBytes += I->Size;
+    ++I;
+  }
   assert(I != Insts.end() && "Split point not found in disassembly!");
   assert(I->Address == SplitAddr &&
          "Split point does not fall on instruction boundary!");
@@ -108,12 +112,15 @@ MCBasicBlock *MCBasicBlock::split(uint64_t SplitAddr) {
   NewBB->Successors = Successors;
   Successors.clear();
   addSuccessor(NewBB);
+
+  NewBB->SizeInBytes = SizeInBytes - LHS_SizeInBytes;
+  SizeInBytes = LHS_SizeInBytes;
   return NewBB;
 }
 
 void MCBasicBlock::addInst(const MCInst &I, uint64_t InstSize) {
   Insts.push_back(MCDecodedInst(I, NextInstAddress, InstSize));
   NextInstAddress += InstSize;
-  Size += InstSize;
+  SizeInBytes += InstSize;
   ++InstCount;
 }

@@ -448,9 +448,9 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
       // Add the fallthrough block.
       if ((MIA.isConditionalBranch(MCBB->back().Inst) ||
            !MIA.isTerminator(MCBB->back().Inst)) &&
-          (MCBB->getStartAddr() + MCBB->getSize() < EndRegion)) {
-        BBI->SuccAddrs.push_back(MCBB->getStartAddr() + MCBB->getSize());
-        Worklist.insert(MCBB->getStartAddr() + MCBB->getSize());
+          (MCBB->getEndAddr() < EndRegion)) {
+        BBI->SuccAddrs.push_back(MCBB->getEndAddr());
+        Worklist.insert(MCBB->getEndAddr());
       }
 
       // If the terminator is a branch, add the target block.

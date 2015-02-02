@@ -282,6 +282,7 @@ void MCModule2YAML::dumpFunction(const MCFunction &MCF) {
     F.BasicBlocks.resize(F.BasicBlocks.size() + 1);
     MCModuleYAML::BasicBlock &BB = F.BasicBlocks.back();
     BB.Address = MCBB.getStartAddr();
+    BB.SizeInBytes = MCBB.getSizeInBytes();
 
     for (MCBasicBlock::const_iterator I = MCBB.begin(), E = MCBB.end();
          I != E; ++I) {
@@ -289,7 +290,6 @@ void MCModule2YAML::dumpFunction(const MCFunction &MCF) {
       BB.Insts.push_back(MCModuleYAML::Inst());
       BB.Insts.back().Opcode = MCDI.Inst.getOpcode();
       BB.Insts.back().Size = MCDI.Size;
-      BB.SizeInBytes += MCDI.Size;
       const unsigned OpCount = MCDI.Inst.getNumOperands();
       BB.Insts.back().Operands.resize(OpCount);
       for (unsigned oi = 0; oi != OpCount; ++oi)

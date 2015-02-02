@@ -116,8 +116,8 @@ void DCTranslator::translateFunction(
 
   for (auto &BB : *MCFN) {
     DEBUG(dbgs() << "Translating basic block starting at "
-                 << utohexstr(BB->getStartAddr()) << ", size " << BB->size()
-                 << "\n");
+                 << utohexstr(BB->getStartAddr()) << ", with " << BB->size()
+                 << " instructions.\n");
     DIS.SwitchToBasicBlock(BB);
     for (auto &I : *BB) {
       DEBUG(dbgs() << "Translating instruction:\n ";

@@ -52,7 +52,7 @@ Function *DCInstrSema::FinalizeFunction() {
 
 void DCInstrSema::FinalizeBasicBlock() {
   if (!TheBB->getTerminator())
-    BranchInst::Create(getOrCreateBasicBlock(getBasicBlockEndAddress() + 1),
+    BranchInst::Create(getOrCreateBasicBlock(getBasicBlockEndAddress()),
                        TheBB);
   DRS.FinalizeBasicBlock();
   TheBB = nullptr;
@@ -199,7 +199,7 @@ uint64_t DCInstrSema::getBasicBlockStartAddress() const {
 
 uint64_t DCInstrSema::getBasicBlockEndAddress() const {
   assert(TheMCBB && "Getting end address without an MC BasicBlock");
-  return TheMCBB->getStartAddr() + TheMCBB->getSize();
+  return TheMCBB->getEndAddr();
 }
 
 Function *DCInstrSema::getFunction(uint64_t Addr) {
