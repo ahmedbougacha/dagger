@@ -159,7 +159,6 @@ bool X86InstrSema::translateTargetInst() {
           Dst, Src, Len,
           /*Align=*/Builder->getInt32(1),
           /*isVolatile=*/Builder->getInt1(false));
-      Builder->GetInsertBlock()->getParent()->dump();
 
       return true;
     }
