@@ -4,7 +4,6 @@
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/MC/MCAnalysis/MCAtom.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCModuleYAML.h"

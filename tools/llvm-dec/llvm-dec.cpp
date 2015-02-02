@@ -5,7 +5,6 @@
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCAnalysis/MCAtom.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCContext.h"
@@ -160,7 +159,7 @@ int main(int argc, char **argv) {
 
   std::unique_ptr<MCObjectDisassembler> OD(
       new MCObjectDisassembler(*Obj, *DisAsm, *MIA));
-  std::unique_ptr<MCModule> MCM(OD->buildModule(/* withCFG */ true));
+  std::unique_ptr<MCModule> MCM(OD->buildModule());
 
   if (!MCM)
     return 1;
