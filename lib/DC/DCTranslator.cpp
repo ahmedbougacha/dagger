@@ -4,7 +4,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/DC/DCInstrSema.h"
 #include "llvm/DC/DCRegisterSema.h"
-#include "llvm/MC/MCAnalysis/MCAtom.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCObjectDisassembler.h"
@@ -99,7 +98,7 @@ Function *DCTranslator::getFunctionAt(uint64_t Addr) {
 }
 
 static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
-  return LHS->getInsts()->getBeginAddr() < RHS->getInsts()->getBeginAddr();
+  return LHS->getStartAddr() < RHS->getStartAddr();
 }
 
 void DCTranslator::translateFunction(
@@ -113,15 +112,14 @@ void DCTranslator::translateFunction(
   std::copy(MCFN->begin(), MCFN->end(), std::back_inserter(BasicBlocks));
   std::sort(BasicBlocks.begin(), BasicBlocks.end(), BBBeginAddrLess);
   for (auto &BB : BasicBlocks)
-    DIS.getOrCreateBasicBlock(BB->getInsts()->getBeginAddr());
+    DIS.getOrCreateBasicBlock(BB->getStartAddr());
 
   for (auto &BB : *MCFN) {
-    const MCTextAtom *TA = BB->getInsts();
-    DEBUG(dbgs() << "Translating atom " << TA->getName() << ", size "
-                 << TA->size() << ", address " << utohexstr(TA->getBeginAddr())
+    DEBUG(dbgs() << "Translating basic block starting at "
+                 << utohexstr(BB->getStartAddr()) << ", size " << BB->size()
                  << "\n");
     DIS.SwitchToBasicBlock(BB);
-    for (auto &I : *TA) {
+    for (auto &I : *BB) {
       DEBUG(dbgs() << "Translating instruction:\n ";
             dbgs() << I.Inst << "\n";);
       DCTranslatedInst TI(I);

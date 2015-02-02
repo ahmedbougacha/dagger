@@ -15,7 +15,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/MC/MCAnalysis/MCAtom.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCModuleYAML.h"
@@ -171,14 +170,14 @@ struct DOTGraphTraits<DOTMCFunction> : public DefaultDOTGraphTraits {
   std::string getNodeLabel(const MCBasicBlock *BB, const DOTMCFunction &MCFN) {
     std::string OutStr;
     raw_string_ostream Out(OutStr);
-    Out << BB->getInsts()->getBeginAddr();
+    Out << BB->getStartAddr();
     return Out.str();
   }
   std::string getNodeDescription(const MCBasicBlock *BB,
                                  const DOTMCFunction &MCFN) {
     std::string OutStr;
     raw_string_ostream Out(OutStr);
-    for (auto DInst : *BB->getInsts()) {
+    for (auto DInst : *BB) {
       MCFN.IP.printInst(&DInst.Inst, Out, "");
       Out << '\n';
     }
@@ -328,7 +327,7 @@ static void DumpObject(const ObjectFile *Obj) {
 
   std::unique_ptr<MCObjectDisassembler> OD(
       new MCObjectDisassembler(*Obj, *DisAsm, *MIA));
-  std::unique_ptr<MCModule> Mod(OD->buildModule(/* withCFG */ true));
+  std::unique_ptr<MCModule> Mod(OD->buildModule());
   if (EmitDOT) {
     for (MCModule::const_func_iterator FI = Mod->func_begin(),
          FE = Mod->func_end();

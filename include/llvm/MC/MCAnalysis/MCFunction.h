@@ -17,6 +17,7 @@
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCInst.h"
+#include <list>
 #include <string>
 #include <vector>
 
@@ -24,19 +25,38 @@ namespace llvm {
 
 class MCFunction;
 class MCModule;
-class MCTextAtom;
+
+// FIXME: Both the Address and Size field are actually redundant when taken in
+// the context of the basic block, and may better be exposed in an iterator
+// instead of stored in the basic block, which would replace this class.
+/// \brief An entry in an MCBasicBlock: a disassembled instruction.
+class MCDecodedInst {
+public:
+  MCInst Inst;
+  uint64_t Address;
+  uint64_t Size;
+  MCDecodedInst(const MCInst &Inst, uint64_t Address, uint64_t Size)
+    : Inst(Inst), Address(Address), Size(Size) {}
+};
 
 /// \brief Basic block containing a sequence of disassembled instructions.
-/// The basic block is backed by an MCTextAtom, which holds the instructions,
-/// and the address range it covers.
 /// Create a basic block using MCFunction::createBlock.
 class MCBasicBlock {
-  const MCTextAtom *Insts;
+  typedef std::list<MCDecodedInst> InstListTy;
+  InstListTy Insts;
+
+  std::string Name;
+  uint64_t StartAddr, Size;
+  uint64_t InstCount;
+
+  /// \brief The address of the next appended instruction, i.e., the
+  /// address immediately after the last instruction in the block.
+  uint64_t NextInstAddress;
 
   // MCFunction owns the basic block.
   MCFunction *Parent;
   friend class MCFunction;
-  MCBasicBlock(const MCTextAtom &Insts, MCFunction *Parent);
+  MCBasicBlock(uint64_t StartAddr, MCFunction *Parent);
 
   /// \name Predecessors/Successors, to represent the CFG.
   /// @{
@@ -45,9 +65,23 @@ class MCBasicBlock {
   BasicBlockListTy Predecessors;
   /// @}
 public:
+  /// Append an instruction.
+  void addInst(const MCInst &Inst, uint64_t InstSize);
 
-  /// \brief Get the backing MCTextAtom, containing the instruction sequence.
-  const MCTextAtom *getInsts() const { return Insts; }
+  /// \brief Get the start address of the block.
+  uint64_t getStartAddr() const { return StartAddr; }
+  /// \brief Get the size of the block.
+  uint64_t getSize() const { return Size; }
+
+  /// \name Instruction list access
+  /// @{
+  typedef InstListTy::const_iterator const_iterator;
+  const_iterator begin() const { return Insts.begin(); }
+  const_iterator end()   const { return Insts.end(); }
+
+  const MCDecodedInst &back() const { return Insts.back(); }
+  size_t size() const { return InstCount; }
+  /// @}
 
   /// \name Get the owning MCFunction.
   /// @{
@@ -71,12 +105,10 @@ public:
   void addPredecessor(const MCBasicBlock *MCBB);
   bool isPredecessor(const MCBasicBlock *MCBB) const;
 
-  /// \brief Split block, mirrorring NewAtom = Insts->split(..).
+  /// \brief Split block.
   /// This moves all successors to \p SplitBB, and
   /// adds a fallthrough to it.
-  /// \p SplitBB The result of splitting Insts, a basic block directly following
-  /// this basic block.
-  void splitBasicBlock(MCBasicBlock *SplitBB);
+  MCBasicBlock *split(uint64_t SplitAddr);
   /// @}
 };
 
@@ -101,7 +133,7 @@ public:
   /// \brief Create an MCBasicBlock backed by Insts and add it to this function.
   /// \param Insts Sequence of straight-line code backing the basic block.
   /// \returns The newly created basic block.
-  MCBasicBlock &createBlock(const MCTextAtom &Insts);
+  MCBasicBlock &createBlock(uint64_t StartAddr);
 
   StringRef getName() const { return Name; }
 
@@ -136,6 +168,14 @@ public:
   /// \brief Find the basic block, if any, that starts at \p StartAddr.
   const MCBasicBlock *find(uint64_t StartAddr) const;
         MCBasicBlock *find(uint64_t StartAddr);
+
+  /// \brief Find the basic block, if any, that contains \p Addr.
+  const MCBasicBlock *findContaining(uint64_t Addr) const;
+        MCBasicBlock *findContaining(uint64_t Addr);
+
+  /// \brief Find the first basic block, if any, that follows \p Addr.
+  const MCBasicBlock *findFirstAfter(uint64_t Addr) const;
+        MCBasicBlock *findFirstAfter(uint64_t Addr);
   /// @}
 };
 

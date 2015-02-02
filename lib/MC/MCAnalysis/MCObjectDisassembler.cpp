@@ -15,7 +15,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
-#include "llvm/MC/MCAnalysis/MCAtom.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
@@ -94,7 +93,7 @@ MCModule *MCObjectDisassembler::buildEmptyModule() {
   return Module;
 }
 
-MCModule *MCObjectDisassembler::buildModule(bool withCFG) {
+MCModule *MCObjectDisassembler::buildModule() {
   MCModule *Module = buildEmptyModule();
 
   if (SectionRegions.empty()) {
@@ -120,71 +119,8 @@ MCModule *MCObjectDisassembler::buildModule(bool withCFG) {
               SectionRegionComparator);
   }
 
-  if (withCFG)
-    buildCFG(Module);
-  else
-    buildSectionAtoms(Module);
+  buildCFG(Module);
   return Module;
-}
-
-void MCObjectDisassembler::buildSectionAtoms(MCModule *Module) {
-  for (const SectionRef &Section : Obj.sections()) {
-    bool isText = Section.isText();
-    bool isData = Section.isData();
-    if (!isData && !isText)
-      continue;
-
-    uint64_t StartAddr = Section.getAddress();
-    uint64_t SecSize = Section.getSize();
-    if (StartAddr == UnknownAddressOrSize || SecSize == UnknownAddressOrSize)
-      continue;
-    StartAddr = getEffectiveLoadAddr(StartAddr);
-
-    StringRef Contents;
-    Section.getContents(Contents);
-    StringRefMemoryObject memoryObject(Contents, StartAddr);
-
-    // We don't care about things like non-file-backed sections yet.
-    if (Contents.size() != SecSize || !SecSize)
-      continue;
-    uint64_t EndAddr = StartAddr + SecSize - 1;
-
-    StringRef SecName;
-    Section.getName(SecName);
-
-    if (isText) {
-      MCTextAtom *Text = nullptr;
-      MCDataAtom *InvalidData = nullptr;
-
-      uint64_t InstSize;
-      for (uint64_t Index = 0; Index < SecSize; Index += InstSize) {
-        const uint64_t CurAddr = StartAddr + Index;
-        MCInst Inst;
-        if (Dis.getInstruction(Inst, InstSize, memoryObject, CurAddr, nulls(),
-                               nulls())) {
-          if (!Text) {
-            Text = Module->createTextAtom(CurAddr, CurAddr);
-            Text->setName(SecName);
-          }
-          Text->addInst(Inst, InstSize);
-          InvalidData = nullptr;
-        } else {
-          assert(InstSize && "getInstruction() consumed no bytes");
-          if (!InvalidData) {
-            Text = nullptr;
-            InvalidData = Module->createDataAtom(CurAddr, CurAddr+InstSize - 1);
-          }
-          for (uint64_t I = 0; I < InstSize; ++I)
-            InvalidData->addData(Contents[Index+I]);
-        }
-      }
-    } else {
-      MCDataAtom *Data = Module->createDataAtom(StartAddr, EndAddr);
-      Data->setName(SecName);
-      for (uint64_t Index = 0; Index < SecSize; ++Index)
-        Data->addData(Contents[Index]);
-    }
-  }
 }
 
 namespace {
@@ -192,13 +128,12 @@ namespace {
   typedef SmallPtrSet<BBInfo*, 2> BBInfoSetTy;
 
   struct BBInfo {
-    MCTextAtom *Atom;
     MCBasicBlock *BB;
     BBInfoSetTy Succs;
     BBInfoSetTy Preds;
     MCObjectDisassembler::AddressSetTy SuccAddrs;
 
-    BBInfo() : Atom(nullptr), BB(nullptr) {}
+    BBInfo() : BB(nullptr) {}
 
     void addSucc(BBInfo &Succ) {
       Succs.insert(&Succ);
@@ -252,123 +187,6 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
     RemoveDupsFromAddressVector(NewCallTargets);
     CallTargets = NewCallTargets;
   }
-
-
-#if 0
-  typedef std::map<uint64_t, BBInfo> BBInfoByAddrTy;
-  BBInfoByAddrTy BBInfos;
-  AddressSetTy Splits;
-  AddressSetTy Calls;
-
-  for (const SymbolRef &Symbol : Obj.symbols()) {
-    SymbolRef::Type SymType;
-    Symbol.getType(SymType);
-    if (SymType == SymbolRef::ST_Function) {
-      uint64_t SymAddr;
-      Symbol.getAddress(SymAddr);
-      SymAddr = getEffectiveLoadAddr(SymAddr);
-      Calls.push_back(SymAddr);
-      Splits.push_back(SymAddr);
-    }
-  }
-
-  assert(Module->func_begin() == Module->func_end()
-         && "Module already has a CFG!");
-
-  // First, determine the basic block boundaries and call targets.
-  for (MCAtom *Atom : Module->atoms()) {
-    MCTextAtom *TA = dyn_cast<MCTextAtom>(Atom);
-    if (!TA) continue;
-    Calls.push_back(TA->getBeginAddr());
-    BBInfos[TA->getBeginAddr()].Atom = TA;
-    for (auto DecodedInst : *TA) {
-      if (MIA.isTerminator(DecodedInst.Inst))
-        Splits.push_back(DecodedInst.Address + DecodedInst.Size);
-      uint64_t Target;
-      if (MIA.evaluateBranch(DecodedInst.Inst, DecodedInst.Address,
-                             DecodedInst.Size, Target)) {
-        if (MIA.isCall(DecodedInst.Inst))
-          Calls.push_back(Target);
-        Splits.push_back(Target);
-      }
-    }
-  }
-
-  RemoveDupsFromAddressVector(Splits);
-  RemoveDupsFromAddressVector(Calls);
-
-  // Split text atoms into basic block atoms.
-  for (uint64_t Address : Splits) {
-    MCAtom *A = Module->findAtomContaining(Address);
-    if (!A)
-      continue;
-    MCTextAtom *TA = dyn_cast<MCTextAtom>(A);
-    // FIXME: when do we get data atoms here?
-    if (!TA)
-      continue;
-    if (TA->getBeginAddr() == Address)
-      continue;
-    MCTextAtom *NewAtom = TA->split(Address);
-    BBInfos[NewAtom->getBeginAddr()].Atom = NewAtom;
-    StringRef BBName = TA->getName();
-    BBName = BBName.substr(0, BBName.find_last_of(':'));
-    NewAtom->setName((BBName + ":" + utohexstr(Address)).str());
-  }
-
-  // Compute succs/preds.
-  for (MCAtom *Atom : Module->atoms()) {
-    MCTextAtom *TA = dyn_cast<MCTextAtom>(Atom);
-    if (!TA) continue;
-    BBInfo &CurBB = BBInfos[TA->getBeginAddr()];
-    const MCDecodedInst &LI = TA->back();
-    if (MIA.isBranch(LI.Inst)) {
-      uint64_t Target;
-      if (MIA.evaluateBranch(LI.Inst, LI.Address, LI.Size, Target))
-        CurBB.addSucc(BBInfos[Target]);
-      if (MIA.isConditionalBranch(LI.Inst))
-        CurBB.addSucc(BBInfos[LI.Address + LI.Size]);
-    } else if (!MIA.isTerminator(LI.Inst))
-      CurBB.addSucc(BBInfos[LI.Address + LI.Size]);
-  }
-
-
-  // Create functions and basic blocks.
-  for (uint64_t Address : Calls) {
-    BBInfo &BBI = BBInfos[Address];
-    if (!BBI.Atom) continue;
-
-    MCFunction &MCFN = *Module->createFunction(BBI.Atom->getName());
-
-    // Create MCBBs.
-    SmallSetVector<BBInfo*, 16> Worklist;
-    Worklist.insert(&BBI);
-    for (size_t wi = 0; wi < Worklist.size(); ++wi) {
-      BBInfo *BBI = Worklist[wi];
-      if (!BBI->Atom)
-        continue;
-      BBI->BB = &MCFN.createBlock(*BBI->Atom);
-      // Add all predecessors and successors to the worklist.
-      for (auto S : BBI->Succs)
-        Worklist.insert(S);
-      for (auto P : BBI->Preds)
-        Worklist.insert(P);
-    }
-
-    // Set preds/succs.
-    for (size_t wi = 0; wi < Worklist.size(); ++wi) {
-      BBInfo *BBI = Worklist[wi];
-      MCBasicBlock *MCBB = BBI->BB;
-      if (!MCBB)
-        continue;
-      for (auto S : BBI->Succs)
-        if (S->BB)
-          MCBB->addSuccessor(S->BB);
-      for (auto P : BBI->Preds)
-        if (P->BB)
-          MCBB->addPredecessor(P->BB);
-    }
-  }
-#endif
 }
 
 bool MCObjectDisassembler::findCachedInstruction(MCInst &Inst,
@@ -538,37 +356,32 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
     BBInfo *BBI = &BBInfos[BeginAddr];
     bool FailedDisassembly = false;
 
-    MCTextAtom *&TA = BBI->Atom;
-    assert(!TA && "Discovered basic block already has an associated atom!");
+    MCBasicBlock *&MCBB = BBI->BB;
+    assert(!MCBB && "Basic Block already exists!");
 
     DEBUG(dbgs() << "Looking for block at " << utohexstr(BeginAddr) << "\n");
 
-    // Look for an atom at BeginAddr.
-    if (MCAtom *A = Module->findAtomContaining(BeginAddr)) {
+    // Look for a BB at BeginAddr.
+    if (MCBasicBlock *ExistingBB = MCFN->findContaining(BeginAddr)) {
       DEBUG(dbgs() << "Found block at " << utohexstr(BeginAddr) << "!\n");
 
-      // FIXME: We don't care about mixed atoms, see above.
-      TA = cast<MCTextAtom>(A);
-
-      // The found atom doesn't begin at BeginAddr, we have to split it.
-      if (TA->getBeginAddr() != BeginAddr) {
-        DEBUG(dbgs() << "Block at " << utohexstr(TA->getBeginAddr())
+      // The found BB doesn't begin at BeginAddr, we have to split it.
+      if (ExistingBB->getStartAddr() != BeginAddr) {
+        DEBUG(dbgs() << "Block at " << utohexstr(ExistingBB->getStartAddr())
               << " needs splitting at " << utohexstr(BeginAddr) << "\n");
-        // FIXME: Handle overlapping atoms: middle-starting instructions, etc..
-        MCTextAtom *NewTA = TA->split(BeginAddr);
+        MCBasicBlock *NewBB = ExistingBB->split(BeginAddr);
 
         // Look for an already encountered basic block that needs splitting
-        auto SplitBBIt = BBInfos.find(TA->getBeginAddr());
-        if (SplitBBIt != BBInfos.end() && SplitBBIt->second.Atom) {
+        auto SplitBBIt = BBInfos.find(ExistingBB->getStartAddr());
+        if (SplitBBIt != BBInfos.end() && SplitBBIt->second.BB) {
           BBI->SuccAddrs = SplitBBIt->second.SuccAddrs;
           SplitBBIt->second.SuccAddrs.clear();
           SplitBBIt->second.SuccAddrs.push_back(BeginAddr);
         }
-        TA = NewTA;
+        MCBB = NewBB;
       }
-      BBI->Atom = TA;
     } else {
-      // If we didn't find an atom, then we have to disassemble to create one!
+      // If we didn't find a BB, then we have to disassemble to create one!
       MemoryObject *Region = getRegionFor(BeginAddr);
       if (!Region)
         llvm_unreachable(("Couldn't find suitable region for disassembly at " +
@@ -577,29 +390,26 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
       uint64_t InstSize;
       uint64_t EndAddr = Region->getBase() + Region->getExtent();
 
-      // We want to stop before the next atom and have a fallthrough to it.
-      if (MCTextAtom *NextAtom =
-              cast_or_null<MCTextAtom>(Module->findFirstAtomAfter(BeginAddr)))
-        EndAddr = std::min(EndAddr, NextAtom->getBeginAddr());
+      // We want to stop before the next BB and have a fallthrough to it.
+      if (MCBasicBlock *NextBB = MCFN->findFirstAfter(BeginAddr))
+        EndAddr = std::min(EndAddr, NextBB->getStartAddr());
 
       DEBUG(dbgs() << "No block, starting disassembly from "
                    << utohexstr(BeginAddr) << " to "
                    << utohexstr(EndAddr) << "\n");
 
+      MCBB = &MCFN->createBlock(BeginAddr);
+
       for (uint64_t Addr = BeginAddr; Addr < EndAddr; Addr += InstSize) {
         MCInst Inst;
         if (findCachedInstruction(Inst, InstSize, *Region, Addr)) {
-          if (!TA)
-            TA = Module->createTextAtom(Addr, Addr);
-          TA->addInst(Inst, InstSize);
+          MCBB->addInst(Inst, InstSize);
           ++Uniqued;
         }  else
         if (Dis.getInstruction(Inst, InstSize, *Region, Addr, nulls(),
                                nulls())) {
           ++Translated;
-          if (!TA)
-            TA = Module->createTextAtom(Addr, Addr);
-          TA->addInst(Inst, InstSize);
+          MCBB->addInst(Inst, InstSize);
 
           StringRefMemoryObject *SRRegion =
               static_cast<StringRefMemoryObject *>(Region);
@@ -627,31 +437,27 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
           break;
         }
       }
-      BBI->Atom = TA;
     }
 
-    assert(TA && "Couldn't disassemble atom, none was created!");
-    assert(TA->begin() != TA->end() && "Empty atom!");
-
-    MemoryObject *Region = getRegionFor(TA->getBeginAddr());
+    MemoryObject *Region = getRegionFor(MCBB->getStartAddr());
     assert(Region && "Couldn't find region for already disassembled code!");
     uint64_t EndRegion = Region->getBase() + Region->getExtent();
 
     if (!FailedDisassembly) {
-      // Now we have a basic block atom, add successors.
+      // Now we have a basic block, add successors.
       // Add the fallthrough block.
-      if ((MIA.isConditionalBranch(TA->back().Inst) ||
-           !MIA.isTerminator(TA->back().Inst)) &&
-          (TA->getEndAddr() + 1 < EndRegion)) {
-        BBI->SuccAddrs.push_back(TA->getEndAddr() + 1);
-        Worklist.insert(TA->getEndAddr() + 1);
+      if ((MIA.isConditionalBranch(MCBB->back().Inst) ||
+           !MIA.isTerminator(MCBB->back().Inst)) &&
+          (MCBB->getStartAddr() + MCBB->getSize() < EndRegion)) {
+        BBI->SuccAddrs.push_back(MCBB->getStartAddr() + MCBB->getSize());
+        Worklist.insert(MCBB->getStartAddr() + MCBB->getSize());
       }
 
       // If the terminator is a branch, add the target block.
-      if (MIA.isBranch(TA->back().Inst)) {
+      if (MIA.isBranch(MCBB->back().Inst)) {
         uint64_t BranchTarget;
-        if (MIA.evaluateBranch(TA->back().Inst, TA->back().Address,
-                               TA->back().Size, BranchTarget)) {
+        if (MIA.evaluateBranch(MCBB->back().Inst, MCBB->back().Address,
+                               MCBB->back().Size, BranchTarget)) {
           StringRef ExtFnName;
           if (MOS)
             ExtFnName =
@@ -666,22 +472,6 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
         }
       }
     }
-  }
-
-  for (size_t wi = 0, we = Worklist.size(); wi != we; ++wi) {
-    const uint64_t BeginAddr = Worklist[wi];
-    BBInfo *BBI = &BBInfos[BeginAddr];
-
-    assert(BBI->Atom && "Found a basic block without an associated atom!");
-
-    // Look for a basic block at BeginAddr.
-    BBI->BB = MCFN->find(BeginAddr);
-    if (BBI->BB) {
-      // FIXME: check that the succs/preds are the same
-      continue;
-    }
-    // If there was none, we have to create one from the atom.
-    BBI->BB = &MCFN->createBlock(*BBI->Atom);
   }
 
   for (size_t wi = 0, we = Worklist.size(); wi != we; ++wi) {

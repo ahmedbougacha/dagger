@@ -144,7 +144,7 @@ void DCInstrSema::SwitchToModule(Module *M) {
 
 void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
   assert(!MCFN->empty() && "Trying to translate empty MC function");
-  const uint64_t StartAddr = MCFN->getEntryBlock()->getInsts()->getBeginAddr();
+  const uint64_t StartAddr = MCFN->getEntryBlock()->getStartAddr();
 
   TheFunction = getFunction(StartAddr);
   TheFunction->setDoesNotAlias(1);
@@ -185,6 +185,7 @@ void DCInstrSema::SwitchToBasicBlock(uint64_t BeginAddr) {
   Builder->SetInsertPoint(TheBB);
 
   DRS.SwitchToBasicBlock(TheBB);
+  // FIXME: we need to keep the unreachable+trap when the basic block is 0-inst.
 
   // The PC at the start of the basic block is known, just set it.
   unsigned PC = DRS.MRI.getProgramCounter();
@@ -193,12 +194,12 @@ void DCInstrSema::SwitchToBasicBlock(uint64_t BeginAddr) {
 
 uint64_t DCInstrSema::getBasicBlockStartAddress() const {
   assert(TheMCBB && "Getting start address without an MC BasicBlock");
-  return TheMCBB->getInsts()->getBeginAddr();
+  return TheMCBB->getStartAddr();
 }
 
 uint64_t DCInstrSema::getBasicBlockEndAddress() const {
   assert(TheMCBB && "Getting end address without an MC BasicBlock");
-  return TheMCBB->getInsts()->getEndAddr();
+  return TheMCBB->getStartAddr() + TheMCBB->getSize();
 }
 
 Function *DCInstrSema::getFunction(uint64_t Addr) {

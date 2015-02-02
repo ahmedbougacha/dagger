@@ -13,7 +13,6 @@
 
 #include "llvm/MC/MCAnalysis/MCModuleYAML.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/MC/MCAnalysis/MCAtom.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
@@ -96,17 +95,12 @@ struct Inst {
   uint64_t Size;
 };
 
-struct Atom {
-  MCAtom::AtomKind Type;
-  yaml::Hex64 StartAddress;
-  uint64_t Size;
-
-  std::vector<Inst> Insts;
-  yaml::BinaryRef Data;
-};
-
 struct BasicBlock {
   yaml::Hex64 Address;
+  uint64_t SizeInBytes;
+  uint64_t InstCount;
+
+  std::vector<Inst> Insts;
   std::vector<yaml::Hex64> Preds;
   std::vector<yaml::Hex64> Succs;
 };
@@ -117,7 +111,6 @@ struct Function {
 };
 
 struct Module {
-  std::vector<Atom> Atoms;
   std::vector<Function> Functions;
 };
 
@@ -127,21 +120,12 @@ struct Module {
 LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(llvm::yaml::Hex64)
 LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(llvm::MCModuleYAML::Operand)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::MCModuleYAML::Inst)
-LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::MCModuleYAML::Atom)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::MCModuleYAML::BasicBlock)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::MCModuleYAML::Function)
 
 namespace llvm {
 
 namespace yaml {
-
-template <> struct ScalarEnumerationTraits<MCAtom::AtomKind> {
-  static void enumeration(IO &IO, MCAtom::AtomKind &Kind);
-};
-
-template <> struct MappingTraits<MCModuleYAML::Atom> {
-  static void mapping(IO &IO, MCModuleYAML::Atom &A);
-};
 
 template <> struct MappingTraits<MCModuleYAML::Inst> {
   static void mapping(IO &IO, MCModuleYAML::Inst &I);
@@ -173,22 +157,6 @@ template <> struct ScalarTraits<MCModuleYAML::OpcodeEnum> {
   static bool mustQuote(StringRef) { return false; }
 };
 
-void ScalarEnumerationTraits<MCAtom::AtomKind>::enumeration(
-    IO &IO, MCAtom::AtomKind &Value) {
-  IO.enumCase(Value, "Text", MCAtom::TextAtom);
-  IO.enumCase(Value, "Data", MCAtom::DataAtom);
-}
-
-void MappingTraits<MCModuleYAML::Atom>::mapping(IO &IO, MCModuleYAML::Atom &A) {
-  IO.mapRequired("StartAddress", A.StartAddress);
-  IO.mapRequired("Size", A.Size);
-  IO.mapRequired("Type", A.Type);
-  if (A.Type == MCAtom::TextAtom)
-    IO.mapRequired("Content", A.Insts);
-  else if (A.Type == MCAtom::DataAtom)
-    IO.mapRequired("Content", A.Data);
-}
-
 void MappingTraits<MCModuleYAML::Inst>::mapping(IO &IO, MCModuleYAML::Inst &I) {
   IO.mapRequired("Inst", I.Opcode);
   IO.mapRequired("Size", I.Size);
@@ -201,6 +169,9 @@ MappingTraits<MCModuleYAML::BasicBlock>::mapping(IO &IO,
   IO.mapRequired("Address", BB.Address);
   IO.mapRequired("Preds", BB.Preds);
   IO.mapRequired("Succs", BB.Succs);
+  IO.mapRequired("SizeInBytes", BB.SizeInBytes);
+  IO.mapRequired("InstCount", BB.InstCount);
+  IO.mapRequired("Instructions", BB.Insts);
 }
 
 void MappingTraits<MCModuleYAML::Function>::mapping(IO &IO,
@@ -211,7 +182,6 @@ void MappingTraits<MCModuleYAML::Function>::mapping(IO &IO,
 
 void MappingTraits<MCModuleYAML::Module>::mapping(IO &IO,
                                                   MCModuleYAML::Module &M) {
-  IO.mapRequired("Atoms", M.Atoms);
   IO.mapOptional("Functions", M.Functions);
 }
 
@@ -278,7 +248,6 @@ namespace {
 class MCModule2YAML {
   const MCModule &MCM;
   MCModuleYAML::Module YAMLModule;
-  void dumpAtom(const MCAtom *MCA);
   void dumpFunction(const MCFunction &MCF);
   void dumpBasicBlock(const MCBasicBlock *MCBB);
 
@@ -298,39 +267,9 @@ public:
 } // end unnamed namespace
 
 MCModule2YAML::MCModule2YAML(const MCModule &MCM) : MCM(MCM), YAMLModule() {
-  for (MCModule::const_atom_iterator AI = MCM.atom_begin(), AE = MCM.atom_end();
-       AI != AE; ++AI)
-    dumpAtom(*AI);
   for (MCModule::const_func_iterator FI = MCM.func_begin(), FE = MCM.func_end();
        FI != FE; ++FI)
     dumpFunction(**FI);
-}
-
-void MCModule2YAML::dumpAtom(const MCAtom *MCA) {
-  YAMLModule.Atoms.resize(YAMLModule.Atoms.size() + 1);
-  MCModuleYAML::Atom &A = YAMLModule.Atoms.back();
-  A.Type = MCA->getKind();
-  A.StartAddress = MCA->getBeginAddr();
-  A.Size = MCA->getEndAddr() - MCA->getBeginAddr() + 1;
-  if (const MCTextAtom *TA = dyn_cast<MCTextAtom>(MCA)) {
-    const size_t InstCount = TA->size();
-    A.Insts.resize(InstCount);
-    size_t N = 0;
-    for (MCTextAtom::const_iterator I = TA->begin(), E = TA->end(); I != E;
-         ++I, ++N) {
-      const MCDecodedInst &MCDI = *I;
-      A.Insts[N].Opcode = MCDI.Inst.getOpcode();
-      A.Insts[N].Size = MCDI.Size;
-      const unsigned OpCount = MCDI.Inst.getNumOperands();
-      A.Insts[N].Operands.resize(OpCount);
-      for (unsigned oi = 0; oi != OpCount; ++oi)
-        A.Insts[N].Operands[oi].MCOp = MCDI.Inst.getOperand(oi);
-    }
-  } else if (const MCDataAtom *DA = dyn_cast<MCDataAtom>(MCA)) {
-    A.Data = DA->getData();
-  } else {
-    llvm_unreachable("Unknown atom type.");
-  }
 }
 
 void MCModule2YAML::dumpFunction(const MCFunction &MCF) {
@@ -342,15 +281,33 @@ void MCModule2YAML::dumpFunction(const MCFunction &MCF) {
     const MCBasicBlock &MCBB = **BBI;
     F.BasicBlocks.resize(F.BasicBlocks.size() + 1);
     MCModuleYAML::BasicBlock &BB = F.BasicBlocks.back();
-    BB.Address = MCBB.getInsts()->getBeginAddr();
+    BB.Address = MCBB.getStartAddr();
+
+    for (MCBasicBlock::const_iterator I = MCBB.begin(), E = MCBB.end();
+         I != E; ++I) {
+      const MCDecodedInst &MCDI = *I;
+      BB.Insts.push_back(MCModuleYAML::Inst());
+      BB.Insts.back().Opcode = MCDI.Inst.getOpcode();
+      BB.Insts.back().Size = MCDI.Size;
+      BB.SizeInBytes += MCDI.Size;
+      const unsigned OpCount = MCDI.Inst.getNumOperands();
+      BB.Insts.back().Operands.resize(OpCount);
+      for (unsigned oi = 0; oi != OpCount; ++oi)
+        BB.Insts.back().Operands[oi].MCOp = MCDI.Inst.getOperand(oi);
+      ++BB.InstCount;
+    }
+
     for (MCBasicBlock::pred_const_iterator PI = MCBB.pred_begin(),
                                            PE = MCBB.pred_end();
          PI != PE; ++PI)
-      BB.Preds.push_back((*PI)->getInsts()->getBeginAddr());
+      BB.Preds.push_back((*PI)->getStartAddr());
+    // FIXME: Should we keep them sorted in MCBasicBlock?
+    std::sort(BB.Preds.begin(), BB.Preds.end());
     for (MCBasicBlock::succ_const_iterator SI = MCBB.succ_begin(),
                                            SE = MCBB.succ_end();
          SI != SE; ++SI)
-      BB.Succs.push_back((*SI)->getInsts()->getBeginAddr());
+      BB.Succs.push_back((*SI)->getStartAddr());
+    std::sort(BB.Succs.begin(), BB.Succs.end());
   }
 }
 
@@ -359,47 +316,8 @@ MCModuleYAML::Module &MCModule2YAML::getYAMLModule() { return YAMLModule; }
 YAML2MCModule::YAML2MCModule(MCModule &MCM) : MCM(MCM) {}
 
 StringRef YAML2MCModule::parse(const MCModuleYAML::Module &YAMLModule) {
-  typedef std::vector<MCModuleYAML::Atom>::const_iterator AtomIt;
   typedef std::vector<MCModuleYAML::Inst>::const_iterator InstIt;
   typedef std::vector<MCModuleYAML::Operand>::const_iterator OpIt;
-
-  typedef DenseMap<uint64_t, MCTextAtom *> AddrToTextAtomTy;
-  AddrToTextAtomTy TAByAddr;
-
-  for (AtomIt AI = YAMLModule.Atoms.begin(), AE = YAMLModule.Atoms.end();
-       AI != AE; ++AI) {
-    uint64_t StartAddress = AI->StartAddress;
-    if (AI->Size == 0)
-      return "Atoms can't be empty!";
-    uint64_t EndAddress = StartAddress + AI->Size - 1;
-    switch (AI->Type) {
-    case MCAtom::TextAtom: {
-      MCTextAtom *TA = MCM.createTextAtom(StartAddress, EndAddress);
-      TAByAddr[StartAddress] = TA;
-      for (InstIt II = AI->Insts.begin(), IE = AI->Insts.end(); II != IE;
-           ++II) {
-        MCInst MI;
-        MI.setOpcode(II->Opcode);
-        for (OpIt OI = II->Operands.begin(), OE = II->Operands.end(); OI != OE;
-             ++OI)
-          MI.addOperand(OI->MCOp);
-        TA->addInst(MI, II->Size);
-      }
-      break;
-    }
-    case MCAtom::DataAtom: {
-      MCDataAtom *DA = MCM.createDataAtom(StartAddress, EndAddress);
-      SmallVector<char, 64> Data;
-      raw_svector_ostream OS(Data);
-      AI->Data.writeAsBinary(OS);
-      OS.flush();
-      for (size_t i = 0, e = Data.size(); i != e; ++i)
-        DA->addData((uint8_t)Data[i]);
-      break;
-    }
-    }
-  }
-
   typedef std::vector<MCModuleYAML::Function>::const_iterator FuncIt;
   typedef std::vector<MCModuleYAML::BasicBlock>::const_iterator BBIt;
   typedef std::vector<yaml::Hex64>::const_iterator AddrIt;
@@ -409,10 +327,16 @@ StringRef YAML2MCModule::parse(const MCModuleYAML::Module &YAMLModule) {
     MCFunction *MCFN = MCM.createFunction(FI->Name);
     for (BBIt BBI = FI->BasicBlocks.begin(), BBE = FI->BasicBlocks.end();
          BBI != BBE; ++BBI) {
-      AddrToTextAtomTy::const_iterator It = TAByAddr.find(BBI->Address);
-      if (It == TAByAddr.end())
-        return "Basic block start address doesn't match any text atom!";
-      MCFN->createBlock(*It->second);
+      MCBasicBlock *MCBB = &MCFN->createBlock(BBI->Address);
+      for (InstIt II = BBI->Insts.begin(), IE = BBI->Insts.end(); II != IE;
+           ++II) {
+        MCInst MI;
+        MI.setOpcode(II->Opcode);
+        for (OpIt OI = II->Operands.begin(), OE = II->Operands.end(); OI != OE;
+             ++OI)
+          MI.addOperand(OI->MCOp);
+        MCBB->addInst(MI, II->Size);
+      }
     }
     for (BBIt BBI = FI->BasicBlocks.begin(), BBE = FI->BasicBlocks.end();
          BBI != BBE; ++BBI) {

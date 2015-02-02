@@ -1,18 +1,16 @@
 RUN: llvm-mccfg %p/Inputs/no-terminator.exe.macho-x86_64 | FileCheck %s
 
 CHECK-LABEL: ---
-CHECK-NEXT: Atoms:
-CHECK-NEXT:   - StartAddress:    0x0000000100000FB4
-CHECK-NEXT:     Size:            4
-CHECK-NEXT:     Type:            Text
-CHECK-NEXT:     Content:
-CHECK-NEXT:       - Inst:            ADD64ri8
-CHECK-NEXT:         Size:            4
-CHECK-NEXT:         Ops:             [ RRDI, RRDI, I1 ]
 CHECK-NEXT: Functions:
 CHECK-NEXT:   - Name:            ''
 CHECK-NEXT:     BasicBlocks:
 CHECK-NEXT:       - Address:         0x0000000100000FB4
 CHECK-NEXT:         Preds:           [  ]
 CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     4
+CHECK-NEXT:         InstCount:       1
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            ADD64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRDI, RRDI, I1 ]
 CHECK-NEXT: ...

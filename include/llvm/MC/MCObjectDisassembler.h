@@ -38,10 +38,8 @@ class MCModule;
 class MCObjectSymbolizer;
 
 /// \brief Disassemble an ObjectFile to an MCModule and MCFunctions.
-/// This class builds on MCDisassembler to disassemble whole sections, creating
-/// MCAtom (MCTextAtom for disassembled sections and MCDataAtom for raw data).
-/// It can also be used to create a control flow graph consisting of MCFunctions
-/// and MCBasicBlocks.
+/// This class builds on MCDisassembler to create a control flow graph
+/// consisting of MCFunctions and MCBasicBlocks.
 class MCObjectDisassembler {
 public:
   MCObjectDisassembler(const object::ObjectFile &Obj,
@@ -49,13 +47,9 @@ public:
                        const MCInstrAnalysis &MIA);
   virtual ~MCObjectDisassembler() {}
 
-  /// \brief Build an MCModule, creating atoms and optionally functions.
-  /// \param withCFG Also build a CFG by adding MCFunctions to the Module.
-  /// If withCFG is false, the MCModule built only contains atoms, representing
-  /// what was found in the object file. If withCFG is true, MCFunctions are
-  /// created, containing MCBasicBlocks. All text atoms are split to form basic
-  /// block atoms, which then each back an MCBasicBlock.
-  MCModule *buildModule(bool withCFG = false);
+  /// \brief Build an MCModule, representing an MC-level Control Flow Graph.
+  /// MCFunctions are created, containing MCBasicBlocks.
+  MCModule *buildModule();
 
   MCModule *buildEmptyModule();
 
@@ -126,11 +120,6 @@ protected:
   MemoryObject *getRegionFor(uint64_t Addr);
 
 private:
-  /// \brief Fill \p Module by creating an atom for each section.
-  /// This could be made much smarter, using information like symbols, but also
-  /// format-specific features, like mach-o function_start or data_in_code LCs.
-  void buildSectionAtoms(MCModule *Module);
-
   /// \brief Enrich \p Module with a CFG consisting of MCFunctions.
   /// \param Module An MCModule returned by buildModule, with no CFG.
   /// NOTE: Each MCBasicBlock in a MCFunction is backed by a single MCTextAtom.

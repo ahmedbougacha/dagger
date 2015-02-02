@@ -1,31 +1,28 @@
 RUN: llvm-mccfg %p/Inputs/jmp-backedge.exe.macho-x86_64 | FileCheck %s
 
 CHECK-LABEL: ---
-CHECK-NEXT: Atoms:
-CHECK-NEXT:   - StartAddress:    0x0000000100000FAD
-CHECK-NEXT:     Size:            4
-CHECK-NEXT:     Type:            Text
-CHECK-NEXT:     Content:
-CHECK-NEXT:       - Inst:            ADD64ri8
-CHECK-NEXT:         Size:            4
-CHECK-NEXT:         Ops:             [ RRDI, RRDI, I1 ]
-CHECK-NEXT:   - StartAddress:    0x0000000100000FB1
-CHECK-NEXT:     Size:            6
-CHECK-NEXT:     Type:            Text
-CHECK-NEXT:     Content:
-CHECK-NEXT:       - Inst:            ADD64ri8
-CHECK-NEXT:         Size:            4
-CHECK-NEXT:         Ops:             [ RRDI, RRDI, I2 ]
-CHECK-NEXT:       - Inst:            JMP_1
-CHECK-NEXT:         Size:            2
-CHECK-NEXT:         Ops:             [ I-6 ]
 CHECK-NEXT: Functions:
 CHECK-NEXT:   - Name:            ''
 CHECK-NEXT:     BasicBlocks:
 CHECK-NEXT:       - Address:         0x0000000100000FAD
 CHECK-NEXT:         Preds:           [  ]
 CHECK-NEXT:         Succs:           [ 0x0000000100000FB1 ]
+CHECK-NEXT:         SizeInBytes:     4
+CHECK-NEXT:         InstCount:       1
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            ADD64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRDI, RRDI, I1 ]
 CHECK-NEXT:       - Address:         0x0000000100000FB1
 CHECK-NEXT:         Preds:           [ 0x0000000100000FAD, 0x0000000100000FB1 ]
 CHECK-NEXT:         Succs:           [ 0x0000000100000FB1 ]
+CHECK-NEXT:         SizeInBytes:     6
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            ADD64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRDI, RRDI, I2 ]
+CHECK-NEXT:           - Inst:            JMP_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I-6 ]
 CHECK-NEXT: ...
