@@ -11,6 +11,7 @@
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/StringRefMemoryObject.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar.h"
@@ -97,6 +98,21 @@ Function *DCTranslator::getFunctionAt(uint64_t Addr) {
   return TheModule.getFunction("fn_" + utohexstr(Addr));
 }
 
+namespace {
+  class AddrPrettyStackTraceEntry : public PrettyStackTraceEntry {
+  public:
+    uint64_t StartAddr;
+    const char *Kind;
+    AddrPrettyStackTraceEntry(uint64_t StartAddr, const char *Kind)
+      : PrettyStackTraceEntry(), StartAddr(StartAddr), Kind(Kind) {}
+
+    void print(raw_ostream &OS) const override {
+      OS << "DC: Translating " << Kind << " at address "
+         << utohexstr(StartAddr) << "\n";
+    }
+  };
+} // end anonymous namespace
+
 static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
   return LHS->getStartAddr() < RHS->getStartAddr();
 }
@@ -104,6 +120,8 @@ static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
 void DCTranslator::translateFunction(
     MCFunction *MCFN,
     const MCObjectDisassembler::AddressSetTy &TailCallTargets) {
+
+  AddrPrettyStackTraceEntry X(MCFN->getEntryBlock()->getStartAddr(),"Function");
 
   DIS.SwitchToFunction(MCFN);
 
@@ -115,6 +133,8 @@ void DCTranslator::translateFunction(
     DIS.getOrCreateBasicBlock(BB->getStartAddr());
 
   for (auto &BB : *MCFN) {
+    AddrPrettyStackTraceEntry X(BB->getStartAddr(), "Basic Block");
+
     DEBUG(dbgs() << "Translating basic block starting at "
                  << utohexstr(BB->getStartAddr()) << ", with " << BB->size()
                  << " instructions.\n");
