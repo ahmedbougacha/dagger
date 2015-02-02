@@ -320,6 +320,49 @@ void X86InstrSema::translateTargetOpcode() {
     break;
   }
 
+  case X86ISD::BSF: {
+    (void)NextVT();
+    Value *Src = getNextOperand();
+    // If the source is zero, it is undefined behavior as per Intel SDM, but
+    // most implementations I'm aware of just leave the destination unchanged.
+    assert((CurrentInst->Inst.getOpcode() >= X86::BSF16rm &&
+           CurrentInst->Inst.getOpcode() <= X86::BSF64rr) &&
+           "Unexpected instruction with X86ISD::BSR node!");
+    Value *IsSrcZero = Builder->CreateIsNull(Src);
+    Value *PrevDstVal = getReg(CurrentInst->Inst.getOperand(0).getReg());
+    Type *ArgTys[] = { PrevDstVal->getType(), Builder->getInt1Ty() };
+    Value *Cttz = Builder->CreateCall2(
+      Intrinsic::getDeclaration(TheModule, Intrinsic::cttz, ArgTys),
+      Src, /*is_zero_undef:*/ Builder->getInt1(true));
+    registerResult(Builder->CreateSelect(IsSrcZero, PrevDstVal, Cttz));
+
+    // We also need to update ZF in EFLAGS.
+    Value *OldEFLAGS = getReg(X86::EFLAGS);
+    registerResult(DRS.insertBitsInValue(OldEFLAGS, IsSrcZero, X86::ZF));
+    break;
+  }
+  case X86ISD::BSR: {
+    (void)NextVT();
+    Value *Src = getNextOperand();
+    // If the source is zero, it is undefined behavior as per Intel SDM, but
+    // most implementations I'm aware of just leave the destination unchanged.
+    assert((CurrentInst->Inst.getOpcode() >= X86::BSR16rm &&
+           CurrentInst->Inst.getOpcode() <= X86::BSR64rr) &&
+           "Unexpected instruction with X86ISD::BSR node!");
+    Value *IsSrcZero = Builder->CreateIsNull(Src);
+    Value *PrevDstVal = getReg(CurrentInst->Inst.getOperand(0).getReg());
+    Type *ArgTys[] = { PrevDstVal->getType(), Builder->getInt1Ty() };
+    Value *Ctlz = Builder->CreateCall2(
+      Intrinsic::getDeclaration(TheModule, Intrinsic::ctlz, ArgTys),
+      Src, /*is_zero_undef:*/ Builder->getInt1(true));
+    registerResult(Builder->CreateSelect(IsSrcZero, PrevDstVal, Ctlz));
+
+    // We also need to update ZF in EFLAGS.
+    Value *OldEFLAGS = getReg(X86::EFLAGS);
+    registerResult(DRS.insertBitsInValue(OldEFLAGS, IsSrcZero, X86::ZF));
+    break;
+  }
+
   case X86DCISD::DIV8:
     translateDivRem(/* isThreeOperand= */ false, /* isSigned= */ false);
     break;
