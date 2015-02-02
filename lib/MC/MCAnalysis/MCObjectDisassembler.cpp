@@ -25,6 +25,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MachO.h"
 #include "llvm/Support/MemoryObject.h"
+#include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/StringRefMemoryObject.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
@@ -323,6 +324,20 @@ void MCObjectDisassembler::uniqueTempInstructions() {
   TempInstValues.reserve(7000);
 }
 
+namespace {
+  class AddrPrettyStackTraceEntry : public PrettyStackTraceEntry {
+  public:
+    uint64_t StartAddr;
+    const char *Kind;
+    AddrPrettyStackTraceEntry(uint64_t StartAddr, const char *Kind)
+      : PrettyStackTraceEntry(), StartAddr(StartAddr), Kind(Kind) {}
+
+    void print(raw_ostream &OS) const override {
+      OS << "MC CFG: Disassembling " << Kind << " at address "
+         << utohexstr(StartAddr) << "\n";
+    }
+  };
+} // end anonymous namespace
 
 // Basic idea of the disassembly + discovery:
 //
@@ -355,6 +370,8 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
     const uint64_t BeginAddr = Worklist[wi];
     BBInfo *BBI = &BBInfos[BeginAddr];
     bool FailedDisassembly = false;
+
+    AddrPrettyStackTraceEntry X(BeginAddr, "Basic Block");
 
     MCBasicBlock *&MCBB = BBI->BB;
     assert(!MCBB && "Basic Block already exists!");
@@ -497,6 +514,8 @@ MCFunction *
 MCObjectDisassembler::createFunction(MCModule *Module, uint64_t BeginAddr,
                                      AddressSetTy &CallTargets,
                                      AddressSetTy &TailCallTargets) {
+  AddrPrettyStackTraceEntry X(BeginAddr, "Function");
+
   // First, check if this is an external function.
   StringRef ExtFnName;
   if (MOS)
