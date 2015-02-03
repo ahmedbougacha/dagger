@@ -46,6 +46,9 @@ private:
 
   void translateDivRem(bool isThreeOperand, bool isSigned);
   void translateHorizontalBinop(Instruction::BinaryOps BinOp);
+
+  void translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
+                        Value *V2 = nullptr);
 };
 
 } // end namespace llvm

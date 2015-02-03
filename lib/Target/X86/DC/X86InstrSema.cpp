@@ -4,6 +4,7 @@
 #include "InstPrinter/X86IntelInstPrinter.h"
 #include "MCTargetDesc/X86MCTargetDesc.h"
 #include "X86ISelLowering.h"
+#include "Utils/X86ShuffleDecode.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
@@ -393,15 +394,11 @@ void X86InstrSema::translateTargetOpcode() {
                                          Src2, Src1));
     break;
   }
-  case X86ISD::MOVLHPS:
   case X86ISD::MOVLHPD:
-  case X86ISD::MOVHLPS:
   case X86ISD::MOVLPS:
   case X86ISD::MOVLPD:
   case X86ISD::MOVSD:
-  case X86ISD::MOVSS:
-  case X86ISD::UNPCKH:
-  case X86ISD::UNPCKL: {
+  case X86ISD::MOVSS: {
     Value *Src1 = getNextOperand();
     Value *Src2 = getNextOperand();
     Type *VecTy = ResEVT.getTypeForEVT(*Ctx);
@@ -422,30 +419,9 @@ void X86InstrSema::translateTargetOpcode() {
         Mask[1] = Builder->getInt32(NumElt + 1);
       break;
     }
-    case X86ISD::MOVLHPS: {
-      assert(NumElt == 4);
-      Mask[2] = Builder->getInt32(NumElt);
-      Mask[3] = Builder->getInt32(NumElt + 1);
-      break;
-    }
-    case X86ISD::MOVHLPS: {
-      assert(NumElt == 4);
-      Mask[0] = Builder->getInt32(NumElt + 2);
-      Mask[1] = Builder->getInt32(NumElt + 3);
-      break;
-    }
     case X86ISD::MOVLHPD: {
       assert(NumElt == 2);
       Mask[1] = Builder->getInt32(NumElt);
-      break;
-    }
-    case X86ISD::UNPCKH:
-    case X86ISD::UNPCKL: {
-      int offset = (Opcode == X86ISD::UNPCKH ? NumElt / 2 : 0);
-      for (int i = 0, e = NumElt / 2; i != e; ++i) {
-        Mask[i] = Builder->getInt32(offset + i);
-        Mask[i + 1] = Builder->getInt32(offset + i + NumElt);
-      }
       break;
     }
     }
@@ -453,23 +429,57 @@ void X86InstrSema::translateTargetOpcode() {
         Builder->CreateShuffleVector(Src1, Src2, ConstantVector::get(Mask)));
     break;
   }
-  case X86ISD::PSHUFD: {
+  case X86ISD::UNPCKL:
+  case X86ISD::UNPCKH:
+  case X86ISD::MOVLHPS:
+  case X86ISD::MOVHLPS: {
+    Value *Src1 = getNextOperand();
+    Value *Src2 = getNextOperand();
+    SmallVector<int, 8> Mask;
+    switch (Opcode) {
+    case X86ISD::MOVLHPS:
+      DecodeMOVLHPSMask(ResEVT.getVectorNumElements(), Mask); break;
+    case X86ISD::MOVHLPS:
+      DecodeMOVHLPSMask(ResEVT.getVectorNumElements(), Mask); break;
+    case X86ISD::UNPCKL:
+      DecodeUNPCKLMask(ResEVT.getSimpleVT(), Mask); break;
+    case X86ISD::UNPCKH:
+      DecodeUNPCKHMask(ResEVT.getSimpleVT(), Mask); break;
+    };
+    translateShuffle(Mask, Src1, Src2);
+    break;
+  }
+  case X86ISD::PSHUFD:
+  case X86ISD::PSHUFHW:
+  case X86ISD::PSHUFLW: {
     Value *Src = getNextOperand();
-    uint64_t Order =
-        cast<ConstantInt>(getNextOperand())->getValue().getZExtValue();
-    Type *VecTy = ResEVT.getTypeForEVT(*Ctx);
-    assert(VecTy->isVectorTy() && VecTy == Src->getType());
-    unsigned NumElt = VecTy->getVectorNumElements();
-    SmallVector<Constant *, 8> Mask;
-    unsigned i;
-    for (i = 0; i != 4; ++i)
-      Mask.push_back(Builder->getInt32((Order >> (i * 2)) & 3));
-    // If Src is bigger than v4, this is a VPSHUFD, so clear the upper bits.
-    for (; i != NumElt; ++i)
-      Mask.push_back(Builder->getInt32(NumElt + i));
-    registerResult(Builder->CreateShuffleVector(Src,
-                                                Constant::getNullValue(VecTy),
-                                                ConstantVector::get(Mask)));
+    unsigned MaskImm = cast<ConstantInt>(getNextOperand())->getZExtValue();
+    SmallVector<int, 8> Mask;
+    switch (Opcode) {
+    case X86ISD::PSHUFD:
+      DecodePSHUFMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+    case X86ISD::PSHUFHW:
+      DecodePSHUFHWMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+    case X86ISD::PSHUFLW:
+      DecodePSHUFLWMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+    };
+    translateShuffle(Mask, Src);
+    break;
+  }
+  case X86ISD::SHUFP:
+  case X86ISD::PALIGNR: {
+    Value *Src1 = getNextOperand();
+    Value *Src2 = getNextOperand();
+    unsigned MaskImm = cast<ConstantInt>(getNextOperand())->getZExtValue();
+    SmallVector<int, 8> Mask;
+    DecodePSHUFMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+    switch (Opcode) {
+    case X86ISD::SHUFP:
+      DecodeSHUFPMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+    case X86ISD::PALIGNR:
+      DecodePALIGNRMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+    };
+    translateShuffle(Mask, Src1, Src2);
     break;
   }
   case X86ISD::HSUB:  translateHorizontalBinop(Instruction::Sub);  break;
@@ -656,4 +666,36 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
                      Builder->CreateBinOp(DivOp, Divisor, Dividend), ResType));
   registerResult(Builder->CreateTrunc(
                      Builder->CreateBinOp(RemOp, Divisor, Dividend), ResType));
+}
+
+void X86InstrSema::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
+                                    Value *V2) {
+  Type *VecTy = V1->getType();
+  Type *EltTy = VecTy->getVectorElementType();
+  unsigned NumElts = VecTy->getVectorNumElements();
+
+  SmallVector<Constant *, 8> MaskCV(NumElts);
+
+  bool V2IsZero = false;
+
+  for (size_t i = 0; i < Mask.size(); ++i) {
+    if (Mask[i] == SM_SentinelZero) {
+      V2IsZero = true;
+      MaskCV[i] = Builder->getInt32(NumElts);
+    } else if (Mask[i] == SM_SentinelUndef)
+      MaskCV[i] = UndefValue::get(EltTy);
+    else
+      MaskCV[i] = Builder->getInt32(Mask[i]);
+  }
+
+  assert((!V2IsZero || !V2) &&
+         "Second shuffle input can't be zero and an operand at the same time!");
+
+  if (!V2)
+    V2 = UndefValue::get(V1->getType());
+  if (V2IsZero)
+    V2 = Constant::getNullValue(VecTy);
+
+  registerResult(
+      Builder->CreateShuffleVector(V1, V2, ConstantVector::get(MaskCV)));
 }
