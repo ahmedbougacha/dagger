@@ -129,17 +129,13 @@ namespace {
   typedef SmallPtrSet<BBInfo*, 2> BBInfoSetTy;
 
   struct BBInfo {
+    uint64_t BeginAddr;
+    uint64_t SizeInBytes;
     MCBasicBlock *BB;
-    BBInfoSetTy Succs;
-    BBInfoSetTy Preds;
+    std::vector<MCDecodedInst> Insts;
     MCObjectDisassembler::AddressSetTy SuccAddrs;
 
-    BBInfo() : BB(nullptr) {}
-
-    void addSucc(BBInfo &Succ) {
-      Succs.insert(&Succ);
-      Succ.Preds.insert(this);
-    }
+    BBInfo() : BeginAddr(0), SizeInBytes(0), BB(nullptr) {}
   };
 }
 
@@ -164,8 +160,6 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
       SymAddr = getEffectiveLoadAddr(SymAddr);
       if (!getRegionFor(SymAddr))
         continue;
-      //MCFunction *MCFN = Module->createFunction("");
-      //getBBAt(Module, MCFN, SymAddr, CallTargets, TailCallTargets);
       createFunction(Module, SymAddr, CallTargets, TailCallTargets);
     }
   }
@@ -179,8 +173,6 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
     // First, create functions for all the previously found targets
     for (uint64_t CallTarget : CallTargets) {
       CallTarget = getEffectiveLoadAddr(CallTarget);
-      //MCFunction *MCFN = Module->createFunction("");
-      //getBBAt(Module, MCFN, CallTarget, NewCallTargets, TailCallTargets);
       createFunction(Module, CallTarget, NewCallTargets, TailCallTargets);
     }
     // Next, forget about those targets, since we just handled them.
@@ -354,13 +346,13 @@ namespace {
 // for all elements in the worklist:
 // - create basic block, update preds/succs, etc..
 //
-MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
-                                            uint64_t BBBeginAddr,
-                                            AddressSetTy &CallTargets,
-                                            AddressSetTy &TailCallTargets) {
-  typedef std::map<uint64_t, BBInfo> BBInfoByAddrTy;
+void MCObjectDisassembler::disassembleFunctionAt(
+    MCModule *Module, MCFunction *MCFN, uint64_t BBBeginAddr,
+    AddressSetTy &CallTargets, AddressSetTy &TailCallTargets) {
+  std::map<uint64_t, BBInfo> BBInfos;
+
   typedef SmallSetVector<uint64_t, 16> AddrWorklistTy;
-  BBInfoByAddrTy BBInfos;
+
   AddrWorklistTy Worklist;
 
   DEBUG(dbgs() << "Starting CFG at " << utohexstr(BBBeginAddr) << "\n");
@@ -368,73 +360,112 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
   Worklist.insert(BBBeginAddr);
   for (size_t wi = 0; wi < Worklist.size(); ++wi) {
     const uint64_t BeginAddr = Worklist[wi];
-    BBInfo *BBI = &BBInfos[BeginAddr];
+
     bool FailedDisassembly = false;
-
     AddrPrettyStackTraceEntry X(BeginAddr, "Basic Block");
-
-    MCBasicBlock *&MCBB = BBI->BB;
-    assert(!MCBB && "Basic Block already exists!");
 
     DEBUG(dbgs() << "Looking for block at " << utohexstr(BeginAddr) << "\n");
 
     // Look for a BB at BeginAddr.
-    if (MCBasicBlock *ExistingBB = MCFN->findContaining(BeginAddr)) {
-      DEBUG(dbgs() << "Found block at " << utohexstr(BeginAddr) << "!\n");
+    auto BeforeIt = std::upper_bound(
+        BBInfos.begin(), BBInfos.end(), BeginAddr,
+        [](uint64_t Addr, const std::pair<uint64_t, BBInfo> &BBI) {
+          return Addr < BBI.second.BeginAddr+BBI.second.SizeInBytes;
+        });
 
-      // The found BB doesn't begin at BeginAddr, we have to split it.
-      if (ExistingBB->getStartAddr() != BeginAddr) {
-        DEBUG(dbgs() << "Block at " << utohexstr(ExistingBB->getStartAddr())
-              << " needs splitting at " << utohexstr(BeginAddr) << "\n");
-        MCBasicBlock *NewBB = ExistingBB->split(BeginAddr);
+    assert((BeforeIt == BBInfos.end() || BeforeIt->first != BeginAddr) &&
+           "Visited same basic block twice!");
 
-        // Look for an already encountered basic block that needs splitting
-        auto SplitBBIt = BBInfos.find(ExistingBB->getStartAddr());
-        if (SplitBBIt != BBInfos.end() && SplitBBIt->second.BB) {
-          BBI->SuccAddrs = SplitBBIt->second.SuccAddrs;
-          SplitBBIt->second.SuccAddrs.clear();
-          SplitBBIt->second.SuccAddrs.push_back(BeginAddr);
+    // Found a BB containing BeginAddr, we have to split it.
+    if (BeforeIt != BBInfos.end() && BeforeIt->first < BeginAddr) {
+
+      BBInfo &BeforeBB = BeforeIt->second;
+      DEBUG(dbgs() << "Found block at " << utohexstr(BeforeBB.BeginAddr)
+                   << ", needs splitting at " << utohexstr(BeginAddr) << "\n");
+
+      assert(BeginAddr < BeforeBB.BeginAddr + BeforeBB.SizeInBytes &&
+             "Address isn't inside block?");
+
+      BBInfo &NewBB = BBInfos[BeginAddr];
+      NewBB.BeginAddr = BeginAddr;
+
+      auto SplitInst = BeforeBB.Insts.end();
+      for (auto I = BeforeBB.Insts.begin(), E = BeforeBB.Insts.end(); I != E;
+           ++I) {
+        if (BeginAddr == I->Address) {
+          SplitInst = I;
+          break;
         }
-        MCBB = NewBB;
       }
+
+      assert(SplitInst != BeforeBB.Insts.end() &&
+             "Split point does not fall on an instruction boundary!");
+
+      // FIXME: use a list instead for free splicing?
+
+      // Splice the remaining instructions to the new block.
+      // While SplitInst is still valid, decrease the size to match.
+      const uint64_t SplitOffset = SplitInst->Address - BeforeBB.BeginAddr;
+      NewBB.SizeInBytes = BeforeBB.SizeInBytes - SplitOffset;
+      BeforeBB.SizeInBytes = SplitOffset;
+
+      // Now do the actual splicing out of BeforeBB.
+      NewBB.Insts.insert(NewBB.Insts.begin(), SplitInst, BeforeBB.Insts.end());
+      BeforeBB.Insts.erase(SplitInst, BeforeBB.Insts.end());
+
+      // Move the successors to the new block.
+      std::swap(NewBB.SuccAddrs, BeforeBB.SuccAddrs);
+
+      BeforeBB.SuccAddrs.push_back(BeginAddr);
     } else {
       // If we didn't find a BB, then we have to disassemble to create one!
       MemoryObject *Region = getRegionFor(BeginAddr);
       if (!Region)
-        llvm_unreachable(("Couldn't find suitable region for disassembly at " +
-                          utostr(BeginAddr)).c_str());
+        report_fatal_error(("No suitable region for disassembly at " +
+                            utostr(BeginAddr)).c_str());
+      const uint64_t EndRegion = Region->getBase() + Region->getExtent();
 
-      uint64_t InstSize;
-      uint64_t EndAddr = Region->getBase() + Region->getExtent();
+      uint64_t EndAddr = EndRegion;
 
       // We want to stop before the next BB and have a fallthrough to it.
-      if (MCBasicBlock *NextBB = MCFN->findFirstAfter(BeginAddr))
-        EndAddr = std::min(EndAddr, NextBB->getStartAddr());
+      if (BeforeIt != BBInfos.end())
+        EndAddr = std::min(EndAddr, BeforeIt->first);
 
-      DEBUG(dbgs() << "No block, starting disassembly from "
+      BBInfo &BBI = BBInfos[BeginAddr];
+      BBI.BeginAddr = BeginAddr;
+
+      auto &BBInsts = BBI.Insts;
+      assert(BBInsts.empty() && "Basic Block already exists!");
+
+      DEBUG(dbgs() << "No existing block found, starting disassembly from "
                    << utohexstr(BeginAddr) << " to "
                    << utohexstr(EndAddr) << "\n");
 
-      MCBB = &MCFN->createBlock(BeginAddr);
+      auto AddInst = [&](MCInst &I, uint64_t Addr, uint64_t Size) {
+        const uint64_t NextAddr = BBI.BeginAddr + BBI.SizeInBytes;
+        assert(NextAddr == Addr);
+        BBI.Insts.emplace_back(I, NextAddr, Size);
+        BBI.SizeInBytes += Size;
+      };
+
+      uint64_t InstSize;
 
       for (uint64_t Addr = BeginAddr; Addr < EndAddr; Addr += InstSize) {
         MCInst Inst;
         if (findCachedInstruction(Inst, InstSize, *Region, Addr)) {
-          MCBB->addInst(Inst, InstSize);
+          AddInst(Inst, Addr, InstSize);
           ++Uniqued;
         }  else
         if (Dis.getInstruction(Inst, InstSize, *Region, Addr, nulls(),
                                nulls())) {
           ++Translated;
-          MCBB->addInst(Inst, InstSize);
+          AddInst(Inst, Addr, InstSize);
 
           StringRefMemoryObject *SRRegion =
               static_cast<StringRefMemoryObject *>(Region);
           addTempInstruction(Inst, SRRegion->getByteRange(Addr, InstSize));
         } else {
-          DEBUG(dbgs() << "Failed disassembly at "
-                << utohexstr(Addr) << "!\n");
-          // We don't care about splitting mixed atoms either.
+          DEBUG(dbgs() << "Failed disassembly at " << utohexstr(Addr) << "!\n");
           FailedDisassembly = true;
           break;
         }
@@ -451,63 +482,64 @@ MCBasicBlock *MCObjectDisassembler::getBBAt(MCModule *Module, MCFunction *MCFN,
 
         if (MIA.isTerminator(Inst)) {
           DEBUG(dbgs() << "Found terminator!\n");
+          // Now we have a complete basic block, add successors.
+
+          // Add the fallthrough block, and mark it for visiting.
+          if (MIA.isConditionalBranch(Inst)) {
+            BBI.SuccAddrs.push_back(Addr + InstSize);
+            Worklist.insert(Addr + InstSize);
+          }
+
+          // If the terminator is a branch, add the target block.
+          if (MIA.isBranch(Inst)) {
+            uint64_t BranchTarget;
+            if (MIA.evaluateBranch(Inst, Addr, InstSize, BranchTarget)) {
+              StringRef ExtFnName;
+              if (MOS &&
+                  !(ExtFnName = MOS->findExternalFunctionAt(
+                        getOriginalLoadAddr(BranchTarget))).empty()) {
+                TailCallTargets.push_back(BranchTarget);
+                CallTargets.push_back(BranchTarget);
+              } else {
+                BBI.SuccAddrs.push_back(BranchTarget);
+                Worklist.insert(BranchTarget);
+              }
+            }
+          }
           break;
         }
       }
     }
-
-    MemoryObject *Region = getRegionFor(MCBB->getStartAddr());
-    assert(Region && "Couldn't find region for already disassembled code!");
-    uint64_t EndRegion = Region->getBase() + Region->getExtent();
-
-    if (!FailedDisassembly) {
-      // Now we have a basic block, add successors.
-      // Add the fallthrough block.
-      if ((MIA.isConditionalBranch(MCBB->back().Inst) ||
-           !MIA.isTerminator(MCBB->back().Inst)) &&
-          (MCBB->getEndAddr() < EndRegion)) {
-        BBI->SuccAddrs.push_back(MCBB->getEndAddr());
-        Worklist.insert(MCBB->getEndAddr());
-      }
-
-      // If the terminator is a branch, add the target block.
-      if (MIA.isBranch(MCBB->back().Inst)) {
-        uint64_t BranchTarget;
-        if (MIA.evaluateBranch(MCBB->back().Inst, MCBB->back().Address,
-                               MCBB->back().Size, BranchTarget)) {
-          StringRef ExtFnName;
-          if (MOS)
-            ExtFnName =
-              MOS->findExternalFunctionAt(getOriginalLoadAddr(BranchTarget));
-          if (!ExtFnName.empty()) {
-            TailCallTargets.push_back(BranchTarget);
-            CallTargets.push_back(BranchTarget);
-          } else {
-            BBI->SuccAddrs.push_back(BranchTarget);
-            Worklist.insert(BranchTarget);
-          }
-        }
-      }
-    }
   }
 
+  // First, create all blocks.
   for (size_t wi = 0, we = Worklist.size(); wi != we; ++wi) {
     const uint64_t BeginAddr = Worklist[wi];
     BBInfo *BBI = &BBInfos[BeginAddr];
-    MCBasicBlock *BB = BBI->BB;
+    MCBasicBlock *&MCBB = BBI->BB;
 
+    MCBB = new MCBasicBlock(BeginAddr, MCFN);
+    MCFN->Blocks.push_back(MCBB);
+
+    std::swap(MCBB->Insts, BBI->Insts);
+    MCBB->InstCount = MCBB->Insts.size();
+    MCBB->SizeInBytes = BBI->SizeInBytes;
+  }
+
+  // Next, add all predecessors/successors.
+  for (size_t wi = 0, we = Worklist.size(); wi != we; ++wi) {
+    const uint64_t BeginAddr = Worklist[wi];
+    BBInfo *BBI = &BBInfos[BeginAddr];
+    MCBasicBlock *&MCBB = BBI->BB;
     RemoveDupsFromAddressVector(BBI->SuccAddrs);
     for (uint64_t Address : BBI->SuccAddrs) {
       MCBasicBlock *Succ = BBInfos[Address].BB;
-      BB->addSuccessor(Succ);
-      Succ->addPredecessor(BB);
+      assert(Succ && "Couldn't find block successor?!");
+      // FIXME: Sort the succs/preds at the end?
+      MCBB->Successors.push_back(Succ);
+      Succ->Predecessors.push_back(MCBB);
     }
   }
-
-  assert(BBInfos[Worklist[0]].BB &&
-         "No basic block created at requested address?");
-
-  return BBInfos[Worklist[0]].BB;
 }
 
 MCFunction *
@@ -521,15 +553,16 @@ MCObjectDisassembler::createFunction(MCModule *Module, uint64_t BeginAddr,
   if (MOS)
     ExtFnName = MOS->findExternalFunctionAt(getOriginalLoadAddr(BeginAddr));
   if (!ExtFnName.empty())
-    return Module->createFunction(ExtFnName);
+    return Module->createFunction(ExtFnName, BeginAddr);
 
   // If it's not, look for an existing function.
   if (MCFunction *Fn = Module->findFunctionAt(BeginAddr))
     return Fn;
 
   // Finally, just create a new one.
-  MCFunction *MCFN = Module->createFunction("");
-  getBBAt(Module, MCFN, BeginAddr, CallTargets, TailCallTargets);
+  MCFunction *MCFN =
+      Module->createFunction(("fn_" + utohexstr(BeginAddr)).c_str(), BeginAddr);
+  disassembleFunctionAt(Module, MCFN, BeginAddr, CallTargets, TailCallTargets);
   return MCFN;
 }
 

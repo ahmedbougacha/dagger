@@ -14,8 +14,9 @@
 
 using namespace llvm;
 
-MCFunction *MCModule::createFunction(StringRef Name) {
+MCFunction *MCModule::createFunction(StringRef Name, uint64_t BeginAddr) {
   std::unique_ptr<MCFunction> MCF(new MCFunction(Name, this));
+  FunctionsByAddr.insert(std::make_pair(BeginAddr, MCF.get()));
   Functions.push_back(std::move(MCF));
   return Functions.back().get();
 }
@@ -25,11 +26,6 @@ MCFunction *MCModule::findFunctionAt(uint64_t BeginAddr) {
   if (FnIt == FunctionsByAddr.end())
     return nullptr;
   return FnIt->second;
-}
-
-void MCModule::registerFunctionEntryAddress(MCFunction *Fn,
-                                            uint64_t EntryBlockAddr) {
-  FunctionsByAddr.insert(std::make_pair(EntryBlockAddr, Fn));
 }
 
 MCModule::MCModule() : Entrypoint(0) { }

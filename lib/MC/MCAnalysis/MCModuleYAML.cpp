@@ -324,9 +324,11 @@ StringRef YAML2MCModule::parse(const MCModuleYAML::Module &YAMLModule) {
   for (FuncIt FI = YAMLModule.Functions.begin(),
               FE = YAMLModule.Functions.end();
        FI != FE; ++FI) {
-    MCFunction *MCFN = MCM.createFunction(FI->Name);
+    MCFunction *MCFN = nullptr;
     for (BBIt BBI = FI->BasicBlocks.begin(), BBE = FI->BasicBlocks.end();
          BBI != BBE; ++BBI) {
+      if (!MCFN)
+        MCFN = MCM.createFunction(FI->Name, BBI->Address);
       MCBasicBlock *MCBB = &MCFN->createBlock(BBI->Address);
       for (InstIt II = BBI->Insts.begin(), IE = BBI->Insts.end(); II != IE;
            ++II) {

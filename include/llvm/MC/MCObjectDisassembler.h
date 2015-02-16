@@ -127,9 +127,9 @@ private:
   /// single MCTextAtom will be split in multiple basic block atoms.
   void buildCFG(MCModule *Module);
 
-  MCBasicBlock *getBBAt(MCModule *Module, MCFunction *MCFN, uint64_t BeginAddr,
-                        AddressSetTy &CallTargets,
-                        AddressSetTy &TailCallTargets);
+  void disassembleFunctionAt(MCModule *Module, MCFunction *MCFN,
+                             uint64_t BeginAddr, AddressSetTy &CallTargets,
+                             AddressSetTy &TailCallTargets);
 
   struct TempInstKey {
     StringRef RawBytes;

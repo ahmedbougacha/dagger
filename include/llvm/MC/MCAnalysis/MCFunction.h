@@ -42,7 +42,7 @@ public:
 /// \brief Basic block containing a sequence of disassembled instructions.
 /// Create a basic block using MCFunction::createBlock.
 class MCBasicBlock {
-  typedef std::list<MCDecodedInst> InstListTy;
+  typedef std::vector<MCDecodedInst> InstListTy;
   InstListTy Insts;
 
   std::string Name;
@@ -55,7 +55,9 @@ class MCBasicBlock {
 
   // MCFunction owns the basic block.
   MCFunction *Parent;
-  friend class MCFunction;
+
+  // MCObjectDisassembler creates the basic block.
+  friend class MCObjectDisassembler;
   MCBasicBlock(uint64_t StartAddr, MCFunction *Parent);
 
   /// \name Predecessors/Successors, to represent the CFG.
@@ -106,11 +108,6 @@ public:
 
   void addPredecessor(const MCBasicBlock *MCBB);
   bool isPredecessor(const MCBasicBlock *MCBB) const;
-
-  /// \brief Split block.
-  /// This moves all successors to \p SplitBB, and
-  /// adds a fallthrough to it.
-  MCBasicBlock *split(uint64_t SplitAddr);
   /// @}
 };
 
@@ -128,6 +125,9 @@ class MCFunction {
   // MCModule owns the function.
   friend class MCModule;
   MCFunction(StringRef Name, MCModule *Parent);
+
+  // MCObjectDisassembler fills in the function.
+  friend class MCObjectDisassembler;
 
 public:
   ~MCFunction();

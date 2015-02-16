@@ -53,10 +53,9 @@ public:
   ~MCModule();
 
   /// \brief Create a new MCFunction.
-  MCFunction *createFunction(StringRef Name);
+  MCFunction *createFunction(StringRef Name, uint64_t BeginAddr);
 
   MCFunction *findFunctionAt(uint64_t BeginAddr);
-  void registerFunctionEntryAddress(MCFunction *Fn, uint64_t EntryBlockAddr);
 
   /// \name Access to the owned function list.
   /// @{
