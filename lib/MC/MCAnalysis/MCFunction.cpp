@@ -59,6 +59,11 @@ const MCBasicBlock *MCFunction::findFirstAfter(uint64_t Addr) const {
   return const_cast<MCFunction *>(this)->findFirstAfter(Addr);
 }
 
+MCBasicBlock &MCFunction::createBlock(uint64_t StartAddr) {
+  Blocks.push_back(new MCBasicBlock(StartAddr, this));
+  return *Blocks.back();
+}
+
 // MCBasicBlock
 
 MCBasicBlock::MCBasicBlock(uint64_t StartAddr, MCFunction *Parent)

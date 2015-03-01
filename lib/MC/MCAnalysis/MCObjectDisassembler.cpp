@@ -518,8 +518,7 @@ void MCObjectDisassembler::disassembleFunctionAt(
     BBInfo *BBI = &BBInfos[BeginAddr];
     MCBasicBlock *&MCBB = BBI->BB;
 
-    MCBB = new MCBasicBlock(BeginAddr, MCFN);
-    MCFN->Blocks.push_back(MCBB);
+    MCBB = &MCFN->createBlock(BeginAddr);
 
     std::swap(MCBB->Insts, BBI->Insts);
     MCBB->InstCount = MCBB->Insts.size();

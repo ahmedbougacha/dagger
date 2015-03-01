@@ -56,8 +56,11 @@ class MCBasicBlock {
   // MCFunction owns the basic block.
   MCFunction *Parent;
 
-  // MCObjectDisassembler creates the basic block.
+  // MCFunction owns the basic block.
+  friend class MCFunction;
+  // MCObjectDisassembler fills in the basic block.
   friend class MCObjectDisassembler;
+
   MCBasicBlock(uint64_t StartAddr, MCFunction *Parent);
 
   /// \name Predecessors/Successors, to represent the CFG.
