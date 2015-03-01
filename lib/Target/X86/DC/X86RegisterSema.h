@@ -71,7 +71,7 @@ private:
   Value *createEFLAGSFromSFs(Value *OldEFLAGS);
 
   void insertExternalWrapperAsm(BasicBlock *WrapperBB,
-                                Function *ExtFn);
+                                Function *ExtFn) override;
 };
 
 } // end namespace llvm
