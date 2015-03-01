@@ -15,7 +15,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/MC/MCAnalysis/MCCachingDisassembler.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCModuleYAML.h"
@@ -45,7 +44,6 @@
 #include "llvm/Support/Host.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/MemoryObject.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/SourceMgr.h"
@@ -90,11 +88,6 @@ Symbolize("symbolize", cl::desc("When disassembling instructions, "
 static cl::opt<bool>
 EmitDOT("emit-dot", cl::desc("Write the CFG for every function found in the"
                              "object to a graphviz .dot file"));
-
-static cl::opt<bool>
-EnableDisassemblyCache("enable-mcod-disass-cache",
-    cl::desc("Enable the MC Object disassembly instruction cache"),
-    cl::init(true), cl::Hidden);
 
 static StringRef ToolName;
 
@@ -304,12 +297,6 @@ static void DumpObject(const ObjectFile *Obj) {
   if (!DisAsm) {
     errs() << "error: no disassembler for target " << TripleName << "\n";
     return;
-  }
-
-  std::unique_ptr<MCDisassembler> DisAsmImpl;
-  if (EnableDisassemblyCache) {
-    DisAsmImpl = std::move(DisAsm);
-    DisAsm.reset(new MCCachingDisassembler(*DisAsmImpl, *STI));
   }
 
   if (Symbolize) {

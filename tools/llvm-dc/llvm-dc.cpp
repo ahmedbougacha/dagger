@@ -4,7 +4,6 @@
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/MC/MCAnalysis/MCCachingDisassembler.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCModuleYAML.h"
@@ -25,7 +24,6 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
-#include "llvm/Support/StringRefMemoryObject.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -52,11 +50,6 @@ TransOptLevel("O",
                        "(default = '-O0')"),
               cl::Prefix,
               cl::init(0u));
-
-static cl::opt<bool>
-EnableDisassemblyCache("enable-mcod-disass-cache",
-    cl::desc("Enable the MC Object disassembly instruction cache"),
-    cl::init(true), cl::Hidden);
 
 static StringRef ToolName;
 
@@ -130,12 +123,6 @@ int main(int argc, char **argv) {
   if (!DisAsm) {
     errs() << "error: no disassembler for target " << TripleName << "\n";
     return 1;
-  }
-
-  std::unique_ptr<MCDisassembler> DisAsmImpl;
-  if (EnableDisassemblyCache) {
-    DisAsmImpl = std::move(DisAsm);
-    DisAsm.reset(new MCCachingDisassembler(*DisAsmImpl, *STI));
   }
 
   std::unique_ptr<MCInstPrinter> MIP(

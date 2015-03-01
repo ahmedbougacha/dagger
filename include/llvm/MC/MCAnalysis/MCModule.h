@@ -42,8 +42,8 @@ class MCModule {
   /// The address of the entrypoint function.
   uint64_t Entrypoint;
 
-  MCModule           (const MCModule &) LLVM_DELETED_FUNCTION;
-  MCModule& operator=(const MCModule &) LLVM_DELETED_FUNCTION;
+  MCModule           (const MCModule &) = delete;
+  MCModule& operator=(const MCModule &) = delete;
 
   // MCObjectDisassembler creates MCModules.
   friend class MCObjectDisassembler;

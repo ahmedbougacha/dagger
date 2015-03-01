@@ -10,6 +10,7 @@
 #include "llvm/Support/Format.h"
 
 #include "llvm/MC/MCObjectDisassembler.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
@@ -24,9 +25,7 @@
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MachO.h"
-#include "llvm/Support/MemoryObject.h"
 #include "llvm/Support/PrettyStackTrace.h"
-#include "llvm/Support/StringRefMemoryObject.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 
@@ -61,23 +60,17 @@ ArrayRef<uint64_t> MCObjectDisassembler::getStaticExitFunctions() {
   return None;
 }
 
-static bool SectionRegionComparator(const std::unique_ptr<MemoryObject> &L,
-                                    const std::unique_ptr<MemoryObject> &R) {
-  return L->getBase() < R->getBase();
-}
-
-static bool SectionRegionAddrComparator(const std::unique_ptr<MemoryObject> &L,
-                                        uint64_t Addr) {
-  return L->getBase() + L->getExtent() <= Addr;
-}
-
-MemoryObject *MCObjectDisassembler::getRegionFor(uint64_t Addr) {
-  auto Region = std::lower_bound(SectionRegions.begin(), SectionRegions.end(),
-                                 Addr, SectionRegionAddrComparator);
+const MCObjectDisassembler::MemoryRegion &
+MCObjectDisassembler::getRegionFor(uint64_t Addr) {
+  auto Region =
+      std::lower_bound(SectionRegions.begin(), SectionRegions.end(), Addr,
+                       [](const MemoryRegion &L, uint64_t Addr) {
+                         return L.Addr + L.Bytes.size() <= Addr;
+                       });
   if (Region != SectionRegions.end())
-    if ((*Region)->getBase() <= Addr)
-      return Region->get();
-  return FallbackRegion.get();
+    if (Region->Addr <= Addr)
+      return *Region;
+  return FallbackRegion;
 }
 
 uint64_t MCObjectDisassembler::getEffectiveLoadAddr(uint64_t Addr) {
@@ -113,11 +106,13 @@ MCModule *MCObjectDisassembler::buildModule() {
       StringRef Contents;
       if (Section.getContents(Contents))
         continue;
-      SectionRegions.push_back(std::unique_ptr<MemoryObject>(
-          new StringRefMemoryObject(Contents, StartAddr)));
+      SectionRegions.emplace_back(
+          StartAddr, ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Contents.data()), Contents.size()));
     }
     std::sort(SectionRegions.begin(), SectionRegions.end(),
-              SectionRegionComparator);
+              [](const MemoryRegion &L, const MemoryRegion &R) {
+                return L.Addr < R.Addr;
+              });
   }
 
   buildCFG(Module);
@@ -158,7 +153,7 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
       if (Symbol.getAddress(SymAddr))
         continue;
       SymAddr = getEffectiveLoadAddr(SymAddr);
-      if (!getRegionFor(SymAddr))
+      if (getRegionFor(SymAddr).Bytes.empty())
         continue;
       createFunction(Module, SymAddr, CallTargets, TailCallTargets);
     }
@@ -285,11 +280,11 @@ void MCObjectDisassembler::disassembleFunctionAt(
       BeforeBB.SuccAddrs.push_back(BeginAddr);
     } else {
       // If we didn't find a BB, then we have to disassemble to create one!
-      MemoryObject *Region = getRegionFor(BeginAddr);
-      if (!Region)
-        report_fatal_error(("No suitable region for disassembly at " +
-                            utostr(BeginAddr)).c_str());
-      const uint64_t EndRegion = Region->getBase() + Region->getExtent();
+      const MemoryRegion &Region = getRegionFor(BeginAddr);
+      if (Region.Bytes.empty())
+        report_fatal_error(("No suitable region for disassembly at 0x" +
+                            utohexstr(BeginAddr)).c_str());
+      const uint64_t EndRegion = Region.Addr + Region.Bytes.size();
 
       uint64_t EndAddr = EndRegion;
 
@@ -304,8 +299,8 @@ void MCObjectDisassembler::disassembleFunctionAt(
       assert(BBInsts.empty() && "Basic Block already exists!");
 
       DEBUG(dbgs() << "No existing block found, starting disassembly from "
-                   << utohexstr(BeginAddr) << " to "
-                   << utohexstr(EndAddr) << "\n");
+                   << utohexstr(Region.Addr) << " to "
+                   << utohexstr(Region.Addr + Region.Bytes.size()) << "\n");
 
       auto AddInst = [&](MCInst &I, uint64_t Addr, uint64_t Size) {
         const uint64_t NextAddr = BBI.BeginAddr + BBI.SizeInBytes;
@@ -318,8 +313,9 @@ void MCObjectDisassembler::disassembleFunctionAt(
 
       for (uint64_t Addr = BeginAddr; Addr < EndAddr; Addr += InstSize) {
         MCInst Inst;
-        if (Dis.getInstruction(Inst, InstSize, *Region, Addr, nulls(),
-                               nulls())) {
+        if (Dis.getInstruction(Inst, InstSize,
+                               Region.Bytes.slice(Addr - Region.Addr), Addr,
+                               nulls(), nulls())) {
           AddInst(Inst, Addr, InstSize);
         } else {
           DEBUG(dbgs() << "Failed disassembly at " << utohexstr(Addr) << "!\n");

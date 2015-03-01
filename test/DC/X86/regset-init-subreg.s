@@ -7,8 +7,8 @@ ret
 
 # CHECK-LABEL:  @fn_0
 # CHECK-LABEL:  entry_fn_0:
-# CHECK:          %RAX_ptr = getelementptr inbounds %regset* %0
-# CHECK:          %RAX_init = load i64* %RAX_ptr
+# CHECK:          %RAX_ptr = getelementptr inbounds %regset, %regset* %0
+# CHECK:          %RAX_init = load i64, i64* %RAX_ptr
 # CHECK-DAG:      %EAX_init = trunc i64 %RAX_init to i32
 # CHECK-DAG:      %AX_init = trunc i64 %RAX_init to i16
 # CHECK-DAG:      %AL_init = trunc i64 %RAX_init to i8

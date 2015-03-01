@@ -26,24 +26,24 @@ def : SDNodeEquiv<X86smul_flag, mul>;
 def : SDNodeEquiv<X86umul_flag, mul>;
 
 // We can reuse the patterns for all jumps/calls.
-def : SameSemantics<JO_1,  JO_4>;
-def : SameSemantics<JNO_1, JNO_4>;
-def : SameSemantics<JB_1,  JB_4>;
-def : SameSemantics<JAE_1, JAE_4>;
-def : SameSemantics<JE_1,  JE_4>;
-def : SameSemantics<JNE_1, JNE_4>;
-def : SameSemantics<JBE_1, JBE_4>;
-def : SameSemantics<JA_1,  JA_4>;
-def : SameSemantics<JS_1,  JS_4>;
-def : SameSemantics<JNS_1, JNS_4>;
-def : SameSemantics<JP_1,  JP_4>;
-def : SameSemantics<JNP_1, JNP_4>;
-def : SameSemantics<JL_1,  JL_4>;
-def : SameSemantics<JGE_1, JGE_4>;
-def : SameSemantics<JLE_1, JLE_4>;
-def : SameSemantics<JG_1,  JG_4>;
+def : SameSemantics<JO_4,  JO_1>;
+def : SameSemantics<JNO_4, JNO_1>;
+def : SameSemantics<JB_4,  JB_1>;
+def : SameSemantics<JAE_4, JAE_1>;
+def : SameSemantics<JE_4,  JE_1>;
+def : SameSemantics<JNE_4, JNE_1>;
+def : SameSemantics<JBE_4, JBE_1>;
+def : SameSemantics<JA_4,  JA_1>;
+def : SameSemantics<JS_4,  JS_1>;
+def : SameSemantics<JNS_4, JNS_1>;
+def : SameSemantics<JP_4,  JP_1>;
+def : SameSemantics<JNP_4, JNP_1>;
+def : SameSemantics<JL_4,  JL_1>;
+def : SameSemantics<JGE_4, JGE_1>;
+def : SameSemantics<JLE_4, JLE_1>;
+def : SameSemantics<JG_4,  JG_1>;
 
-def : SameSemantics<JMP_1, JMP_4>;
+def : SameSemantics<JMP_4, JMP_1>;
 
 def : Semantics<CALL64pcrel32, [(X86call imm:$dst)]>;
 
@@ -81,14 +81,15 @@ multiclass Sema_Div<string inst, SDNode Div8Op, SDNode DivOp> {
 defm : Sema_Div<"IDIV", X86dc_idiv8, X86dc_idiv>;
 defm : Sema_Div<"DIV", X86dc_div8, X86dc_div>;
 
+// FIXME: we don't need these anymore?
 // These should go away when we can do proper equivalence between inc->add
 multiclass Sema_IncDec<string inst, SDNode op> {
   def : Sema_F_Str<inst#8r, (set GR8:$dst, (op GR8:$src1, 1))>;
   def : Sema_F_Str<inst#16r, (set GR16:$dst, (op GR16:$src1, 1))>;
   def : Sema_F_Str<inst#32r, (set GR32:$dst, (op GR32:$src1, 1))>;
   def : Sema_F_Str<inst#64r, (set GR64:$dst, (op GR64:$src1, 1))>;
-  def : Sema_F_Str<inst#64_32r, (set GR32:$dst, (op GR32:$src1, 1))>;
-  def : Sema_F_Str<inst#64_16r, (set GR16:$dst, (op GR16:$src1, 1))>;
+  def : Sema_F_Str<inst#32r_alt, (set GR32:$dst, (op GR32:$src1, 1))>;
+  def : Sema_F_Str<inst#16r_alt, (set GR16:$dst, (op GR16:$src1, 1))>;
 }
 defm : Sema_IncDec<"DEC", sub>;
 defm : Sema_IncDec<"INC", add>;

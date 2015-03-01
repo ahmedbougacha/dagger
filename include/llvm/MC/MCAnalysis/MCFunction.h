@@ -117,8 +117,8 @@ public:
 /// \brief Represents a function in machine code, containing MCBasicBlocks.
 /// MCFunctions are created by MCModule.
 class MCFunction {
-  MCFunction           (const MCFunction&) LLVM_DELETED_FUNCTION;
-  MCFunction& operator=(const MCFunction&) LLVM_DELETED_FUNCTION;
+  MCFunction           (const MCFunction&) = delete;
+  MCFunction& operator=(const MCFunction&) = delete;
 
   std::string Name;
   MCModule *ParentModule;

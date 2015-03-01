@@ -6,6 +6,6 @@ ret
 
 # CHECK-LABEL:  @fn_0
 # CHECK-LABEL:  entry_fn_0:
-# CHECK:          %RAX_ptr = getelementptr inbounds %regset* %0
-# CHECK:          %RAX_init = load i64* %RAX_ptr
+# CHECK:          %RAX_ptr = getelementptr inbounds %regset, %regset* %0
+# CHECK:          %RAX_init = load i64, i64* %RAX_ptr
 # CHECK: br label %exit_fn_0

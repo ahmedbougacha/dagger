@@ -23,8 +23,8 @@ namespace llvm {
 
 class DCRegisterSema {
 private:
-  DCRegisterSema(const DCRegisterSema &) LLVM_DELETED_FUNCTION;
-  void operator=(const DCRegisterSema &) LLVM_DELETED_FUNCTION;
+  DCRegisterSema(const DCRegisterSema &) = delete;
+  void operator=(const DCRegisterSema &) = delete;
 
 public:
   typedef std::vector<unsigned> RegSizeTy;

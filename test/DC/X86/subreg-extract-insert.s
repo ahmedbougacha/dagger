@@ -7,16 +7,16 @@ ret
 
 # CHECK-LABEL:  define void @fn_0
 # CHECK-LABEL:  exit_fn_0:
-# CHECK-DAG:      [[LASTRAX:%[0-9]+]] = load i64* %RAX
+# CHECK-DAG:      [[LASTRAX:%[0-9]+]] = load i64, i64* %RAX
 # CHECK-DAG:      store i64 [[LASTRAX:%[0-9]+]], i64* %RAX_ptr
-# CHECK-DAG:      [[LASTRBX:%[0-9]+]] = load i64* %RBX
+# CHECK-DAG:      [[LASTRBX:%[0-9]+]] = load i64, i64* %RBX
 # CHECK-DAG:      store i64 [[LASTRBX:%[0-9]+]], i64* %RBX_ptr
 # CHECK-LABEL:  bb_0:
-# CHECK:          %RAX_0 = load i64* %RAX
+# CHECK:          %RAX_0 = load i64, i64* %RAX
 # CHECK:          %EAX_0 = trunc i64 %RAX_0 to i32
 # Unused load, inserted when first creating the value for %EBX_0 to init %EBX:
 # see FIXME in DCRegisterSema.
-# CHECK:          %RBX_0 = load i64* %RBX
+# CHECK:          %RBX_0 = load i64, i64* %RBX
 # CHECK-DAG:      %RBX_1 = zext i32 [[EBXVAL:%EAX_0]] to i64
 # CHECK-DAG:      %BX_0 = trunc i32 [[EBXVAL]] to i16
 # CHECK-DAG:      [[BH32:%[0-9]+]] = lshr i32 [[EBXVAL]], 8

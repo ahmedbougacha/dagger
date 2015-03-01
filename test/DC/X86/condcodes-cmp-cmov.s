@@ -3,8 +3,8 @@
 cmov_condcodes:
 cmp rdi, 42
 # CHECK-LABEL: bb_0:
-# CHECK-DAG: [[RAX0:%RAX_[0-9]+]] = load i64* %RAX
-# CHECK-DAG: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK-DAG: [[RAX0:%RAX_[0-9]+]] = load i64, i64* %RAX
+# CHECK-DAG: [[RDI0:%RDI_[0-9]+]] = load i64, i64* %RDI
 # CHECK-DAG: [[CMPSUB:%[0-9]+]] = sub i64 [[RDI0]], [[OP2:42]]
 # CHECK-DAG: [[CC_A:%CC_A_[0-9]+]]   = icmp ugt i64 [[RDI0]], [[OP2]]
 # CHECK-DAG: [[CC_AE:%CC_AE_[0-9]+]] = icmp uge i64 [[RDI0]], [[OP2]]

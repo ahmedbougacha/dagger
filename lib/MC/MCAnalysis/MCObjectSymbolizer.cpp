@@ -356,11 +356,8 @@ const RelocationRef *MCObjectSymbolizer::findRelocationAt(uint64_t Addr) const {
 }
 
 void MCObjectSymbolizer::buildSectionList() {
-  for (const SectionRef &Section : Obj->sections()) {
-    if (!Section.isRequiredForExecution())
-      continue;
+  for (const SectionRef &Section : Obj->sections())
     SortedSections.push_back(Section);
-  }
   std::sort(SortedSections.begin(), SortedSections.end());
 
   uint64_t PrevSecEnd = 0;

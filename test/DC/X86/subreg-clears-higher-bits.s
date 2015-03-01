@@ -6,7 +6,7 @@ f:
  ret
 
 # CHECK-LABEL: bb_0:
-# CHECK: [[RAX0:%RAX_[0-9]+]] = load i64* %RAX
+# CHECK: [[RAX0:%RAX_[0-9]+]] = load i64, i64* %RAX
 # CHECK: [[RAX1:%RAX_[0-9]+]] = add i64 [[RAX0]], 1234
 # CHECK: [[EAX0:%EAX_[0-9]+]] = trunc i64 [[RAX1]] to i32
 # CHECK: [[EAX1:%EAX_[0-9]+]] = add i32 [[EAX0]], 42

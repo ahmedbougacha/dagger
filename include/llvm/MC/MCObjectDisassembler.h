@@ -18,7 +18,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/DataTypes.h"
-#include "llvm/Support/MemoryObject.h"
 #include "llvm/MC/MCInst.h"
 #include <vector>
 
@@ -61,9 +60,9 @@ public:
 
   /// \brief Set the region on which to fallback if disassembly was requested
   /// somewhere not accessible in the object file.
-  /// This is used for dynamic disassembly (see RawMemoryObject).
-  void setFallbackRegion(std::unique_ptr<MemoryObject> Region) {
-    FallbackRegion = std::move(Region);
+  /// This is used for dynamic disassembly.
+  void setFallbackRegion(uint64_t BeginAddr, ArrayRef<uint8_t> Region) {
+    FallbackRegion = { BeginAddr, Region };
   }
 
   /// \brief Set the symbolizer to use to get information on external functions.
@@ -107,17 +106,25 @@ protected:
   const MCInstrAnalysis &MIA;
   MCObjectSymbolizer *MOS;
 
-  /// \brief The fallback memory region, outside the object file.
-  std::unique_ptr<MemoryObject> FallbackRegion;
+  struct MemoryRegion {
+    uint64_t Addr;
+    ArrayRef<uint8_t> Bytes;
+    MemoryRegion(uint64_t Addr = 0,
+                 ArrayRef<uint8_t> Bytes = ArrayRef<uint8_t>())
+        : Addr(Addr), Bytes(Bytes) {}
+  };
 
-  std::vector<std::unique_ptr<MemoryObject>> SectionRegions;
+  /// \brief The fallback memory region, outside the object file.
+  MemoryRegion FallbackRegion;
+
+  std::vector<MemoryRegion> SectionRegions;
 
   /// \brief Return a memory region suitable for reading starting at \p Addr.
-  /// In most cases, this returns a StringRefMemoryObject backed by the
+  /// In most cases, this returns an ArrayRef backed by the
   /// containing section. When no section was found, this returns the
   /// FallbackRegion, if it is suitable.
-  /// If it is not, or if there is no fallback region, this returns 0.
-  MemoryObject *getRegionFor(uint64_t Addr);
+  /// If it is not, or if there is no fallback region, this an empty region.
+  const MemoryRegion &getRegionFor(uint64_t Addr);
 
 private:
   /// \brief Enrich \p Module with a CFG consisting of MCFunctions.

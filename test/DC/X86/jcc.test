@@ -11,7 +11,7 @@
 # ret
 
 # CHECK-LABEL: bb_100000FA6:
-# CHECK: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK: [[RDI0:%RDI_[0-9]+]] = load i64, i64* %RDI
 # CHECK: [[CC_NE0:%CC_NE_[0-9]+]] = icmp ne i64 [[RDI0]], 42
 # CHECK: br i1 [[CC_NE0]], label %bb_100000FB7, label %bb_100000FB3
 # CHECK: bb_100000FB3:

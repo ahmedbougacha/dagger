@@ -5,9 +5,9 @@ add rdi, 2
 ret
 
 # CHECK-LABEL: bb_0:
-# CHECK-DAG: [[RDI0:%RDI_[0-9]+]] = load i64* %RDI
+# CHECK-DAG: [[RDI0:%RDI_[0-9]+]] = load i64, i64* %RDI
 # CHECK-DAG: [[RDI1:%RDI_[0-9]+]] = add i64 [[RDI0]], [[OP2:2]]
-# CHECK-DAG: [[EFLAGS0:%EFLAGS_[0-9]+]] = load i32* %EFLAGS
+# CHECK-DAG: [[EFLAGS0:%EFLAGS_[0-9]+]] = load i32, i32* %EFLAGS
 
 # CHECK:     [[ZF0:%ZF_[0-9]+]] = icmp eq i64 [[RDI1]], 0
 # CHECK:     [[SF0:%SF_[0-9]+]] = icmp slt i64 [[RDI1]], 0

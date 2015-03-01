@@ -32,7 +32,7 @@ bool X86RegisterSema::doesSubRegIndexClearSuper(unsigned SubRegIdx) const {
     const MCInstrDesc &MCID = MII.get(CurrentInst->Inst.getOpcode());
     // VEX-encoded SSE instructions clear [size-1:127].
     // FIXME: This should take into account VEX.vvvv, .LIG, ..
-    if ((MCID.TSFlags >> X86II::VEXShift) & X86II::VEX)
+    if (MCID.TSFlags & X86II::VEX)
       return true;
   }
   return false;

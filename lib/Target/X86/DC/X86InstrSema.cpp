@@ -518,9 +518,31 @@ void X86InstrSema::translateCustomOperand(unsigned OperandType,
     break;
   }
 
+  case X86::OpTypes::i1imm:
+  case X86::OpTypes::i8imm:
+  case X86::OpTypes::i16imm:
+  case X86::OpTypes::i16i8imm:
+  case X86::OpTypes::i32imm:
+  case X86::OpTypes::i32i8imm:
+  case X86::OpTypes::i32u8imm:
+  case X86::OpTypes::i64i8imm:
+  case X86::OpTypes::i64i32imm:
+  case X86::OpTypes::i64imm: {
+    // FIXME: Is there anything special to do with the sext/zext?
+    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Value *Cst =
+        ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOpNo));
+    registerResult(Cst);
+    // FIXME: factor this out in DIS.
+    // lets us maintain DTIT info as well.
+    break;
+  }
+
   case X86::OpTypes::i64i32imm_pcrel:
   case X86::OpTypes::brtarget:
-  case X86::OpTypes::brtarget8: {
+  case X86::OpTypes::brtarget8:
+  case X86::OpTypes::brtarget16:
+  case X86::OpTypes::brtarget32: {
     // FIXME: use MCInstrAnalysis for this kind of thing?
     uint64_t Target = getImmOp(MIOpNo) +
       CurrentInst->Address + CurrentInst->Size;
