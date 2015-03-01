@@ -130,40 +130,6 @@ private:
   void disassembleFunctionAt(MCModule *Module, MCFunction *MCFN,
                              uint64_t BeginAddr, AddressSetTy &CallTargets,
                              AddressSetTy &TailCallTargets);
-
-  struct TempInstKey {
-    StringRef RawBytes;
-    unsigned ValueIdx;
-    bool operator<(const TempInstKey &RHS) const { return RawBytes < RHS.RawBytes; }
-  };
-
-  std::vector<TempInstKey> TempInstKeys;
-  std::vector<MCInst> TempInstValues;
-
-  struct CachedInstEntry {
-    StringRef RawBytes;
-    MCInst Inst;
-    // < really is a >, because we want to use lower_bound with LHS being a
-    // prefix of RHS.
-    bool operator<(const CachedInstEntry &RHS) const {
-      return RawBytes > RHS.RawBytes;
-    }
-    bool operator<(const StringRef &RHS) const { return RawBytes > RHS; }
-  };
-
-  std::vector<CachedInstEntry> CachedInsts;
-  size_t LongestCachedRawBytes;
-
-  unsigned Uniqued;
-  unsigned Translated;
-
-  bool findCachedInstruction(MCInst &Inst,
-                             uint64_t &InstSize,
-                             MemoryObject &Region,
-                             uint64_t Addr);
-  void addTempInstruction(const MCInst &Inst, StringRef RawBytes);
-
-  void uniqueTempInstructions();
 };
 
 class MCMachOObjectDisassembler : public MCObjectDisassembler {
