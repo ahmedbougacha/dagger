@@ -50,37 +50,35 @@ public:
     uint16_t CustomOpType;
 
     ValueInfo() : DecodedInst(0), VH(), RegNo(0), OpKind(0), CustomOpType(0) {}
-    ValueInfo(const MCDecodedInst *DecodedInst, Value *V,
-              OperandKind OpKind, unsigned RegOrOperandNo,
-              unsigned CustomOpType = 0)
-        : DecodedInst(DecodedInst), VH(V),
-          RegNo(RegOrOperandNo), OpKind(OpKind), CustomOpType(CustomOpType) {}
+    ValueInfo(const MCDecodedInst *DecodedInst, Value *V, OperandKind OpKind,
+              unsigned RegOrOperandNo, unsigned CustomOpType = 0)
+        : DecodedInst(DecodedInst), VH(V), RegNo(RegOrOperandNo),
+          OpKind(OpKind), CustomOpType(CustomOpType) {}
   };
 
   void addImpUse(unsigned RegNo, Value *V) {
     ImpUseVals.push_back(
-      ValueInfo(DecodedInst, V, ValueInfo::ImpUseKind, RegNo));
+        ValueInfo(DecodedInst, V, ValueInfo::ImpUseKind, RegNo));
   }
   void addImpDef(unsigned RegNo, Value *V) {
     ImpDefVals.push_back(
-      ValueInfo(DecodedInst, V, ValueInfo::ImpDefKind, RegNo));
+        ValueInfo(DecodedInst, V, ValueInfo::ImpDefKind, RegNo));
   }
   void addRegOpUse(unsigned MIOperandNo, Value *V) {
     OperandUseVals.push_back(
-      ValueInfo(DecodedInst, V, ValueInfo::RegUseKind, MIOperandNo));
+        ValueInfo(DecodedInst, V, ValueInfo::RegUseKind, MIOperandNo));
   }
   void addRegOpDef(unsigned MIOperandNo, Value *V) {
     OperandDefVals.push_back(
-      ValueInfo(DecodedInst, V, ValueInfo::RegDefKind, MIOperandNo));
+        ValueInfo(DecodedInst, V, ValueInfo::RegDefKind, MIOperandNo));
   }
   void addOpUse(unsigned MIOperandNo, unsigned CustomOpType, Value *V) {
-    OperandUseVals.push_back(
-        ValueInfo(DecodedInst, V, ValueInfo::CustomOpKind,
-                  MIOperandNo, CustomOpType));
+    OperandUseVals.push_back(ValueInfo(DecodedInst, V, ValueInfo::CustomOpKind,
+                                       MIOperandNo, CustomOpType));
   }
   void addImmOpUse(unsigned MIOperandNo, Value *V) {
     OperandUseVals.push_back(
-      ValueInfo(DecodedInst, V, ValueInfo::ImmOpKind, MIOperandNo));
+        ValueInfo(DecodedInst, V, ValueInfo::ImmOpKind, MIOperandNo));
   }
 
   SmallVector<ValueInfo, 4> OperandUseVals;
@@ -93,8 +91,8 @@ public:
 };
 
 class DCTranslatedInstTracker {
-  typedef ValueMap<
-      const Value *, SmallVector<DCTranslatedInst::ValueInfo, 2> > ValInfoMapTy;
+  typedef ValueMap<const Value *, SmallVector<DCTranslatedInst::ValueInfo, 2>>
+      ValInfoMapTy;
   ValInfoMapTy ValInfo;
 
   typedef std::vector<DCTranslatedInst> TranslatedInstListTy;
@@ -104,8 +102,9 @@ class DCTranslatedInstTracker {
 public:
   void trackInst(const DCTranslatedInst &TI);
 
-  void getInstsForValue(const Value &V,
-    const SmallVectorImpl<DCTranslatedInst::ValueInfo> *&TrackedInsts) const;
+  void getInstsForValue(
+      const Value &V,
+      const SmallVectorImpl<DCTranslatedInst::ValueInfo> *&TrackedInsts) const;
 
   const DCTranslatedInst *getTrackedInfo(const MCDecodedInst &MCDI) const;
 

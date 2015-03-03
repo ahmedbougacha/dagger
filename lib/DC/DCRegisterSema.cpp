@@ -17,8 +17,9 @@
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
-
 using namespace llvm;
+
+#define DEBUG_TYPE "dc-regsema"
 
 DCRegisterSema::DCRegisterSema(const MCRegisterInfo &MRI,
                                const MCInstrInfo &MII,

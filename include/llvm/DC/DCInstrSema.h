@@ -38,9 +38,6 @@
 
 namespace llvm {
 class MCContext;
-}
-
-namespace llvm {
 class DCTranslatedInst;
 
 class DCInstrSema {

@@ -17,8 +17,9 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
-
 using namespace llvm;
+
+#define DEBUG_TYPE "x86-dc-regsema"
 
 static void X86InitSpecialRegSizes(DCRegisterSema::RegSizeTy &RegSizes) {
   RegSizes[X86::IP] = 16;

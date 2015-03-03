@@ -15,8 +15,7 @@ static bool TranslatedInstAddrComp(const DCTranslatedInst &LHS, uint64_t Addr) {
   return LHS.DecodedInst->Address < Addr;
 }
 
-void
-DCTranslatedInstTracker::trackInst(const DCTranslatedInst &TI) {
+void DCTranslatedInstTracker::trackInst(const DCTranslatedInst &TI) {
   TranslatedInstListTy::iterator I =
       std::lower_bound(TranslatedInsts.begin(), TranslatedInsts.end(),
                        TI.DecodedInst->Address, TranslatedInstAddrComp);
@@ -35,8 +34,9 @@ DCTranslatedInstTracker::trackInst(const DCTranslatedInst &TI) {
     ValInfo[TI.ImpUseVals[i].VH].push_back(TI.ImpUseVals[i]);
 }
 
-void DCTranslatedInstTracker::getInstsForValue(const Value &V,
-  const SmallVectorImpl<DCTranslatedInst::ValueInfo> *&TrackedInsts) const {
+void DCTranslatedInstTracker::getInstsForValue(
+    const Value &V,
+    const SmallVectorImpl<DCTranslatedInst::ValueInfo> *&TrackedInsts) const {
 
   TrackedInsts = 0;
   ValInfoMapTy::const_iterator I = ValInfo.find(&V);
@@ -46,7 +46,8 @@ void DCTranslatedInstTracker::getInstsForValue(const Value &V,
   TrackedInsts = &I->second;
 }
 
-const DCTranslatedInst *DCTranslatedInstTracker::getTrackedInfo(const MCDecodedInst &MCDI) const {
+const DCTranslatedInst *
+DCTranslatedInstTracker::getTrackedInfo(const MCDecodedInst &MCDI) const {
 
   TranslatedInstListTy::const_iterator I =
       std::lower_bound(TranslatedInsts.begin(), TranslatedInsts.end(),

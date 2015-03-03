@@ -14,7 +14,6 @@
 #include "MCTargetDesc/X86MCTargetDesc.h"
 #include "X86ISelLowering.h"
 #include "Utils/X86ShuffleDecode.h"
-
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
@@ -31,10 +30,10 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/TypeBuilder.h"
-
 #include "X86GenSema.inc"
-
 using namespace llvm;
+
+#define DEBUG_TYPE "x86-dc-sema"
 
 X86InstrSema::X86InstrSema(DCRegisterSema &DRS)
     : DCInstrSema(X86::OpcodeToSemaIdx, X86::InstSemantics, X86::ConstantArray,

@@ -75,7 +75,8 @@ void DCAnnotationWriter::printInfoComment(const Value &V,
     case DCTranslatedInst::ValueInfo::CustomOpKind: {
       OS << " op-use ";
       if (MCDI)
-        IP.printMachineOperand(&MCDI->Inst, VI.CustomOpType,VI.MIOperandNo,OS);
+        IP.printMachineOperand(&MCDI->Inst, VI.CustomOpType, VI.MIOperandNo,
+                               OS);
       break;
     }
     }

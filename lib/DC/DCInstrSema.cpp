@@ -28,8 +28,9 @@
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/Support/raw_ostream.h"
-
 using namespace llvm;
+
+#define DEBUG_TYPE "dc-sema"
 
 DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
                          const unsigned *SemanticsArray,

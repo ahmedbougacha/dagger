@@ -15,8 +15,6 @@
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCObjectDisassembler.h"
-#include "llvm/Object/MachO.h"
-#include "llvm/Object/ObjectFile.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/PrettyStackTrace.h"
@@ -25,16 +23,16 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include <algorithm>
 #include <vector>
-
 using namespace llvm;
-using namespace object;
+
+#define DEBUG_TYPE "dctranslator"
 
 DCTranslator::DCTranslator(LLVMContext &Ctx, TransOpt::Level TransOptLevel,
                            DCInstrSema &DIS, DCRegisterSema &DRS,
                            MCInstPrinter &IP, MCModule &MCM,
                            MCObjectDisassembler *MCOD, bool EnableIRAnnotation)
-    : TheModule("output", Ctx), MCOD(MCOD), MCM(MCM), FPM(&TheModule),
-      DTIT(), AnnotWriter(), DIS(DIS), OptLevel(TransOptLevel) {
+    : TheModule("output", Ctx), MCOD(MCOD), MCM(MCM), FPM(&TheModule), DTIT(),
+      AnnotWriter(), DIS(DIS), OptLevel(TransOptLevel) {
 
   // FIXME: now this can move to print, we don't need to keep it around
   if (EnableIRAnnotation)
@@ -106,18 +104,18 @@ Function *DCTranslator::getFunctionAt(uint64_t Addr) {
 }
 
 namespace {
-  class AddrPrettyStackTraceEntry : public PrettyStackTraceEntry {
-  public:
-    uint64_t StartAddr;
-    const char *Kind;
-    AddrPrettyStackTraceEntry(uint64_t StartAddr, const char *Kind)
+class AddrPrettyStackTraceEntry : public PrettyStackTraceEntry {
+public:
+  uint64_t StartAddr;
+  const char *Kind;
+  AddrPrettyStackTraceEntry(uint64_t StartAddr, const char *Kind)
       : PrettyStackTraceEntry(), StartAddr(StartAddr), Kind(Kind) {}
 
-    void print(raw_ostream &OS) const override {
-      OS << "DC: Translating " << Kind << " at address "
-         << utohexstr(StartAddr) << "\n";
-    }
-  };
+  void print(raw_ostream &OS) const override {
+    OS << "DC: Translating " << Kind << " at address " << utohexstr(StartAddr)
+       << "\n";
+  }
+};
 } // end anonymous namespace
 
 static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
@@ -128,7 +126,8 @@ void DCTranslator::translateFunction(
     MCFunction *MCFN,
     const MCObjectDisassembler::AddressSetTy &TailCallTargets) {
 
-  AddrPrettyStackTraceEntry X(MCFN->getEntryBlock()->getStartAddr(),"Function");
+  AddrPrettyStackTraceEntry X(MCFN->getEntryBlock()->getStartAddr(),
+                              "Function");
 
   DIS.SwitchToFunction(MCFN);
 
@@ -147,8 +146,7 @@ void DCTranslator::translateFunction(
                  << " instructions.\n");
     DIS.SwitchToBasicBlock(BB);
     for (auto &I : *BB) {
-      DEBUG(dbgs() << "Translating instruction:\n ";
-            dbgs() << I.Inst << "\n";);
+      DEBUG(dbgs() << "Translating instruction:\n "; dbgs() << I.Inst << "\n";);
       DCTranslatedInst TI(I);
       if (!DIS.translateInst(I, TI)) {
         errs() << "Cannot translate instruction: \n  ";
