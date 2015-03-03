@@ -1,4 +1,12 @@
-#define DEBUG_TYPE "dctranslator"
+//===-- lib/DC/DCTranslator.cpp - DC Translation Engine ---------*- C++ -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringExtras.h"

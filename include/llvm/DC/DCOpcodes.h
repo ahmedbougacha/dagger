@@ -1,4 +1,4 @@
-//===-- DCOpcodes.h ---------------------------------------------*- C++ -*-===//
+//===-- llvm/DC/DCOpcodes.h - DC Semantics Opcodes --------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -13,8 +13,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef DCOPCODES_H
-#define DCOPCODES_H
+#ifndef LLVM_DC_DCOPCODES_H
+#define LLVM_DC_DCOPCODES_H
 
 #include "llvm/CodeGen/ISDOpcodes.h"
 

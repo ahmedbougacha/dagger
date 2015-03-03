@@ -1,3 +1,12 @@
+//===-- llvm/DC/DCAnnotationWriter.cpp - DC IR Annotation -------*- C++ -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+
 #include "llvm/DC/DCAnnotationWriter.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCInstPrinter.h"

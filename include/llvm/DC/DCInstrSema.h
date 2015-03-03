@@ -1,5 +1,24 @@
-#ifndef DAGGER_DC_DCINSTRSEMA_H
-#define DAGGER_DC_DCINSTRSEMA_H
+//===-- llvm/DC/DCInstrSema.h - DC Instruction Semantics --------*- C++ -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines DCInstrSema, the main interface that can be used to
+// translate machine code (represented by an MCModule, an MC-level CFG) to IR.
+//
+// DCInstrSema provides various methods - some provided by a Target-specific
+// subclassing implementation - that translate MC-level constructs into
+// corresponding IR, at several granularities: functions inside a module, basic
+// blocks, instructions, and finally instruction operands.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef LLVM_DC_DCINSTRSEMA_H
+#define LLVM_DC_DCINSTRSEMA_H
 
 #include "llvm/DC/DCOpcodes.h"
 #include "llvm/DC/DCRegisterSema.h"

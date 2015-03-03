@@ -1,5 +1,23 @@
-#ifndef DCTRANSLATOR_H
-#define DCTRANSLATOR_H
+//===-- llvm/DC/DCTranslator.cpp - DC Translation Engine --------*- C++ -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines the DCTranslator class, a wrapper around the DC library
+// to drive the translation of a Machine Code program (represented as an MC CFG,
+// implemented by an MCModule), to LLVM IR.
+//
+// It provides the execution context necessary for the translated IR, such as
+// a wrapper "main" function that sets up a Register Set and a Stack.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef LLVM_DC_DCTRANSLATOR_H
+#define LLVM_DC_DCTRANSLATOR_H
 
 #include "llvm/DC/DCAnnotationWriter.h"
 #include "llvm/DC/DCTranslatedInstTracker.h"

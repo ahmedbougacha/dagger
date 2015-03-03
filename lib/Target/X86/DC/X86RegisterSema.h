@@ -1,5 +1,14 @@
-#ifndef TARGET_X86_DC_X86REGISTERSEMA_H
-#define TARGET_X86_DC_X86REGISTERSEMA_H
+//===-- X86RegisterSema.h - X86 DC Register Semantics -----------*- C++ -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef LLVM_LIB_TARGET_X86_DC_X86REGISTERSEMA_H
+#define LLVM_LIB_TARGET_X86_DC_X86REGISTERSEMA_H
 
 #include "X86InstrInfo.h"
 #include "llvm/DC/DCRegisterSema.h"

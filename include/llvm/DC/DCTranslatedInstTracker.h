@@ -1,5 +1,22 @@
-#ifndef DAGGER_DC_DCTRANSLATEDINSTTRACKER_H
-#define DAGGER_DC_DCTRANSLATEDINSTTRACKER_H
+//===-- llvm/DC/DCTranslatedInstTracker.h - DC Inst. Tracking ---*- C++ -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines the DCTranslatedInstTracker class, which provides a way
+// to track the origin - in the Machine Code, represented by an MCModule - of
+// an LLVM IR instruction, result of the DC translation process.
+//
+// It is maintained by the DCTranslator.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef LLVM_DC_DCTRANSLATEDINSTTRACKER_H
+#define LLVM_DC_DCTRANSLATEDINSTTRACKER_H
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"

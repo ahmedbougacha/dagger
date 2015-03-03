@@ -1,5 +1,31 @@
-#ifndef DCREGISTERSEMA_H
-#define DCREGISTERSEMA_H
+//===-- llvm/DC/DCRegisterSema.cpp - DC Register Semantics ------*- C++ -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines the DCRegisterSema class, which provides register-level
+// semantics used to translate Machine Code to LLVM IR.
+// Register-level semantics include describing the register set hierarchy
+// (super- and sub-registers), semantics of special registers (such as the
+// status/flags register).
+// DCRegisterSema also computes and builds the Register Set type, an LLVM IR
+// struct type which contains all registers for a given target.
+//
+// It finally provides various functions to generate code dealing with
+// registers, such as getting/setting a register with an LLVM value, saving and
+// restoring the Register Set across function calls, etc...
+//
+// Targets need to implement a DCRegisterSema subclass, and complete it with
+// their actual semantics.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef LLVM_DC_DCREGISTERSEMA_H
+#define LLVM_DC_DCREGISTERSEMA_H
 
 #include "llvm/Support/Compiler.h"
 #include "llvm/IR/IRBuilder.h"

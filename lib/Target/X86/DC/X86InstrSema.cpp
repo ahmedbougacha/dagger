@@ -1,3 +1,12 @@
+//===-- X86InstrSema.cpp - X86 DC Instruction Semantics ---------*- C++ -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+
 #include "X86InstrSema.h"
 #include "X86RegisterSema.h"
 #include "InstPrinter/X86ATTInstPrinter.h"
