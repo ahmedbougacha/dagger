@@ -28,7 +28,7 @@ MCFunction *MCModule::findFunctionAt(uint64_t BeginAddr) {
   return FnIt->second;
 }
 
-MCModule::MCModule() : Entrypoint(0) { }
+MCModule::MCModule() {}
 
 MCModule::~MCModule() {
 }

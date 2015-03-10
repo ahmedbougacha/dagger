@@ -1,4 +1,4 @@
-#RUN: llvm-dec %p/Inputs/pc-update.macho-x86_64 | FileCheck %s
+#RUN: llvm-dec %p/Inputs/pc-update.macho-x86_64 -entrypoint=0x100000F99 | FileCheck %s
 #
 # Assembly source:
 #   adds_1:

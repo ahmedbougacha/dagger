@@ -14,13 +14,15 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCRelocationInfo.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/MachO.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 
 using namespace llvm;
 using namespace object;
+
+#define DEBUG_TYPE "mcobjectsymbolizer"
 
 //===- Helpers ------------------------------------------------------------===//
 
@@ -50,40 +52,15 @@ static bool RelocU64AddrComparator(const object::RelocationRef &LHS,
 //===- MCMachObjectSymbolizer ---------------------------------------------===//
 
 namespace {
-class MCMachObjectSymbolizer final : public MCObjectSymbolizer {
-  const MachOObjectFile *MOOF;
-  // __TEXT;__stubs support.
-  uint64_t StubsStart;
-  uint64_t StubsCount;
-  uint64_t StubSize;
-  uint64_t StubsIndSymIndex;
-
-  // MachOObjectFile::getSymbolSize is *super* expensive, because it needs to
-  // search through the entire symtab for the next symbol, to determine size.
-  // Keep track of all symbols to be able to efficiently provide size.
-  std::vector<DataRefImpl> SortedSymbolRefs;
-
-public:
-  MCMachObjectSymbolizer(MCContext &Ctx,
-                         std::unique_ptr<MCRelocationInfo> RelInfo,
-                         const MachOObjectFile *MOOF);
-
-  StringRef findExternalFunctionAt(uint64_t Addr) override;
-
-  void tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
-                                       uint64_t Address) override;
-  void buildAddrToFunctionSymbolMap() override;
-};
-
 struct SymbolRefAddressComparator {
-  const MachOObjectFile *MOOF;
+  const MachOObjectFile &MOOF;
 
-  SymbolRefAddressComparator(const MachOObjectFile *MOOF) : MOOF(MOOF) {}
+  SymbolRefAddressComparator(const MachOObjectFile &MOOF) : MOOF(MOOF) {}
 
   bool operator()(const DataRefImpl &LHS, const DataRefImpl &RHS) {
     uint64_t LHSSize, RHSSize;
-    MOOF->getSymbolAddress(LHS, LHSSize);
-    MOOF->getSymbolAddress(RHS, RHSSize);
+    MOOF.getSymbolAddress(LHS, LHSSize);
+    MOOF.getSymbolAddress(RHS, RHSSize);
     return LHSSize < RHSSize;
   }
 };
@@ -91,21 +68,23 @@ struct SymbolRefAddressComparator {
 
 MCMachObjectSymbolizer::MCMachObjectSymbolizer(
     MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
-    const MachOObjectFile *MOOF)
-  : MCObjectSymbolizer(Ctx, std::move(RelInfo), MOOF), MOOF(MOOF),
-    StubsStart(0), StubsCount(0), StubSize(0), StubsIndSymIndex(0) {
+    const MachOObjectFile &MOOF, uint64_t VMAddrSlide,
+    uint64_t HeaderLoadAddress)
+    : MCObjectSymbolizer(Ctx, std::move(RelInfo), MOOF), MOOF(MOOF),
+      StubsStart(0), StubsCount(0), StubSize(0), StubsIndSymIndex(0),
+      VMAddrSlide(VMAddrSlide), HeaderLoadAddress(HeaderLoadAddress) {
 
-  for (const SectionRef &Section : MOOF->sections()) {
+  for (const SectionRef &Section : MOOF.sections()) {
     StringRef Name;
     Section.getName(Name);
     if (Name == "__stubs") {
       SectionRef StubsSec = Section;
-      if (MOOF->is64Bit()) {
-        MachO::section_64 S = MOOF->getSection64(StubsSec.getRawDataRefImpl());
+      if (MOOF.is64Bit()) {
+        MachO::section_64 S = MOOF.getSection64(StubsSec.getRawDataRefImpl());
         StubsIndSymIndex = S.reserved1;
         StubSize = S.reserved2;
       } else {
-        MachO::section S = MOOF->getSection(StubsSec.getRawDataRefImpl());
+        MachO::section S = MOOF.getSection(StubsSec.getRawDataRefImpl());
         StubsIndSymIndex = S.reserved1;
         StubSize = S.reserved2;
       }
@@ -116,14 +95,58 @@ MCMachObjectSymbolizer::MCMachObjectSymbolizer(
     }
   }
 
-  for (const SymbolRef &Symbol : MOOF->symbols())
+  for (const SymbolRef &Symbol : MOOF.symbols())
     SortedSymbolRefs.push_back(Symbol.getRawDataRefImpl());
 
   std::sort(SortedSymbolRefs.begin(), SortedSymbolRefs.end(),
             SymbolRefAddressComparator(MOOF));
+
+  // Also look for the init/exit func sections.
+  for (const SectionRef &Section : MOOF.sections()) {
+    StringRef Name;
+    Section.getName(Name);
+    // FIXME: We should use the S_ section type instead of the name.
+    if (Name == "__mod_init_func") {
+      DEBUG(dbgs() << "Found __mod_init_func section!\n");
+      Section.getContents(ModInitContents);
+    } else if (Name == "__mod_exit_func") {
+      DEBUG(dbgs() << "Found __mod_exit_func section!\n");
+      Section.getContents(ModExitContents);
+    }
+  }
+}
+
+// FIXME: Only do the translations for addresses actually inside the object.
+uint64_t MCMachObjectSymbolizer::getEffectiveLoadAddr(uint64_t Addr) {
+  return Addr + VMAddrSlide;
+}
+
+uint64_t MCMachObjectSymbolizer::getOriginalLoadAddr(uint64_t EffectiveAddr) {
+  return EffectiveAddr - VMAddrSlide;
+}
+
+ArrayRef<uint64_t> MCMachObjectSymbolizer::getStaticInitFunctions() {
+  // FIXME: We only handle 64bit mach-o
+  assert(MOOF.is64Bit());
+
+  size_t EntrySize = 8;
+  size_t EntryCount = ModInitContents.size() / EntrySize;
+  return makeArrayRef(
+      reinterpret_cast<const uint64_t *>(ModInitContents.data()), EntryCount);
+}
+
+ArrayRef<uint64_t> MCMachObjectSymbolizer::getStaticExitFunctions() {
+  // FIXME: We only handle 64bit mach-o
+  assert(MOOF.is64Bit());
+
+  size_t EntrySize = 8;
+  size_t EntryCount = ModExitContents.size() / EntrySize;
+  return makeArrayRef(
+      reinterpret_cast<const uint64_t *>(ModExitContents.data()), EntryCount);
 }
 
 StringRef MCMachObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
+  Addr = getOriginalLoadAddr(Addr);
   // FIXME: also, this can all be done at the very beginning, by iterating over
   // all stubs and creating the calls to outside functions. Is it worth it
   // though?
@@ -134,14 +157,43 @@ StringRef MCMachObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
     return StringRef();
 
   uint32_t SymtabIdx =
-    MOOF->getIndirectSymbolTableEntry(MOOF->getDysymtabLoadCommand(), StubIdx);
-  symbol_iterator SI = MOOF->getSymbolByIndex(SymtabIdx);
+      MOOF.getIndirectSymbolTableEntry(MOOF.getDysymtabLoadCommand(), StubIdx);
+  symbol_iterator SI = MOOF.getSymbolByIndex(SymtabIdx);
 
   StringRef SymName;
   SI->getName(SymName);
-  assert(SI != MOOF->symbol_end() && "Stub wasn't found in the symbol table!");
+  assert(SI != MOOF.symbol_end() && "Stub wasn't found in the symbol table!");
   assert(SymName.front() == '_' && "Mach-O symbol doesn't start with '_'!");
   return SymName.substr(1);
+}
+
+uint64_t MCMachObjectSymbolizer::getEntrypoint() {
+  uint64_t EntryFileOffset = 0;
+
+  // Look for LC_MAIN.
+  {
+    uint32_t LoadCommandCount = MOOF.getHeader().ncmds;
+    MachOObjectFile::LoadCommandInfo Load = MOOF.getFirstLoadCommandInfo();
+    for (unsigned I = 0;; ++I) {
+      if (Load.C.cmd == MachO::LC_MAIN) {
+        EntryFileOffset =
+            ((const MachO::entry_point_command *)Load.Ptr)->entryoff;
+        break;
+      }
+
+      if (I == LoadCommandCount - 1)
+        break;
+      else
+        Load = MOOF.getNextLoadCommandInfo(Load);
+    }
+  }
+
+  // If we didn't find anything, default to the common implementation.
+  // FIXME: Maybe we could also look at LC_UNIXTHREAD and friends?
+  if (EntryFileOffset)
+    return MCObjectSymbolizer::getEntrypoint();
+
+  return EntryFileOffset + HeaderLoadAddress;
 }
 
 void MCMachObjectSymbolizer::
@@ -170,7 +222,7 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
 void MCMachObjectSymbolizer::buildAddrToFunctionSymbolMap() {
   for (size_t SymI = 0; SymI != SortedSymbolRefs.size(); ++SymI) {
     const DataRefImpl &SymbolDRI = SortedSymbolRefs[SymI];
-    const SymbolRef Symbol(SymbolDRI, MOOF);
+    const SymbolRef Symbol(SymbolDRI, &MOOF);
     uint64_t SymAddr;
     Symbol.getAddress(SymAddr);
     uint64_t SymSize;
@@ -178,8 +230,8 @@ void MCMachObjectSymbolizer::buildAddrToFunctionSymbolMap() {
     if (SymI+1 != SortedSymbolRefs.size()) {
       const DataRefImpl &NextSymbolDRI = SortedSymbolRefs[SymI+1];
       uint64_t SymSize, NextSymSize;
-      MOOF->getSymbolAddress(SymbolDRI, SymSize);
-      MOOF->getSymbolAddress(NextSymbolDRI, NextSymSize);
+      MOOF.getSymbolAddress(SymbolDRI, SymSize);
+      MOOF.getSymbolAddress(NextSymbolDRI, NextSymSize);
       SymSize = NextSymSize - SymSize;
     } else {
       Symbol.getSize(SymSize);
@@ -203,11 +255,30 @@ void MCMachObjectSymbolizer::buildAddrToFunctionSymbolMap() {
 //===- MCObjectSymbolizer -------------------------------------------------===//
 
 MCObjectSymbolizer::MCObjectSymbolizer(
-  MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
-  const ObjectFile *Obj)
-  : MCSymbolizer(Ctx, std::move(RelInfo)), Obj(Obj) {
+    MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
+    const ObjectFile &Obj)
+    : MCSymbolizer(Ctx, std::move(RelInfo)), Obj(Obj) {
   buildSectionList();
 }
+
+uint64_t MCObjectSymbolizer::getEntrypoint() {
+  for (const SymbolRef &Symbol : Obj.symbols()) {
+    StringRef Name;
+    Symbol.getName(Name);
+    if (Name == "main" || Name == "_main") {
+      uint64_t Entrypoint;
+      Symbol.getAddress(Entrypoint);
+      return Entrypoint;
+    }
+  }
+  return 0;
+}
+
+uint64_t MCObjectSymbolizer::getEffectiveLoadAddr(uint64_t Addr) {
+  return Addr;
+}
+
+uint64_t MCObjectSymbolizer::getOriginalLoadAddr(uint64_t Addr) { return Addr; }
 
 bool MCObjectSymbolizer::
 tryAddingSymbolicOperand(MCInst &MI, raw_ostream &cStream,
@@ -280,7 +351,7 @@ findContainingFunction(uint64_t Addr, uint64_t &Offset)
 }
 
 void MCObjectSymbolizer::buildAddrToFunctionSymbolMap() {
-  for (const SymbolRef &Symbol : Obj->symbols()) {
+  for (const SymbolRef &Symbol : Obj.symbols()) {
     uint64_t SymAddr;
     Symbol.getAddress(SymAddr);
     uint64_t SymSize;
@@ -306,14 +377,6 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream,
 
 StringRef MCObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
   return StringRef();
-}
-
-MCObjectSymbolizer *MCObjectSymbolizer::createObjectSymbolizer(
-    MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
-    const ObjectFile *Obj) {
-  if (const MachOObjectFile *MOOF = dyn_cast<MachOObjectFile>(Obj))
-    return new MCMachObjectSymbolizer(Ctx, std::move(RelInfo), MOOF);
-  return new MCObjectSymbolizer(Ctx, std::move(RelInfo), Obj);
 }
 
 // SortedSections implementation.
@@ -356,7 +419,7 @@ const RelocationRef *MCObjectSymbolizer::findRelocationAt(uint64_t Addr) const {
 }
 
 void MCObjectSymbolizer::buildSectionList() {
-  for (const SectionRef &Section : Obj->sections())
+  for (const SectionRef &Section : Obj.sections())
     SortedSections.push_back(Section);
   std::sort(SortedSections.begin(), SortedSections.end());
 

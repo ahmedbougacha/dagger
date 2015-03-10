@@ -19,7 +19,6 @@
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCModuleYAML.h"
-#include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler.h"
@@ -81,10 +80,6 @@ MAttrs("mattr",
   cl::CommaSeparated,
   cl::desc("Target specific attributes"),
   cl::value_desc("a1,+a2,-a3,..."));
-
-static cl::opt<bool>
-Symbolize("symbolize", cl::desc("When disassembling instructions, "
-                                "try to symbolize operands."));
 
 static cl::opt<bool>
 EmitDOT("emit-dot", cl::desc("Write the CFG for every function found in the"
@@ -309,18 +304,6 @@ static void DumpObject(const ObjectFile *Obj) {
   if (EnableDisassemblyCache) {
     DisAsmImpl = std::move(DisAsm);
     DisAsm.reset(new MCCachingDisassembler(*DisAsmImpl, *STI));
-  }
-
-  if (Symbolize) {
-    std::unique_ptr<MCRelocationInfo> RelInfo(
-        TheTarget->createMCRelocationInfo(TripleName, Ctx));
-    if (RelInfo) {
-      std::unique_ptr<MCSymbolizer> Symzer(
-        MCObjectSymbolizer::createObjectSymbolizer(Ctx, std::move(RelInfo),
-                                                   Obj));
-      if (Symzer)
-        DisAsm->setSymbolizer(std::move(Symzer));
-    }
   }
 
   std::unique_ptr<const MCInstrAnalysis> MIA(

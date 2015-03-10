@@ -288,10 +288,6 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     errs() << "error: no reloc info for target " << TripleName << "\n";
     exit(1);
   }
-  // FIXME: why are there unique_ptrs everywhere?
-  std::unique_ptr<MCObjectSymbolizer> MOS(
-      MCObjectSymbolizer::createObjectSymbolizer(Ctx, std::move(RelInfo),
-                                                 Obj));
 
   // FIXME: Mach-O specific
 
@@ -301,9 +297,18 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   uint64_t VMAddrSlide = _dyld_get_image_vmaddr_slide(0);
   uint64_t HeaderLoadAddress = (uint64_t)_dyld_get_image_header(0);
 
-  std::unique_ptr<MCObjectDisassembler> OD(new MCMachOObjectDisassembler(
-      *cast<object::MachOObjectFile>(Obj), *DisAsm, *MIA, VMAddrSlide,
-      HeaderLoadAddress));
+  MachOObjectFile *MOOF = dyn_cast<MachOObjectFile>(Obj);
+  if (!MOOF) {
+    errs() << "error: unrecognized object file " << InputFilename << "\n";
+    exit(1);
+  }
+
+  // FIXME: why are there unique_ptrs everywhere?
+  std::unique_ptr<MCMachObjectSymbolizer> MOS(new MCMachObjectSymbolizer(
+      Ctx, std::move(RelInfo), *MOOF, VMAddrSlide, HeaderLoadAddress));
+
+  std::unique_ptr<MCObjectDisassembler> OD(
+      new MCObjectDisassembler(*Obj, *DisAsm, *MIA));
   OD->setSymbolizer(MOS.get());
   // FIXME: We need either:
   //  - a custom non-contiguous memory object, for every mapped region.
@@ -390,7 +395,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     TranslatedFns.reserve(Fns.size());
     for (auto FnAddr : Fns)
       TranslatedFns.push_back(
-          DT->translateRecursivelyAt(OD->getEffectiveLoadAddr(FnAddr)));
+          DT->translateRecursivelyAt(MOS->getEffectiveLoadAddr(FnAddr)));
     DEBUG(DT->printCurrentModule(dbgs()));
 
     // Add these to the JIT, and run them.
@@ -405,10 +410,10 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     }
   };
 
-  TranslateAndRunStaticInitExit(OD->getStaticInitFunctions());
+  TranslateAndRunStaticInitExit(MOS->getStaticInitFunctions());
 
   // Now we can start running real code.
-  uint64_t CurPC = MCM->getEntrypoint();
+  uint64_t CurPC = MOS->getEffectiveLoadAddr(MOS->getEntrypoint());
   assert(dlsym(RTLD_MAIN_ONLY, "main") == (void *)CurPC);
   do {
     Function *Fn = DT->translateRecursivelyAt(CurPC);
@@ -427,7 +432,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   int exitVal = RunFiniRegSet();
 
-  TranslateAndRunStaticInitExit(OD->getStaticExitFunctions());
+  TranslateAndRunStaticInitExit(MOS->getStaticExitFunctions());
 
   exit(exitVal);
 }

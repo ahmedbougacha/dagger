@@ -8,6 +8,7 @@
 #include "llvm/MC/MCAnalysis/MCCachingDisassembler.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
+#include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler.h"
 #include "llvm/MC/MCInst.h"
@@ -38,6 +39,11 @@ InputFilename(cl::Positional, cl::desc("Input object file"), cl::Required);
 static cl::opt<std::string>
 TripleName("triple", cl::desc("Target triple to disassemble for, "
                               "see -version for available targets"));
+
+static cl::opt<uint64_t>
+TranslationEntrypoint("entrypoint",
+                      cl::desc("Address to start translating from "
+                               "(default = object entrypoint)"));
 
 static cl::opt<bool>
 AnnotateIROutput("annot", cl::desc("Enable IR output anotations"),
@@ -164,6 +170,16 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  std::unique_ptr<MCRelocationInfo> RelInfo(
+      TheTarget->createMCRelocationInfo(TripleName, Ctx));
+  if (!RelInfo) {
+    errs() << "error: no relocation info for target " << TripleName << "\n";
+    return 1;
+  }
+  std::unique_ptr<MCObjectSymbolizer> MOS(
+      new MCObjectSymbolizer(Ctx, std::move(RelInfo), *Obj));
+  // FIXME: should we set the symbolizer on OD? maybe under a CLI option.
+
   std::unique_ptr<const MCInstrAnalysis> MIA(
       TheTarget->createMCInstrAnalysis(MII.get()));
 
@@ -204,8 +220,11 @@ int main(int argc, char **argv) {
                      TOLvl, *DIS, *DRS, *MIP, *MCM,
                      OD.get(), AnnotateIROutput));
 
+  if (!TranslationEntrypoint)
+    TranslationEntrypoint = MOS->getEntrypoint();
+
   DT->createMainFunctionWrapper(
-      DT->translateRecursivelyAt(MCM->getEntrypoint()));
+      DT->translateRecursivelyAt(TranslationEntrypoint));
   DT->printCurrentModule(outs());
   return 0;
 }

@@ -39,9 +39,6 @@ class MCModule {
   DenseMap<uint64_t, MCFunction *> FunctionsByAddr;
   /// @}
 
-  /// The address of the entrypoint function.
-  uint64_t Entrypoint;
-
   MCModule           (const MCModule &) = delete;
   MCModule& operator=(const MCModule &) = delete;
 
@@ -74,9 +71,6 @@ public:
     return const_func_iterator_range(func_begin(), func_end());
   }
   /// @}
-
-  /// \brief Get the address of the entrypoint function, or 0 if there is none.
-  uint64_t getEntrypoint() const { return Entrypoint; }
 };
 
 }

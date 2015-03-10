@@ -72,34 +72,6 @@ public:
     MOS = ObjectSymbolizer;
   }
 
-  /// \brief Get the effective address of the entrypoint, or 0 if there is none.
-  virtual uint64_t getEntrypoint();
-
-  /// \name Get the addresses of static constructors/destructors in the object.
-  /// The caller is expected to know how to interpret the addresses;
-  /// for example, Mach-O init functions expect 5 arguments, not for ELF.
-  /// The addresses are original object file load addresses, not effective.
-  /// @{
-  virtual ArrayRef<uint64_t> getStaticInitFunctions();
-  virtual ArrayRef<uint64_t> getStaticExitFunctions();
-  /// @}
-
-  /// \name Translation between effective and objectfile load address.
-  /// @{
-  /// \brief Compute the effective load address, from an objectfile virtual
-  /// address. This is implemented in a format-specific way, to take into
-  /// account things like PIE/ASLR when doing dynamic disassembly.
-  /// For example, on Mach-O this would be done by adding the VM addr slide,
-  /// on glibc ELF by keeping a map between segment load addresses, filled
-  /// using dl_iterate_phdr, etc..
-  /// In most static situations and in the default impl., this returns \p Addr.
-  virtual uint64_t getEffectiveLoadAddr(uint64_t Addr);
-
-  /// \brief Compute the original load address, as specified in the objectfile.
-  /// This is the inverse of getEffectiveLoadAddr.
-  virtual uint64_t getOriginalLoadAddr(uint64_t EffectiveAddr);
-  /// @}
-
 protected:
   const object::ObjectFile &Obj;
   const MCDisassembler &Dis;
@@ -137,36 +109,6 @@ private:
   void disassembleFunctionAt(MCModule *Module, MCFunction *MCFN,
                              uint64_t BeginAddr, AddressSetTy &CallTargets,
                              AddressSetTy &TailCallTargets);
-};
-
-class MCMachOObjectDisassembler : public MCObjectDisassembler {
-  const object::MachOObjectFile &MOOF;
-
-  uint64_t VMAddrSlide;
-  uint64_t HeaderLoadAddress;
-
-  // __DATA;__mod_init_func support.
-  llvm::StringRef ModInitContents;
-  // __DATA;__mod_exit_func support.
-  llvm::StringRef ModExitContents;
-
-public:
-  /// \brief Construct a Mach-O specific object disassembler.
-  /// \param VMAddrSlide The virtual address slide applied by dyld.
-  /// \param HeaderLoadAddress The load address of the mach_header for this
-  /// object.
-  MCMachOObjectDisassembler(const object::MachOObjectFile &MOOF,
-                            const MCDisassembler &Dis,
-                            const MCInstrAnalysis &MIA, uint64_t VMAddrSlide,
-                            uint64_t HeaderLoadAddress);
-
-protected:
-  uint64_t getEffectiveLoadAddr(uint64_t Addr) override;
-  uint64_t getOriginalLoadAddr(uint64_t EffectiveAddr) override;
-  uint64_t getEntrypoint() override;
-
-  ArrayRef<uint64_t> getStaticInitFunctions() override;
-  ArrayRef<uint64_t> getStaticExitFunctions() override;
 };
 
 }

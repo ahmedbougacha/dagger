@@ -39,27 +39,6 @@ MCObjectDisassembler::MCObjectDisassembler(const ObjectFile &Obj,
                                            const MCInstrAnalysis &MIA)
     : Obj(Obj), Dis(Dis), MIA(MIA), MOS(nullptr) {}
 
-uint64_t MCObjectDisassembler::getEntrypoint() {
-  for (const SymbolRef &Symbol : Obj.symbols()) {
-    StringRef Name;
-    Symbol.getName(Name);
-    if (Name == "main" || Name == "_main") {
-      uint64_t Entrypoint;
-      Symbol.getAddress(Entrypoint);
-      return getEffectiveLoadAddr(Entrypoint);
-    }
-  }
-  return 0;
-}
-
-ArrayRef<uint64_t> MCObjectDisassembler::getStaticInitFunctions() {
-  return None;
-}
-
-ArrayRef<uint64_t> MCObjectDisassembler::getStaticExitFunctions() {
-  return None;
-}
-
 const MCObjectDisassembler::MemoryRegion &
 MCObjectDisassembler::getRegionFor(uint64_t Addr) {
   auto Region =
@@ -73,17 +52,8 @@ MCObjectDisassembler::getRegionFor(uint64_t Addr) {
   return FallbackRegion;
 }
 
-uint64_t MCObjectDisassembler::getEffectiveLoadAddr(uint64_t Addr) {
-  return Addr;
-}
-
-uint64_t MCObjectDisassembler::getOriginalLoadAddr(uint64_t Addr) {
-  return Addr;
-}
-
 MCModule *MCObjectDisassembler::buildEmptyModule() {
   MCModule *Module = new MCModule;
-  Module->Entrypoint = getEntrypoint();
   return Module;
 }
 
@@ -99,7 +69,8 @@ MCModule *MCObjectDisassembler::buildModule() {
       // FIXME
       if (StartAddr == UnknownAddressOrSize || SecSize == UnknownAddressOrSize)
         continue;
-      StartAddr = getEffectiveLoadAddr(StartAddr);
+      if (MOS)
+        StartAddr = MOS->getEffectiveLoadAddr(StartAddr);
       if (!isText)
         continue;
 
@@ -107,7 +78,9 @@ MCModule *MCObjectDisassembler::buildModule() {
       if (Section.getContents(Contents))
         continue;
       SectionRegions.emplace_back(
-          StartAddr, ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Contents.data()), Contents.size()));
+          StartAddr,
+          ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Contents.data()),
+                            Contents.size()));
     }
     std::sort(SectionRegions.begin(), SectionRegions.end(),
               [](const MemoryRegion &L, const MemoryRegion &R) {
@@ -152,7 +125,8 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
     if (SymType == SymbolRef::ST_Function) {
       if (Symbol.getAddress(SymAddr))
         continue;
-      SymAddr = getEffectiveLoadAddr(SymAddr);
+      if (MOS)
+        SymAddr = MOS->getEffectiveLoadAddr(SymAddr);
       if (getRegionFor(SymAddr).Bytes.empty())
         continue;
       createFunction(Module, SymAddr, CallTargets, TailCallTargets);
@@ -167,7 +141,8 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
   while (!NewCallTargets.empty()) {
     // First, create functions for all the previously found targets
     for (uint64_t CallTarget : CallTargets) {
-      CallTarget = getEffectiveLoadAddr(CallTarget);
+      if (MOS)
+        CallTarget = MOS->getEffectiveLoadAddr(CallTarget);
       createFunction(Module, CallTarget, NewCallTargets, TailCallTargets);
     }
     // Next, forget about those targets, since we just handled them.
@@ -349,8 +324,8 @@ void MCObjectDisassembler::disassembleFunctionAt(
             if (MIA.evaluateBranch(Inst, Addr, InstSize, BranchTarget)) {
               StringRef ExtFnName;
               if (MOS &&
-                  !(ExtFnName = MOS->findExternalFunctionAt(
-                        getOriginalLoadAddr(BranchTarget))).empty()) {
+                  !(ExtFnName = MOS->findExternalFunctionAt(BranchTarget))
+                       .empty()) {
                 TailCallTargets.push_back(BranchTarget);
                 CallTargets.push_back(BranchTarget);
               } else {
@@ -403,7 +378,7 @@ MCObjectDisassembler::createFunction(MCModule *Module, uint64_t BeginAddr,
   // First, check if this is an external function.
   StringRef ExtFnName;
   if (MOS)
-    ExtFnName = MOS->findExternalFunctionAt(getOriginalLoadAddr(BeginAddr));
+    ExtFnName = MOS->findExternalFunctionAt(BeginAddr);
   if (!ExtFnName.empty())
     return Module->createFunction(ExtFnName, BeginAddr);
 
@@ -416,86 +391,4 @@ MCObjectDisassembler::createFunction(MCModule *Module, uint64_t BeginAddr,
       Module->createFunction(("fn_" + utohexstr(BeginAddr)).c_str(), BeginAddr);
   disassembleFunctionAt(Module, MCFN, BeginAddr, CallTargets, TailCallTargets);
   return MCFN;
-}
-
-// MachO MCObjectDisassembler implementation.
-
-MCMachOObjectDisassembler::MCMachOObjectDisassembler(
-    const MachOObjectFile &MOOF, const MCDisassembler &Dis,
-    const MCInstrAnalysis &MIA, uint64_t VMAddrSlide,
-    uint64_t HeaderLoadAddress)
-    : MCObjectDisassembler(MOOF, Dis, MIA), MOOF(MOOF),
-      VMAddrSlide(VMAddrSlide), HeaderLoadAddress(HeaderLoadAddress) {
-
-  for (const SectionRef &Section : MOOF.sections()) {
-    StringRef Name;
-    Section.getName(Name);
-    // FIXME: We should use the S_ section type instead of the name.
-    if (Name == "__mod_init_func") {
-      DEBUG(dbgs() << "Found __mod_init_func section!\n");
-      Section.getContents(ModInitContents);
-    } else if (Name == "__mod_exit_func") {
-      DEBUG(dbgs() << "Found __mod_exit_func section!\n");
-      Section.getContents(ModExitContents);
-    }
-  }
-}
-
-// FIXME: Only do the translations for addresses actually inside the object.
-uint64_t MCMachOObjectDisassembler::getEffectiveLoadAddr(uint64_t Addr) {
-  return Addr + VMAddrSlide;
-}
-
-uint64_t
-MCMachOObjectDisassembler::getOriginalLoadAddr(uint64_t EffectiveAddr) {
-  return EffectiveAddr - VMAddrSlide;
-}
-
-uint64_t MCMachOObjectDisassembler::getEntrypoint() {
-  uint64_t EntryFileOffset = 0;
-
-  // Look for LC_MAIN.
-  {
-    uint32_t LoadCommandCount = MOOF.getHeader().ncmds;
-    MachOObjectFile::LoadCommandInfo Load = MOOF.getFirstLoadCommandInfo();
-    for (unsigned I = 0;; ++I) {
-      if (Load.C.cmd == MachO::LC_MAIN) {
-        EntryFileOffset =
-            ((const MachO::entry_point_command *)Load.Ptr)->entryoff;
-        break;
-      }
-
-      if (I == LoadCommandCount - 1)
-        break;
-      else
-        Load = MOOF.getNextLoadCommandInfo(Load);
-    }
-  }
-
-  // If we didn't find anything, default to the common implementation.
-  // FIXME: Maybe we could also look at LC_UNIXTHREAD and friends?
-  if (EntryFileOffset)
-    return MCObjectDisassembler::getEntrypoint();
-
-  return EntryFileOffset + HeaderLoadAddress;
-}
-
-ArrayRef<uint64_t> MCMachOObjectDisassembler::getStaticInitFunctions() {
-  // FIXME: We only handle 64bit mach-o
-  assert(MOOF.is64Bit());
-
-  size_t EntrySize = 8;
-  size_t EntryCount = ModInitContents.size() / EntrySize;
-  return makeArrayRef(
-      reinterpret_cast<const uint64_t *>(ModInitContents.data()), EntryCount);
-}
-
-ArrayRef<uint64_t> MCMachOObjectDisassembler::getStaticExitFunctions() {
-  // FIXME: We only handle 64bit mach-o
-  assert(MOOF.is64Bit());
-
-  size_t EntrySize = 8;
-  size_t EntryCount = ModExitContents.size() / EntrySize;
-  return makeArrayRef(
-      reinterpret_cast<const uint64_t *>(ModExitContents.data()), EntryCount);
 }

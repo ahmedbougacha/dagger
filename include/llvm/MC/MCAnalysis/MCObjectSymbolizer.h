@@ -15,6 +15,7 @@
 #ifndef LLVM_MC_MCANALYSIS_MCOBJECTSYMBOLIZER_H
 #define LLVM_MC_MCANALYSIS_MCOBJECTSYMBOLIZER_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/MC/MCSymbolizer.h"
 #include "llvm/Object/ObjectFile.h"
@@ -31,7 +32,7 @@ class raw_ostream;
 /// \brief An ObjectFile-backed symbolizer.
 class MCObjectSymbolizer : public MCSymbolizer {
 protected:
-  const object::ObjectFile *Obj;
+  const object::ObjectFile &Obj;
 
   // Map a load address to the first relocation that applies there. As far as I
   // know, if there are several relocations at the exact same address, they are
@@ -42,10 +43,10 @@ protected:
   const object::RelocationRef *findRelocationAt(uint64_t Addr) const;
   const object::SectionRef *findSectionContaining(uint64_t Addr) const;
 
-  MCObjectSymbolizer(MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
-                     const object::ObjectFile *Obj);
-
 public:
+  MCObjectSymbolizer(MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
+                     const object::ObjectFile &Obj);
+
   /// \name Overridden MCSymbolizer methods:
   /// @{
   bool tryAddingSymbolicOperand(MCInst &MI, raw_ostream &cStream,
@@ -63,11 +64,24 @@ public:
   /// \returns The function's name, or the empty string if not found.
   virtual StringRef findExternalFunctionAt(uint64_t Addr);
 
-  /// \brief Create an object symbolizer for \p Obj.
-  static MCObjectSymbolizer *
-  createObjectSymbolizer(MCContext &Ctx,
-                         std::unique_ptr<MCRelocationInfo> RelInfo,
-                         const object::ObjectFile *Obj);
+  /// \brief Get the effective address of the entrypoint, or 0 if there is none.
+  virtual uint64_t getEntrypoint();
+
+  /// \name Translation between effective and objectfile load address.
+  /// @{
+  /// \brief Compute the effective load address, from an objectfile virtual
+  /// address. This is implemented in a format-specific way, to take into
+  /// account things like PIE/ASLR when doing dynamic disassembly.
+  /// For example, on Mach-O this would be done by adding the VM addr slide,
+  /// on glibc ELF by keeping a map between segment load addresses, filled
+  /// using dl_iterate_phdr, etc..
+  /// In most static situations and in the default impl., this returns \p Addr.
+  virtual uint64_t getEffectiveLoadAddr(uint64_t Addr);
+
+  /// \brief Compute the original load address, as specified in the objectfile.
+  /// This is the inverse of getEffectiveLoadAddr.
+  virtual uint64_t getOriginalLoadAddr(uint64_t EffectiveAddr);
+  /// @}
 
 protected:
   struct FunctionSymbol {
@@ -103,6 +117,58 @@ protected:
   SectionInfo *findSectionInfoContaining(uint64_t Addr);
 };
 
+class MCMachObjectSymbolizer final : public MCObjectSymbolizer {
+  const object::MachOObjectFile &MOOF;
+  // __TEXT;__stubs support.
+  uint64_t StubsStart;
+  uint64_t StubsCount;
+  uint64_t StubSize;
+  uint64_t StubsIndSymIndex;
+
+  uint64_t VMAddrSlide;
+  uint64_t HeaderLoadAddress;
+
+  // __DATA;__mod_init_func support.
+  llvm::StringRef ModInitContents;
+  // __DATA;__mod_exit_func support.
+  llvm::StringRef ModExitContents;
+
+  // MachOObjectFile::getSymbolSize is *super* expensive, because it needs to
+  // search through the entire symtab for the next symbol, to determine size.
+  // Keep track of all symbols to be able to efficiently provide size.
+  std::vector<object::DataRefImpl> SortedSymbolRefs;
+
+public:
+  /// \brief Construct a Mach-O specific object symbolizer.
+  /// \param VMAddrSlide The virtual address slide applied by dyld.
+  /// \param HeaderLoadAddress The load address of the mach_header for this
+  /// object.
+  MCMachObjectSymbolizer(MCContext &Ctx,
+                         std::unique_ptr<MCRelocationInfo> RelInfo,
+                         const object::MachOObjectFile &MOOF,
+                         uint64_t VMAddrSlide = 0,
+                         uint64_t HeaderLoadAddress = 0);
+
+  StringRef findExternalFunctionAt(uint64_t Addr) override;
+
+  uint64_t getEntrypoint() override;
+
+  void tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
+                                       uint64_t Address) override;
+  void buildAddrToFunctionSymbolMap() override;
+
+  uint64_t getEffectiveLoadAddr(uint64_t Addr) override;
+  uint64_t getOriginalLoadAddr(uint64_t EffectiveAddr) override;
+
+  /// \name Get the addresses of static constructors/destructors in the object.
+  /// The caller is expected to know how to interpret the addresses;
+  /// On Mach-O, init functions expect 5 arguments.
+  /// The addresses are original object file load addresses, not effective.
+  /// @{
+  ArrayRef<uint64_t> getStaticInitFunctions();
+  ArrayRef<uint64_t> getStaticExitFunctions();
+  /// @}
+};
 }
 
 #endif
