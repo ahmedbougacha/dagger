@@ -679,8 +679,8 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
     IntegerType *HalfType = cast<IntegerType>(ResType);
     unsigned HalfBits = HalfType->getPrimitiveSizeInBits();
     IntegerType *FullType = IntegerType::get(*Ctx, HalfBits * 2);
-    Value *DivHi = Builder->CreateCast(ExtOp, Op1, FullType);
-    Value *DivLo = Builder->CreateCast(ExtOp, Op2, FullType);
+    Value *DivHi = Builder->CreateCast(Instruction::ZExt, Op1, FullType);
+    Value *DivLo = Builder->CreateCast(Instruction::ZExt, Op2, FullType);
     Divisor = Builder->CreateOr(
         Builder->CreateShl(DivHi, ConstantInt::get(FullType, HalfBits)), DivLo);
   } else {
