@@ -673,7 +673,7 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
     RemOp = Instruction::URem;
   }
 
-  Value *Divisor;
+  Value *Dividend;
   if (isThreeOperand) {
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
     IntegerType *HalfType = cast<IntegerType>(ResType);
@@ -681,19 +681,19 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
     IntegerType *FullType = IntegerType::get(*Ctx, HalfBits * 2);
     Value *DivHi = Builder->CreateCast(Instruction::ZExt, Op1, FullType);
     Value *DivLo = Builder->CreateCast(Instruction::ZExt, Op2, FullType);
-    Divisor = Builder->CreateOr(
+    Dividend = Builder->CreateOr(
         Builder->CreateShl(DivHi, ConstantInt::get(FullType, HalfBits)), DivLo);
   } else {
-    Divisor = getNextOperand();
+    Dividend = getNextOperand();
   }
 
-  Value *Dividend = getNextOperand();
-  Dividend = Builder->CreateCast(ExtOp, Dividend, Divisor->getType());
+  Value *Divisor = getNextOperand();
+  Divisor = Builder->CreateCast(ExtOp, Divisor, Dividend->getType());
 
   registerResult(Builder->CreateTrunc(
-                     Builder->CreateBinOp(DivOp, Divisor, Dividend), ResType));
+                     Builder->CreateBinOp(DivOp, Dividend, Divisor), ResType));
   registerResult(Builder->CreateTrunc(
-                     Builder->CreateBinOp(RemOp, Divisor, Dividend), ResType));
+                     Builder->CreateBinOp(RemOp, Dividend, Divisor), ResType));
 }
 
 void X86InstrSema::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
