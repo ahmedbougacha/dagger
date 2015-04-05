@@ -317,23 +317,23 @@ Type *DCRegisterSema::getRegType(unsigned RegNo) {
   return IntegerType::get(*Ctx, RegSizes[RegNo]);
 }
 
-void DCRegisterSema::getRegOffsetInRegSet(const DataLayout *DL, unsigned RegNo,
-                                          unsigned &SizeInBytes,
-                                          unsigned &Offset) const {
-  SizeInBytes = RegSizes[RegNo] / 8;
+std::pair<size_t, size_t>
+DCRegisterSema::getRegSizeOffsetInRegSet(const DataLayout *DL,
+                                         unsigned RegNo) const {
+  size_t Size, Offset;
+  Size = RegSizes[RegNo] / 8;
 
   const StructLayout *SL = DL->getStructLayout(RegSetType);
   unsigned Largest = RegLargestSupers[RegNo];
   unsigned Idx = RegOffsetsInSet[Largest];
   Offset = SL->getElementOffset(Idx);
-  if (Largest == RegNo) {
-    return;
+  if (Largest != RegNo) {
+    unsigned SubRegIdx = MRI.getSubRegIndex(Largest, RegNo);
+    assert(SubRegIdx &&
+           "Couldn't determine register's offset in super-register.");
+    unsigned OffsetInSuper = MRI.getSubRegIdxOffset(SubRegIdx);
+    assert(((OffsetInSuper % 8) == 0) && "Register isn't byte aligned!");
+    Offset += (OffsetInSuper / 8);
   }
-
-  unsigned SubRegIdx = MRI.getSubRegIndex(Largest, RegNo);
-  assert(SubRegIdx &&
-         "Couldn't determine register's offset in super-register.");
-  unsigned OffsetInSuper = MRI.getSubRegIdxOffset(SubRegIdx);
-  assert(((OffsetInSuper % 8) == 0) && "Register isn't byte aligned!");
-  Offset += (OffsetInSuper / 8);
+  return std::make_pair(Size, Offset);
 }

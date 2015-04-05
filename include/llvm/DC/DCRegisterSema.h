@@ -123,8 +123,8 @@ public:
   StructType *getRegSetType() const { return RegSetType; }
   // Compute the register's offset in bytes from the start of the regset.
   // Also return it's size in bytes.
-  void getRegOffsetInRegSet(const DataLayout *DL, unsigned RegNo,
-                            unsigned &SizeInBytes, unsigned &Offset) const;
+  std::pair<size_t, size_t> getRegSizeOffsetInRegSet(const DataLayout *DL,
+                                                     unsigned RegNo) const;
 
   virtual void SwitchToModule(Module *TheModule);
   virtual void SwitchToFunction(Function *TheFunction);
