@@ -57,9 +57,9 @@ public:
 
   BasicBlock *getOrCreateBasicBlock(uint64_t StartAddress);
 
-  Function *createMainFunction(Function *EntryFn);
-  Function *getInitRegSetFunction() { return InitFn; }
-  Function *getFiniRegSetFunction() { return FiniFn; }
+  Function *getOrCreateMainFunction(Function *EntryFn);
+  Function *getOrCreateInitRegSetFunction();
+  Function *getOrCreateFiniRegSetFunction();
 
   void createExternalWrapperFunction(uint64_t Addr, StringRef Name);
   void createExternalTailCallBB(uint64_t Addr);
@@ -81,8 +81,6 @@ protected:
   Module *TheModule;
   DCRegisterSema &DRS;
   FunctionType *FuncType;
-  Function *InitFn;
-  Function *FiniFn;
 
   // Following members are valid only inside a Function
   Function *TheFunction;

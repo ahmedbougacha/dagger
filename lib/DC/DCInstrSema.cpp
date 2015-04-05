@@ -69,15 +69,17 @@ void DCInstrSema::FinalizeBasicBlock() {
   TheMCBB = nullptr;
 }
 
-void DCInstrSema::FinalizeModule() {}
-
-Function *DCInstrSema::createMainFunction(Function *EntryFn) {
+Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
   Type *MainArgs[] = { Builder->getInt32Ty(),
                        Builder->getInt8PtrTy()->getPointerTo() };
   Function *IRMain = cast<Function>(
       TheModule->getOrInsertFunction(
           "main", FunctionType::get(Builder->getInt32Ty(), MainArgs, false)));
 
+  if (!IRMain->empty())
+    return IRMain;
+
+  IRBuilderBase::InsertPointGuard IPG(*Builder);
   Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", IRMain));
 
   Value *Regset = Builder->CreateAlloca(DRS.getRegSetType());
@@ -93,10 +95,40 @@ Function *DCInstrSema::createMainFunction(Function *EntryFn) {
   Value *ArgC = ArgI++;
   Value *ArgV = ArgI++;
 
+  Function *InitFn = getOrCreateInitRegSetFunction();
+  Function *FiniFn = getOrCreateFiniRegSetFunction();
+
   Builder->CreateCall5(InitFn, Regset, StackPtr, StackSize, ArgC, ArgV);
   Builder->CreateCall(EntryFn, Regset);
   Builder->CreateRet(Builder->CreateCall(FiniFn, Regset));
   return IRMain;
+}
+
+Function *DCInstrSema::getOrCreateInitRegSetFunction() {
+  StructType *RegSetType = DRS.getRegSetType();
+
+  Type *InitArgs[] = {RegSetType->getPointerTo(), Builder->getInt8PtrTy(),
+                      Builder->getInt32Ty(), Builder->getInt32Ty(),
+                      Builder->getInt8PtrTy()->getPointerTo()};
+  Function *InitFn = cast<Function>(TheModule->getOrInsertFunction(
+      "main_init_regset",
+      FunctionType::get(Builder->getVoidTy(), InitArgs, false)));
+  if (InitFn->empty())
+    DRS.insertInitRegSetCode(InitFn);
+  return InitFn;
+}
+
+Function *DCInstrSema::getOrCreateFiniRegSetFunction() {
+  StructType *RegSetType = DRS.getRegSetType();
+
+  Type *FiniArgs[] = {RegSetType->getPointerTo()};
+  Function *FiniFn = cast<Function>(TheModule->getOrInsertFunction(
+      "main_fini_regset",
+      FunctionType::get(Builder->getInt32Ty(), FiniArgs, false)));
+
+  if (FiniFn->empty())
+    DRS.insertFiniRegSetCode(FiniFn);
+  return FiniFn;
 }
 
 void DCInstrSema::createExternalWrapperFunction(uint64_t Addr, StringRef Name) {
@@ -129,27 +161,6 @@ void DCInstrSema::SwitchToModule(Module *M) {
   FuncType = FunctionType::get(Type::getVoidTy(*Ctx),
                                DRS.getRegSetType()->getPointerTo(), false);
   Builder.reset(new DCIRBuilder(*Ctx));
-
-  // Create the init/fini functions.
-  StructType *RegSetType = DRS.getRegSetType();
-
-  Type *InitArgs[] = { RegSetType->getPointerTo(),
-                       Builder->getInt8PtrTy(),
-                       Builder->getInt32Ty(),
-                       Builder->getInt32Ty(),
-                       Builder->getInt8PtrTy()->getPointerTo() };
-  InitFn = cast<Function>(
-      TheModule->getOrInsertFunction(
-          "main_init_regset",
-          FunctionType::get(Builder->getVoidTy(), InitArgs, false)));
-
-  Type *FiniArgs[] = { RegSetType->getPointerTo() };
-  FiniFn = cast<Function>(
-      TheModule->getOrInsertFunction(
-          "main_fini_regset",
-          FunctionType::get(Builder->getInt32Ty(), FiniArgs, false)));
-
-  DRS.insertInitFiniRegsetCode(InitFn, FiniFn);
 }
 
 void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {

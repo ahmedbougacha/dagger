@@ -153,9 +153,10 @@ public:
 
   Type *getRegType(unsigned RegNo);
 
-  // Creates 2 functions, main_{init,fini}_regset, to initialize a regset from
+  // Fill 2 functions, main_{init,fini}_regset, to initialize a regset from
   // a stack pointer and ac/av, and to extract the return value.
-  virtual void insertInitFiniRegsetCode(Function *InitFn, Function *FiniFn) = 0;
+  virtual void insertInitRegSetCode(Function *InitFn) = 0;
+  virtual void insertFiniRegSetCode(Function *FiniFn) = 0;
 
   virtual void insertExternalWrapperAsm(BasicBlock *WrapperBB,
                                         Function *ExtFn) {}

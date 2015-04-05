@@ -42,8 +42,8 @@ public:
   void updateEFLAGS(Value *Def, bool IsINCDEC = false);
   Value *testCondCode(unsigned CondCode);
 
-  void insertInitFiniRegsetCode(Function *InitFn,
-                                Function *FiniFn) override;
+  void insertInitRegSetCode(Function *InitFn) override;
+  void insertFiniRegSetCode(Function *FiniFn) override;
 
 private:
   bool doesSubRegIndexClearSuper(unsigned SubRegIdx) const override;

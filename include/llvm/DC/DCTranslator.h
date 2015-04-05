@@ -74,6 +74,7 @@ public:
   Function *getFunctionAt(uint64_t Addr);
   Function *getInitRegSetFunction();
   Function *getFiniRegSetFunction();
+  Function *createMainFunctionWrapper(Function *Entrypoint);
 
   uint64_t getEntrypoint() const { return MCM.getEntrypoint(); }
 

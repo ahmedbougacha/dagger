@@ -202,7 +202,7 @@ int main(int argc, char **argv) {
     new DCTranslator(getGlobalContext(), TOLvl, *DIS, *DRS, *MIP, *MCM,
                      OD.get(), AnnotateIROutput));
 
-  DT->getMainFunction();
+  DT->createMainFunctionWrapper(DT->getFunctionAt(MCM->getEntrypoint()));
   DT->print(outs());
   return 0;
 }

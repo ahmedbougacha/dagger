@@ -55,16 +55,14 @@ DCTranslator::DCTranslator(LLVMContext &Ctx, TransOpt::Level TransOptLevel,
 
 DCTranslator::~DCTranslator() {}
 
-Function *DCTranslator::getMainFunction() {
-  return DIS.createMainFunction(getFunctionAt(getEntrypoint()));
-}
-
 Function *DCTranslator::getInitRegSetFunction() {
-  return DIS.getInitRegSetFunction();
+  return DIS.getOrCreateInitRegSetFunction();
 }
-
 Function *DCTranslator::getFiniRegSetFunction() {
-  return DIS.getFiniRegSetFunction();
+  return DIS.getOrCreateFiniRegSetFunction();
+}
+Function *DCTranslator::createMainFunctionWrapper(Function *Entrypoint) {
+  return DIS.getOrCreateMainFunction(Entrypoint);
 }
 
 Function *DCTranslator::getFunctionAt(uint64_t Addr) {

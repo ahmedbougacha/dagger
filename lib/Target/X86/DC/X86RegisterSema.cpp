@@ -319,67 +319,61 @@ Value *X86RegisterSema::getSF(X86::StatusFlag SF) {
   return SV;
 }
 
-void X86RegisterSema::insertInitFiniRegsetCode(Function *InitFn,
-                                               Function *FiniFn) {
-  // FIXME: this is all very much amd64 sysv specific
-  // What about using the stuff in CallingConvLower.h?
-
+// FIXME: this is all very much amd64 sysv specific
+// What about using the stuff in CallingConvLower.h?
+void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
+  IRBuilderBase::InsertPointGuard IPG(*Builder);
   Type *I64Ty = Builder->getInt64Ty();
+  Value *Idx[] = {Builder->getInt32(0), 0};
+  Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", InitFn));
 
-  Value *Idx[] = { Builder->getInt32(0), 0 };
+  Function::arg_iterator ArgI = InitFn->getArgumentList().begin();
+  Value *RegSet = ArgI++;
+  Value *StackPtr = ArgI++;
+  Value *StackSize = ArgI++;
+  Value *ArgC = ArgI++;
+  Value *ArgV = ArgI++;
 
-  // First generate code for InitFn
-  {
-    Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", InitFn));
+  // Initialize RSP to point to the end of the stack
+  Value *RSP = Builder->CreatePtrToInt(StackPtr, I64Ty);
+  RSP = Builder->CreateAdd(RSP, Builder->CreateZExtOrBitCast(StackSize, I64Ty));
 
-    Function::arg_iterator ArgI = InitFn->getArgumentList().begin();
-    Value *Regset = ArgI++;
-    Value *StackPtr = ArgI++;
-    Value *StackSize = ArgI++;
-    Value *ArgC = ArgI++;
-    Value *ArgV = ArgI++;
+  // push ~0 to simulate a call
+  RSP = Builder->CreateSub(RSP, Builder->getInt64(8));
+  Builder->CreateStore(Builder->getInt(APInt::getAllOnesValue(64)),
+                       Builder->CreateIntToPtr(RSP, I64Ty->getPointerTo()));
 
-    // Initialize RSP to point to the end of the stack
-    Value *RSP = Builder->CreatePtrToInt(StackPtr, I64Ty);
-    RSP =
-        Builder->CreateAdd(RSP, Builder->CreateZExtOrBitCast(StackSize, I64Ty));
+  // put a pointer to the test stack in RSP
+  Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::RSP]]);
+  Builder->CreateStore(RSP, Builder->CreateInBoundsGEP(RegSet, Idx));
 
-    // push ~0 to simulate a call
-    RSP = Builder->CreateSub(RSP, Builder->getInt64(8));
-    Builder->CreateStore(Builder->getInt(APInt::getAllOnesValue(64)),
-                         Builder->CreateIntToPtr(RSP, I64Ty->getPointerTo()));
+  // ac comes in EDI
+  Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::EDI]]);
+  Builder->CreateStore(Builder->CreateZExt(ArgC, Builder->getInt64Ty()),
+                       Builder->CreateInBoundsGEP(RegSet, Idx));
 
-    // put a pointer to the test stack in RSP
-    Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::RSP]]);
-    Builder->CreateStore(RSP, Builder->CreateInBoundsGEP(Regset, Idx));
+  // av comes in RSI
+  Idx[1] = Builder->getInt32(RegOffsetsInSet[X86::RSI]);
+  Builder->CreateStore(Builder->CreatePtrToInt(ArgV, Builder->getInt64Ty()),
+                       Builder->CreateInBoundsGEP(RegSet, Idx));
 
-    // ac comes in EDI
-    Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::EDI]]);
-    Builder->CreateStore(Builder->CreateZExt(ArgC, Builder->getInt64Ty()),
-                         Builder->CreateInBoundsGEP(Regset, Idx));
+  Builder->CreateRetVoid();
+}
 
-    // av comes in RSI
-    Idx[1] = Builder->getInt32(RegOffsetsInSet[X86::RSI]);
-    Builder->CreateStore(Builder->CreatePtrToInt(ArgV, Builder->getInt64Ty()),
-                         Builder->CreateInBoundsGEP(Regset, Idx));
+void X86RegisterSema::insertFiniRegSetCode(Function *FiniFn) {
+  IRBuilderBase::InsertPointGuard IPG(*Builder);
+  Type *I64Ty = Builder->getInt64Ty();
+  Value *Idx[] = {Builder->getInt32(0), 0};
+  Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", FiniFn));
 
-    Builder->CreateRetVoid();
-  }
+  Function::arg_iterator ArgI = FiniFn->getArgumentList().begin();
+  Value *RegSet = ArgI;
 
-  // Next generate code for FiniFn
-  {
-    Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", FiniFn));
-
-    Function::arg_iterator ArgI = FiniFn->getArgumentList().begin();
-    Value *Regset = ArgI;
-
-    // Result comes out of EAX
-    Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::EAX]]);
-    Builder->CreateRet(
-        Builder->CreateTrunc(
-            Builder->CreateLoad(Builder->CreateInBoundsGEP(Regset, Idx)),
-            Builder->getInt32Ty()));
-  }
+  // Result comes out of EAX
+  Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::EAX]]);
+  Builder->CreateRet(Builder->CreateTrunc(
+      Builder->CreateLoad(Builder->CreateInBoundsGEP(RegSet, Idx)),
+      Builder->getInt32Ty()));
 }
 
 // FIXME: we really need the regsets to be tablegen'd
