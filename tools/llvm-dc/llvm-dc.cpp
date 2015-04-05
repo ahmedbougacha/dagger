@@ -184,11 +184,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  std::unique_ptr<DCTranslator> DT(new DCTranslator(getGlobalContext(), TOLvl,
-                                                    *DIS, *DRS, *MIP,
-                                                    *MCM, /* MCOD= */ 0,
-                                                    AnnotateIROutput));
+  std::unique_ptr<DCTranslator> DT(
+      new DCTranslator(getGlobalContext(), /*DataLayoutStr=*/"", TOLvl, *DIS,
+                       *DRS, *MIP, *MCM, /* MCOD= */ 0, AnnotateIROutput));
 
-  DT->print(outs());
+  DT->translateAllKnownFunctions();
+  DT->printCurrentModule(outs());
   return 0;
 }

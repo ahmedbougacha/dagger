@@ -50,10 +50,16 @@ enum Level {
 }
 
 class DCTranslator {
-  Module TheModule;
+  LLVMContext &Ctx;
+  std::string DataLayoutStr;
+
+  std::vector<std::unique_ptr<Module>> ModuleSet;
+
   MCObjectDisassembler *MCOD;
   MCModule &MCM;
-  FunctionPassManager FPM;
+
+  Module *CurrentModule;
+  std::unique_ptr<FunctionPassManager> CurrentFPM;
 
   DCTranslatedInstTracker DTIT;
 
@@ -64,23 +70,24 @@ class DCTranslator {
   TransOpt::Level OptLevel;
 
 public:
-  DCTranslator(LLVMContext &Ctx, TransOpt::Level OptLevel, DCInstrSema &DIS,
-               DCRegisterSema &DRS, MCInstPrinter &IP, MCModule &MCM,
-               MCObjectDisassembler *MCOD = 0, bool EnableIRAnnotation = false);
+  DCTranslator(LLVMContext &Ctx, StringRef DataLayoutStr,
+               TransOpt::Level OptLevel, DCInstrSema &DIS, DCRegisterSema &DRS,
+               MCInstPrinter &IP, MCModule &MCM, MCObjectDisassembler *MCOD = 0,
+               bool EnableIRAnnotation = false);
   ~DCTranslator();
 
-  Module *getModule() { return &TheModule; }
-
-  Function *getFunctionAt(uint64_t Addr);
   Function *getInitRegSetFunction();
   Function *getFiniRegSetFunction();
   Function *createMainFunctionWrapper(Function *Entrypoint);
 
-  uint64_t getEntrypoint() const { return MCM.getEntrypoint(); }
+  Module *finalizeTranslationModule();
+  Module *getCurrentTranslationModule() { return CurrentModule; }
 
-  Function *getMainFunction();
+  Function *translateRecursivelyAt(uint64_t Addr);
 
-  void print(raw_ostream &OS);
+  void translateAllKnownFunctions();
+
+  void printCurrentModule(raw_ostream &OS);
 
 private:
   void

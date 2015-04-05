@@ -198,11 +198,14 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  // FIXME: should we have a non-default datalayout?
   std::unique_ptr<DCTranslator> DT(
-    new DCTranslator(getGlobalContext(), TOLvl, *DIS, *DRS, *MIP, *MCM,
+    new DCTranslator(getGlobalContext(), /*DataLayoutStr=*/"",
+                     TOLvl, *DIS, *DRS, *MIP, *MCM,
                      OD.get(), AnnotateIROutput));
 
-  DT->createMainFunctionWrapper(DT->getFunctionAt(MCM->getEntrypoint()));
-  DT->print(outs());
+  DT->createMainFunctionWrapper(
+      DT->translateRecursivelyAt(MCM->getEntrypoint()));
+  DT->printCurrentModule(outs());
   return 0;
 }

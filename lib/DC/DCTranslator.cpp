@@ -27,30 +27,46 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dctranslator"
 
-DCTranslator::DCTranslator(LLVMContext &Ctx, TransOpt::Level TransOptLevel,
-                           DCInstrSema &DIS, DCRegisterSema &DRS,
-                           MCInstPrinter &IP, MCModule &MCM,
-                           MCObjectDisassembler *MCOD, bool EnableIRAnnotation)
-    : TheModule("output", Ctx), MCOD(MCOD), MCM(MCM), FPM(&TheModule), DTIT(),
-      AnnotWriter(), DIS(DIS), OptLevel(TransOptLevel) {
+DCTranslator::DCTranslator(LLVMContext &Ctx, StringRef DataLayoutStr,
+                           TransOpt::Level TransOptLevel, DCInstrSema &DIS,
+                           DCRegisterSema &DRS, MCInstPrinter &IP,
+                           MCModule &MCM, MCObjectDisassembler *MCOD,
+                           bool EnableIRAnnotation)
+    : Ctx(Ctx), DataLayoutStr(DataLayoutStr), ModuleSet(), MCOD(MCOD), MCM(MCM),
+      CurrentModule(nullptr), CurrentFPM(), DTIT(), AnnotWriter(), DIS(DIS),
+      OptLevel(TransOptLevel) {
 
   // FIXME: now this can move to print, we don't need to keep it around
   if (EnableIRAnnotation)
     AnnotWriter.reset(new DCAnnotationWriter(DTIT, DRS.MRI, IP));
 
-  if (OptLevel >= TransOpt::Less)
-    FPM.add(createPromoteMemoryToRegisterPass());
-  if (OptLevel >= TransOpt::Default)
-    FPM.add(createDeadCodeEliminationPass());
-  if (OptLevel >= TransOpt::Aggressive)
-    FPM.add(createInstructionCombiningPass());
+  finalizeTranslationModule();
+}
 
-  DIS.SwitchToModule(&TheModule);
+Module *DCTranslator::finalizeTranslationModule() {
+  Module *OldModule = CurrentModule;
+
+  ModuleSet.emplace_back(
+      CurrentModule = new Module(
+          (Twine("dct module #") + utohexstr(ModuleSet.size())).str(), Ctx));
+  CurrentModule->setDataLayout(DataLayoutStr);
+
+  CurrentFPM.reset(new FunctionPassManager(CurrentModule));
+  if (OptLevel >= TransOpt::Less)
+    CurrentFPM->add(createPromoteMemoryToRegisterPass());
+  if (OptLevel >= TransOpt::Default)
+    CurrentFPM->add(createDeadCodeEliminationPass());
+  if (OptLevel >= TransOpt::Aggressive)
+    CurrentFPM->add(createInstructionCombiningPass());
+
+  DIS.SwitchToModule(CurrentModule);
+  return OldModule;
+}
+
+void DCTranslator::translateAllKnownFunctions() {
   MCObjectDisassembler::AddressSetTy DummyTailCallTargets;
-  for (auto &F : MCM.funcs())
+  for (const auto &F : MCM.funcs())
     translateFunction(&*F, DummyTailCallTargets);
-  DIS.FinalizeModule();
-  (void)DRS;
 }
 
 DCTranslator::~DCTranslator() {}
@@ -65,12 +81,13 @@ Function *DCTranslator::createMainFunctionWrapper(Function *Entrypoint) {
   return DIS.getOrCreateMainFunction(Entrypoint);
 }
 
-Function *DCTranslator::getFunctionAt(uint64_t Addr) {
+Function *DCTranslator::translateRecursivelyAt(uint64_t Addr) {
   SmallSetVector<uint64_t, 16> WorkList;
   WorkList.insert(Addr);
   for (size_t i = 0; i < WorkList.size(); ++i) {
     uint64_t Addr = WorkList[i];
-    Function *F = TheModule.getFunction("fn_" + utohexstr(Addr));
+    // FIXME: look up in other modules
+    Function *F = CurrentModule->getFunction("fn_" + utohexstr(Addr));
     if (F && !F->isDeclaration())
       continue;
 
@@ -98,7 +115,7 @@ Function *DCTranslator::getFunctionAt(uint64_t Addr) {
     for (auto CallTarget : CallTargets)
       WorkList.insert(CallTarget);
   }
-  return TheModule.getFunction("fn_" + utohexstr(Addr));
+  return CurrentModule->getFunction("fn_" + utohexstr(Addr));
 }
 
 namespace {
@@ -151,7 +168,8 @@ void DCTranslator::translateFunction(
         errs() << I.Inst << "\n";
         llvm_unreachable("Couldn't translate instruction\n");
       }
-      DTIT.trackInst(TI);
+      if (AnnotWriter)
+        DTIT.trackInst(TI);
     }
     DIS.FinalizeBasicBlock();
   }
@@ -164,14 +182,11 @@ void DCTranslator::translateFunction(
     // ValueToValueMapTy VMap;
     // Function *OrigFn = CloneFunction(Fn, VMap, false);
     // OrigFn->setName(Fn->getName() + "_orig");
-    // TheModule.getFunctionList().push_back(OrigFn);
-    FPM.run(*Fn);
+    // CurrentModule->getFunctionList().push_back(OrigFn);
+    CurrentFPM->run(*Fn);
   }
-
-  if (!AnnotWriter)
-    DTIT.clear();
 }
 
-void DCTranslator::print(raw_ostream &OS) {
-  TheModule.print(OS, AnnotWriter.get());
+void DCTranslator::printCurrentModule(raw_ostream &OS) {
+  CurrentModule->print(OS, AnnotWriter.get());
 }
