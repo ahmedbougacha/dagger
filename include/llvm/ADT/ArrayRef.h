@@ -161,7 +161,7 @@ namespace llvm {
     }
 
     /// slice(n) - Chop off the first N elements of the array.
-    ArrayRef<T> slice(unsigned N) const {
+    ArrayRef<T> slice(size_t N) const {
       assert(N <= size() && "Invalid specifier");
       return ArrayRef<T>(data()+N, size()-N);
     }
