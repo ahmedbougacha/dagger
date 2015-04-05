@@ -358,6 +358,11 @@ void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
   Builder->CreateStore(Builder->CreatePtrToInt(ArgV, Builder->getInt64Ty()),
                        Builder->CreateInBoundsGEP(RegSet, Idx));
 
+  // Initialize EFLAGS to 0x202 (empirical).
+  Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::EFLAGS]]);
+  Builder->CreateStore(Builder->getInt32(0x202),
+                       Builder->CreateInBoundsGEP(RegSet, Idx));
+
   Builder->CreateRetVoid();
 }
 
