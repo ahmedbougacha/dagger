@@ -24,6 +24,8 @@ set(SOURCES
   dyn.cpp
   )
 
+set(LLVM_EXPORTED_SYMBOL_FILE ${CMAKE_CURRENT_SOURCE_DIR}/dyn.exports)
+
 add_llvm_library(DYN SHARED ${SOURCES})
 
 if(CMAKE_VERSION VERSION_LESS 2.8.12)
