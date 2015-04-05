@@ -160,10 +160,17 @@ StringRef MCMachObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
       MOOF.getIndirectSymbolTableEntry(MOOF.getDysymtabLoadCommand(), StubIdx);
   symbol_iterator SI = MOOF.getSymbolByIndex(SymtabIdx);
 
+  assert(SI != MOOF.symbol_end() && "Stub wasn't found in the symbol table!");
+
+  const MachO::nlist_64 &SymNList =
+      MOOF.getSymbol64TableEntry(SI->getRawDataRefImpl());
+  if ((SymNList.n_type & MachO::N_TYPE) != MachO::N_UNDF)
+    return StringRef();
+
   StringRef SymName;
   SI->getName(SymName);
-  assert(SI != MOOF.symbol_end() && "Stub wasn't found in the symbol table!");
   assert(SymName.front() == '_' && "Mach-O symbol doesn't start with '_'!");
+
   return SymName.substr(1);
 }
 
