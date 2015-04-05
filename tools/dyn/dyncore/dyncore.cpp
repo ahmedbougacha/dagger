@@ -349,7 +349,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
       reinterpret_cast<void *>(&__llvm_dc_translate_at));
 
   EngineBuilder Builder;
-  Builder.setOptLevel(CodeGenOpt::Aggressive);
+  Builder.setOptLevel(CodeGenOpt::Default);
   TargetMachine *TM = Builder.selectTarget();
   if (!TM)
     llvm_unreachable("Unable to select target machine for JIT!");
@@ -360,7 +360,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   std::unique_ptr<DCTranslator> DT(
     new DCTranslator(getGlobalContext(), DL->getStringRepresentation(),
-                     TransOpt::Aggressive, *DIS, *DRS,
+                     TransOpt::Default, *DIS, *DRS,
                      *MIP, *MCM, OD.get()));
 
   __dc_DT = DT.get();
