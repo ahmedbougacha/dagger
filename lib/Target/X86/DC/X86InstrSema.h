@@ -58,6 +58,8 @@ private:
 
   void translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
                         Value *V2 = nullptr);
+
+  void translateCMPXCHG(unsigned MemOpType, unsigned CmpReg);
 };
 
 } // end namespace llvm

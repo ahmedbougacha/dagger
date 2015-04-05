@@ -55,6 +55,15 @@ bool X86InstrSema::translateTargetInst() {
       Instruction::BinaryOps Opc = Instruction::FAdd; // Invalid initializer
       switch (Opcode) {
       default: break;
+      case X86::CMPXCHG8rm:
+        translateCMPXCHG(X86::OpTypes::i8mem, X86::AL); return true;
+      case X86::CMPXCHG16rm:
+        translateCMPXCHG(X86::OpTypes::i16mem, X86::AX); return true;
+      case X86::CMPXCHG32rm:
+        translateCMPXCHG(X86::OpTypes::i32mem, X86::EAX); return true;
+      case X86::CMPXCHG64rm:
+        translateCMPXCHG(X86::OpTypes::i64mem, X86::RAX); return true;
+
       case X86::XADD8rm: XADDMemOpType = X86::OpTypes::i8mem; break;
       case X86::XADD16rm: XADDMemOpType = X86::OpTypes::i16mem; break;
       case X86::XADD32rm: XADDMemOpType = X86::OpTypes::i32mem; break;
@@ -724,4 +733,32 @@ void X86InstrSema::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
 
   registerResult(
       Builder->CreateShuffleVector(V1, V2, ConstantVector::get(MaskCV)));
+}
+
+void X86InstrSema::translateCMPXCHG(unsigned MemOpType, unsigned CmpReg) {
+  // First, translate the mem operand.
+  translateCustomOperand(MemOpType, 0);
+  Value *PointerOperand = Vals.back();
+
+  // Next, get the A-reg compare value.
+  Value *CmpVal = getReg(CmpReg);
+
+  // Finally, get the register operands value.
+  Value *Operand2 = getReg(getRegOp(5));
+
+  // Translate LOCK-prefix into monotonic ordering.
+  // FIXME: monotonic doesn't make much sense here.
+  Value *OldPair = Builder->CreateAtomicCmpXchg(
+      PointerOperand, CmpVal, Operand2, AtomicOrdering::Monotonic,
+      AtomicOrdering::Monotonic);
+
+  Value *OldVal = Builder->CreateExtractValue(OldPair, 0);
+  Value *Success = Builder->CreateExtractValue(OldPair, 1);
+
+  setReg(CmpReg, Builder->CreateSelect(Success, CmpVal, OldVal));
+
+  // Finally, update EFLAGS.
+  // FIXME: add support to X86DRS::updateEFLAGS for cmpxchg.
+  Value *Result = Builder->CreateBinOp(Instruction::Sub, CmpVal, OldVal);
+  X86DRS.updateEFLAGS(Result);
 }
