@@ -376,9 +376,9 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   J.addModule(DT->finalizeTranslationModule());
 
   const StructLayout *SL = DL->getStructLayout(DRS->getRegSetType());
-  std::unique_ptr<uint8_t[]> RegSet(new uint8_t[SL->getSizeInBytes()]);
+  std::vector<uint8_t> RegSet(SL->getSizeInBytes());
   const unsigned StackSize = 4096 * 1024;
-  std::unique_ptr<uint8_t[]> StackPtr(new uint8_t[StackSize]);
+  std::vector<uint8_t> StackPtr(StackSize);
 
   unsigned RegSetPCSize, RegSetPCOffset;
   std::tie(RegSetPCSize, RegSetPCOffset) =
@@ -388,7 +388,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
       (void (*)(uint8_t *, uint8_t *, uint32_t, uint32_t, char **))
         (intptr_t)J.findUnmangledSymbol(InitRegSetFn->getName()).getAddress();
   auto RunInitRegSet = [&]() {
-    InitRegSetFnFP(RegSet.get(), StackPtr.get(), StackSize, argc, argv);
+    InitRegSetFnFP(RegSet.data(), StackPtr.data(), StackSize, argc, argv);
   };
 
   RunInitRegSet();
@@ -397,7 +397,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     auto FnSymbol = J.findUnmangledSymbol(Fn->getName());
     DEBUG(dbgs() << "Jumping to " << Fn->getName() << "\n");
     auto FnPointer = (void (*)(uint8_t *))(intptr_t)FnSymbol.getAddress();
-    return FnPointer(RegSet.get());
+    return FnPointer(RegSet.data());
   };
 
   // Translate all static init functions.
@@ -433,13 +433,13 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     DEBUG(DT->printCurrentModule(dbgs()));
     J.addModule(DT->finalizeTranslationModule());
     RunIRFunction(Fn);
-    CurPC = loadRegFromSet(RegSet.get(), RegSetPCOffset, RegSetPCSize);
+    CurPC = loadRegFromSet(RegSet.data(), RegSetPCOffset, RegSetPCSize);
   } while (CurPC != ~0ULL);
 
   auto FiniRegSetFnFP =
       (int (*)(uint8_t *))(intptr_t)J.findUnmangledSymbol(
                                           FiniRegSetFn->getName()).getAddress();
-  auto RunFiniRegSet = [&]() { return FiniRegSetFnFP(RegSet.get()); };
+  auto RunFiniRegSet = [&]() { return FiniRegSetFnFP(RegSet.data()); };
 
   int exitVal = RunFiniRegSet();
 
