@@ -126,6 +126,10 @@ public:
   std::pair<size_t, size_t> getRegSizeOffsetInRegSet(const DataLayout *DL,
                                                      unsigned RegNo) const;
 
+  // Returns the regset diff function, that prints to stderr:
+  //     void @__llvm_dc_print_regset_diff(i8* fn, %regset* v1, %regset* v2)
+  Function *getOrCreateRegSetDiffFunction(bool Definition = false);
+
   virtual void SwitchToModule(Module *TheModule);
   virtual void SwitchToFunction(Function *TheFunction);
   virtual void SwitchToBasicBlock(BasicBlock *TheBB);

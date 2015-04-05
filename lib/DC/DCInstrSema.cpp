@@ -32,6 +32,9 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dc-sema"
 
+static cl::opt<bool>
+EnableRegSetDiff("enable-dc-regset-diff", cl::desc(""), cl::init(false));
+
 DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
                          const unsigned *SemanticsArray,
                          const uint64_t *ConstantArray, DCRegisterSema &DRS)
@@ -116,6 +119,12 @@ Function *DCInstrSema::getOrCreateInitRegSetFunction() {
       FunctionType::get(Builder->getVoidTy(), InitArgs, false)));
   if (InitFn->empty())
     DRS.insertInitRegSetCode(InitFn);
+
+  // If we need to diff regsets, now's a good time to insert the function.
+  // FIXME: bad hijack
+  if (EnableRegSetDiff)
+    DRS.getOrCreateRegSetDiffFunction(/*Definition=*/ true);
+
   return InitFn;
 }
 
@@ -180,10 +189,36 @@ void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
 
   // From now on we insert in the entry basic block.
   Builder->SetInsertPoint(TheBB);
+
+  if (EnableRegSetDiff) {
+    Value *SavedRegSet = Builder->CreateAlloca(DRS.getRegSetType());
+    Value *RegSetArg = &TheFunction->getArgumentList().front();
+
+    // First, save the previous regset in the entry block.
+    Builder->CreateStore(Builder->CreateLoad(RegSetArg), SavedRegSet);
+
+    // Second, insert a call to the diff function, in a separate exit block.
+    // Move the return to that block, and branch to it from ExitBB.
+    BasicBlock *DiffExitBB = BasicBlock::Create(
+        *Ctx, "diff_exit_fn_" + utohexstr(StartAddr), TheFunction);
+
+    DCIRBuilder ExitBBBuilder(DiffExitBB);
+
+    Value *FnAddr = ExitBBBuilder.CreateIntToPtr(
+        ExitBBBuilder.getInt64(reinterpret_cast<uint64_t>(StartAddr)),
+        ExitBBBuilder.getInt8PtrTy());
+
+    ExitBBBuilder.CreateCall3(DRS.getOrCreateRegSetDiffFunction(), FnAddr,
+                              SavedRegSet, RegSetArg);
+    ReturnInst::Create(*Ctx, DiffExitBB);
+    BranchInst::Create(DiffExitBB, ExitBB);
+  } else {
+    // Create a ret void in the exit basic block.
+    ReturnInst::Create(*Ctx, ExitBB);
+  }
+
   // Create a br from the entry basic block to the first basic block, at StartAddr.
   Builder->CreateBr(getOrCreateBasicBlock(StartAddr));
-  // Create a ret void in the exit basic block.
-  ReturnInst::Create(*Ctx, ExitBB);
 
   DRS.SwitchToFunction(TheFunction);
 }
