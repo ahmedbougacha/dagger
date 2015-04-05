@@ -163,19 +163,25 @@ static uint64_t loadRegFromSet(uint8_t *RegSet, unsigned Offset, unsigned Size){
   }
 }
 
-//static DCTranslator *__dc_DT;
-//static ExecutionEngine *__dc_EE;
+static DCTranslator *__dc_DT;
+static DYNJIT *__dc_JIT;
 
 // FIXME: We need to handle cache invalidation when functions are freed.
 //static DenseMap<void *, void *> TranslationCache(128);
 
 // FIXME: This should be configurable (to at least remove the global state).
-//extern "C" void *__llvm_dc_translate_at(void *addr) {
-//  void *&ptr = TranslationCache[addr];
-//  if (ptr == 0)
-//    ptr = __dc_EE->getPointerToFunction(__dc_DT->getFunctionAt((uint64_t)addr));
-//  return ptr;
-//}
+extern "C" void *__llvm_dc_translate_at(void *addr) {
+  void *ptr;
+  Function *F = __dc_DT->translateRecursivelyAt((uint64_t)addr);
+  DEBUG(dbgs() << "Jumping to " << F->getName() << "\n");
+  ptr = (void*)__dc_JIT->findUnmangledSymbol(F->getName()).getAddress();
+  if (!ptr) {
+    __dc_JIT->addModule(__dc_DT->finalizeTranslationModule());
+    auto FnSymbol = __dc_JIT->findUnmangledSymbol(F->getName());
+    ptr = (void*)FnSymbol.getAddress();
+  }
+  return ptr;
+}
 
 // FIXME: This is all mach-o hacks to get this working.
 struct ProgramVars {
@@ -354,6 +360,9 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     new DCTranslator(getGlobalContext(), DL->getStringRepresentation(),
                      TransOpt::Aggressive, *DIS, *DRS,
                      *MIP, *MCM, OD.get()));
+
+  __dc_DT = DT.get();
+  __dc_JIT = &J;
 
   // Now run it !
 
