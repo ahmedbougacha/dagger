@@ -363,7 +363,6 @@ void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
 
 void X86RegisterSema::insertFiniRegSetCode(Function *FiniFn) {
   IRBuilderBase::InsertPointGuard IPG(*Builder);
-  Type *I64Ty = Builder->getInt64Ty();
   Value *Idx[] = {Builder->getInt32(0), 0};
   Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", FiniFn));
 
