@@ -16,9 +16,8 @@ endforeach()
 
 set(LLVM_LINK_COMPONENTS
     ${LLVM_TARGETS_TO_BUILD}
-    jit selectiondag native
+    orcjit selectiondag native
     DC
-    DebugInfo
   )
 
 set(SOURCES

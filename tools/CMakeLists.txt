@@ -65,11 +65,11 @@ add_llvm_tool_subdirectory(llvm-mccfg)
 #add_llvm_tool_subdirectory(llvm-bintrans)
 ignore_llvm_tool_subdirectory(llvm-bintrans)
 
-#if( APPLE )
-#  add_llvm_tool_subdirectory(dyn)
-#else()
+if( APPLE )
+  add_llvm_tool_subdirectory(dyn)
+else()
   ignore_llvm_tool_subdirectory(dyn)
-#endif()
+endif()
 
 add_llvm_tool_subdirectory(llvm-go)
 

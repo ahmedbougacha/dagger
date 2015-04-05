@@ -6,25 +6,25 @@
 #include "llvm/DC/DCInstrSema.h"
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/DC/DCTranslator.h"
+#include "llvm/ExecutionEngine/Orc/CompileUtils.h"
+#include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
+#include "llvm/ExecutionEngine/Orc/LazyEmittingLayer.h"
+#include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
-#include "llvm/ExecutionEngine/GenericValue.h"
-#include "llvm/ExecutionEngine/JIT.h"
-#include "llvm/ExecutionEngine/JITEventListener.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/MC/MCAnalysis/MCFunction.h"
+#include "llvm/MC/MCAnalysis/MCModule.h"
+#include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
 #include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCAtom.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler.h"
-#include "llvm/MC/MCFunction.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstBuilder.h"
 #include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCModule.h"
 #include "llvm/MC/MCObjectDisassembler.h"
 #include "llvm/MC/MCObjectFileInfo.h"
-#include "llvm/MC/MCObjectSymbolizer.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Object/MachO.h"
@@ -39,27 +39,28 @@
 #include "llvm/Support/MemoryObject.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
-#include "llvm/Support/StringRefMemoryObject.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
+#include <memory>
 
 // See dyncore.h, this makes sure the DYNCore library is loaded.
 extern "C" void LLVMLinkInDYNCore() {}
 
 using namespace llvm;
 using namespace object;
+using namespace orc;
 
-static const char *TripleName = 0;
+static std::string TripleName;
 
 static StringRef ToolName;
 
 static const Target *getTarget(const ObjectFile *Obj) {
   // Figure out the target triple.
   Triple TheTriple("unknown-unknown-unknown");
-  if (TripleName == 0) {
+  if (TripleName.empty()) {
   if (Obj) {
     TheTriple.setArch(Triple::ArchType(Obj->getArch()));
     // TheTriple defaults to ELF, and COFF doesn't have an environment:
@@ -80,15 +81,81 @@ static const Target *getTarget(const ObjectFile *Obj) {
   }
 
   // Update the triple name and return the found target.
-  TripleName = TheTriple.getTriple().c_str();
+  TripleName = TheTriple.getTriple();
   return TheTarget;
 }
+
+template <typename T>
+static std::vector<T> singletonSet(T t) {
+  std::vector<T> Vec;
+  Vec.push_back(std::move(t));
+  return Vec;
+}
+
+class DYNJIT {
+public:
+  typedef ObjectLinkingLayer<> ObjLayerT;
+  typedef IRCompileLayer<ObjLayerT> CompileLayerT;
+  typedef LazyEmittingLayer<CompileLayerT> LazyEmitLayerT;
+
+  typedef LazyEmitLayerT::ModuleSetHandleT ModuleHandleT;
+
+  DYNJIT(TargetMachine &TM)
+    : Mang(TM.getDataLayout()),
+      CompileLayer(ObjectLayer, SimpleCompiler(TM)),
+      LazyEmitLayer(CompileLayer) {}
+
+  std::string mangle(const std::string &Name) {
+    std::string MangledName;
+    {
+      raw_string_ostream MangledNameStream(MangledName);
+      Mang.getNameWithPrefix(MangledNameStream, Name);
+    }
+    return MangledName;
+  }
+
+  ModuleHandleT addModule(Module *M) {
+    // We need a memory manager to allocate memory and resolve symbols for this
+    // new module. Create one that resolves symbols by looking back into the
+    // JIT.
+    auto MM = createLookasideRTDyldMM<SectionMemoryManager>(
+                [&](const std::string &Name) {
+                  if (uint64_t Addr = findSymbol(Name).getAddress())
+                    return Addr;
+                  assert(Name.length() > 1 && Name.front() == '_');
+                  return (uint64_t)dlsym(RTLD_DEFAULT, Name.c_str()+1);
+                },
+                [](const std::string &S) {
+                  return 0;
+                } );
+    return LazyEmitLayer.addModuleSet(singletonSet(std::move(M)),
+                                      std::move(MM));
+  }
+
+  void removeModule(ModuleHandleT H) { LazyEmitLayer.removeModuleSet(H); }
+
+  JITSymbol findSymbol(const std::string &Name) {
+    return LazyEmitLayer.findSymbol(Name, true);
+  }
+
+  JITSymbol findUnmangledSymbol(const std::string Name) {
+    return findSymbol(mangle(Name));
+  }
+
+private:
+  Mangler Mang;
+  ObjLayerT ObjectLayer;
+  CompileLayerT CompileLayer;
+  LazyEmitLayerT LazyEmitLayer;
+};
 
 static uint64_t loadRegFromSet(uint8_t *RegSet, unsigned Offset, unsigned Size){
   RegSet += Offset;
   switch (Size) {
   default:
     llvm_unreachable("Loading unhandled size from register set!");
+    // FIXME: Is this ever unaligned?  shouldn't be, since the StructType should
+    // have its members properly aligned
   case 1: return *(uint8_t  *)RegSet;
   case 2: return *(uint16_t *)RegSet;
   case 4: return *(uint32_t *)RegSet;
@@ -96,19 +163,19 @@ static uint64_t loadRegFromSet(uint8_t *RegSet, unsigned Offset, unsigned Size){
   }
 }
 
-static DCTranslator *__dc_DT;
-static ExecutionEngine *__dc_EE;
+//static DCTranslator *__dc_DT;
+//static ExecutionEngine *__dc_EE;
 
 // FIXME: We need to handle cache invalidation when functions are freed.
-static DenseMap<void *, void *> TranslationCache(128);
+//static DenseMap<void *, void *> TranslationCache(128);
 
 // FIXME: This should be configurable (to at least remove the global state).
-extern "C" void *__llvm_dc_translate_at(void *addr) {
-  void *&ptr = TranslationCache[addr];
-  if (ptr == 0)
-    ptr = __dc_EE->getPointerToFunction(__dc_DT->getFunctionAt((uint64_t)addr));
-  return ptr;
-}
+//extern "C" void *__llvm_dc_translate_at(void *addr) {
+//  void *&ptr = TranslationCache[addr];
+//  if (ptr == 0)
+//    ptr = __dc_EE->getPointerToFunction(__dc_DT->getFunctionAt((uint64_t)addr));
+//  return ptr;
+//}
 
 // FIXME: This is all mach-o hacks to get this working.
 struct ProgramVars {
@@ -118,6 +185,7 @@ struct ProgramVars {
   const char*** environPtr;
   const char**  __prognamePtr;
 };
+#include <iostream>
 
 void dyn_entry(int ac, char **av, const char **envp, const char **apple,
                struct ProgramVars *pvars) __attribute__((constructor));
@@ -130,6 +198,9 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;
 
+  InitializeNativeTarget();
+  InitializeNativeTargetAsmPrinter();
+  InitializeNativeTargetAsmParser();
   InitializeAllTargets();
   InitializeAllTargetInfos();
   InitializeAllTargetDCs();
@@ -137,27 +208,27 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   InitializeAllAsmParsers();
   InitializeAllDisassemblers();
 
+  // Remove ourselves from the environment, in case the process decides to fork.
+  // Translating the child as well should be done on purpose, but affecting the
+  // environment is unacceptable anyway.
+  // For now, it messes with stuff like ASAN's symbolizer, so just disable it.
+  unsetenv("DYLD_INSERT_LIBRARIES");
+
   ToolName = "dyn";
+  cl::ParseEnvironmentOptions(ToolName.str().c_str(), "DCDYN_OPTIONS");
+
   std::string InputFilename = argv[0];
 
-  std::unique_ptr<MemoryBuffer> FileBuf;
-  if (error_code ec = MemoryBuffer::getFile(InputFilename, FileBuf)) {
-    errs() << ToolName << ": '" << InputFilename << "': " << ec.message()
-           << ".\n";
+  ErrorOr<OwningBinary<Binary>> BinaryOrErr = createBinary(InputFilename);
+  if (std::error_code EC = BinaryOrErr.getError()) {
+    errs() << ToolName << ": '" << InputFilename << "': " << EC.message() << ".\n";
     exit(1);
   }
-
-  ErrorOr<Binary *> BinaryOrErr = createBinary(FileBuf.get());
-  if (error_code ec = BinaryOrErr.getError()) {
-    errs() << ToolName << ": '" << InputFilename << "': "
-           << ec.message() << ".\n";
-    exit(1);
-  }
-  std::unique_ptr<Binary> binary(BinaryOrErr.get());
+  Binary &Binary = *BinaryOrErr.get().getBinary();
 
 
   ObjectFile *Obj;
-  if (!(Obj = dyn_cast<ObjectFile>(binary.get()))) {
+  if (!(Obj = dyn_cast<ObjectFile>(&Binary))) {
     errs() << ToolName << ": '" << InputFilename << "': "
            << "Unrecognized file type.\n";
     exit(1);
@@ -193,12 +264,6 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     exit(1);
   }
 
-  std::unique_ptr<MCDisassembler> DisAsm(TheTarget->createMCDisassembler(*STI));
-  if (!DisAsm) {
-    errs() << "error: no disassembler for target " << TripleName << "\n";
-    exit(1);
-  }
-
   std::unique_ptr<MCInstPrinter> MIP(
       TheTarget->createMCInstPrinter(0, *MAI, *MII, *MRI, *STI));
   if (!MIP) {
@@ -209,17 +274,24 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   std::unique_ptr<const MCInstrAnalysis> MIA(
       TheTarget->createMCInstrAnalysis(MII.get()));
   std::unique_ptr<const MCObjectFileInfo> MOFI(new MCObjectFileInfo);
-  std::unique_ptr<MCContext> Ctx(
-    new MCContext(MAI.get(), MRI.get(), MOFI.get()));
+  MCContext Ctx(MAI.get(), MRI.get(), MOFI.get());
+
+  std::unique_ptr<MCDisassembler> DisAsm(TheTarget->createMCDisassembler(*STI, Ctx));
+  if (!DisAsm) {
+    errs() << "error: no disassembler for target " << TripleName << "\n";
+    exit(1);
+  }
 
   std::unique_ptr<MCRelocationInfo> RelInfo(
-      TheTarget->createMCRelocationInfo(TripleName, *Ctx.get()));
+      TheTarget->createMCRelocationInfo(TripleName, Ctx));
   if (!RelInfo) {
     errs() << "error: no reloc info for target " << TripleName << "\n";
     exit(1);
   }
+  // FIXME: why are there unique_ptrs everywhere?
   std::unique_ptr<MCObjectSymbolizer> MOS(
-      MCObjectSymbolizer::createObjectSymbolizer(*Ctx.get(), RelInfo, Obj));
+      MCObjectSymbolizer::createObjectSymbolizer(Ctx, std::move(RelInfo),
+                                                 Obj));
 
   // FIXME: Mach-O specific
 
@@ -241,9 +313,8 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   // anyway, so this isn't that big a deal right now.
   // Just do a hack to access a big deal of reachable memory.
   {
-    std::unique_ptr<MemoryObject> FallbackRegion(new StringRefMemoryObject(
-        StringRef((char *)0x1000, 0x7FFFFFFFFFFFFFFFULL), 0x1000));
-    OD->setFallbackRegion(FallbackRegion);
+    OD->setFallbackRegion(0x1000,
+        ArrayRef<uint8_t>((uint8_t *)0x1000, (uint8_t *)0x7FFFFFFFFFFFFFFFULL));
   }
 
   std::unique_ptr<MCModule> MCM(OD->buildEmptyModule());
@@ -264,103 +335,99 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     exit(1);
   }
 
+  EngineBuilder Builder;
+  Builder.setOptLevel(CodeGenOpt::Aggressive);
+  TargetMachine *TM = Builder.selectTarget();
+  if (!TM)
+    llvm_unreachable("Unable to select target machine for JIT!");
+
+  const DataLayout *DL = TM->getDataLayout();
+
+  DYNJIT J(*TM);
+
   std::unique_ptr<DCTranslator> DT(
-    new DCTranslator(getGlobalContext(), TransOpt::Aggressive, *DIS, *DRS,
+    new DCTranslator(getGlobalContext(), DL->getStringRepresentation(),
+                     TransOpt::Aggressive, *DIS, *DRS,
                      *MIP, *MCM, OD.get()));
 
   // Now run it !
 
-  Module *Mod = DT->getModule();
+  // First, get the init/fini functions.
+  Function *InitRegSetFn = DT->getInitRegSetFunction();
+  Function *FiniRegSetFn = DT->getFiniRegSetFunction();
 
-  std::string ErrorMsg;
-
-  EngineBuilder Builder(Mod);
-  Builder.setErrorStr(&ErrorMsg);
-  Builder.setOptLevel(CodeGenOpt::Aggressive);
-  Builder.setEngineKind(EngineKind::JIT);
-  Builder.setAllocateGVsWithCode(false);
-
-  ExecutionEngine *EE = Builder.create();
-  if (!EE) {
-    errs() << "error: Unable to create ExecutionEngine: " << ErrorMsg << "\n";
-    exit(1);
-  }
-
-  const DataLayout *DL = EE->getDataLayout();
-  Mod->setDataLayout(DL->getStringRepresentation());
+  // Add these to the JIT.
+  J.addModule(DT->finalizeTranslationModule());
 
   const StructLayout *SL = DL->getStructLayout(DRS->getRegSetType());
-  uint8_t *RegSet = new uint8_t[SL->getSizeInBytes()];
+  std::unique_ptr<uint8_t[]> RegSet(new uint8_t[SL->getSizeInBytes()]);
   const unsigned StackSize = 4096 * 1024;
-  uint8_t *StackPtr = new uint8_t[StackSize];
+  std::unique_ptr<uint8_t[]> StackPtr(new uint8_t[StackSize]);
 
-  std::vector<GenericValue> InitArgs;
-  GenericValue GV;
-  GV.PointerVal = RegSet;
-  InitArgs.push_back(GV);
-  GV.PointerVal = StackPtr;
-  InitArgs.push_back(GV);
-  GV.IntVal = APInt(32, StackSize);
-  InitArgs.push_back(GV);
-  GV.IntVal = APInt(32, argc);
-  InitArgs.push_back(GV);
-  GV.PointerVal = argv;
-  InitArgs.push_back(GV);
+  unsigned RegSetPCSize, RegSetPCOffset;
+  std::tie(RegSetPCSize, RegSetPCOffset) =
+      DRS->getRegSizeOffsetInRegSet(DL, MRI->getProgramCounter());
 
-  EE->runFunction(DT->getInitRegSetFunction(), InitArgs);
+  auto InitRegSetFnFP =
+      (void (*)(uint8_t *, uint8_t *, uint32_t, uint32_t, char **))
+        (intptr_t)J.findUnmangledSymbol(InitRegSetFn->getName()).getAddress();
+  auto RunInitRegSet = [&]() {
+    InitRegSetFnFP(RegSet.get(), StackPtr.get(), StackSize, argc, argv);
+  };
 
-  std::vector<GenericValue> Args;
-  GV.PointerVal = RegSet;
-  Args.push_back(GV);
+  RunInitRegSet();
 
-  unsigned PCSize, PCOffset;
-  DRS->getRegOffsetInRegSet(DL, MRI->getProgramCounter(), PCSize, PCOffset);
+  auto RunIRFunction = [&](Function *Fn) {
+    auto FnSymbol = J.findUnmangledSymbol(Fn->getName());
+    DEBUG(dbgs() << "Jumping to " << Fn->getName() << "\n");
+    auto FnPointer = (void (*)(uint8_t *))(intptr_t)FnSymbol.getAddress();
+    return FnPointer(RegSet.get());
+  };
 
-  __dc_DT = DT.get();
-  __dc_EE = EE;
+  // Translate all static init functions.
+  auto TranslateAndRunStaticInitExit = [&](ArrayRef<uint64_t> Fns) {
+    std::vector<Function *> TranslatedFns;
+    TranslatedFns.reserve(Fns.size());
+    for (auto FnAddr : Fns)
+      TranslatedFns.push_back(
+          DT->translateRecursivelyAt(OD->getEffectiveLoadAddr(FnAddr)));
+    DEBUG(DT->printCurrentModule(dbgs()));
 
-  class DynListener : public JITEventListener {
-  public:
-    void NotifyFunctionEmitted(const Function &fn, void *ptr, size_t size,
-                               const EmittedFunctionDetails &) {
-      DEBUG(dbgs() << "Function was emitted !! " << fn.getName() << " at "
-                   << ptr << "\n");
-    }
-
-    void NotifyFreeingMachineCode(void *ptr) {
-      DEBUG(dbgs() << "Function was freed !! " << ptr << "\n");
+    // Add these to the JIT, and run them.
+    J.addModule(DT->finalizeTranslationModule());
+    for (auto Fn : TranslatedFns) {
+      DEBUG(dbgs() << "Executing static init/fini function " << Fn->getName()
+                   << "\n");
+      RunIRFunction(Fn);
+      // Reset the register state. Since we don't look at the return address,
+      // this takes care of faking the push/pop.
+      RunInitRegSet();
     }
   };
-  DynListener dynlistener;
-  // debug
-  EE->RegisterJITEventListener(&dynlistener);
 
-  ArrayRef<uint64_t> StaticInits = OD->getStaticInitFunctions();
-  // FIXME: This doesn't check the return address.
-  for (size_t i = 0, e = StaticInits.size(); i != e; ++i) {
-    Function *Fn = DT->getFunctionAt(OD->getEffectiveLoadAddr(StaticInits[i]));
-    DEBUG(dbgs() << "Executing static init function " << Fn->getName() << "\n");
-    // Mod->dump();
-    EE->runFunction(Fn, Args);
+  TranslateAndRunStaticInitExit(OD->getStaticInitFunctions());
 
-    // Reset the register state. Since we don't look at the return address,
-    // this takes care of faking the push/pop.
-    EE->runFunction(DT->getInitRegSetFunction(), InitArgs);
-  }
-
-  uint64_t CurPC = DT->getEntrypoint();
+  // Now we can start running real code.
+  uint64_t CurPC = MCM->getEntrypoint();
   assert(dlsym(RTLD_MAIN_ONLY, "main") == (void *)CurPC);
-  while (CurPC != ~0ULL) {
-    Function *Fn = DT->getFunctionAt(CurPC);
+  do {
+    Function *Fn = DT->translateRecursivelyAt(CurPC);
     DEBUG(dbgs() << "Executing function " << Fn->getName() << "\n");
-    // Mod->dump();
-    EE->runFunction(Fn, Args);
-    CurPC = loadRegFromSet(RegSet, PCOffset, PCSize);
-  }
+    // Dump the IR we found.
+    DEBUG(DT->printCurrentModule(dbgs()));
+    J.addModule(DT->finalizeTranslationModule());
+    RunIRFunction(Fn);
+    CurPC = loadRegFromSet(RegSet.get(), RegSetPCOffset, RegSetPCSize);
+  } while (CurPC != ~0ULL);
 
-  // Dump the IR we found.
-  DEBUG(Mod->print(dbgs(), 0));
+  auto FiniRegSetFnFP =
+      (int (*)(uint8_t *))(intptr_t)J.findUnmangledSymbol(
+                                          FiniRegSetFn->getName()).getAddress();
+  auto RunFiniRegSet = [&]() { return FiniRegSetFnFP(RegSet.get()); };
 
-  GV = EE->runFunction(DT->getFiniRegSetFunction(), Args);
-  exit(GV.IntVal.getZExtValue());
+  int exitVal = RunFiniRegSet();
+
+  TranslateAndRunStaticInitExit(OD->getStaticExitFunctions());
+
+  exit(exitVal);
 }
