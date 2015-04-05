@@ -35,6 +35,9 @@ using namespace llvm;
 static cl::opt<bool>
 EnableRegSetDiff("enable-dc-regset-diff", cl::desc(""), cl::init(false));
 
+static cl::opt<bool>
+EnableInstAddrSave("enable-dc-pc-save", cl::desc(""), cl::init(false));
+
 DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
                          const unsigned *SemanticsArray,
                          const uint64_t *ConstantArray, DCRegisterSema &DRS)
@@ -172,6 +175,10 @@ void DCInstrSema::SwitchToModule(Module *M) {
                                DRS.getRegSetType()->getPointerTo(), false);
   Builder.reset(new DCIRBuilder(*Ctx));
 }
+
+extern "C" uintptr_t __llvm_dc_current_fn = 0;
+extern "C" uintptr_t __llvm_dc_current_bb = 0;
+extern "C" uintptr_t __llvm_dc_current_instr = 0;
 
 void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
   assert(!MCFN->empty() && "Trying to translate empty MC function");
@@ -349,6 +356,15 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
   CurrentInst = &DecodedInst;
   CurrentTInst = &TranslatedInst;
   DRS.SwitchToInst(DecodedInst);
+
+  if (EnableInstAddrSave) {
+    ConstantInt *CurIVal =
+        Builder->getInt64(reinterpret_cast<uint64_t>(CurrentInst->Address));
+    Value *CurIPtr = ConstantExpr::getIntToPtr(
+        Builder->getInt64(reinterpret_cast<uint64_t>(&__llvm_dc_current_instr)),
+        Builder->getInt64Ty()->getPointerTo());
+    Builder->CreateStore(CurIVal, CurIPtr, true);
+  }
 
   Idx = OpcodeToSemaIdx[CurrentInst->Inst.getOpcode()];
   if (!translateTargetInst()) {
