@@ -237,6 +237,7 @@ Value *X86RegisterSema::computeEFLAGSForDef(Value *Def, Value *OldEFLAGS,
   setSF(X86::SF,
         Builder->CreateICmpSLT(Def, ConstantInt::getNullValue(Def->getType())));
 
+  // FIXME: We need to generate AF as well.
   setSF(X86::AF, Builder->getFalse());
 
   // FIXME: CF/OF need a smarter trick.
