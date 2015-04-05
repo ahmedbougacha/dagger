@@ -379,7 +379,7 @@ void X86RegisterSema::insertFiniRegSetCode(Function *FiniFn) {
 // FIXME: we really need the regsets to be tablegen'd
 // generate a full C structure, with some code to create a StructType
 // FIXME: Maybe this could be done as inline assembly too.
-extern "C" void __extwrap(char *regset, void *fn) {
+static void __extwrap(char *regset, void *fn) {
   asm volatile (
                 "mov %0, %%r12          \n" // r12 <- regset
                 "mov %1, %%r13          \n" // r13 <- fn
@@ -441,10 +441,15 @@ void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
   DCIRBuilder WBuilder(WrapperBB);
 
   Type *ArgTypes[2] = { RegSetType->getPointerTo(), ExtFn->getType() };
-  Function *EWFn =
-      cast<Function>(ExtFn->getParent()->getOrInsertFunction(
-                         "__extwrap", FunctionType::get(Type::getVoidTy(*Ctx),
-                                                        ArgTypes, false)));
+  FunctionType *EWFnType =
+      FunctionType::get(Type::getVoidTy(*Ctx), ArgTypes, false);
+
+  // FIXME: bitness
+  ConstantInt *EWPtr =
+      Builder->getInt64(reinterpret_cast<uint64_t>(&__extwrap));
+  Value *EWFn = ConstantExpr::getBitCast(
+      ConstantExpr::getIntToPtr(EWPtr, Builder->getInt8PtrTy()),
+      EWFnType->getPointerTo(), "__llvm_dc_x86_extwrap");
   WBuilder.CreateCall2(EWFn, WrapperBB->getParent()->getArgumentList().begin(),
                        ExtFn);
 }
