@@ -115,6 +115,8 @@ public:
   }
 
   ModuleHandleT addModule(Module *M) {
+    // Dump the IR we found.
+    DEBUG(M->dump());
     // We need a memory manager to allocate memory and resolve symbols for this
     // new module. Create one that resolves symbols by looking back into the
     // JIT.
@@ -429,8 +431,6 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   do {
     Function *Fn = DT->translateRecursivelyAt(CurPC);
     DEBUG(dbgs() << "Executing function " << Fn->getName() << "\n");
-    // Dump the IR we found.
-    DEBUG(DT->printCurrentModule(dbgs()));
     J.addModule(DT->finalizeTranslationModule());
     RunIRFunction(Fn);
     CurPC = loadRegFromSet(RegSet.data(), RegSetPCOffset, RegSetPCSize);
