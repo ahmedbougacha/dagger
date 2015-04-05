@@ -8,8 +8,7 @@ ret
 # CHECK-LABEL: bb_0:
 # CHECK: [[RDI0:%RDI_[0-9]+]] = load i64, i64* %RDI
 # CHECK: [[RDIPTR:%[0-9]+]] = inttoptr i64 [[RDI0]] to i8*
-## FIXME: The function should be better defined than this.
-# CHECK: [[FUNPTR:%[0-9]+]] = call void (%regset*)* (i8*)* @__llvm_dc_translate_at(i8* [[RDIPTR]])
+# CHECK: [[FUNPTR:%[0-9]+]] = call void (%regset*)* (i8*)* inttoptr (i64 57005 to void (%regset*)* (i8*)*)(i8* [[RDIPTR]])
 # CHECK: store i64 [[RDI0]], i64* %RDI
 # CHECK: br label %bb_0_call
 # CHECK-LABEL: bb_0_call:

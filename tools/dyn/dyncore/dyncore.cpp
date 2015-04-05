@@ -169,8 +169,7 @@ static DYNJIT *__dc_JIT;
 // FIXME: We need to handle cache invalidation when functions are freed.
 //static DenseMap<void *, void *> TranslationCache(128);
 
-// FIXME: This should be configurable (to at least remove the global state).
-extern "C" void *__llvm_dc_translate_at(void *addr) {
+static void *__llvm_dc_translate_at(void *addr) {
   void *ptr;
   Function *F = __dc_DT->translateRecursivelyAt((uint64_t)addr);
   DEBUG(dbgs() << "Jumping to " << F->getName() << "\n");
@@ -345,6 +344,9 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     errs() << "error: no dc instruction sema for target " << TripleName << "\n";
     exit(1);
   }
+
+  DIS->setDynTranslateAtCallback(
+      reinterpret_cast<void *>(&__llvm_dc_translate_at));
 
   EngineBuilder Builder;
   Builder.setOptLevel(CodeGenOpt::Aggressive);

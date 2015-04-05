@@ -36,7 +36,8 @@ DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
                          const unsigned *SemanticsArray,
                          const uint64_t *ConstantArray, DCRegisterSema &DRS)
     : OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
-      ConstantArray(ConstantArray), Ctx(0), TheModule(0), DRS(DRS), FuncType(0),
+      ConstantArray(ConstantArray), DynTranslateAtCBPtr(0),
+      Ctx(0), TheModule(0), DRS(DRS), FuncType(0),
       TheFunction(0), TheMCFunction(0), BBByAddr(), ExitBB(0), CallBBs(),
       TheBB(0), TheMCBB(0), Builder(), Idx(0), ResEVT(), Opcode(0), Vals(),
       CurrentInst(0) {}
@@ -265,12 +266,27 @@ BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
 }
 
 Value *DCInstrSema::insertTranslateAt(Value *OrigTarget) {
+  void* CBPtr = DynTranslateAtCBPtr;
+  if (!CBPtr) {
+    // If we don't have access to the dynamic translate_at function, jump to
+    // some bad address.
+    // FIXME: A better target would be a dedicated IR function with just trap+
+    // unreachable, which would make it possible to debug more easily.
+    // FIXME: We should be able generate a table with all possible call targets
+    // from the symbol table.
+    CBPtr = reinterpret_cast<void*>(0xDEAD);
+  }
+
   FunctionType *CallbackType = FunctionType::get(
       FuncType->getPointerTo(), Builder->getInt8PtrTy(), false);
-  Constant *Fn =
-      TheModule->getOrInsertFunction("__llvm_dc_translate_at", CallbackType);
+  // FIXME: bitness
+  ConstantInt *CBPtr =
+      Builder->getInt64(reinterpret_cast<uint64_t>(CBPtr));
   return Builder->CreateCall(
-             Fn, Builder->CreateIntToPtr(OrigTarget, Builder->getInt8PtrTy()));
+      Builder->CreateBitCast(
+          Builder->CreateIntToPtr(CBPtr, Builder->getInt8PtrTy()),
+          CallbackType->getPointerTo(), "__llvm_dc_translate_at"),
+      Builder->CreateIntToPtr(OrigTarget, Builder->getInt8PtrTy()));
 }
 
 void DCInstrSema::insertCall(Value *CallTarget) {
