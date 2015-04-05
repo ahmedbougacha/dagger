@@ -55,14 +55,10 @@ bool X86InstrSema::translateTargetInst() {
       Instruction::BinaryOps Opc = Instruction::FAdd; // Invalid initializer
       switch (Opcode) {
       default: break;
-      case X86::XADD8rm:
-        XADDMemOpType = X86::OpTypes::i8mem; break;
-      case X86::XADD16rm:
-        XADDMemOpType = X86::OpTypes::i16mem; break;
-      case X86::XADD32rm:
-        XADDMemOpType = X86::OpTypes::i32mem; break;
-      case X86::XADD64rm:
-        XADDMemOpType = X86::OpTypes::i64mem; break;
+      case X86::XADD8rm: XADDMemOpType = X86::OpTypes::i8mem; break;
+      case X86::XADD16rm: XADDMemOpType = X86::OpTypes::i16mem; break;
+      case X86::XADD32rm: XADDMemOpType = X86::OpTypes::i32mem; break;
+      case X86::XADD64rm: XADDMemOpType = X86::OpTypes::i64mem; break;
 
       case X86::INC8m: case X86::INC16m: case X86::INC32m: case X86::INC64m:
         isINCDEC = true; // fallthrough
