@@ -270,8 +270,7 @@ void MCObjectDisassembler::disassembleFunctionAt(
       BBInfo &BBI = BBInfos[BeginAddr];
       BBI.BeginAddr = BeginAddr;
 
-      auto &BBInsts = BBI.Insts;
-      assert(BBInsts.empty() && "Basic Block already exists!");
+      assert(BBI.Insts.empty() && "Basic Block already exists!");
 
       DEBUG(dbgs() << "No existing block found, starting disassembly from "
                    << utohexstr(Region.Addr) << " to "
