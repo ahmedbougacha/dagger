@@ -202,35 +202,28 @@ bool X86InstrSema::translateTargetInst() {
     return true;
 
   case X86::CPUID: {
-    // FIXME: Also generate the function.
-    Type *I32Ty = Builder->getInt32Ty();
-    Type *ArgTys[] = { I32Ty, I32Ty };
-    Type *RetTy = StructType::get(I32Ty, I32Ty, I32Ty, I32Ty, nullptr);
-    Function *CPUIDFn = cast<Function>(TheModule->getOrInsertFunction(
-        "__llvm_dc_x86_cpuid", FunctionType::get(RetTy, ArgTys, false)));
-
-    Value *Args[] = { getReg(X86::EAX), getReg(X86::ECX) };
-
-    Value *CPUIDCall = Builder->CreateCall(CPUIDFn, Args);
-    setReg(X86::EAX, Builder->CreateExtractValue(CPUIDCall, 0));
-    setReg(X86::EBX, Builder->CreateExtractValue(CPUIDCall, 1));
-    setReg(X86::ECX, Builder->CreateExtractValue(CPUIDCall, 2));
-    setReg(X86::EDX, Builder->CreateExtractValue(CPUIDCall, 3));
+    // FIXME: There's no reason to have a function, this is just a hack to get
+    // it working.
+    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateUnreachable();
     return true;
   }
   case X86::XGETBV: {
-    // FIXME: Also generate the function.
-    Type *I32Ty = Builder->getInt32Ty();
-    Type *ArgTys[] = { I32Ty };
-    Type *RetTy = StructType::get(I32Ty, I32Ty, nullptr);
-    Function *ECRFn = cast<Function>(TheModule->getOrInsertFunction(
-        "__llvm_dc_x86_xgetbv", FunctionType::get(RetTy, ArgTys, false)));
-
-    Value *Args[] = { getReg(X86::ECX) };
-
-    Value *ECRCall = Builder->CreateCall(ECRFn, Args);
-    setReg(X86::EAX, Builder->CreateExtractValue(ECRCall, 0));
-    setReg(X86::EDX, Builder->CreateExtractValue(ECRCall, 1));
+    // FIXME: XCR[0] support is missing, they're not even in X86RegisterInfo.td
+    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateUnreachable();
+    return true;
+  }
+  case X86::XSAVE: {
+    // FIXME: See XGETBV.
+    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateUnreachable();
+    return true;
+  }
+  case X86::XRSTOR: {
+    // FIXME: See XGETBV.
+    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateUnreachable();
     return true;
   }
 
