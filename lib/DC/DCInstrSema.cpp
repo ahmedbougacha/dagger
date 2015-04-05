@@ -279,13 +279,8 @@ Value *DCInstrSema::insertTranslateAt(Value *OrigTarget) {
 
   FunctionType *CallbackType = FunctionType::get(
       FuncType->getPointerTo(), Builder->getInt8PtrTy(), false);
-  // FIXME: bitness
-  ConstantInt *CBPtr =
-      Builder->getInt64(reinterpret_cast<uint64_t>(CBPtr));
   return Builder->CreateCall(
-      Builder->CreateBitCast(
-          Builder->CreateIntToPtr(CBPtr, Builder->getInt8PtrTy()),
-          CallbackType->getPointerTo(), "__llvm_dc_translate_at"),
+      DRS.getCallTargetForExtFn(CallbackType, CBPtr),
       Builder->CreateIntToPtr(OrigTarget, Builder->getInt8PtrTy()));
 }
 

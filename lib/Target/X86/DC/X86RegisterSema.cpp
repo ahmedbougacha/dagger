@@ -445,12 +445,7 @@ void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
   FunctionType *EWFnType =
       FunctionType::get(Type::getVoidTy(*Ctx), ArgTypes, false);
 
-  // FIXME: bitness
-  ConstantInt *EWPtr =
-      Builder->getInt64(reinterpret_cast<uint64_t>(&__extwrap));
-  Value *EWFn = ConstantExpr::getBitCast(
-      ConstantExpr::getIntToPtr(EWPtr, Builder->getInt8PtrTy()),
-      EWFnType->getPointerTo(), "__llvm_dc_x86_extwrap");
+  Value *EWFn = getCallTargetForExtFn(EWFnType, &__extwrap);
   WBuilder.CreateCall2(EWFn, WrapperBB->getParent()->getArgumentList().begin(),
                        ExtFn);
 }

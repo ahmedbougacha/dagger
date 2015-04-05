@@ -175,6 +175,19 @@ public:
   // inserting.
   Value *insertBitsInValue(Value *FullVal, Value *ValToInsert,
                            unsigned Offset = 0, bool ClearOldValue = false);
+
+  // Get a constant expression expressing \p FPtr as a \p FTy value.
+  template <typename T>
+  Value *getCallTargetForExtFn(FunctionType *FTy, T FPtr) {
+    LLVMContext &Ctx = FTy->getContext();
+
+    // FIXME: bitness
+    ConstantInt *FnPtrInt = ConstantInt::get(Type::getInt64Ty(Ctx),
+                                             reinterpret_cast<uint64_t>(FPtr));
+    return ConstantExpr::getBitCast(
+        ConstantExpr::getIntToPtr(FnPtrInt, Type::getInt8PtrTy(Ctx)),
+        FTy->getPointerTo());
+  }
 };
 }
 
