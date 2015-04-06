@@ -49,6 +49,7 @@ void DCAnnotationWriter::printInfoComment(const Value &V,
       llvm_unreachable("Unknown translated operand type!");
     case DCTranslatedInst::ValueInfo::ImpUseKind: {
       OS << "imp-use ";
+      // FIXME: Use the inst printer to get the register name, not MRI.
       OS << MRI.getName(VI.RegNo);
       break;
     }
