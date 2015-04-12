@@ -41,6 +41,7 @@ def get_reglist(regset):
             n = "z" + n[1:]
             s = ('0'*64) + s
         reglist.append((n, s))
+    reglist.sort(key=lambda reg: reg[0])
     return reglist
 
 def print_reglist(reglist):
