@@ -76,6 +76,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
@@ -915,7 +916,7 @@ bool PeepholeOptimizer::optimizeCoalescableCopy(MachineInstr *MI) {
   // => v0 = COPY v1
   // Currently we haven't seen motivating example for that and we
   // want to avoid untested code.
-  NumRewrittenCopies += Changed == true;
+  NumRewrittenCopies += Changed;
   return Changed;
 }
 

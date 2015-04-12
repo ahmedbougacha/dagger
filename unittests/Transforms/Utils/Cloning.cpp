@@ -22,6 +22,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -30,9 +31,7 @@ namespace {
 
 class CloneInstruction : public ::testing::Test {
 protected:
-  virtual void SetUp() {
-    V = nullptr;
-  }
+  void SetUp() override { V = nullptr; }
 
   template <typename T>
   T *clone(T *V1) {
@@ -46,7 +45,7 @@ protected:
     DeleteContainerPointers(Clones);
   }
 
-  virtual void TearDown() {
+  void TearDown() override {
     eraseClones();
     DeleteContainerPointers(Orig);
     delete V;
@@ -135,7 +134,8 @@ TEST_F(CloneInstruction, Inbounds) {
   Constant *Z = Constant::getNullValue(Type::getInt32Ty(context));
   std::vector<Value *> ops;
   ops.push_back(Z);
-  GetElementPtrInst *GEP = GetElementPtrInst::Create(V, ops);
+  GetElementPtrInst *GEP =
+      GetElementPtrInst::Create(Type::getInt32Ty(context), V, ops);
   EXPECT_FALSE(this->clone(GEP)->isInBounds());
 
   GEP->setIsInBounds();
@@ -204,16 +204,14 @@ TEST_F(CloneInstruction, CallingConvention) {
 
 class CloneFunc : public ::testing::Test {
 protected:
-  virtual void SetUp() {
+  void SetUp() override {
     SetupModule();
     CreateOldFunc();
     CreateNewFunc();
     SetupFinder();
   }
 
-  virtual void TearDown() {
-    delete Finder;
-  }
+  void TearDown() override { delete Finder; }
 
   void SetupModule() {
     M = new Module("", C);
@@ -296,15 +294,15 @@ TEST_F(CloneFunc, NewFunctionCreated) {
 // Test that a new subprogram entry was added and is pointing to the new
 // function, while the original subprogram still points to the old one.
 TEST_F(CloneFunc, Subprogram) {
+  EXPECT_FALSE(verifyModule(*M));
+
   unsigned SubprogramCount = Finder->subprogram_count();
   EXPECT_EQ(2U, SubprogramCount);
 
   auto Iter = Finder->subprograms().begin();
-  DISubprogram Sub1(*Iter);
-  EXPECT_TRUE(Sub1.Verify());
+  DISubprogram Sub1 = cast<MDSubprogram>(*Iter);
   Iter++;
-  DISubprogram Sub2(*Iter);
-  EXPECT_TRUE(Sub2.Verify());
+  DISubprogram Sub2 = cast<MDSubprogram>(*Iter);
 
   EXPECT_TRUE((Sub1.getFunction() == OldFunc && Sub2.getFunction() == NewFunc)
            || (Sub1.getFunction() == NewFunc && Sub2.getFunction() == OldFunc));
@@ -313,21 +311,23 @@ TEST_F(CloneFunc, Subprogram) {
 // Test that the new subprogram entry was not added to the CU which doesn't
 // contain the old subprogram entry.
 TEST_F(CloneFunc, SubprogramInRightCU) {
+  EXPECT_FALSE(verifyModule(*M));
+
   EXPECT_EQ(2U, Finder->compile_unit_count());
 
   auto Iter = Finder->compile_units().begin();
-  DICompileUnit CU1(*Iter);
-  EXPECT_TRUE(CU1.Verify());
+  DICompileUnit CU1 = cast<MDCompileUnit>(*Iter);
   Iter++;
-  DICompileUnit CU2(*Iter);
-  EXPECT_TRUE(CU2.Verify());
-  EXPECT_TRUE(CU1.getSubprograms().getNumElements() == 0
-           || CU2.getSubprograms().getNumElements() == 0);
+  DICompileUnit CU2 = cast<MDCompileUnit>(*Iter);
+  EXPECT_TRUE(CU1.getSubprograms().size() == 0 ||
+              CU2.getSubprograms().size() == 0);
 }
 
 // Test that instructions in the old function still belong to it in the
 // metadata, while instruction in the new function belong to the new one.
 TEST_F(CloneFunc, InstructionOwnership) {
+  EXPECT_FALSE(verifyModule(*M));
+
   inst_iterator OldIter = inst_begin(OldFunc);
   inst_iterator OldEnd = inst_end(OldFunc);
   inst_iterator NewIter = inst_begin(NewFunc);
@@ -345,12 +345,10 @@ TEST_F(CloneFunc, InstructionOwnership) {
       // Verify that the debug location data is the same
       EXPECT_EQ(OldDL.getLine(), NewDL.getLine());
       EXPECT_EQ(OldDL.getCol(), NewDL.getCol());
-      
+
       // But that they belong to different functions
-      DISubprogram OldSubprogram(OldDL.getScope(C));
-      DISubprogram NewSubprogram(NewDL.getScope(C));
-      EXPECT_TRUE(OldSubprogram.Verify());
-      EXPECT_TRUE(NewSubprogram.Verify());
+      DISubprogram OldSubprogram = cast<MDSubprogram>(OldDL.getScope());
+      DISubprogram NewSubprogram = cast<MDSubprogram>(NewDL.getScope());
       EXPECT_EQ(OldFunc, OldSubprogram.getFunction());
       EXPECT_EQ(NewFunc, NewSubprogram.getFunction());
     }
@@ -365,6 +363,8 @@ TEST_F(CloneFunc, InstructionOwnership) {
 // Test that the arguments for debug intrinsics in the new function were
 // properly cloned
 TEST_F(CloneFunc, DebugIntrinsics) {
+  EXPECT_FALSE(verifyModule(*M));
+
   inst_iterator OldIter = inst_begin(OldFunc);
   inst_iterator OldEnd = inst_end(OldFunc);
   inst_iterator NewIter = inst_begin(NewFunc);
@@ -384,21 +384,25 @@ TEST_F(CloneFunc, DebugIntrinsics) {
                          getParent()->getParent());
 
       // Old variable must belong to the old function
-      EXPECT_EQ(OldFunc, DISubprogram(DIVariable(OldIntrin->getVariable())
-                         .getContext()).getFunction());
+      EXPECT_EQ(OldFunc, DISubprogram(cast<MDSubprogram>(
+                                          OldIntrin->getVariable()->getScope()))
+                             .getFunction());
       // New variable must belong to the New function
-      EXPECT_EQ(NewFunc, DISubprogram(DIVariable(NewIntrin->getVariable())
-                         .getContext()).getFunction());
+      EXPECT_EQ(NewFunc, DISubprogram(cast<MDSubprogram>(
+                                          NewIntrin->getVariable()->getScope()))
+                             .getFunction());
     } else if (DbgValueInst* OldIntrin = dyn_cast<DbgValueInst>(&OldI)) {
       DbgValueInst* NewIntrin = dyn_cast<DbgValueInst>(&NewI);
       EXPECT_TRUE(NewIntrin);
 
       // Old variable must belong to the old function
-      EXPECT_EQ(OldFunc, DISubprogram(DIVariable(OldIntrin->getVariable())
-                         .getContext()).getFunction());
+      EXPECT_EQ(OldFunc, DISubprogram(cast<MDSubprogram>(
+                                          OldIntrin->getVariable()->getScope()))
+                             .getFunction());
       // New variable must belong to the New function
-      EXPECT_EQ(NewFunc, DISubprogram(DIVariable(NewIntrin->getVariable())
-                         .getContext()).getFunction());
+      EXPECT_EQ(NewFunc, DISubprogram(cast<MDSubprogram>(
+                                          NewIntrin->getVariable()->getScope()))
+                             .getFunction());
     }
 
     ++OldIter;

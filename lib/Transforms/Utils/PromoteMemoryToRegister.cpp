@@ -45,6 +45,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
 #include <queue>
@@ -667,6 +668,8 @@ void PromoteMem2Reg::run() {
     A->eraseFromParent();
   }
 
+  const DataLayout &DL = F.getParent()->getDataLayout();
+
   // Remove alloca's dbg.declare instrinsics from the function.
   for (unsigned i = 0, e = AllocaDbgDeclares.size(); i != e; ++i)
     if (DbgDeclareInst *DDI = AllocaDbgDeclares[i])
@@ -691,7 +694,7 @@ void PromoteMem2Reg::run() {
       PHINode *PN = I->second;
 
       // If this PHI node merges one value and/or undefs, get the value.
-      if (Value *V = SimplifyInstruction(PN, nullptr, nullptr, &DT, AC)) {
+      if (Value *V = SimplifyInstruction(PN, DL, nullptr, &DT, AC)) {
         if (AST && PN->getType()->isPointerTy())
           AST->deleteValue(PN);
         PN->replaceAllUsesWith(V);
@@ -869,8 +872,10 @@ void PromoteMem2Reg::DetermineInsertionPoint(AllocaInst *AI, unsigned AllocaNum,
   }
 
   SmallVector<std::pair<unsigned, BasicBlock *>, 32> DFBlocks;
-  SmallPtrSet<DomTreeNode *, 32> Visited;
   SmallVector<DomTreeNode *, 32> Worklist;
+  SmallPtrSet<DomTreeNode *, 32> VisitedPQ;
+  SmallPtrSet<DomTreeNode *, 32> VisitedWorklist;
+
   while (!PQ.empty()) {
     DomTreeNodePair RootPair = PQ.top();
     PQ.pop();
@@ -884,6 +889,7 @@ void PromoteMem2Reg::DetermineInsertionPoint(AllocaInst *AI, unsigned AllocaNum,
 
     Worklist.clear();
     Worklist.push_back(Root);
+    VisitedWorklist.insert(Root);
 
     while (!Worklist.empty()) {
       DomTreeNode *Node = Worklist.pop_back_val();
@@ -902,7 +908,7 @@ void PromoteMem2Reg::DetermineInsertionPoint(AllocaInst *AI, unsigned AllocaNum,
         if (SuccLevel > RootLevel)
           continue;
 
-        if (!Visited.insert(SuccNode).second)
+        if (!VisitedPQ.insert(SuccNode).second)
           continue;
 
         BasicBlock *SuccBB = SuccNode->getBlock();
@@ -916,7 +922,7 @@ void PromoteMem2Reg::DetermineInsertionPoint(AllocaInst *AI, unsigned AllocaNum,
 
       for (DomTreeNode::iterator CI = Node->begin(), CE = Node->end(); CI != CE;
            ++CI) {
-        if (!Visited.count(*CI))
+        if (VisitedWorklist.insert(*CI).second)
           Worklist.push_back(*CI);
       }
     }

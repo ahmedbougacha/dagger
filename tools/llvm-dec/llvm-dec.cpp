@@ -164,7 +164,7 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<MCInstPrinter> MIP(
-      TheTarget->createMCInstPrinter(0, *MAI, *MII, *MRI, *STI));
+      TheTarget->createMCInstPrinter(Triple(TripleName), 0, *MAI, *MII, *MRI));
   if (!MIP) {
     errs() << "error: no instprinter for target " << TripleName << "\n";
     return 1;
@@ -217,7 +217,7 @@ int main(int argc, char **argv) {
   // FIXME: should we have a non-default datalayout?
   std::unique_ptr<DCTranslator> DT(
     new DCTranslator(getGlobalContext(), /*DataLayoutStr=*/"",
-                     TOLvl, *DIS, *DRS, *MIP, *MCM,
+                     TOLvl, *DIS, *DRS, *MIP, *STI, *MCM,
                      OD.get(), AnnotateIROutput));
 
   if (!TranslationEntrypoint)

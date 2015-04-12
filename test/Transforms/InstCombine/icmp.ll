@@ -244,8 +244,8 @@ define i1 @test23(i32 %x) nounwind {
 ; CHECK:    %cmp = icmp eq i64 %i, 1000
 ; CHECK:   ret i1 %cmp
 define i1 @test24(i64 %i) {
-  %p1 = getelementptr inbounds i32, i32* getelementptr inbounds ([1000 x i32]* @X, i64 0, i64 0), i64 %i
-  %cmp = icmp eq i32* %p1, getelementptr inbounds ([1000 x i32]* @X, i64 1, i64 0)
+  %p1 = getelementptr inbounds i32, i32* getelementptr inbounds ([1000 x i32], [1000 x i32]* @X, i64 0, i64 0), i64 %i
+  %cmp = icmp eq i32* %p1, getelementptr inbounds ([1000 x i32], [1000 x i32]* @X, i64 1, i64 0)
   ret i1 %cmp
 }
 
@@ -256,8 +256,8 @@ define i1 @test24(i64 %i) {
 ; CHECK: %cmp = icmp eq i16 %1, 1000
 ; CHECK: ret i1 %cmp
 define i1 @test24_as1(i64 %i) {
-  %p1 = getelementptr inbounds i32, i32 addrspace(1)* getelementptr inbounds ([1000 x i32] addrspace(1)* @X_as1, i64 0, i64 0), i64 %i
-  %cmp = icmp eq i32 addrspace(1)* %p1, getelementptr inbounds ([1000 x i32] addrspace(1)* @X_as1, i64 1, i64 0)
+  %p1 = getelementptr inbounds i32, i32 addrspace(1)* getelementptr inbounds ([1000 x i32], [1000 x i32] addrspace(1)* @X_as1, i64 0, i64 0), i64 %i
+  %cmp = icmp eq i32 addrspace(1)* %p1, getelementptr inbounds ([1000 x i32], [1000 x i32] addrspace(1)* @X_as1, i64 1, i64 0)
   ret i1 %cmp
 }
 
@@ -1572,4 +1572,34 @@ define i32 @f5(i8 %a, i8 %b) {
   %sub7 = sub nsw i32 0, %sub
   %sub7.sub = select i1 %cmp4, i32 %sub7, i32 %sub
   ret i32 %sub7.sub
+}
+
+; CHECK-LABEL: @f6
+; CHECK: %cmp.unshifted = xor i32 %a, %b
+; CHECK-NEXT: %cmp.mask = and i32 %cmp.unshifted, 255
+; CHECK-NEXT: %cmp = icmp eq i32 %cmp.mask, 0
+; CHECK-NEXT: %s = select i1 %cmp, i32 10000, i32 0
+; CHECK-NEXT: ret i32 %s
+define i32 @f6(i32 %a, i32 %b) {
+  %sext = shl i32 %a, 24
+  %conv = ashr i32 %sext, 24
+  %sext6 = shl i32 %b, 24
+  %conv4 = ashr i32 %sext6, 24
+  %cmp = icmp eq i32 %conv, %conv4
+  %s = select i1 %cmp, i32 10000, i32 0
+  ret i32 %s
+}
+
+; CHECK-LABEL: @f7
+; CHECK:   %cmp.unshifted = xor i32 %a, %b
+; CHECK-NEXT: %cmp.mask = and i32 %cmp.unshifted, 511
+; CHECK-NEXT: %cmp = icmp ne i32 %cmp.mask, 0
+; CHECK-NEXT: %s = select i1 %cmp, i32 10000, i32 0
+; CHECK-NEXT: ret i32 %s
+define i32 @f7(i32 %a, i32 %b) {
+  %sext = shl i32 %a, 23
+  %sext6 = shl i32 %b, 23
+  %cmp = icmp ne i32 %sext, %sext6
+  %s = select i1 %cmp, i32 10000, i32 0
+  ret i32 %s
 }

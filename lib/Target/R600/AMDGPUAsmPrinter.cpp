@@ -17,6 +17,7 @@
 //
 
 #include "AMDGPUAsmPrinter.h"
+#include "InstPrinter/AMDGPUInstPrinter.h"
 #include "AMDGPU.h"
 #include "AMDKernelCodeT.h"
 #include "AMDGPUSubtarget.h"
@@ -105,8 +106,6 @@ bool AMDGPUAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
 
   SetupMachineFunction(MF);
 
-  EmitFunctionHeader();
-
   MCContext &Context = getObjFileLowering().getContext();
   const MCSectionELF *ConfigSection =
       Context.getELFSection(".AMDGPU.config", ELF::SHT_PROGBITS, 0);
@@ -129,7 +128,6 @@ bool AMDGPUAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   HexLines.clear();
   DisasmLineMaxLen = 0;
 
-  OutStreamer.SwitchSection(getObjFileLowering().getTextSection());
   EmitFunctionBody();
 
   if (isVerbose()) {
@@ -338,6 +336,13 @@ void AMDGPUAsmPrinter::getSIProgramInfo(SIProgramInfo &ProgInfo,
   // number of registers.
   ProgInfo.NumVGPR = MaxVGPR + 1;
   ProgInfo.NumSGPR = MaxSGPR + 1;
+
+  if (STM.hasSGPRInitBug()) {
+    if (ProgInfo.NumSGPR > AMDGPUSubtarget::FIXED_SGPR_COUNT_FOR_INIT_BUG)
+      llvm_unreachable("Too many SGPRs used with the SGPR init bug");
+
+    ProgInfo.NumSGPR = AMDGPUSubtarget::FIXED_SGPR_COUNT_FOR_INIT_BUG;
+  }
 
   ProgInfo.VGPRBlocks = (ProgInfo.NumVGPR - 1) / 4;
   ProgInfo.SGPRBlocks = (ProgInfo.NumSGPR - 1) / 8;
@@ -569,4 +574,25 @@ void AMDGPUAsmPrinter::EmitAmdKernelCodeT(const MachineFunction &MF,
   }
 
   OutStreamer.EmitBytes(StringRef((char*)&header, sizeof(header)));
+}
+
+bool AMDGPUAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
+                                       unsigned AsmVariant,
+                                       const char *ExtraCode, raw_ostream &O) {
+  if (ExtraCode && ExtraCode[0]) {
+    if (ExtraCode[1] != 0)
+      return true; // Unknown modifier.
+
+    switch (ExtraCode[0]) {
+    default:
+      // See if this is a generic print operand
+      return AsmPrinter::PrintAsmOperand(MI, OpNo, AsmVariant, ExtraCode, O);
+    case 'r':
+      break;
+    }
+  }
+
+  AMDGPUInstPrinter::printRegOperand(MI->getOperand(OpNo).getReg(), O,
+                   *TM.getSubtargetImpl(*MF->getFunction())->getRegisterInfo());
+  return false;
 }

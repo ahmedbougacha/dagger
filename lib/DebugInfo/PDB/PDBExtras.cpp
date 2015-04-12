@@ -247,6 +247,25 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, const PDB_SymType &Tag) {
   return OS;
 }
 
+raw_ostream &llvm::operator<<(raw_ostream &OS, const PDB_MemberAccess &Access) {
+  switch (Access) {
+    CASE_OUTPUT_ENUM_CLASS_STR(PDB_MemberAccess, Public, "public", OS)
+    CASE_OUTPUT_ENUM_CLASS_STR(PDB_MemberAccess, Protected, "protected", OS)
+    CASE_OUTPUT_ENUM_CLASS_STR(PDB_MemberAccess, Private, "private", OS)
+  }
+  return OS;
+}
+
+raw_ostream &llvm::operator<<(raw_ostream &OS, const PDB_UdtType &Type) {
+  switch (Type) {
+    CASE_OUTPUT_ENUM_CLASS_STR(PDB_UdtType, Class, "class", OS)
+    CASE_OUTPUT_ENUM_CLASS_STR(PDB_UdtType, Struct, "struct", OS)
+    CASE_OUTPUT_ENUM_CLASS_STR(PDB_UdtType, Interface, "interface", OS)
+    CASE_OUTPUT_ENUM_CLASS_STR(PDB_UdtType, Union, "union", OS)
+  }
+  return OS;
+}
+
 raw_ostream &llvm::operator<<(raw_ostream &OS, const PDB_UniqueId &Id) {
   static const char *Lookup = "0123456789ABCDEF";
 
@@ -284,7 +303,7 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, const Variant &Value) {
       OS << Value.Int64;
       break;
     case PDB_VariantType::Int8:
-      OS << Value.Int8;
+      OS << static_cast<int>(Value.Int8);
       break;
     case PDB_VariantType::Single:
       OS << Value.Single;
@@ -299,12 +318,11 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, const Variant &Value) {
       OS << Value.UInt64;
       break;
     case PDB_VariantType::UInt8:
-      OS << Value.UInt8;
+      OS << static_cast<unsigned>(Value.UInt8);
       break;
     default:
       OS << Value.Type;
   }
-  OS << " {" << Value.Type << "}";
   return OS;
 }
 

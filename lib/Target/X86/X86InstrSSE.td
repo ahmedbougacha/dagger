@@ -643,9 +643,6 @@ let Predicates = [UseAVX] in {
 
   // Represent the same patterns above but in the form they appear for
   // 256-bit types
-  def : Pat<(v8i32 (X86vzmovl (insert_subvector undef,
-                   (v4i32 (scalar_to_vector (loadi32 addr:$src))), (iPTR 0)))),
-            (SUBREG_TO_REG (i32 0), (VMOVSSrm addr:$src), sub_xmm)>;
   def : Pat<(v8f32 (X86vzmovl (insert_subvector undef,
                    (v4f32 (scalar_to_vector (loadf32 addr:$src))), (iPTR 0)))),
             (SUBREG_TO_REG (i32 0), (VMOVSSrm addr:$src), sub_xmm)>;
@@ -653,9 +650,6 @@ let Predicates = [UseAVX] in {
                    (v2f64 (scalar_to_vector (loadf64 addr:$src))), (iPTR 0)))),
             (SUBREG_TO_REG (i32 0), (VMOVSDrm addr:$src), sub_xmm)>;
   }
-  def : Pat<(v4i64 (X86vzmovl (insert_subvector undef,
-                   (v2i64 (scalar_to_vector (loadi64 addr:$src))), (iPTR 0)))),
-            (SUBREG_TO_REG (i64 0), (VMOVSDrm addr:$src), sub_xmm)>;
 
   // Extract and store.
   def : Pat<(store (f32 (vector_extract (v4f32 VR128:$src), (iPTR 0))),
@@ -793,7 +787,7 @@ let Predicates = [UseSSE2] in {
             (MOVSDrr VR128:$src1, (COPY_TO_REGCLASS VR128:$src2, FR64))>;
 
   // FIXME: Instead of a X86Movlps there should be a X86Movsd here, the problem
-  // is during lowering, where it's not possible to recognize the fold cause
+  // is during lowering, where it's not possible to recognize the fold because
   // it has two uses through a bitcast. One use disappears at isel time and the
   // fold opportunity reappears.
   def : Pat<(v2f64 (X86Movlpd VR128:$src1, VR128:$src2)),
@@ -3678,13 +3672,30 @@ def MOVNTI_64mr : RI<0xC3, MRMDestMem, (outs), (ins i64mem:$dst, GR64:$src),
                   PS, Requires<[HasSSE2]>;
 } // SchedRW = [WriteStore]
 
+let Predicates = [HasAVX2, NoVLX] in {
+  def : Pat<(alignednontemporalstore (v8i32 VR256:$src), addr:$dst),
+            (VMOVNTDQYmr addr:$dst, VR256:$src)>;
+  def : Pat<(alignednontemporalstore (v16i16 VR256:$src), addr:$dst),
+            (VMOVNTDQYmr addr:$dst, VR256:$src)>;
+  def : Pat<(alignednontemporalstore (v32i8 VR256:$src), addr:$dst),
+            (VMOVNTDQYmr addr:$dst, VR256:$src)>;
+}
+
 let Predicates = [HasAVX, NoVLX] in {
   def : Pat<(alignednontemporalstore (v4i32 VR128:$src), addr:$dst),
-            (VMOVNTPSmr addr:$dst, VR128:$src)>;
+            (VMOVNTDQmr addr:$dst, VR128:$src)>;
+  def : Pat<(alignednontemporalstore (v8i16 VR128:$src), addr:$dst),
+            (VMOVNTDQmr addr:$dst, VR128:$src)>;
+  def : Pat<(alignednontemporalstore (v16i8 VR128:$src), addr:$dst),
+            (VMOVNTDQmr addr:$dst, VR128:$src)>;
 }
 
 def : Pat<(alignednontemporalstore (v4i32 VR128:$src), addr:$dst),
-          (MOVNTPSmr addr:$dst, VR128:$src)>;
+          (MOVNTDQmr addr:$dst, VR128:$src)>;
+def : Pat<(alignednontemporalstore (v8i16 VR128:$src), addr:$dst),
+          (MOVNTDQmr addr:$dst, VR128:$src)>;
+def : Pat<(alignednontemporalstore (v16i8 VR128:$src), addr:$dst),
+          (MOVNTDQmr addr:$dst, VR128:$src)>;
 
 } // AddedComplexity
 
@@ -4077,7 +4088,7 @@ defm PMULUDQ : PDI_binop_rm2<0xF4, "pmuludq", X86pmuludq, v2i64, v4i32, VR128,
 // SSE2 - Packed Integer Logical Instructions
 //===---------------------------------------------------------------------===//
 
-let Predicates = [HasAVX] in {
+let Predicates = [HasAVX, NoVLX] in {
 defm VPSLLW : PDI_binop_rmi<0xF1, 0x71, MRM6r, "vpsllw", X86vshl, X86vshli,
                             VR128, v8i16, v8i16, bc_v8i16, loadv2i64,
                             SSE_INTSHIFT_ITINS_P, 0>, VEX_4V;
@@ -4123,7 +4134,7 @@ let ExeDomain = SSEPackedInt, SchedRW = [WriteVecShift] in {
 }
 } // Predicates = [HasAVX]
 
-let Predicates = [HasAVX2] in {
+let Predicates = [HasAVX2, NoVLX] in {
 defm VPSLLWY : PDI_binop_rmi<0xF1, 0x71, MRM6r, "vpsllw", X86vshl, X86vshli,
                              VR256, v16i16, v8i16, bc_v8i16, loadv2i64,
                              SSE_INTSHIFT_ITINS_P, 0>, VEX_4V, VEX_L;
@@ -4890,7 +4901,8 @@ let Predicates = [UseAVX] in {
     def : Pat<(v4i32 (X86vzmovl (v4i32 (scalar_to_vector GR32:$src)))),
               (VMOVDI2PDIrr GR32:$src)>;
 
-  // AVX 128-bit movd/movq instruction write zeros in the high 128-bit part.
+  // AVX 128-bit movd/movq instructions write zeros in the high 128-bit part.
+  // These instructions also write zeros in the high part of a 256-bit register.
   let AddedComplexity = 20 in {
     def : Pat<(v4i32 (X86vzmovl (v4i32 (scalar_to_vector (loadi32 addr:$src))))),
               (VMOVDI2PDIrm addr:$src)>;
@@ -4898,6 +4910,9 @@ let Predicates = [UseAVX] in {
               (VMOVDI2PDIrm addr:$src)>;
     def : Pat<(v4i32 (X86vzmovl (bc_v4i32 (loadv2i64 addr:$src)))),
               (VMOVDI2PDIrm addr:$src)>;
+    def : Pat<(v8i32 (X86vzmovl (insert_subvector undef,
+                (v4i32 (scalar_to_vector (loadi32 addr:$src))), (iPTR 0)))),
+              (SUBREG_TO_REG (i32 0), (VMOVDI2PDIrm addr:$src), sub_xmm)>;
   }
   // Use regular 128-bit instructions to match 256-bit scalar_to_vec+zext.
   def : Pat<(v8i32 (X86vzmovl (insert_subvector undef,
@@ -5016,6 +5031,9 @@ let Predicates = [UseAVX], AddedComplexity = 20 in {
             (VMOVZQI2PQIrm addr:$src)>;
   def : Pat<(v2i64 (X86vzload addr:$src)),
             (VMOVZQI2PQIrm addr:$src)>;
+  def : Pat<(v4i64 (X86vzmovl (insert_subvector undef,
+              (v2i64 (scalar_to_vector (loadi64 addr:$src))), (iPTR 0)))),
+            (SUBREG_TO_REG (i64 0), (VMOVZQI2PQIrm addr:$src), sub_xmm)>;
 }
 
 let Predicates = [UseSSE2], AddedComplexity = 20 in {
@@ -5902,7 +5920,6 @@ multiclass SS41I_pmovx_avx2_patterns<string OpcPrefix, string ExtTy, SDNode ExtO
             (!cast<I>(OpcPrefix#DQYrr) VR128:$src)>;
 
   // On AVX2, we also support 256bit inputs.
-  // FIXME: remove these patterns when the old shuffle lowering goes away.
   def : Pat<(v16i16 (ExtOp (v32i8 VR256:$src))),
             (!cast<I>(OpcPrefix#BWYrr) (EXTRACT_SUBREG VR256:$src, sub_xmm))>;
   def : Pat<(v8i32 (ExtOp (v32i8 VR256:$src))),
@@ -7151,6 +7168,10 @@ let Predicates = [HasAVX2] in {
 }
 
 // Patterns
+// FIXME: Prefer a movss or movsd over a blendps when optimizing for size or
+// on targets where they have equal performance. These were changed to use
+// blends because blends have better throughput on SandyBridge and Haswell, but
+// movs[s/d] are 1-2 byte shorter instructions.
 let Predicates = [UseAVX] in {
   let AddedComplexity = 15 in {
   // Move scalar to XMM zero-extended, zeroing a VR128 then do a
@@ -7167,8 +7188,10 @@ let Predicates = [UseAVX] in {
   // Move low f32 and clear high bits.
   def : Pat<(v8f32 (X86vzmovl (v8f32 VR256:$src))),
             (VBLENDPSYrri (v8f32 (AVX_SET0)), VR256:$src, (i8 1))>;
-  def : Pat<(v8i32 (X86vzmovl (v8i32 VR256:$src))),
-            (VBLENDPSYrri (v8i32 (AVX_SET0)), VR256:$src, (i8 1))>;
+
+  // Move low f64 and clear high bits.
+  def : Pat<(v4f64 (X86vzmovl (v4f64 VR256:$src))),
+            (VBLENDPDYrri (v4f64 (AVX_SET0)), VR256:$src, (i8 1))>;
   }
 
   def : Pat<(v8f32 (X86vzmovl (insert_subvector undef,
@@ -7182,14 +7205,19 @@ let Predicates = [UseAVX] in {
                            (v2f64 (VMOVSDrr (v2f64 (V_SET0)), FR64:$src)),
                            sub_xmm)>;
 
-  // Move low f64 and clear high bits.
-  def : Pat<(v4f64 (X86vzmovl (v4f64 VR256:$src))),
-            (VBLENDPDYrri (v4f64 (AVX_SET0)), VR256:$src, (i8 1))>;
-
+  // These will incur an FP/int domain crossing penalty, but it may be the only
+  // way without AVX2. Do not add any complexity because we may be able to match
+  // more optimal patterns defined earlier in this file.
+  def : Pat<(v8i32 (X86vzmovl (v8i32 VR256:$src))),
+            (VBLENDPSYrri (v8i32 (AVX_SET0)), VR256:$src, (i8 1))>;
   def : Pat<(v4i64 (X86vzmovl (v4i64 VR256:$src))),
             (VBLENDPDYrri (v4i64 (AVX_SET0)), VR256:$src, (i8 1))>;
 }
 
+// FIXME: Prefer a movss or movsd over a blendps when optimizing for size or
+// on targets where they have equal performance. These were changed to use
+// blends because blends have better throughput on SandyBridge and Haswell, but
+// movs[s/d] are 1-2 byte shorter instructions.
 let Predicates = [UseSSE41] in {
   // With SSE41 we can use blends for these patterns.
   def : Pat<(v4f32 (X86vzmovl (v4f32 VR128:$src))),
@@ -7835,9 +7863,9 @@ def VBROADCASTSDYrr  : avx2_broadcast_reg<0x19, "vbroadcastsd", VR256,
                                       WriteFShuffle256>, VEX_L;
 
 let Predicates = [HasAVX2] in
-def VBROADCASTI128 : avx_broadcast<0x5A, "vbroadcasti128", VR256, i128mem,
-                                   int_x86_avx2_vbroadcasti128, WriteLoad>,
-                                   VEX_L;
+def VBROADCASTI128 : avx_broadcast_no_int<0x5A, "vbroadcasti128", VR256,
+                                          i128mem, v4i64, loadv2i64,
+                                          WriteLoad>, VEX_L;
 
 let Predicates = [HasAVX] in
 def : Pat<(int_x86_avx_vbroadcastf128_ps_256 addr:$src),
@@ -8342,7 +8370,7 @@ let Predicates = [HasAVX2] in {
   def : Pat<(v4f64 (X86VBroadcast (v2f64 VR128:$src))),
           (VBROADCASTSDYrr VR128:$src)>;
 
-  // Provide aliases for broadcast from the same regitser class that
+  // Provide aliases for broadcast from the same register class that
   // automatically does the extract.
   def : Pat<(v32i8 (X86VBroadcast (v32i8 VR256:$src))),
             (VPBROADCASTBYrr (v16i8 (EXTRACT_SUBREG (v32i8 VR256:$src),
@@ -8596,9 +8624,7 @@ def : Pat<(vinsert128_insert:$ins (v16i16 VR256:$src1),
 //
 def VEXTRACTI128rr : AVX2AIi8<0x39, MRMDestReg, (outs VR128:$dst),
           (ins VR256:$src1, u8imm:$src2),
-          "vextracti128\t{$src2, $src1, $dst|$dst, $src1, $src2}",
-          [(set VR128:$dst,
-            (int_x86_avx2_vextracti128 VR256:$src1, imm:$src2))]>,
+          "vextracti128\t{$src2, $src1, $dst|$dst, $src1, $src2}", []>,
           Sched<[WriteShuffle256]>, VEX, VEX_L;
 let hasSideEffects = 0, mayStore = 1 in
 def VEXTRACTI128mr : AVX2AIi8<0x39, MRMDestMem, (outs),

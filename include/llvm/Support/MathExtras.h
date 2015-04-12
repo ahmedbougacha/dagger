@@ -318,31 +318,31 @@ inline bool isIntN(unsigned N, int64_t x) {
   return N >= 64 || (-(INT64_C(1)<<(N-1)) <= x && x < (INT64_C(1)<<(N-1)));
 }
 
-/// isMask_32 - This function returns true if the argument is a sequence of ones
-/// starting at the least significant bit with the remainder zero (32 bit
-/// version).   Ex. isMask_32(0x0000FFFFU) == true.
+/// isMask_32 - This function returns true if the argument is a non-empty
+/// sequence of ones starting at the least significant bit with the remainder
+/// zero (32 bit version).  Ex. isMask_32(0x0000FFFFU) == true.
 inline bool isMask_32(uint32_t Value) {
   return Value && ((Value + 1) & Value) == 0;
 }
 
-/// isMask_64 - This function returns true if the argument is a sequence of ones
-/// starting at the least significant bit with the remainder zero (64 bit
-/// version).
+/// isMask_64 - This function returns true if the argument is a non-empty
+/// sequence of ones starting at the least significant bit with the remainder
+/// zero (64 bit version).
 inline bool isMask_64(uint64_t Value) {
   return Value && ((Value + 1) & Value) == 0;
 }
 
 /// isShiftedMask_32 - This function returns true if the argument contains a
-/// sequence of ones with the remainder zero (32 bit version.)
+/// non-empty sequence of ones with the remainder zero (32 bit version.)
 /// Ex. isShiftedMask_32(0x0000FF00U) == true.
 inline bool isShiftedMask_32(uint32_t Value) {
-  return isMask_32((Value - 1) | Value);
+  return Value && isMask_32((Value - 1) | Value);
 }
 
 /// isShiftedMask_64 - This function returns true if the argument contains a
-/// sequence of ones with the remainder zero (64 bit version.)
+/// non-empty sequence of ones with the remainder zero (64 bit version.)
 inline bool isShiftedMask_64(uint64_t Value) {
-  return isMask_64((Value - 1) | Value);
+  return Value && isMask_64((Value - 1) | Value);
 }
 
 /// isPowerOf2_32 - This function returns true if the argument is a power of
@@ -534,14 +534,6 @@ inline uint32_t FloatToBits(float Float) {
   return T.I;
 }
 
-/// Platform-independent wrappers for the C99 isnan() function.
-int IsNAN(float f);
-int IsNAN(double d);
-
-/// Platform-independent wrappers for the C99 isinf() function.
-int IsInf(float f);
-int IsInf(double d);
-
 /// MinAlign - A and B are either alignments or offsets.  Return the minimum
 /// alignment that may be assumed after adding the two together.
 inline uint64_t MinAlign(uint64_t A, uint64_t B) {
@@ -610,13 +602,6 @@ inline uint64_t RoundUpToAlignment(uint64_t Value, uint64_t Align) {
 /// non-zero.
 inline uint64_t OffsetToAlignment(uint64_t Value, uint64_t Align) {
   return RoundUpToAlignment(Value, Align) - Value;
-}
-
-/// abs64 - absolute value of a 64-bit int.  Not all environments support
-/// "abs" on whatever their name for the 64-bit int type is.  The absolute
-/// value of the largest negative number is undefined, as with "abs".
-inline int64_t abs64(int64_t x) {
-  return (x < 0) ? -x : x;
 }
 
 /// SignExtend32 - Sign extend B-bit number x to 32-bit int.

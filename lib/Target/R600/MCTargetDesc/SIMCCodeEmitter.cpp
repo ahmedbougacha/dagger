@@ -49,7 +49,7 @@ public:
                   MCContext &ctx)
     : MCII(mcii), MRI(mri), Ctx(ctx) { }
 
-  ~SIMCCodeEmitter() { }
+  ~SIMCCodeEmitter() override {}
 
   /// \brief Encode the instruction and write it to the OS.
   void EncodeInstruction(const MCInst &MI, raw_ostream &OS,
@@ -72,7 +72,6 @@ public:
 
 MCCodeEmitter *llvm::createSIMCCodeEmitter(const MCInstrInfo &MCII,
                                            const MCRegisterInfo &MRI,
-                                           const MCSubtargetInfo &STI,
                                            MCContext &Ctx) {
   return new SIMCCodeEmitter(MCII, MRI, Ctx);
 }

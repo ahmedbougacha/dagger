@@ -103,6 +103,11 @@ def FeatureVGPRSpilling : SubtargetFeature<"vgpr-spilling",
         "true",
         "Enable spilling of VGPRs to scratch memory">;
 
+def FeatureSGPRInitBug : SubtargetFeature<"sgpr-init-bug",
+        "SGPRInitBug",
+        "true",
+        "VI SGPR initilization bug requiring a fixed SGPR allocation size">;
+
 class SubtargetFeatureFetchLimit <string Value> :
                           SubtargetFeature <"fetch"#Value,
         "TexVTXClauseSize",
@@ -128,6 +133,20 @@ class SubtargetFeatureLocalMemorySize <int Value> : SubtargetFeature<
         !cast<string>(Value),
         "The size of local memory in bytes">;
 
+def FeatureGCN : SubtargetFeature<"gcn",
+        "IsGCN",
+        "true",
+        "GCN or newer GPU">;
+
+def FeatureGCN1Encoding : SubtargetFeature<"gcn1-encoding",
+        "GCN1Encoding",
+        "true",
+        "Encoding format for SI and CI">;
+
+def FeatureGCN3Encoding : SubtargetFeature<"gcn3-encoding",
+        "GCN3Encoding",
+        "true",
+        "Encoding format for VI">;
 class SubtargetFeatureGeneration <string Value,
                                   list<SubtargetFeature> Implies> :
         SubtargetFeature <Value, "Gen", "AMDGPUSubtarget::"#Value,
@@ -153,15 +172,17 @@ def FeatureNorthernIslands : SubtargetFeatureGeneration<"NORTHERN_ISLANDS",
 
 def FeatureSouthernIslands : SubtargetFeatureGeneration<"SOUTHERN_ISLANDS",
         [Feature64BitPtr, FeatureFP64, FeatureLocalMemorySize32768,
-         FeatureWavefrontSize64]>;
+         FeatureWavefrontSize64, FeatureGCN, FeatureGCN1Encoding]>;
 
 def FeatureSeaIslands : SubtargetFeatureGeneration<"SEA_ISLANDS",
         [Feature64BitPtr, FeatureFP64, FeatureLocalMemorySize65536,
-         FeatureWavefrontSize64, FeatureFlatAddressSpace]>;
+         FeatureWavefrontSize64, FeatureGCN, FeatureFlatAddressSpace,
+         FeatureGCN1Encoding]>;
 
 def FeatureVolcanicIslands : SubtargetFeatureGeneration<"VOLCANIC_ISLANDS",
         [Feature64BitPtr, FeatureFP64, FeatureLocalMemorySize65536,
-         FeatureWavefrontSize64, FeatureFlatAddressSpace]>;
+         FeatureWavefrontSize64, FeatureFlatAddressSpace, FeatureGCN,
+         FeatureGCN3Encoding]>;
 
 //===----------------------------------------------------------------------===//
 
@@ -192,8 +213,10 @@ def NullALU : InstrItinClass;
 
 class PredicateControl {
   Predicate SubtargetPredicate;
+  list<Predicate> AssemblerPredicates = [];
   list<Predicate> OtherPredicates = [];
   list<Predicate> Predicates = !listconcat([SubtargetPredicate],
+                                            AssemblerPredicates,
                                             OtherPredicates);
 }
 

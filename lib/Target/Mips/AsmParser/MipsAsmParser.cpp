@@ -29,6 +29,7 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/raw_ostream.h"
 #include <memory>
 
 using namespace llvm;
@@ -53,7 +54,13 @@ public:
   }
 
   unsigned getATRegNum() const { return ATReg; }
-  bool setATReg(unsigned Reg);
+  bool setATReg(unsigned Reg) {
+    if (Reg > 31)
+      return false;
+
+    ATReg = Reg;
+    return true;
+  }
 
   bool isReorder() const { return Reorder; }
   void setReorder() { Reorder = true; }
@@ -193,6 +200,9 @@ class MipsAsmParser : public MCTargetAsmParser {
   bool expandLoadStoreMultiple(MCInst &Inst, SMLoc IDLoc,
                                SmallVectorImpl<MCInst> &Instructions);
 
+  void createNop(bool hasShortDelaySlot, SMLoc IDLoc,
+                 SmallVectorImpl<MCInst> &Instructions);
+
   bool reportParseError(Twine ErrorMsg);
   bool reportParseError(SMLoc Loc, Twine ErrorMsg);
 
@@ -235,6 +245,8 @@ class MipsAsmParser : public MCTargetAsmParser {
   bool parseDirectiveModuleFP();
   bool parseFpABIValue(MipsABIFlagsSection::FpABIKind &FpABI,
                        StringRef Directive);
+
+  bool parseInternalDirectiveReallowModule();
 
   MCSymbolRefExpr::VariantKind getVariantKind(StringRef Symbol);
 
@@ -1365,22 +1377,11 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
     }
   }
 
+  // If this instruction has a delay slot and .set reorder is active,
+  // emit a NOP after it.
   if (MCID.hasDelaySlot() && AssemblerOptions.back()->isReorder()) {
-    // If this instruction has a delay slot and .set reorder is active,
-    // emit a NOP after it.
     Instructions.push_back(Inst);
-    MCInst NopInst;
-    if (hasShortDelaySlot(Inst.getOpcode())) {
-      NopInst.setOpcode(Mips::MOVE16_MM);
-      NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
-      NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
-    } else {
-      NopInst.setOpcode(Mips::SLL);
-      NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
-      NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
-      NopInst.addOperand(MCOperand::CreateImm(0));
-    }
-    Instructions.push_back(NopInst);
+    createNop(hasShortDelaySlot(Inst.getOpcode()), IDLoc, Instructions);
     return false;
   }
 
@@ -1584,10 +1585,10 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
 bool MipsAsmParser::needsExpansion(MCInst &Inst) {
 
   switch (Inst.getOpcode()) {
-  case Mips::LoadImm32Reg:
-  case Mips::LoadAddr32Imm:
-  case Mips::LoadAddr32Reg:
-  case Mips::LoadImm64Reg:
+  case Mips::LoadImm32:
+  case Mips::LoadImm64:
+  case Mips::LoadAddrImm32:
+  case Mips::LoadAddrReg32:
   case Mips::B_MM_Pseudo:
   case Mips::LWM_MM:
   case Mips::SWM_MM:
@@ -1603,17 +1604,17 @@ bool MipsAsmParser::expandInstruction(MCInst &Inst, SMLoc IDLoc,
                                       SmallVectorImpl<MCInst> &Instructions) {
   switch (Inst.getOpcode()) {
   default: llvm_unreachable("unimplemented expansion");
-  case Mips::LoadImm32Reg:
+  case Mips::LoadImm32:
     return expandLoadImm(Inst, IDLoc, Instructions);
-  case Mips::LoadImm64Reg:
+  case Mips::LoadImm64:
     if (!isGP64bit()) {
       Error(IDLoc, "instruction requires a 64-bit architecture");
       return true;
     }
     return expandLoadImm(Inst, IDLoc, Instructions);
-  case Mips::LoadAddr32Imm:
+  case Mips::LoadAddrImm32:
     return expandLoadAddressImm(Inst, IDLoc, Instructions);
-  case Mips::LoadAddr32Reg:
+  case Mips::LoadAddrReg32:
     return expandLoadAddressReg(Inst, IDLoc, Instructions);
   case Mips::B_MM_Pseudo:
     return expandUncondBranchMMPseudo(Inst, IDLoc, Instructions);
@@ -1712,7 +1713,7 @@ bool MipsAsmParser::expandLoadImm(MCInst &Inst, SMLoc IDLoc,
   // FIXME: gas has a special case for values that are 000...1111, which
   // becomes a li -1 and then a dsrl
   if (0 <= ImmValue && ImmValue <= 65535) {
-    // For 0 <= j <= 65535.
+    // For unsigned and positive signed 16-bit values (0 <= j <= 65535):
     // li d,j => ori d,$zero,j
     tmpInst.setOpcode(Mips::ORi);
     tmpInst.addOperand(MCOperand::CreateReg(RegOp.getReg()));
@@ -1720,7 +1721,7 @@ bool MipsAsmParser::expandLoadImm(MCInst &Inst, SMLoc IDLoc,
     tmpInst.addOperand(MCOperand::CreateImm(ImmValue));
     Instructions.push_back(tmpInst);
   } else if (ImmValue < 0 && ImmValue >= -32768) {
-    // For -32768 <= j < 0.
+    // For negative signed 16-bit values (-32768 <= j < 0):
     // li d,j => addiu d,$zero,j
     tmpInst.setOpcode(Mips::ADDiu);
     tmpInst.addOperand(MCOperand::CreateReg(RegOp.getReg()));
@@ -1728,8 +1729,7 @@ bool MipsAsmParser::expandLoadImm(MCInst &Inst, SMLoc IDLoc,
     tmpInst.addOperand(MCOperand::CreateImm(ImmValue));
     Instructions.push_back(tmpInst);
   } else if ((ImmValue & 0xffffffff) == ImmValue) {
-    // For any value of j that is representable as a 32-bit integer, create
-    // a sequence of:
+    // For all other values which are representable as a 32-bit integer:
     // li d,j => lui d,hi16(j)
     //           ori d,d,lo16(j)
     tmpInst.setOpcode(Mips::LUi);
@@ -1751,8 +1751,7 @@ bool MipsAsmParser::expandLoadImm(MCInst &Inst, SMLoc IDLoc,
     // | 16-bytes | 16-bytes | 16-bytes |
     // |__________|__________|__________|
     //
-    // For any value of j that is representable as a 48-bit integer, create
-    // a sequence of:
+    // For any 64-bit value that is representable as a 48-bit integer:
     // li d,j => lui d,hi16(j)
     //           ori d,d,hi16(lo32(j))
     //           dsll d,d,16
@@ -1777,7 +1776,7 @@ bool MipsAsmParser::expandLoadImm(MCInst &Inst, SMLoc IDLoc,
     // | 16-bytes | 16-bytes | 16-bytes | 16-bytes |
     // |__________|__________|__________|__________|
     //
-    // For any value of j that isn't representable as a 48-bit integer.
+    // For all other values which are representable as a 64-bit integer:
     // li d,j => lui d,hi16(j)
     //           ori d,d,lo16(hi32(j))
     //           dsll d,d,16
@@ -1982,14 +1981,10 @@ bool MipsAsmParser::expandUncondBranchMMPseudo(
   }
   Instructions.push_back(Inst);
 
-  if (AssemblerOptions.back()->isReorder()) {
-    // If .set reorder is active, emit a NOP after the branch instruction.
-    MCInst NopInst;
-    NopInst.setOpcode(Mips::MOVE16_MM);
-    NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
-    NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
-    Instructions.push_back(NopInst);
-  }
+  // If .set reorder is active, emit a NOP after the branch instruction.
+  if (AssemblerOptions.back()->isReorder())
+    createNop(true, IDLoc, Instructions);
+
   return false;
 }
 
@@ -2081,12 +2076,14 @@ void MipsAsmParser::expandMemInst(MCInst &Inst, SMLoc IDLoc,
   // Prepare TempInst for next instruction.
   TempInst.clear();
   // Add temp register to base.
-  TempInst.setOpcode(Mips::ADDu);
-  TempInst.addOperand(MCOperand::CreateReg(TmpRegNum));
-  TempInst.addOperand(MCOperand::CreateReg(TmpRegNum));
-  TempInst.addOperand(MCOperand::CreateReg(BaseRegNum));
-  Instructions.push_back(TempInst);
-  TempInst.clear();
+  if (BaseRegNum != Mips::ZERO) {
+    TempInst.setOpcode(Mips::ADDu);
+    TempInst.addOperand(MCOperand::CreateReg(TmpRegNum));
+    TempInst.addOperand(MCOperand::CreateReg(TmpRegNum));
+    TempInst.addOperand(MCOperand::CreateReg(BaseRegNum));
+    Instructions.push_back(TempInst);
+    TempInst.clear();
+  }
   // And finally, create original instruction with low part
   // of offset and new base.
   TempInst.setOpcode(Inst.getOpcode());
@@ -2130,6 +2127,22 @@ MipsAsmParser::expandLoadStoreMultiple(MCInst &Inst, SMLoc IDLoc,
   Inst.setOpcode(NewOpcode);
   Instructions.push_back(Inst);
   return false;
+}
+
+void MipsAsmParser::createNop(bool hasShortDelaySlot, SMLoc IDLoc,
+                              SmallVectorImpl<MCInst> &Instructions) {
+  MCInst NopInst;
+  if (hasShortDelaySlot) {
+    NopInst.setOpcode(Mips::MOVE16_MM);
+    NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
+    NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
+  } else {
+    NopInst.setOpcode(Mips::SLL);
+    NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
+    NopInst.addOperand(MCOperand::CreateReg(Mips::ZERO));
+    NopInst.addOperand(MCOperand::CreateImm(0));
+  }
+  Instructions.push_back(NopInst);
 }
 
 unsigned MipsAsmParser::checkTargetMatchPredicate(MCInst &Inst) {
@@ -2370,14 +2383,6 @@ int MipsAsmParser::matchMSA128CtrlRegisterName(StringRef Name) {
   return CC;
 }
 
-bool MipsAssemblerOptions::setATReg(unsigned Reg) {
-  if (Reg > 31)
-    return false;
-
-  ATReg = Reg;
-  return true;
-}
-
 int MipsAsmParser::getATReg(SMLoc Loc) {
   int AT = AssemblerOptions.back()->getATRegNum();
   if (AT == 0)
@@ -2566,7 +2571,7 @@ bool MipsAsmParser::parseRelocOperand(const MCExpr *&Res) {
   if (Tok.isNot(AsmToken::Identifier))
     return true;
 
-  std::string Str = Tok.getIdentifier().str();
+  std::string Str = Tok.getIdentifier();
 
   Parser.Lex(); // Eat the identifier.
   // Now make an expression from the rest of the operand.
@@ -3574,11 +3579,7 @@ bool MipsAsmParser::parseSetAssignment() {
   if (Parser.parseExpression(Value))
     return reportParseError("expected valid expression after comma");
 
-  // Check if the Name already exists as a symbol.
-  MCSymbol *Sym = getContext().LookupSymbol(Name);
-  if (Sym)
-    return reportParseError("symbol already defined");
-  Sym = getContext().GetOrCreateSymbol(Name);
+  MCSymbol *Sym = getContext().GetOrCreateSymbol(Name);
   Sym->setVariableValue(Value);
 
   return false;
@@ -4429,7 +4430,23 @@ bool MipsAsmParser::ParseDirective(AsmToken DirectiveID) {
   if (IDVal == ".module")
     return parseDirectiveModule();
 
+  if (IDVal == ".llvm_internal_mips_reallow_module_directive")
+    return parseInternalDirectiveReallowModule();
+
   return true;
+}
+
+bool MipsAsmParser::parseInternalDirectiveReallowModule() {
+  // If this is not the end of the statement, report an error.
+  if (getLexer().isNot(AsmToken::EndOfStatement)) {
+    reportParseError("unexpected token, expected end of statement");
+    return false;
+  }
+
+  getTargetStreamer().reallowModuleDirective();
+
+  getParser().Lex(); // Eat EndOfStatement token.
+  return false;
 }
 
 extern "C" void LLVMInitializeMipsAsmParser() {

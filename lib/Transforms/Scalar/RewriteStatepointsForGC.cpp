@@ -17,6 +17,7 @@
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Dominators.h"
@@ -49,11 +50,11 @@ static cl::opt<bool> TraceLSP("trace-rewrite-statepoints", cl::Hidden,
 // Print the liveset found at the insert location
 static cl::opt<bool> PrintLiveSet("spp-print-liveset", cl::Hidden,
                                   cl::init(false));
-static cl::opt<bool> PrintLiveSetSize("spp-print-liveset-size",
-                                      cl::Hidden, cl::init(false));
+static cl::opt<bool> PrintLiveSetSize("spp-print-liveset-size", cl::Hidden,
+                                      cl::init(false));
 // Print out the base pointers for debugging
-static cl::opt<bool> PrintBasePointers("spp-print-base-pointers",
-                                       cl::Hidden, cl::init(false));
+static cl::opt<bool> PrintBasePointers("spp-print-base-pointers", cl::Hidden,
+                                       cl::init(false));
 
 namespace {
 struct RewriteStatepointsForGC : public FunctionPass {
@@ -85,6 +86,22 @@ INITIALIZE_PASS_END(RewriteStatepointsForGC, "rewrite-statepoints-for-gc",
                     "Make relocations explicit at statepoints", false, false)
 
 namespace {
+struct GCPtrLivenessData {
+  /// Values defined in this block.
+  DenseMap<BasicBlock *, DenseSet<Value *>> KillSet;
+  /// Values used in this block (and thus live); does not included values
+  /// killed within this block.
+  DenseMap<BasicBlock *, DenseSet<Value *>> LiveSet;
+
+  /// Values live into this basic block (i.e. used by any
+  /// instruction in this basic block or ones reachable from here)
+  DenseMap<BasicBlock *, DenseSet<Value *>> LiveIn;
+
+  /// Values live out of this basic block (i.e. live into
+  /// any successor block)
+  DenseMap<BasicBlock *, DenseSet<Value *>> LiveOut;
+};
+
 // The type of the internal cache used inside the findBasePointers family
 // of functions.  From the callers perspective, this is an opaque type and
 // should not be inspected.
@@ -119,6 +136,15 @@ struct PartiallyConstructedSafepointRecord {
 };
 }
 
+/// Compute the live-in set for every basic block in the function
+static void computeLiveInValues(DominatorTree &DT, Function &F,
+                                GCPtrLivenessData &Data);
+
+/// Given results from the dataflow liveness computation, find the set of live
+/// Values at a particular instruction.
+static void findLiveSetAtInst(Instruction *inst, GCPtrLivenessData &Data,
+                              StatepointLiveSetTy &out);
+
 // TODO: Once we can get to the GCStrategy, this becomes
 // Optional<bool> isGCManagedPointer(const Value *V) const override {
 
@@ -131,129 +157,46 @@ static bool isGCPointerType(const Type *T) {
   return false;
 }
 
-/// Return true if the Value is a gc reference type which is potentially used
-/// after the instruction 'loc'.  This is only used with the edge reachability
-/// liveness code.  Note: It is assumed the V dominates loc.
-static bool isLiveGCReferenceAt(Value &V, Instruction *loc, DominatorTree &DT,
-                                LoopInfo *LI) {
-  if (!isGCPointerType(V.getType()))
-    return false;
-
-  if (V.use_empty())
-    return false;
-
-  // Given assumption that V dominates loc, this may be live
-  return true;
+// Return true if this type is one which a) is a gc pointer or contains a GC
+// pointer and b) is of a type this code expects to encounter as a live value.
+// (The insertion code will assert that a type which matches (a) and not (b)
+// is not encountered.)
+static bool isHandledGCPointerType(Type *T) {
+  // We fully support gc pointers
+  if (isGCPointerType(T))
+    return true;
+  // We partially support vectors of gc pointers. The code will assert if it
+  // can't handle something.
+  if (auto VT = dyn_cast<VectorType>(T))
+    if (isGCPointerType(VT->getElementType()))
+      return true;
+  return false;
 }
 
 #ifndef NDEBUG
-static bool isAggWhichContainsGCPtrType(Type *Ty) {
+/// Returns true if this type contains a gc pointer whether we know how to
+/// handle that type or not.
+static bool containsGCPtrType(Type *Ty) {
+  if (isGCPointerType(Ty))
+    return true;
   if (VectorType *VT = dyn_cast<VectorType>(Ty))
     return isGCPointerType(VT->getScalarType());
   if (ArrayType *AT = dyn_cast<ArrayType>(Ty))
-    return isGCPointerType(AT->getElementType()) ||
-           isAggWhichContainsGCPtrType(AT->getElementType());
+    return containsGCPtrType(AT->getElementType());
   if (StructType *ST = dyn_cast<StructType>(Ty))
-    return std::any_of(ST->subtypes().begin(), ST->subtypes().end(),
-                       [](Type *SubType) {
-                         return isGCPointerType(SubType) ||
-                                isAggWhichContainsGCPtrType(SubType);
-                       });
+    return std::any_of(
+        ST->subtypes().begin(), ST->subtypes().end(),
+        [](Type *SubType) { return containsGCPtrType(SubType); });
   return false;
 }
-#endif
 
-// Conservatively identifies any definitions which might be live at the
-// given instruction. The  analysis is performed immediately before the
-// given instruction. Values defined by that instruction are not considered
-// live.  Values used by that instruction are considered live.
-//
-// preconditions: valid IR graph, term is either a terminator instruction or
-// a call instruction, pred is the basic block of term, DT, LI are valid
-//
-// side effects: none, does not mutate IR
-//
-//  postconditions: populates liveValues as discussed above
-static void findLiveGCValuesAtInst(Instruction *term, BasicBlock *pred,
-                                   DominatorTree &DT, LoopInfo *LI,
-                                   StatepointLiveSetTy &liveValues) {
-  liveValues.clear();
-
-  assert(isa<CallInst>(term) || isa<InvokeInst>(term) || term->isTerminator());
-
-  Function *F = pred->getParent();
-
-  auto is_live_gc_reference =
-      [&](Value &V) { return isLiveGCReferenceAt(V, term, DT, LI); };
-
-  // Are there any gc pointer arguments live over this point?  This needs to be
-  // special cased since arguments aren't defined in basic blocks.
-  for (Argument &arg : F->args()) {
-    assert(!isAggWhichContainsGCPtrType(arg.getType()) &&
-           "support for FCA unimplemented");
-
-    if (is_live_gc_reference(arg)) {
-      liveValues.insert(&arg);
-    }
-  }
-
-  // Walk through all dominating blocks - the ones which can contain
-  // definitions used in this block - and check to see if any of the values
-  // they define are used in locations potentially reachable from the
-  // interesting instruction.
-  BasicBlock *BBI = pred;
-  while (true) {
-    if (TraceLSP) {
-      errs() << "[LSP] Looking at dominating block " << pred->getName() << "\n";
-    }
-    assert(DT.dominates(BBI, pred));
-    assert(isPotentiallyReachable(BBI, pred, &DT) &&
-           "dominated block must be reachable");
-
-    // Walk through the instructions in dominating blocks and keep any
-    // that have a use potentially reachable from the block we're
-    // considering putting the safepoint in
-    for (Instruction &inst : *BBI) {
-      if (TraceLSP) {
-        errs() << "[LSP] Looking at instruction ";
-        inst.dump();
-      }
-
-      if (pred == BBI && (&inst) == term) {
-        if (TraceLSP) {
-          errs() << "[LSP] stopped because we encountered the safepoint "
-                    "instruction.\n";
-        }
-
-        // If we're in the block which defines the interesting instruction,
-        // we don't want to include any values as live which are defined
-        // _after_ the interesting line or as part of the line itself
-        // i.e. "term" is the call instruction for a call safepoint, the
-        // results of the call should not be considered live in that stackmap
-        break;
-      }
-
-      assert(!isAggWhichContainsGCPtrType(inst.getType()) &&
-             "support for FCA unimplemented");
-
-      if (is_live_gc_reference(inst)) {
-        if (TraceLSP) {
-          errs() << "[LSP] found live value for this safepoint ";
-          inst.dump();
-          term->dump();
-        }
-        liveValues.insert(&inst);
-      }
-    }
-    if (!DT.getNode(BBI)->getIDom()) {
-      assert(BBI == &F->getEntryBlock() &&
-             "failed to find a dominator for something other than "
-             "the entry block");
-      break;
-    }
-    BBI = DT.getNode(BBI)->getIDom()->getBlock();
-  }
+// Returns true if this is a type which a) is a gc pointer or contains a GC
+// pointer and b) is of a type which the code doesn't expect (i.e. first class
+// aggregates).  Used to trip assertions.
+static bool isUnhandledGCPointerType(Type *Ty) {
+  return containsGCPtrType(Ty) && !isHandledGCPointerType(Ty);
 }
+#endif
 
 static bool order_by_name(llvm::Value *a, llvm::Value *b) {
   if (a->hasName() && b->hasName()) {
@@ -268,16 +211,17 @@ static bool order_by_name(llvm::Value *a, llvm::Value *b) {
   }
 }
 
-/// Find the initial live set. Note that due to base pointer
-/// insertion, the live set may be incomplete.
-static void
-analyzeParsePointLiveness(DominatorTree &DT, const CallSite &CS,
-                          PartiallyConstructedSafepointRecord &result) {
+// Conservatively identifies any definitions which might be live at the
+// given instruction. The  analysis is performed immediately before the
+// given instruction. Values defined by that instruction are not considered
+// live.  Values used by that instruction are considered live.
+static void analyzeParsePointLiveness(
+    DominatorTree &DT, GCPtrLivenessData &OriginalLivenessData,
+    const CallSite &CS, PartiallyConstructedSafepointRecord &result) {
   Instruction *inst = CS.getInstruction();
 
-  BasicBlock *BB = inst->getParent();
   StatepointLiveSetTy liveset;
-  findLiveGCValuesAtInst(inst, BB, DT, nullptr, liveset);
+  findLiveSetAtInst(inst, OriginalLivenessData, liveset);
 
   if (PrintLiveSet) {
     // Note: This output is used by several of the test cases
@@ -299,10 +243,49 @@ analyzeParsePointLiveness(DominatorTree &DT, const CallSite &CS,
   result.liveset = liveset;
 }
 
-/// True iff this value is the null pointer constant (of any pointer type)
-static bool LLVM_ATTRIBUTE_UNUSED isNullConstant(Value *V) {
-  return isa<Constant>(V) && isa<PointerType>(V->getType()) &&
-         cast<Constant>(V)->isNullValue();
+/// If we can trivially determine that this vector contains only base pointers,
+/// return the base instruction.
+static Value *findBaseOfVector(Value *I) {
+  assert(I->getType()->isVectorTy() &&
+         cast<VectorType>(I->getType())->getElementType()->isPointerTy() &&
+         "Illegal to ask for the base pointer of a non-pointer type");
+
+  // Each case parallels findBaseDefiningValue below, see that code for
+  // detailed motivation.
+
+  if (isa<Argument>(I))
+    // An incoming argument to the function is a base pointer
+    return I;
+
+  // We shouldn't see the address of a global as a vector value?
+  assert(!isa<GlobalVariable>(I) &&
+         "unexpected global variable found in base of vector");
+
+  // inlining could possibly introduce phi node that contains
+  // undef if callee has multiple returns
+  if (isa<UndefValue>(I))
+    // utterly meaningless, but useful for dealing with partially optimized
+    // code.
+    return I;
+
+  // Due to inheritance, this must be _after_ the global variable and undef
+  // checks
+  if (Constant *Con = dyn_cast<Constant>(I)) {
+    assert(!isa<GlobalVariable>(I) && !isa<UndefValue>(I) &&
+           "order of checks wrong!");
+    assert(Con->isNullValue() && "null is the only case which makes sense");
+    return Con;
+  }
+
+  if (isa<LoadInst>(I))
+    return I;
+
+  // Note: This code is currently rather incomplete.  We are essentially only
+  // handling cases where the vector element is trivially a base pointer.  We
+  // need to update the entire base pointer construction algorithm to know how
+  // to track vector elements and potentially scalarize, but the case which
+  // would motivate the work hasn't shown up in real workloads yet.
+  llvm_unreachable("no base found for vector element");
 }
 
 /// Helper function for findBasePointer - Will return a value which either a)
@@ -312,52 +295,36 @@ static Value *findBaseDefiningValue(Value *I) {
   assert(I->getType()->isPointerTy() &&
          "Illegal to ask for the base pointer of a non-pointer type");
 
-  // There are instructions which can never return gc pointer values.  Sanity
-  // check
-  // that this is actually true.
-  assert(!isa<InsertElementInst>(I) && !isa<ExtractElementInst>(I) &&
-         !isa<ShuffleVectorInst>(I) && "Vector types are not gc pointers");
-  assert((!isa<Instruction>(I) || isa<InvokeInst>(I) ||
-          !cast<Instruction>(I)->isTerminator()) &&
-         "With the exception of invoke terminators don't define values");
-  assert(!isa<StoreInst>(I) && !isa<FenceInst>(I) &&
-         "Can't be definitions to start with");
-  assert(!isa<ICmpInst>(I) && !isa<FCmpInst>(I) &&
-         "Comparisons don't give ops");
-  // There's a bunch of instructions which just don't make sense to apply to
-  // a pointer.  The only valid reason for this would be pointer bit
-  // twiddling which we're just not going to support.
-  assert((!isa<Instruction>(I) || !cast<Instruction>(I)->isBinaryOp()) &&
-         "Binary ops on pointer values are meaningless.  Unless your "
-         "bit-twiddling which we don't support");
+  // This case is a bit of a hack - it only handles extracts from vectors which
+  // trivially contain only base pointers.  See note inside the function for
+  // how to improve this.
+  if (auto *EEI = dyn_cast<ExtractElementInst>(I)) {
+    Value *VectorOperand = EEI->getVectorOperand();
+    Value *VectorBase = findBaseOfVector(VectorOperand);
+    (void)VectorBase;
+    assert(VectorBase && "extract element not known to be a trivial base");
+    return EEI;
+  }
 
-  if (Argument *Arg = dyn_cast<Argument>(I)) {
+  if (isa<Argument>(I))
     // An incoming argument to the function is a base pointer
     // We should have never reached here if this argument isn't an gc value
-    assert(Arg->getType()->isPointerTy() &&
-           "Base for pointer must be another pointer");
-    return Arg;
-  }
+    return I;
 
-  if (GlobalVariable *global = dyn_cast<GlobalVariable>(I)) {
+  if (isa<GlobalVariable>(I))
     // base case
-    assert(global->getType()->isPointerTy() &&
-           "Base for pointer must be another pointer");
-    return global;
-  }
+    return I;
 
   // inlining could possibly introduce phi node that contains
   // undef if callee has multiple returns
-  if (UndefValue *undef = dyn_cast<UndefValue>(I)) {
-    assert(undef->getType()->isPointerTy() &&
-           "Base for pointer must be another pointer");
-    return undef; // utterly meaningless, but useful for dealing with
-                  // partially optimized code.
-  }
+  if (isa<UndefValue>(I))
+    // utterly meaningless, but useful for dealing with
+    // partially optimized code.
+    return I;
 
   // Due to inheritance, this must be _after_ the global variable and undef
   // checks
-  if (Constant *con = dyn_cast<Constant>(I)) {
+  if (Constant *Con = dyn_cast<Constant>(I)) {
     assert(!isa<GlobalVariable>(I) && !isa<UndefValue>(I) &&
            "order of checks wrong!");
     // Note: Finding a constant base for something marked for relocation
@@ -368,49 +335,30 @@ static Value *findBaseDefiningValue(Value *I) {
     // off a potentially null value and have proven it null.  We also use
     // null pointers in dead paths of relocation phis (which we might later
     // want to find a base pointer for).
-    assert(con->getType()->isPointerTy() &&
-           "Base for pointer must be another pointer");
-    assert(con->isNullValue() && "null is the only case which makes sense");
-    return con;
+    assert(isa<ConstantPointerNull>(Con) &&
+           "null is the only case which makes sense");
+    return Con;
   }
 
   if (CastInst *CI = dyn_cast<CastInst>(I)) {
-    Value *def = CI->stripPointerCasts();
-    assert(def->getType()->isPointerTy() &&
-           "Base for pointer must be another pointer");
+    Value *Def = CI->stripPointerCasts();
     // If we find a cast instruction here, it means we've found a cast which is
     // not simply a pointer cast (i.e. an inttoptr).  We don't know how to
     // handle int->ptr conversion.
-    assert(!isa<CastInst>(def) && "shouldn't find another cast here");
-    return findBaseDefiningValue(def);
+    assert(!isa<CastInst>(Def) && "shouldn't find another cast here");
+    return findBaseDefiningValue(Def);
   }
 
-  if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
-    if (LI->getType()->isPointerTy()) {
-      Value *Op = LI->getOperand(0);
-      (void)Op;
-      // Has to be a pointer to an gc object, or possibly an array of such?
-      assert(Op->getType()->isPointerTy());
-      return LI; // The value loaded is an gc base itself
-    }
-  }
-  if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(I)) {
-    Value *Op = GEP->getOperand(0);
-    if (Op->getType()->isPointerTy()) {
-      return findBaseDefiningValue(Op); // The base of this GEP is the base
-    }
-  }
+  if (isa<LoadInst>(I))
+    return I; // The value loaded is an gc base itself
 
-  if (AllocaInst *alloc = dyn_cast<AllocaInst>(I)) {
-    // An alloca represents a conceptual stack slot.  It's the slot itself
-    // that the GC needs to know about, not the value in the slot.
-    assert(alloc->getType()->isPointerTy() &&
-           "Base for pointer must be another pointer");
-    return alloc;
-  }
+  if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(I))
+    // The base of this GEP is the base
+    return findBaseDefiningValue(GEP->getPointerOperand());
 
   if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
     switch (II->getIntrinsicID()) {
+    case Intrinsic::experimental_gc_result_ptr:
     default:
       // fall through to general call handling
       break;
@@ -418,11 +366,6 @@ static Value *findBaseDefiningValue(Value *I) {
     case Intrinsic::experimental_gc_result_float:
     case Intrinsic::experimental_gc_result_int:
       llvm_unreachable("these don't produce pointers");
-    case Intrinsic::experimental_gc_result_ptr:
-      // This is just a special case of the CallInst check below to handle a
-      // statepoint with deopt args which hasn't been rewritten for GC yet.
-      // TODO: Assert that the statepoint isn't rewritten yet.
-      return II;
     case Intrinsic::experimental_gc_relocate: {
       // Rerunning safepoint insertion after safepoints are already
       // inserted is not supported.  It could probably be made to work,
@@ -440,41 +383,27 @@ static Value *findBaseDefiningValue(Value *I) {
   // We assume that functions in the source language only return base
   // pointers.  This should probably be generalized via attributes to support
   // both source language and internal functions.
-  if (CallInst *call = dyn_cast<CallInst>(I)) {
-    assert(call->getType()->isPointerTy() &&
-           "Base for pointer must be another pointer");
-    return call;
-  }
-  if (InvokeInst *invoke = dyn_cast<InvokeInst>(I)) {
-    assert(invoke->getType()->isPointerTy() &&
-           "Base for pointer must be another pointer");
-    return invoke;
-  }
+  if (isa<CallInst>(I) || isa<InvokeInst>(I))
+    return I;
 
   // I have absolutely no idea how to implement this part yet.  It's not
   // neccessarily hard, I just haven't really looked at it yet.
   assert(!isa<LandingPadInst>(I) && "Landing Pad is unimplemented");
 
-  if (AtomicCmpXchgInst *cas = dyn_cast<AtomicCmpXchgInst>(I)) {
+  if (isa<AtomicCmpXchgInst>(I))
     // A CAS is effectively a atomic store and load combined under a
     // predicate.  From the perspective of base pointers, we just treat it
-    // like a load.  We loaded a pointer from a address in memory, that value
-    // had better be a valid base pointer.
-    return cas->getPointerOperand();
-  }
-  if (AtomicRMWInst *atomic = dyn_cast<AtomicRMWInst>(I)) {
-    assert(AtomicRMWInst::Xchg == atomic->getOperation() &&
-           "All others are binary ops which don't apply to base pointers");
-    // semantically, a load, store pair.  Treat it the same as a standard load
-    return atomic->getPointerOperand();
-  }
+    // like a load.
+    return I;
+
+  assert(!isa<AtomicRMWInst>(I) && "Xchg handled above, all others are "
+                                   "binary ops which don't apply to pointers");
 
   // The aggregate ops.  Aggregates can either be in the heap or on the
   // stack, but in either case, this is simply a field load.  As a result,
   // this is a defining definition of the base just like a load is.
-  if (ExtractValueInst *ev = dyn_cast<ExtractValueInst>(I)) {
-    return ev;
-  }
+  if (isa<ExtractValueInst>(I))
+    return I;
 
   // We should never see an insert vector since that would require we be
   // tracing back a struct value not a pointer value.
@@ -485,23 +414,21 @@ static Value *findBaseDefiningValue(Value *I) {
   // return a value which dynamically selects from amoung several base
   // derived pointers (each with it's own base potentially).  It's the job of
   // the caller to resolve these.
-  if (SelectInst *select = dyn_cast<SelectInst>(I)) {
-    return select;
-  }
-
-  return cast<PHINode>(I);
+  assert((isa<SelectInst>(I) || isa<PHINode>(I)) &&
+         "missing instruction case in findBaseDefiningValing");
+  return I;
 }
 
 /// Returns the base defining value for this value.
-static Value *findBaseDefiningValueCached(Value *I, DefiningValueMapTy &cache) {
-  Value *&Cached = cache[I];
+static Value *findBaseDefiningValueCached(Value *I, DefiningValueMapTy &Cache) {
+  Value *&Cached = Cache[I];
   if (!Cached) {
     Cached = findBaseDefiningValue(I);
   }
-  assert(cache[I] != nullptr);
+  assert(Cache[I] != nullptr);
 
   if (TraceLSP) {
-    errs() << "fBDV-cached: " << I->getName() << " -> " << Cached->getName()
+    dbgs() << "fBDV-cached: " << I->getName() << " -> " << Cached->getName()
            << "\n";
   }
   return Cached;
@@ -509,25 +436,26 @@ static Value *findBaseDefiningValueCached(Value *I, DefiningValueMapTy &cache) {
 
 /// Return a base pointer for this value if known.  Otherwise, return it's
 /// base defining value.
-static Value *findBaseOrBDV(Value *I, DefiningValueMapTy &cache) {
-  Value *def = findBaseDefiningValueCached(I, cache);
-  auto Found = cache.find(def);
-  if (Found != cache.end()) {
+static Value *findBaseOrBDV(Value *I, DefiningValueMapTy &Cache) {
+  Value *Def = findBaseDefiningValueCached(I, Cache);
+  auto Found = Cache.find(Def);
+  if (Found != Cache.end()) {
     // Either a base-of relation, or a self reference.  Caller must check.
     return Found->second;
   }
   // Only a BDV available
-  return def;
+  return Def;
 }
 
 /// Given the result of a call to findBaseDefiningValue, or findBaseOrBDV,
 /// is it known to be a base pointer?  Or do we need to continue searching.
-static bool isKnownBaseResult(Value *v) {
-  if (!isa<PHINode>(v) && !isa<SelectInst>(v)) {
+static bool isKnownBaseResult(Value *V) {
+  if (!isa<PHINode>(V) && !isa<SelectInst>(V)) {
     // no recursion possible
     return true;
   }
-  if (cast<Instruction>(v)->getMetadata("is_base_value")) {
+  if (isa<Instruction>(V) &&
+      cast<Instruction>(V)->getMetadata("is_base_value")) {
     // This is a previously inserted base phi or select.  We know
     // that this is a base value.
     return true;
@@ -548,9 +476,6 @@ public:
   }
   PhiState(Value *b) : status(Base), base(b) {}
   PhiState() : status(Unknown), base(nullptr) {}
-  PhiState(const PhiState &other) : status(other.status), base(other.base) {
-    assert(status != Base || base);
-  }
 
   Status getStatus() const { return status; }
   Value *getBase() const { return base; }
@@ -690,7 +615,7 @@ static Value *findBasePointer(Value *I, DefiningValueMapTy &cache,
     done = true;
     // Since we're adding elements to 'states' as we run, we can't keep
     // iterators into the set.
-    SmallVector<Value*, 16> Keys;
+    SmallVector<Value *, 16> Keys;
     Keys.reserve(states.size());
     for (auto Pair : states) {
       Value *V = Pair.first;
@@ -780,7 +705,7 @@ static Value *findBasePointer(Value *I, DefiningValueMapTy &cache,
   // We want to keep naming deterministic in the loop that follows, so
   // sort the keys before iteration.  This is useful in allowing us to
   // write stable tests. Note that there is no invalidation issue here.
-  SmallVector<Value*, 16> Keys;
+  SmallVector<Value *, 16> Keys;
   Keys.reserve(states.size());
   for (auto Pair : states) {
     Value *V = Pair.first;
@@ -795,7 +720,7 @@ static Value *findBasePointer(Value *I, DefiningValueMapTy &cache,
     assert(!state.isUnknown() && "Optimistic algorithm didn't complete!");
     if (!state.isConflict())
       continue;
-    
+
     if (isa<PHINode>(v)) {
       int num_preds =
           std::distance(pred_begin(v->getParent()), pred_end(v->getParent()));
@@ -841,7 +766,7 @@ static Value *findBasePointer(Value *I, DefiningValueMapTy &cache,
     assert(!state.isUnknown() && "Optimistic algorithm didn't complete!");
     if (!state.isConflict())
       continue;
-    
+
     if (PHINode *basephi = dyn_cast<PHINode>(state.getBase())) {
       PHINode *phi = cast<PHINode>(v);
       unsigned NumPHIValues = phi->getNumIncomingValues();
@@ -982,14 +907,15 @@ static Value *findBasePointer(Value *I, DefiningValueMapTy &cache,
 // post condition: PointerToBase contains one (derived, base) pair for every
 // pointer in live.  Note that derived can be equal to base if the original
 // pointer was a base pointer.
-static void findBasePointers(const StatepointLiveSetTy &live,
-                             DenseMap<llvm::Value *, llvm::Value *> &PointerToBase,
-                             DominatorTree *DT, DefiningValueMapTy &DVCache,
-                             DenseSet<llvm::Value *> &NewInsertedDefs) {
+static void
+findBasePointers(const StatepointLiveSetTy &live,
+                 DenseMap<llvm::Value *, llvm::Value *> &PointerToBase,
+                 DominatorTree *DT, DefiningValueMapTy &DVCache,
+                 DenseSet<llvm::Value *> &NewInsertedDefs) {
   // For the naming of values inserted to be deterministic - which makes for
   // much cleaner and more stable tests - we need to assign an order to the
   // live values.  DenseSets do not provide a deterministic order across runs.
-  SmallVector<Value*, 64> Temp;
+  SmallVector<Value *, 64> Temp;
   Temp.insert(Temp.end(), live.begin(), live.end());
   std::sort(Temp.begin(), Temp.end(), order_by_name);
   for (Value *ptr : Temp) {
@@ -1004,10 +930,10 @@ static void findBasePointers(const StatepointLiveSetTy &live,
     // If you see this trip and like to live really dangerously, the code should
     // be correct, just with idioms the verifier can't handle.  You can try
     // disabling the verifier at your own substaintial risk.
-    assert(!isNullConstant(base) && "the relocation code needs adjustment to "
-                                    "handle the relocation of a null pointer "
-                                    "constant without causing false positives "
-                                    "in the safepoint ir verifier.");
+    assert(!isa<ConstantPointerNull>(base) &&
+           "the relocation code needs adjustment to handle the relocation of "
+           "a null pointer constant without causing false positives in the "
+           "safepoint ir verifier.");
   }
 }
 
@@ -1018,13 +944,14 @@ static void findBasePointers(DominatorTree &DT, DefiningValueMapTy &DVCache,
                              PartiallyConstructedSafepointRecord &result) {
   DenseMap<llvm::Value *, llvm::Value *> PointerToBase;
   DenseSet<llvm::Value *> NewInsertedDefs;
-  findBasePointers(result.liveset, PointerToBase, &DT, DVCache, NewInsertedDefs);
+  findBasePointers(result.liveset, PointerToBase, &DT, DVCache,
+                   NewInsertedDefs);
 
   if (PrintBasePointers) {
     // Note: Need to print these in a stable order since this is checked in
     // some tests.
     errs() << "Base Pairs (w/o Relocation):\n";
-    SmallVector<Value*, 64> Temp;
+    SmallVector<Value *, 64> Temp;
     Temp.reserve(PointerToBase.size());
     for (auto Pair : PointerToBase) {
       Temp.push_back(Pair.first);
@@ -1032,8 +959,8 @@ static void findBasePointers(DominatorTree &DT, DefiningValueMapTy &DVCache,
     std::sort(Temp.begin(), Temp.end(), order_by_name);
     for (Value *Ptr : Temp) {
       Value *Base = PointerToBase[Ptr];
-      errs() << " derived %" << Ptr->getName() << " base %"
-             << Base->getName() << "\n";
+      errs() << " derived %" << Ptr->getName() << " base %" << Base->getName()
+             << "\n";
     }
   }
 
@@ -1041,57 +968,23 @@ static void findBasePointers(DominatorTree &DT, DefiningValueMapTy &DVCache,
   result.NewInsertedDefs = NewInsertedDefs;
 }
 
-/// Check for liveness of items in the insert defs and add them to the live
-/// and base pointer sets
-static void fixupLiveness(DominatorTree &DT, const CallSite &CS,
-                          const DenseSet<Value *> &allInsertedDefs,
-                          PartiallyConstructedSafepointRecord &result) {
-  Instruction *inst = CS.getInstruction();
+/// Given an updated version of the dataflow liveness results, update the
+/// liveset and base pointer maps for the call site CS.
+static void recomputeLiveInValues(GCPtrLivenessData &RevisedLivenessData,
+                                  const CallSite &CS,
+                                  PartiallyConstructedSafepointRecord &result);
 
-  auto liveset = result.liveset;
-  auto PointerToBase = result.PointerToBase;
-
-  auto is_live_gc_reference =
-      [&](Value &V) { return isLiveGCReferenceAt(V, inst, DT, nullptr); };
-
-  // For each new definition, check to see if a) the definition dominates the
-  // instruction we're interested in, and b) one of the uses of that definition
-  // is edge-reachable from the instruction we're interested in.  This is the
-  // same definition of liveness we used in the intial liveness analysis
-  for (Value *newDef : allInsertedDefs) {
-    if (liveset.count(newDef)) {
-      // already live, no action needed
-      continue;
-    }
-
-    // PERF: Use DT to check instruction domination might not be good for
-    // compilation time, and we could change to optimal solution if this
-    // turn to be a issue
-    if (!DT.dominates(cast<Instruction>(newDef), inst)) {
-      // can't possibly be live at inst
-      continue;
-    }
-
-    if (is_live_gc_reference(*newDef)) {
-      // Add the live new defs into liveset and PointerToBase
-      liveset.insert(newDef);
-      PointerToBase[newDef] = newDef;
-    }
-  }
-
-  result.liveset = liveset;
-  result.PointerToBase = PointerToBase;
-}
-
-static void fixupLiveReferences(
-    Function &F, DominatorTree &DT, Pass *P,
-    const DenseSet<llvm::Value *> &allInsertedDefs,
-    ArrayRef<CallSite> toUpdate,
+static void recomputeLiveInValues(
+    Function &F, DominatorTree &DT, Pass *P, ArrayRef<CallSite> toUpdate,
     MutableArrayRef<struct PartiallyConstructedSafepointRecord> records) {
+  // TODO-PERF: reuse the original liveness, then simply run the dataflow
+  // again.  The old values are still live and will help it stablize quickly.
+  GCPtrLivenessData RevisedLivenessData;
+  computeLiveInValues(DT, F, RevisedLivenessData);
   for (size_t i = 0; i < records.size(); i++) {
     struct PartiallyConstructedSafepointRecord &info = records[i];
     const CallSite &CS = toUpdate[i];
-    fixupLiveness(DT, CS, allInsertedDefs, info);
+    recomputeLiveInValues(RevisedLivenessData, CS, info);
   }
 }
 
@@ -1168,11 +1061,11 @@ static AttributeSet legalizeCallAttributes(AttributeSet AS) {
 ///   statepointToken - statepoint instruction to which relocates should be
 ///   bound.
 ///   Builder - Llvm IR builder to be used to construct new calls.
-void CreateGCRelocates(ArrayRef<llvm::Value *> liveVariables,
-                       const int liveStart,
-                       ArrayRef<llvm::Value *> basePtrs,
-                       Instruction *statepointToken, IRBuilder<> Builder) {
-
+static void CreateGCRelocates(ArrayRef<llvm::Value *> liveVariables,
+                              const int liveStart,
+                              ArrayRef<llvm::Value *> basePtrs,
+                              Instruction *statepointToken,
+                              IRBuilder<> Builder) {
   SmallVector<Instruction *, 64> NewDefs;
   NewDefs.reserve(liveVariables.size());
 
@@ -1183,7 +1076,7 @@ void CreateGCRelocates(ArrayRef<llvm::Value *> liveVariables,
     // combination.  This results is some blow up the function declarations in
     // the IR, but removes the need for argument bitcasts which shrinks the IR
     // greatly and makes it much more readable.
-    SmallVector<Type *, 1> types;                    // one per 'any' type
+    SmallVector<Type *, 1> types;                 // one per 'any' type
     types.push_back(liveVariables[i]->getType()); // result type
     Value *gc_relocate_decl = Intrinsic::getDeclaration(
         M, Intrinsic::experimental_gc_relocate, types);
@@ -1336,7 +1229,7 @@ makeStatepointExplicitImpl(const CallSite &CS, /* to replace */
   // Take the name of the original value call if it had one.
   token->takeName(CS.getInstruction());
 
-  // The GCResult is already inserted, we just need to find it
+// The GCResult is already inserted, we just need to find it
 #ifndef NDEBUG
   Instruction *toReplace = CS.getInstruction();
   assert((toReplace->hasNUses(0) || toReplace->hasNUses(1)) &&
@@ -1354,7 +1247,6 @@ makeStatepointExplicitImpl(const CallSite &CS, /* to replace */
 
   // Second, create a gc.relocate for every live variable
   CreateGCRelocates(liveVariables, live_start, basePtrs, token, Builder);
-
 }
 
 namespace {
@@ -1386,7 +1278,7 @@ static void stablize_order(SmallVectorImpl<Value *> &basevec,
 
 // Replace an existing gc.statepoint with a new one and a set of gc.relocates
 // which make the relocations happening at this safepoint explicit.
-// 
+//
 // WARNING: Does not do any fixup to adjust users of the original live
 // values.  That's the callers responsibility.
 static void
@@ -1461,14 +1353,13 @@ static void relocationViaAlloca(
     Function &F, DominatorTree &DT, ArrayRef<Value *> live,
     ArrayRef<struct PartiallyConstructedSafepointRecord> records) {
 #ifndef NDEBUG
-  int initialAllocaNum = 0;
-
-  // record initial number of allocas
-  for (inst_iterator itr = inst_begin(F), end = inst_end(F); itr != end;
-       itr++) {
-    if (isa<AllocaInst>(*itr))
-      initialAllocaNum++;
-  }
+  // record initial number of (static) allocas; we'll check we have the same
+  // number when we get done.
+  int InitialAllocaNum = 0;
+  for (auto I = F.getEntryBlock().begin(), E = F.getEntryBlock().end(); I != E;
+       I++)
+    if (isa<AllocaInst>(*I))
+      InitialAllocaNum++;
 #endif
 
   // TODO-PERF: change data structures, reserve
@@ -1508,8 +1399,8 @@ static void relocationViaAlloca(
     // In case if it was invoke statepoint
     // we will insert stores for exceptional path gc relocates.
     if (isa<InvokeInst>(Statepoint)) {
-      insertRelocationStores(info.UnwindToken->users(),
-                             allocaMap, visitedLiveValues);
+      insertRelocationStores(info.UnwindToken->users(), allocaMap,
+                             visitedLiveValues);
     }
 
 #ifndef NDEBUG
@@ -1539,7 +1430,7 @@ static void relocationViaAlloca(
     };
 
     // Insert the clobbering stores.  These may get intermixed with the
-    // gc.results and gc.relocates, but that's fine.  
+    // gc.results and gc.relocates, but that's fine.
     if (auto II = dyn_cast<InvokeInst>(Statepoint)) {
       InsertClobbersAt(II->getNormalDest()->getFirstInsertionPt());
       InsertClobbersAt(II->getUnwindDest()->getFirstInsertionPt());
@@ -1596,11 +1487,21 @@ static void relocationViaAlloca(
     // store must be inserted after load, otherwise store will be in alloca's
     // use list and an extra load will be inserted before it
     StoreInst *store = new StoreInst(def, alloca);
-    if (isa<Instruction>(def)) {
-      store->insertAfter(cast<Instruction>(def));
+    if (Instruction *inst = dyn_cast<Instruction>(def)) {
+      if (InvokeInst *invoke = dyn_cast<InvokeInst>(inst)) {
+        // InvokeInst is a TerminatorInst so the store need to be inserted
+        // into its normal destination block.
+        BasicBlock *normalDest = invoke->getNormalDest();
+        store->insertBefore(normalDest->getFirstNonPHI());
+      } else {
+        assert(!inst->isTerminator() &&
+               "The only TerminatorInst that can produce a value is "
+               "InvokeInst which is handled above.");
+        store->insertAfter(inst);
+      }
     } else {
       assert((isa<Argument>(def) || isa<GlobalVariable>(def) ||
-              (isa<Constant>(def) && cast<Constant>(def)->isNullValue())) &&
+              isa<ConstantPointerNull>(def)) &&
              "Must be argument or global");
       store->insertAfter(cast<Instruction>(alloca));
     }
@@ -1614,12 +1515,11 @@ static void relocationViaAlloca(
   }
 
 #ifndef NDEBUG
-  for (inst_iterator itr = inst_begin(F), end = inst_end(F); itr != end;
-       itr++) {
-    if (isa<AllocaInst>(*itr))
-      initialAllocaNum--;
-  }
-  assert(initialAllocaNum == 0 && "We must not introduce any extra allocas");
+  for (auto I = F.getEntryBlock().begin(), E = F.getEntryBlock().end(); I != E;
+       I++)
+    if (isa<AllocaInst>(*I))
+      InitialAllocaNum--;
+  assert(InitialAllocaNum == 0 && "We must not introduce any extra allocas");
 #endif
 }
 
@@ -1676,40 +1576,124 @@ static void insertUseHolderAfter(CallSite &CS, const ArrayRef<Value *> Values,
 static void findLiveReferences(
     Function &F, DominatorTree &DT, Pass *P, ArrayRef<CallSite> toUpdate,
     MutableArrayRef<struct PartiallyConstructedSafepointRecord> records) {
+  GCPtrLivenessData OriginalLivenessData;
+  computeLiveInValues(DT, F, OriginalLivenessData);
   for (size_t i = 0; i < records.size(); i++) {
     struct PartiallyConstructedSafepointRecord &info = records[i];
     const CallSite &CS = toUpdate[i];
-    analyzeParsePointLiveness(DT, CS, info);
+    analyzeParsePointLiveness(DT, OriginalLivenessData, CS, info);
   }
 }
 
-static void addBasesAsLiveValues(StatepointLiveSetTy &liveset,
-                                 DenseMap<Value *, Value *> &PointerToBase) {
-  // Identify any base pointers which are used in this safepoint, but not
-  // themselves relocated.  We need to relocate them so that later inserted
-  // safepoints can get the properly relocated base register.
-  DenseSet<Value *> missing;
-  for (Value *L : liveset) {
-    assert(PointerToBase.find(L) != PointerToBase.end());
-    Value *base = PointerToBase[L];
-    assert(base);
-    if (liveset.find(base) == liveset.end()) {
-      assert(PointerToBase.find(base) == PointerToBase.end());
-      // uniqued by set insert
-      missing.insert(base);
+/// Remove any vector of pointers from the liveset by scalarizing them over the
+/// statepoint instruction.  Adds the scalarized pieces to the liveset.  It
+/// would be preferrable to include the vector in the statepoint itself, but
+/// the lowering code currently does not handle that.  Extending it would be
+/// slightly non-trivial since it requires a format change.  Given how rare
+/// such cases are (for the moment?) scalarizing is an acceptable comprimise.
+static void splitVectorValues(Instruction *StatepointInst,
+                              StatepointLiveSetTy &LiveSet, DominatorTree &DT) {
+  SmallVector<Value *, 16> ToSplit;
+  for (Value *V : LiveSet)
+    if (isa<VectorType>(V->getType()))
+      ToSplit.push_back(V);
+
+  if (ToSplit.empty())
+    return;
+
+  Function &F = *(StatepointInst->getParent()->getParent());
+
+  DenseMap<Value *, AllocaInst *> AllocaMap;
+  // First is normal return, second is exceptional return (invoke only)
+  DenseMap<Value *, std::pair<Value *, Value *>> Replacements;
+  for (Value *V : ToSplit) {
+    LiveSet.erase(V);
+
+    AllocaInst *Alloca =
+        new AllocaInst(V->getType(), "", F.getEntryBlock().getFirstNonPHI());
+    AllocaMap[V] = Alloca;
+
+    VectorType *VT = cast<VectorType>(V->getType());
+    IRBuilder<> Builder(StatepointInst);
+    SmallVector<Value *, 16> Elements;
+    for (unsigned i = 0; i < VT->getNumElements(); i++)
+      Elements.push_back(Builder.CreateExtractElement(V, Builder.getInt32(i)));
+    LiveSet.insert(Elements.begin(), Elements.end());
+
+    auto InsertVectorReform = [&](Instruction *IP) {
+      Builder.SetInsertPoint(IP);
+      Builder.SetCurrentDebugLocation(IP->getDebugLoc());
+      Value *ResultVec = UndefValue::get(VT);
+      for (unsigned i = 0; i < VT->getNumElements(); i++)
+        ResultVec = Builder.CreateInsertElement(ResultVec, Elements[i],
+                                                Builder.getInt32(i));
+      return ResultVec;
+    };
+
+    if (isa<CallInst>(StatepointInst)) {
+      BasicBlock::iterator Next(StatepointInst);
+      Next++;
+      Instruction *IP = &*(Next);
+      Replacements[V].first = InsertVectorReform(IP);
+      Replacements[V].second = nullptr;
+    } else {
+      InvokeInst *Invoke = cast<InvokeInst>(StatepointInst);
+      // We've already normalized - check that we don't have shared destination
+      // blocks
+      BasicBlock *NormalDest = Invoke->getNormalDest();
+      assert(!isa<PHINode>(NormalDest->begin()));
+      BasicBlock *UnwindDest = Invoke->getUnwindDest();
+      assert(!isa<PHINode>(UnwindDest->begin()));
+      // Insert insert element sequences in both successors
+      Instruction *IP = &*(NormalDest->getFirstInsertionPt());
+      Replacements[V].first = InsertVectorReform(IP);
+      IP = &*(UnwindDest->getFirstInsertionPt());
+      Replacements[V].second = InsertVectorReform(IP);
     }
   }
+  for (Value *V : ToSplit) {
+    AllocaInst *Alloca = AllocaMap[V];
 
-  // Note that we want these at the end of the list, otherwise
-  // register placement gets screwed up once we lower to STATEPOINT
-  // instructions.  This is an utter hack, but there doesn't seem to be a
-  // better one.
-  for (Value *base : missing) {
-    assert(base);
-    liveset.insert(base);
-    PointerToBase[base] = base;
+    // Capture all users before we start mutating use lists
+    SmallVector<Instruction *, 16> Users;
+    for (User *U : V->users())
+      Users.push_back(cast<Instruction>(U));
+
+    for (Instruction *I : Users) {
+      if (auto Phi = dyn_cast<PHINode>(I)) {
+        for (unsigned i = 0; i < Phi->getNumIncomingValues(); i++)
+          if (V == Phi->getIncomingValue(i)) {
+            LoadInst *Load = new LoadInst(
+                Alloca, "", Phi->getIncomingBlock(i)->getTerminator());
+            Phi->setIncomingValue(i, Load);
+          }
+      } else {
+        LoadInst *Load = new LoadInst(Alloca, "", I);
+        I->replaceUsesOfWith(V, Load);
+      }
+    }
+
+    // Store the original value and the replacement value into the alloca
+    StoreInst *Store = new StoreInst(V, Alloca);
+    if (auto I = dyn_cast<Instruction>(V))
+      Store->insertAfter(I);
+    else
+      Store->insertAfter(Alloca);
+
+    // Normal return for invoke, or call return
+    Instruction *Replacement = cast<Instruction>(Replacements[V].first);
+    (new StoreInst(Replacement, Alloca))->insertAfter(Replacement);
+    // Unwind return for invoke only
+    Replacement = cast_or_null<Instruction>(Replacements[V].second);
+    if (Replacement)
+      (new StoreInst(Replacement, Alloca))->insertAfter(Replacement);
   }
-  assert(liveset.size() == PointerToBase.size());
+
+  // apply mem2reg to promote alloca to SSA
+  SmallVector<AllocaInst *, 16> Allocas;
+  for (Value *V : ToSplit)
+    Allocas.push_back(AllocaMap[V]);
+  PromoteMemToReg(Allocas, DT);
 }
 
 static bool insertParsePoints(Function &F, DominatorTree &DT, Pass *P,
@@ -1742,7 +1726,9 @@ static bool insertParsePoints(Function &F, DominatorTree &DT, Pass *P,
     SmallVector<Value *, 64> DeoptValues;
     for (Use &U : StatepointCS.vm_state_args()) {
       Value *Arg = cast<Value>(&U);
-      if (isGCPointerType(Arg->getType()))
+      assert(!isUnhandledGCPointerType(Arg->getType()) &&
+             "support for FCA unimplemented");
+      if (isHandledGCPointerType(Arg->getType()))
         DeoptValues.push_back(Arg);
     }
     insertUseHolderAfter(CS, DeoptValues, holders);
@@ -1759,6 +1745,17 @@ static bool insertParsePoints(Function &F, DominatorTree &DT, Pass *P,
   // A) Identify all gc pointers which are staticly live at the given call
   // site.
   findLiveReferences(F, DT, P, toUpdate, records);
+
+  // Do a limited scalarization of any live at safepoint vector values which
+  // contain pointers.  This enables this pass to run after vectorization at
+  // the cost of some possible performance loss.  TODO: it would be nice to
+  // natively support vectors all the way through the backend so we don't need
+  // to scalarize here.
+  for (size_t i = 0; i < records.size(); i++) {
+    struct PartiallyConstructedSafepointRecord &info = records[i];
+    Instruction *statepoint = toUpdate[i].getInstruction();
+    splitVectorValues(cast<Instruction>(statepoint), info.liveset, DT);
+  }
 
   // B) Find the base pointers for each live pointer
   /* scope for caching */ {
@@ -1806,22 +1803,11 @@ static bool insertParsePoints(Function &F, DominatorTree &DT, Pass *P,
     insertUseHolderAfter(CS, Bases, holders);
   }
 
-  // Add the bases explicitly to the live vector set.  This may result in a few
-  // extra relocations, but the base has to be available whenever a pointer
-  // derived from it is used.  Thus, we need it to be part of the statepoint's
-  // gc arguments list.  TODO: Introduce an explicit notion (in the following
-  // code) of the GC argument list as seperate from the live Values at a
-  // given statepoint.
-  for (size_t i = 0; i < records.size(); i++) {
-    struct PartiallyConstructedSafepointRecord &info = records[i];
-    addBasesAsLiveValues(info.liveset, info.PointerToBase);
-  }
+  // By selecting base pointers, we've effectively inserted new uses. Thus, we
+  // need to rerun liveness.  We may *also* have inserted new defs, but that's
+  // not the key issue.
+  recomputeLiveInValues(F, DT, P, toUpdate, records);
 
-  // If we inserted any new values, we need to adjust our notion of what is
-  // live at a particular safepoint.
-  if (!allInsertedDefs.empty()) {
-    fixupLiveReferences(F, DT, P, allInsertedDefs, toUpdate, records);
-  }
   if (PrintBasePointers) {
     for (size_t i = 0; i < records.size(); i++) {
       struct PartiallyConstructedSafepointRecord &info = records[i];
@@ -1917,18 +1903,285 @@ bool RewriteStatepointsForGC::runOnFunction(Function &F) {
   if (!shouldRewriteStatepointsIn(F))
     return false;
 
-  // Gather all the statepoints which need rewritten.
+  DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+
+  // Gather all the statepoints which need rewritten.  Be careful to only
+  // consider those in reachable code since we need to ask dominance queries
+  // when rewriting.  We'll delete the unreachable ones in a moment.
   SmallVector<CallSite, 64> ParsePointNeeded;
+  bool HasUnreachableStatepoint = false;
   for (Instruction &I : inst_range(F)) {
     // TODO: only the ones with the flag set!
-    if (isStatepoint(I))
-      ParsePointNeeded.push_back(CallSite(&I));
+    if (isStatepoint(I)) {
+      if (DT.isReachableFromEntry(I.getParent()))
+        ParsePointNeeded.push_back(CallSite(&I));
+      else
+        HasUnreachableStatepoint = true;
+    }
   }
+
+  bool MadeChange = false;
+
+  // Delete any unreachable statepoints so that we don't have unrewritten
+  // statepoints surviving this pass.  This makes testing easier and the
+  // resulting IR less confusing to human readers.  Rather than be fancy, we
+  // just reuse a utility function which removes the unreachable blocks.
+  if (HasUnreachableStatepoint)
+    MadeChange |= removeUnreachableBlocks(F);
 
   // Return early if no work to do.
   if (ParsePointNeeded.empty())
-    return false;
+    return MadeChange;
 
-  DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  return insertParsePoints(F, DT, this, ParsePointNeeded);
+  // As a prepass, go ahead and aggressively destroy single entry phi nodes.
+  // These are created by LCSSA.  They have the effect of increasing the size
+  // of liveness sets for no good reason.  It may be harder to do this post
+  // insertion since relocations and base phis can confuse things.
+  for (BasicBlock &BB : F)
+    if (BB.getUniquePredecessor()) {
+      MadeChange = true;
+      FoldSingleEntryPHINodes(&BB);
+    }
+
+  MadeChange |= insertParsePoints(F, DT, this, ParsePointNeeded);
+  return MadeChange;
+}
+
+// liveness computation via standard dataflow
+// -------------------------------------------------------------------
+
+// TODO: Consider using bitvectors for liveness, the set of potentially
+// interesting values should be small and easy to pre-compute.
+
+/// Is this value a constant consisting of entirely null values?
+static bool isConstantNull(Value *V) {
+  return isa<Constant>(V) && cast<Constant>(V)->isNullValue();
+}
+
+/// Compute the live-in set for the location rbegin starting from
+/// the live-out set of the basic block
+static void computeLiveInValues(BasicBlock::reverse_iterator rbegin,
+                                BasicBlock::reverse_iterator rend,
+                                DenseSet<Value *> &LiveTmp) {
+
+  for (BasicBlock::reverse_iterator ritr = rbegin; ritr != rend; ritr++) {
+    Instruction *I = &*ritr;
+
+    // KILL/Def - Remove this definition from LiveIn
+    LiveTmp.erase(I);
+
+    // Don't consider *uses* in PHI nodes, we handle their contribution to
+    // predecessor blocks when we seed the LiveOut sets
+    if (isa<PHINode>(I))
+      continue;
+
+    // USE - Add to the LiveIn set for this instruction
+    for (Value *V : I->operands()) {
+      assert(!isUnhandledGCPointerType(V->getType()) &&
+             "support for FCA unimplemented");
+      if (isHandledGCPointerType(V->getType()) && !isConstantNull(V) &&
+          !isa<UndefValue>(V)) {
+        // The choice to exclude null and undef is arbitrary here.  Reconsider?
+        LiveTmp.insert(V);
+      }
+    }
+  }
+}
+
+static void computeLiveOutSeed(BasicBlock *BB, DenseSet<Value *> &LiveTmp) {
+
+  for (BasicBlock *Succ : successors(BB)) {
+    const BasicBlock::iterator E(Succ->getFirstNonPHI());
+    for (BasicBlock::iterator I = Succ->begin(); I != E; I++) {
+      PHINode *Phi = cast<PHINode>(&*I);
+      Value *V = Phi->getIncomingValueForBlock(BB);
+      assert(!isUnhandledGCPointerType(V->getType()) &&
+             "support for FCA unimplemented");
+      if (isHandledGCPointerType(V->getType()) && !isConstantNull(V) &&
+          !isa<UndefValue>(V)) {
+        // The choice to exclude null and undef is arbitrary here.  Reconsider?
+        LiveTmp.insert(V);
+      }
+    }
+  }
+}
+
+static DenseSet<Value *> computeKillSet(BasicBlock *BB) {
+  DenseSet<Value *> KillSet;
+  for (Instruction &I : *BB)
+    if (isHandledGCPointerType(I.getType()))
+      KillSet.insert(&I);
+  return KillSet;
+}
+
+#ifndef NDEBUG
+/// Check that the items in 'Live' dominate 'TI'.  This is used as a basic
+/// sanity check for the liveness computation.
+static void checkBasicSSA(DominatorTree &DT, DenseSet<Value *> &Live,
+                          TerminatorInst *TI, bool TermOkay = false) {
+  for (Value *V : Live) {
+    if (auto *I = dyn_cast<Instruction>(V)) {
+      // The terminator can be a member of the LiveOut set.  LLVM's definition
+      // of instruction dominance states that V does not dominate itself.  As
+      // such, we need to special case this to allow it.
+      if (TermOkay && TI == I)
+        continue;
+      assert(DT.dominates(I, TI) &&
+             "basic SSA liveness expectation violated by liveness analysis");
+    }
+  }
+}
+
+/// Check that all the liveness sets used during the computation of liveness
+/// obey basic SSA properties.  This is useful for finding cases where we miss
+/// a def.
+static void checkBasicSSA(DominatorTree &DT, GCPtrLivenessData &Data,
+                          BasicBlock &BB) {
+  checkBasicSSA(DT, Data.LiveSet[&BB], BB.getTerminator());
+  checkBasicSSA(DT, Data.LiveOut[&BB], BB.getTerminator(), true);
+  checkBasicSSA(DT, Data.LiveIn[&BB], BB.getTerminator());
+}
+#endif
+
+static void computeLiveInValues(DominatorTree &DT, Function &F,
+                                GCPtrLivenessData &Data) {
+
+  SmallSetVector<BasicBlock *, 200> Worklist;
+  auto AddPredsToWorklist = [&](BasicBlock *BB) {
+    // We use a SetVector so that we don't have duplicates in the worklist.
+    Worklist.insert(pred_begin(BB), pred_end(BB));
+  };
+  auto NextItem = [&]() {
+    BasicBlock *BB = Worklist.back();
+    Worklist.pop_back();
+    return BB;
+  };
+
+  // Seed the liveness for each individual block
+  for (BasicBlock &BB : F) {
+    Data.KillSet[&BB] = computeKillSet(&BB);
+    Data.LiveSet[&BB].clear();
+    computeLiveInValues(BB.rbegin(), BB.rend(), Data.LiveSet[&BB]);
+
+#ifndef NDEBUG
+    for (Value *Kill : Data.KillSet[&BB])
+      assert(!Data.LiveSet[&BB].count(Kill) && "live set contains kill");
+#endif
+
+    Data.LiveOut[&BB] = DenseSet<Value *>();
+    computeLiveOutSeed(&BB, Data.LiveOut[&BB]);
+    Data.LiveIn[&BB] = Data.LiveSet[&BB];
+    set_union(Data.LiveIn[&BB], Data.LiveOut[&BB]);
+    set_subtract(Data.LiveIn[&BB], Data.KillSet[&BB]);
+    if (!Data.LiveIn[&BB].empty())
+      AddPredsToWorklist(&BB);
+  }
+
+  // Propagate that liveness until stable
+  while (!Worklist.empty()) {
+    BasicBlock *BB = NextItem();
+
+    // Compute our new liveout set, then exit early if it hasn't changed
+    // despite the contribution of our successor.
+    DenseSet<Value *> LiveOut = Data.LiveOut[BB];
+    const auto OldLiveOutSize = LiveOut.size();
+    for (BasicBlock *Succ : successors(BB)) {
+      assert(Data.LiveIn.count(Succ));
+      set_union(LiveOut, Data.LiveIn[Succ]);
+    }
+    // assert OutLiveOut is a subset of LiveOut
+    if (OldLiveOutSize == LiveOut.size()) {
+      // If the sets are the same size, then we didn't actually add anything
+      // when unioning our successors LiveIn  Thus, the LiveIn of this block
+      // hasn't changed.
+      continue;
+    }
+    Data.LiveOut[BB] = LiveOut;
+
+    // Apply the effects of this basic block
+    DenseSet<Value *> LiveTmp = LiveOut;
+    set_union(LiveTmp, Data.LiveSet[BB]);
+    set_subtract(LiveTmp, Data.KillSet[BB]);
+
+    assert(Data.LiveIn.count(BB));
+    const DenseSet<Value *> &OldLiveIn = Data.LiveIn[BB];
+    // assert: OldLiveIn is a subset of LiveTmp
+    if (OldLiveIn.size() != LiveTmp.size()) {
+      Data.LiveIn[BB] = LiveTmp;
+      AddPredsToWorklist(BB);
+    }
+  } // while( !worklist.empty() )
+
+#ifndef NDEBUG
+  // Sanity check our ouput against SSA properties.  This helps catch any
+  // missing kills during the above iteration.
+  for (BasicBlock &BB : F) {
+    checkBasicSSA(DT, Data, BB);
+  }
+#endif
+}
+
+static void findLiveSetAtInst(Instruction *Inst, GCPtrLivenessData &Data,
+                              StatepointLiveSetTy &Out) {
+
+  BasicBlock *BB = Inst->getParent();
+
+  // Note: The copy is intentional and required
+  assert(Data.LiveOut.count(BB));
+  DenseSet<Value *> LiveOut = Data.LiveOut[BB];
+
+  // We want to handle the statepoint itself oddly.  It's
+  // call result is not live (normal), nor are it's arguments
+  // (unless they're used again later).  This adjustment is
+  // specifically what we need to relocate
+  BasicBlock::reverse_iterator rend(Inst);
+  computeLiveInValues(BB->rbegin(), rend, LiveOut);
+  LiveOut.erase(Inst);
+  Out.insert(LiveOut.begin(), LiveOut.end());
+}
+
+static void recomputeLiveInValues(GCPtrLivenessData &RevisedLivenessData,
+                                  const CallSite &CS,
+                                  PartiallyConstructedSafepointRecord &Info) {
+  Instruction *Inst = CS.getInstruction();
+  StatepointLiveSetTy Updated;
+  findLiveSetAtInst(Inst, RevisedLivenessData, Updated);
+
+#ifndef NDEBUG
+  DenseSet<Value *> Bases;
+  for (auto KVPair : Info.PointerToBase) {
+    Bases.insert(KVPair.second);
+  }
+#endif
+  // We may have base pointers which are now live that weren't before.  We need
+  // to update the PointerToBase structure to reflect this.
+  for (auto V : Updated)
+    if (!Info.PointerToBase.count(V)) {
+      assert(Bases.count(V) && "can't find base for unexpected live value");
+      Info.PointerToBase[V] = V;
+      continue;
+    }
+
+#ifndef NDEBUG
+  for (auto V : Updated) {
+    assert(Info.PointerToBase.count(V) &&
+           "must be able to find base for live value");
+  }
+#endif
+
+  // Remove any stale base mappings - this can happen since our liveness is
+  // more precise then the one inherent in the base pointer analysis
+  DenseSet<Value *> ToErase;
+  for (auto KVPair : Info.PointerToBase)
+    if (!Updated.count(KVPair.first))
+      ToErase.insert(KVPair.first);
+  for (auto V : ToErase)
+    Info.PointerToBase.erase(V);
+
+#ifndef NDEBUG
+  for (auto KVPair : Info.PointerToBase)
+    assert(Updated.count(KVPair.first) && "record for non-live value");
+#endif
+
+  Info.liveset = Updated;
 }

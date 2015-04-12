@@ -261,6 +261,7 @@ std::error_code rename(const Twine &from, const Twine &to) {
                       MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING))
       return std::error_code();
     DWORD LastError = ::GetLastError();
+    ec = windows_error(LastError);
     if (LastError != ERROR_ACCESS_DENIED)
       break;
     // Retry MoveFile() at ACCESS_DENIED.
@@ -599,8 +600,8 @@ std::error_code detail::directory_iterator_construct(detail::DirIterState &it,
 
   it.IterationHandle = intptr_t(FindHandle.take());
   SmallString<128> directory_entry_path(path);
-  path::append(directory_entry_path, directory_entry_name_utf8.str());
-  it.CurrentEntry = directory_entry(directory_entry_path.str());
+  path::append(directory_entry_path, directory_entry_name_utf8);
+  it.CurrentEntry = directory_entry(directory_entry_path);
 
   return std::error_code();
 }

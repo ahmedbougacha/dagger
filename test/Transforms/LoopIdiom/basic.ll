@@ -1,5 +1,12 @@
 ; RUN: opt -basicaa -loop-idiom < %s -S | FileCheck %s
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-s0:64:64-f80:128:128-n8:16:32:64"
+
+; For @test11_pattern
+; CHECK: @.memset_pattern = private unnamed_addr constant [4 x i32] [i32 1, i32 1, i32 1, i32 1]
+
+; For @test13_pattern
+; CHECK: @.memset_pattern1 = private unnamed_addr constant [2 x i32*] [i32* @G, i32* @G]
+
 target triple = "x86_64-apple-darwin10.0.0"
 
 define void @test1(i8* %Base, i64 %Size) nounwind ssp {
@@ -373,7 +380,7 @@ for.body:                                         ; preds = %for.inc, %for.body.
   br i1 %cmp, label %for.body, label %for.end
 
 for.end:                                          ; preds = %for.inc
-  %tmp8 = load i32, i32* getelementptr inbounds ([7 x i32]* @g_50, i32 0, i64 6), align 4
+  %tmp8 = load i32, i32* getelementptr inbounds ([7 x i32], [7 x i32]* @g_50, i32 0, i64 6), align 4
   ret i32 %tmp8
 ; CHECK-LABEL: @test14(
 ; CHECK: for.body:

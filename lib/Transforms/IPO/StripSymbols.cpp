@@ -306,14 +306,11 @@ bool StripDeadDebugInfo::runOnModule(Module &M) {
   DenseSet<const MDNode *> VisitedSet;
 
   for (DICompileUnit DIC : F.compile_units()) {
-    assert(DIC.Verify() && "DIC must verify as a DICompileUnit.");
-
     // Create our live subprogram list.
-    DIArray SPs = DIC.getSubprograms();
+    MDSubprogramArray SPs = DIC->getSubprograms();
     bool SubprogramChange = false;
-    for (unsigned i = 0, e = SPs.getNumElements(); i != e; ++i) {
-      DISubprogram DISP(SPs.getElement(i));
-      assert(DISP.Verify() && "DISP must verify as a DISubprogram.");
+    for (unsigned i = 0, e = SPs.size(); i != e; ++i) {
+      DISubprogram DISP = SPs[i];
 
       // Make sure we visit each subprogram only once.
       if (!VisitedSet.insert(DISP).second)
@@ -327,11 +324,10 @@ bool StripDeadDebugInfo::runOnModule(Module &M) {
     }
 
     // Create our live global variable list.
-    DIArray GVs = DIC.getGlobalVariables();
+    MDGlobalVariableArray GVs = DIC->getGlobalVariables();
     bool GlobalVariableChange = false;
-    for (unsigned i = 0, e = GVs.getNumElements(); i != e; ++i) {
-      DIGlobalVariable DIG(GVs.getElement(i));
-      assert(DIG.Verify() && "DIG must verify as DIGlobalVariable.");
+    for (unsigned i = 0, e = GVs.size(); i != e; ++i) {
+      DIGlobalVariable DIG = GVs[i];
 
       // Make sure we only visit each global variable only once.
       if (!VisitedSet.insert(DIG).second)

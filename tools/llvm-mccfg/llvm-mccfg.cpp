@@ -129,8 +129,11 @@ static const Target *getTarget(const ObjectFile *Obj = nullptr) {
 struct DOTMCFunction {
   const MCFunction &Fn;
   MCInstPrinter &IP;
+  const MCSubtargetInfo &STI;
 
-  DOTMCFunction(const MCFunction &Fn, MCInstPrinter &IP) : Fn(Fn), IP(IP) {}
+  DOTMCFunction(const MCFunction &Fn, MCInstPrinter &IP,
+                const MCSubtargetInfo &STI)
+      : Fn(Fn), IP(IP), STI(STI) {}
 };
 
 template<>
@@ -178,7 +181,7 @@ struct DOTGraphTraits<DOTMCFunction> : public DefaultDOTGraphTraits {
     std::string OutStr;
     raw_string_ostream Out(OutStr);
     for (auto DInst : *BB) {
-      MCFN.IP.printInst(&DInst.Inst, Out, "");
+      MCFN.IP.printInst(&DInst.Inst, Out, "", MCFN.STI);
       Out << '\n';
     }
     return Out.str();
@@ -189,7 +192,7 @@ struct DOTGraphTraits<DOTMCFunction> : public DefaultDOTGraphTraits {
 // Write a graphviz file for the CFG inside an MCFunction.
 // FIXME: Use GraphWriter
 static void emitDOTFile(const char *FileName, const MCFunction &f,
-                        MCInstPrinter *IP) {
+                        MCInstPrinter *IP, const MCSubtargetInfo &STI) {
   // Start a new dot file.
   std::error_code EC;
 
@@ -199,7 +202,7 @@ static void emitDOTFile(const char *FileName, const MCFunction &f,
     errs() << ToolName << ": warning: " << EC.message() << '\n';
     return;
   }
-  DOTMCFunction DOTFn(f, *IP);
+  DOTMCFunction DOTFn(f, *IP, STI);
   WriteGraph(Out, DOTFn);
 
 #if 0
@@ -311,7 +314,7 @@ static void DumpObject(const ObjectFile *Obj) {
 
   int AsmPrinterVariant = AsmInfo->getAssemblerDialect();
   std::unique_ptr<MCInstPrinter> IP(TheTarget->createMCInstPrinter(
-      AsmPrinterVariant, *AsmInfo, *MII, *MRI, *STI));
+      Triple(TripleName), AsmPrinterVariant, *AsmInfo, *MII, *MRI));
   if (!IP) {
     errs() << "error: no instruction printer for target " << TripleName
       << '\n';
@@ -328,7 +331,7 @@ static void DumpObject(const ObjectFile *Obj) {
       static int filenum = 0;
       emitDOTFile((Twine((*FI)->getName()) + "_" +
                    utostr(filenum) + ".dot").str().c_str(),
-                  **FI, IP.get());
+                  **FI, IP.get(), *STI);
       ++filenum;
     }
   }

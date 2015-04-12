@@ -8,6 +8,7 @@
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
+#include "llvm/ExecutionEngine/Orc/LambdaResolver.h"
 #include "llvm/ExecutionEngine/Orc/LazyEmittingLayer.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
@@ -33,6 +34,7 @@
 #include "llvm/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -120,18 +122,20 @@ public:
     // We need a memory manager to allocate memory and resolve symbols for this
     // new module. Create one that resolves symbols by looking back into the
     // JIT.
-    auto MM = createLookasideRTDyldMM<SectionMemoryManager>(
-                [&](const std::string &Name) {
-                  if (uint64_t Addr = findSymbol(Name).getAddress())
-                    return Addr;
-                  assert(Name.length() > 1 && Name.front() == '_');
-                  return (uint64_t)dlsym(RTLD_DEFAULT, Name.c_str()+1);
-                },
-                [](const std::string &S) {
-                  return 0;
-                } );
+    auto Resolver = createLambdaResolver(
+        [&](const std::string &Name) {
+          if (auto Sym = findSymbol(Name))
+            return RuntimeDyld::SymbolInfo(Sym.getAddress(), Sym.getFlags());
+          else if (auto Addr =
+                       RTDyldMemoryManager::getSymbolAddressInProcess(Name))
+            return RuntimeDyld::SymbolInfo(Addr, JITSymbolFlags::Exported);
+          return RuntimeDyld::SymbolInfo(nullptr);
+        },
+        [](const std::string &S) { return nullptr; });
+
     return LazyEmitLayer.addModuleSet(singletonSet(std::move(M)),
-                                      std::move(MM));
+                                      make_unique<SectionMemoryManager>(),
+                                      std::move(Resolver));
   }
 
   void removeModule(ModuleHandleT H) { LazyEmitLayer.removeModuleSet(H); }
@@ -272,7 +276,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   }
 
   std::unique_ptr<MCInstPrinter> MIP(
-      TheTarget->createMCInstPrinter(0, *MAI, *MII, *MRI, *STI));
+      TheTarget->createMCInstPrinter(Triple(TripleName), 0, *MAI, *MII, *MRI));
   if (!MIP) {
     errs() << "error: no instprinter for target " << TripleName << "\n";
     exit(1);
@@ -358,12 +362,18 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   const DataLayout *DL = TM->getDataLayout();
 
+  // Add the program's symbols into the JIT's search space.
+  if (sys::DynamicLibrary::LoadLibraryPermanently(nullptr)) {
+    errs() << "error: unable to load program symbols.\n";
+    exit(1);
+  }
+
   DYNJIT J(*TM);
 
   std::unique_ptr<DCTranslator> DT(
     new DCTranslator(getGlobalContext(), DL->getStringRepresentation(),
                      TransOpt::Default, *DIS, *DRS,
-                     *MIP, *MCM, OD.get()));
+                     *MIP, *STI, *MCM, OD.get()));
 
   __dc_DT = DT.get();
   __dc_JIT = &J;

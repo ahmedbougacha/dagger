@@ -48,7 +48,7 @@ public:
     : MCII(mcii), CTX(ctx), IsLittleEndian(IsLittle) {
   }
 
-  ~ARMMCCodeEmitter() {}
+  ~ARMMCCodeEmitter() override {}
 
   bool isThumb(const MCSubtargetInfo &STI) const {
     return (STI.getFeatureBits() & ARM::ModeThumb) != 0;
@@ -441,14 +441,12 @@ public:
 
 MCCodeEmitter *llvm::createARMLEMCCodeEmitter(const MCInstrInfo &MCII,
                                               const MCRegisterInfo &MRI,
-                                              const MCSubtargetInfo &STI,
                                               MCContext &Ctx) {
   return new ARMMCCodeEmitter(MCII, Ctx, true);
 }
 
 MCCodeEmitter *llvm::createARMBEMCCodeEmitter(const MCInstrInfo &MCII,
                                               const MCRegisterInfo &MRI,
-                                              const MCSubtargetInfo &STI,
                                               MCContext &Ctx) {
   return new ARMMCCodeEmitter(MCII, Ctx, false);
 }

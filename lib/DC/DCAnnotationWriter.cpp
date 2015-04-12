@@ -18,8 +18,9 @@ using namespace llvm;
 
 DCAnnotationWriter::DCAnnotationWriter(const DCTranslatedInstTracker &DTIT,
                                        const MCRegisterInfo &MRI,
-                                       MCInstPrinter &IP)
-    : AssemblyAnnotationWriter(), DTIT(DTIT), MRI(MRI), IP(IP) {}
+                                       MCInstPrinter &IP,
+                                       const MCSubtargetInfo &STI)
+    : AssemblyAnnotationWriter(), DTIT(DTIT), MRI(MRI), IP(IP), STI(STI) {}
 
 void DCAnnotationWriter::printInfoComment(const Value &V,
                                           formatted_raw_ostream &OS) {
@@ -77,7 +78,7 @@ void DCAnnotationWriter::printInfoComment(const Value &V,
       OS << " op-use ";
       if (MCDI)
         IP.printMachineOperand(&MCDI->Inst, VI.CustomOpType, VI.MIOperandNo,
-                               OS);
+                               STI, OS);
       break;
     }
     }
@@ -98,7 +99,7 @@ void DCAnnotationWriter::printInfoComment(const Value &V,
 
     if (MCDI)
       OS << ": ";
-    IP.printInst(&MCDI->Inst, OS.PadToColumn(90), "");
+    IP.printInst(&MCDI->Inst, OS.PadToColumn(90), "", STI);
   }
 }
 

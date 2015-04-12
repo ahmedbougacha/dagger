@@ -675,8 +675,18 @@ bool PPCFastISel::PPCEmitStore(MVT VT, unsigned SrcReg, Address &Addr) {
       case PPC::STFS: Opc = PPC::STFSX; break;
       case PPC::STFD: Opc = IsVSFRC ? PPC::STXSDX : PPC::STFDX; break;
     }
-    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(Opc))
-      .addReg(SrcReg).addReg(Addr.Base.Reg).addReg(IndexReg);
+
+    auto MIB = BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(Opc))
+        .addReg(SrcReg);
+
+    // If we have an index register defined we use it in the store inst,
+    // otherwise we use X0 as base as it makes the vector instructions to
+    // use zero in the computation of the effective address regardless the
+    // content of the register.
+    if (IndexReg)
+      MIB.addReg(Addr.Base.Reg).addReg(IndexReg);
+    else
+      MIB.addReg(PPC::ZERO8).addReg(Addr.Base.Reg);
   }
 
   return true;
@@ -948,6 +958,8 @@ unsigned PPCFastISel::PPCMoveToFPReg(MVT SrcVT, unsigned SrcReg,
 }
 
 // Attempt to fast-select an integer-to-floating-point conversion.
+// FIXME: Once fast-isel has better support for VSX, conversions using
+//        direct moves should be implemented.
 bool PPCFastISel::SelectIToFP(const Instruction *I, bool IsSigned) {
   MVT DstVT;
   Type *DstTy = I->getType();
@@ -1055,6 +1067,8 @@ unsigned PPCFastISel::PPCMoveToIntReg(const Instruction *I, MVT VT,
 }
 
 // Attempt to fast-select a floating-point-to-integer conversion.
+// FIXME: Once fast-isel has better support for VSX, conversions using
+//        direct moves should be implemented.
 bool PPCFastISel::SelectFPToI(const Instruction *I, bool IsSigned) {
   MVT DstVT, SrcVT;
   Type *DstTy = I->getType();
@@ -1434,6 +1448,9 @@ bool PPCFastISel::fastLowerCall(CallLoweringInfo &CLI) {
   else if (!isTypeLegal(RetTy, RetVT) && RetVT != MVT::i16 &&
            RetVT != MVT::i8)
     return false;
+  else if (RetVT == MVT::i1 && PPCSubTarget->useCRBits())
+    // We can't handle boolean returns when CR bits are in use.
+    return false;
 
   // FIXME: No multi-register return values yet.
   if (RetVT != MVT::isVoid && RetVT != MVT::i8 && RetVT != MVT::i16 &&
@@ -1532,7 +1549,7 @@ bool PPCFastISel::fastLowerCall(CallLoweringInfo &CLI) {
 
   // Add a register mask with the call-preserved registers.  Proper
   // defs for return values will be added by setPhysRegsDeadExcept().
-  MIB.addRegMask(TRI.getCallPreservedMask(CC));
+  MIB.addRegMask(TRI.getCallPreservedMask(*FuncInfo.MF, CC));
 
   CLI.Call = MIB;
 

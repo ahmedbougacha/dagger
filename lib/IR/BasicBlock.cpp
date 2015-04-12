@@ -29,10 +29,6 @@ ValueSymbolTable *BasicBlock::getValueSymbolTable() {
   return nullptr;
 }
 
-const DataLayout *BasicBlock::getDataLayout() const {
-  return getParent()->getDataLayout();
-}
-
 LLVMContext &BasicBlock::getContext() const {
   return getType()->getContext();
 }
@@ -98,8 +94,8 @@ void BasicBlock::removeFromParent() {
   getParent()->getBasicBlockList().remove(this);
 }
 
-void BasicBlock::eraseFromParent() {
-  getParent()->getBasicBlockList().erase(this);
+iplist<BasicBlock>::iterator BasicBlock::eraseFromParent() {
+  return getParent()->getBasicBlockList().erase(this);
 }
 
 /// Unlink this basic block from its current function and
@@ -117,6 +113,9 @@ void BasicBlock::moveAfter(BasicBlock *MovePos) {
                                        getParent()->getBasicBlockList(), this);
 }
 
+const Module *BasicBlock::getModule() const {
+  return getParent()->getParent();
+}
 
 TerminatorInst *BasicBlock::getTerminator() {
   if (InstList.empty()) return nullptr;

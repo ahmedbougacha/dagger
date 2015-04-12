@@ -26,7 +26,8 @@ namespace {
                                 Is64Bit ?  ELF::EM_SPARCV9 : ELF::EM_SPARC,
                                 /*HasRelocationAddend*/ true) {}
 
-    virtual ~SparcELFObjectWriter() {}
+    ~SparcELFObjectWriter() override {}
+
   protected:
     unsigned GetRelocType(const MCValue &Target, const MCFixup &Fixup,
                           bool IsPCRel) const override;
@@ -104,8 +105,7 @@ unsigned SparcELFObjectWriter::GetRelocType(const MCValue &Target,
   return ELF::R_SPARC_NONE;
 }
 
-MCObjectWriter *llvm::createSparcELFObjectWriter(raw_ostream &OS,
-                                                 bool Is64Bit,
+MCObjectWriter *llvm::createSparcELFObjectWriter(raw_ostream &OS, bool Is64Bit,
                                                  uint8_t OSABI) {
   MCELFObjectTargetWriter *MOTW = new SparcELFObjectWriter(Is64Bit, OSABI);
   return createELFObjectWriter(MOTW, OS,  /*IsLittleEndian=*/false);

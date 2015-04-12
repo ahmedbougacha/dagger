@@ -41,6 +41,13 @@ def FeatureZCZeroing : SubtargetFeature<"zcz", "HasZeroCycleZeroing", "true",
                                         "Has zero-cycle zeroing instructions">;
 
 //===----------------------------------------------------------------------===//
+// Architectures.
+//
+
+def HasV8_1aOps : SubtargetFeature<"v8.1a", "HasV8_1aOps", "true",
+  "Support ARM v8.1a instructions", [FeatureCRC]>;
+
+//===----------------------------------------------------------------------===//
 // Register File Description
 //===----------------------------------------------------------------------===//
 
@@ -116,12 +123,14 @@ def AppleAsmParserVariant : AsmParserVariant {
 // AsmWriter bits get associated with the correct class.
 def GenericAsmWriter : AsmWriter {
   string AsmWriterClassName  = "InstPrinter";
+  int PassSubtarget = 1;
   int Variant = 0;
   bit isMCAsmWriter = 1;
 }
 
 def AppleAsmWriter : AsmWriter {
   let AsmWriterClassName = "AppleInstPrinter";
+  int PassSubtarget = 1;
   int Variant = 1;
   int isMCAsmWriter = 1;
 }

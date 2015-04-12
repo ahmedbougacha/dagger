@@ -22,6 +22,7 @@
 #define DEBUG_TYPE "ppc-loop-preinc-prep"
 #include "PPC.h"
 #include "PPCTargetMachine.h"
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
@@ -36,6 +37,7 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Scalar.h"
@@ -84,7 +86,6 @@ namespace {
     PPCTargetMachine *TM;
     LoopInfo *LI;
     ScalarEvolution *SE;
-    const DataLayout *DL;
   };
 }
 
@@ -141,16 +142,11 @@ bool PPCLoopPreIncPrep::runOnFunction(Function &F) {
   LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   SE = &getAnalysis<ScalarEvolution>();
 
-  DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
-  DL = DLP ? &DLP->getDataLayout() : 0;
-
   bool MadeChange = false;
 
-  for (LoopInfo::iterator I = LI->begin(), E = LI->end();
-       I != E; ++I) {
-    Loop *L = *I;
-    MadeChange |= runOnLoop(L);
-  }
+  for (auto I = LI->begin(), IE = LI->end(); I != IE; ++I)
+    for (auto L = df_begin(*I), LE = df_end(*I); L != LE; ++L)
+      MadeChange |= runOnLoop(*L);
 
   return MadeChange;
 }
@@ -158,23 +154,19 @@ bool PPCLoopPreIncPrep::runOnFunction(Function &F) {
 bool PPCLoopPreIncPrep::runOnLoop(Loop *L) {
   bool MadeChange = false;
 
-  if (!DL)
-    return MadeChange;
-
   // Only prep. the inner-most loop
   if (!L->empty())
     return MadeChange;
+
+  DEBUG(dbgs() << "PIP: Examining: " << *L << "\n");
 
   BasicBlock *Header = L->getHeader();
 
   const PPCSubtarget *ST =
     TM ? TM->getSubtargetImpl(*Header->getParent()) : nullptr;
 
-  unsigned HeaderLoopPredCount = 0;
-  for (pred_iterator PI = pred_begin(Header), PE = pred_end(Header);
-       PI != PE; ++PI) {
-    ++HeaderLoopPredCount;
-  }
+  unsigned HeaderLoopPredCount =
+    std::distance(pred_begin(Header), pred_end(Header));
 
   // Collect buckets of comparable addresses used by loads and stores.
   typedef std::multimap<const SCEV *, Instruction *, SCEVLess> Bucket;
@@ -211,9 +203,13 @@ bool PPCLoopPreIncPrep::runOnLoop(Loop *L) {
       if (L->isLoopInvariant(PtrValue))
         continue;
 
-      const SCEV *LSCEV = SE->getSCEV(PtrValue);
-      if (!isa<SCEVAddRecExpr>(LSCEV))
+      const SCEV *LSCEV = SE->getSCEVAtScope(PtrValue, L);
+      if (const SCEVAddRecExpr *LARSCEV = dyn_cast<SCEVAddRecExpr>(LSCEV)) {
+        if (LARSCEV->getLoop() != L)
+          continue;
+      } else {
         continue;
+      }
 
       bool FoundBucket = false;
       for (unsigned i = 0, e = Buckets.size(); i != e; ++i)
@@ -242,10 +238,15 @@ bool PPCLoopPreIncPrep::runOnLoop(Loop *L) {
   // returns a value (which might contribute to determining the loop's
   // iteration space), insert a new preheader for the loop.
   if (!LoopPredecessor ||
-      !LoopPredecessor->getTerminator()->getType()->isVoidTy())
+      !LoopPredecessor->getTerminator()->getType()->isVoidTy()) {
     LoopPredecessor = InsertPreheaderForLoop(L, this);
+    if (LoopPredecessor)
+      MadeChange = true;
+  }
   if (!LoopPredecessor)
     return MadeChange;
+
+  DEBUG(dbgs() << "PIP: Found " << Buckets.size() << " buckets\n");
 
   SmallSet<BasicBlock *, 16> BBChanged;
   for (unsigned i = 0, e = Buckets.size(); i != e; ++i) {
@@ -257,10 +258,15 @@ bool PPCLoopPreIncPrep::runOnLoop(Loop *L) {
     if (!BasePtrSCEV->isAffine())
       continue;
 
+    DEBUG(dbgs() << "PIP: Transforming: " << *BasePtrSCEV << "\n");
+    assert(BasePtrSCEV->getLoop() == L &&
+           "AddRec for the wrong loop?");
+
     Instruction *MemI = Buckets[i].begin()->second;
     Value *BasePtr = GetPointerOperand(MemI);
     assert(BasePtr && "No pointer operand");
 
+    Type *I8Ty = Type::getInt8Ty(MemI->getParent()->getContext());
     Type *I8PtrTy = Type::getInt8PtrTy(MemI->getParent()->getContext(),
       BasePtr->getType()->getPointerAddressSpace());
 
@@ -276,11 +282,13 @@ bool PPCLoopPreIncPrep::runOnLoop(Loop *L) {
     if (!isSafeToExpand(BasePtrStartSCEV, *SE))
       continue;
 
+    DEBUG(dbgs() << "PIP: New start is: " << *BasePtrStartSCEV << "\n");
+
     PHINode *NewPHI = PHINode::Create(I8PtrTy, HeaderLoopPredCount,
       MemI->hasName() ? MemI->getName() + ".phi" : "",
       Header->getFirstNonPHI());
 
-    SCEVExpander SCEVE(*SE, "pistart");
+    SCEVExpander SCEVE(*SE, Header->getModule()->getDataLayout(), "pistart");
     Value *BasePtrStart = SCEVE.expandCodeFor(BasePtrStartSCEV, I8PtrTy,
       LoopPredecessor->getTerminator());
 
@@ -295,8 +303,8 @@ bool PPCLoopPreIncPrep::runOnLoop(Loop *L) {
     }
 
     Instruction *InsPoint = Header->getFirstInsertionPt();
-    GetElementPtrInst *PtrInc =
-      GetElementPtrInst::Create(NewPHI, BasePtrIncSCEV->getValue(),
+    GetElementPtrInst *PtrInc = GetElementPtrInst::Create(
+        I8Ty, NewPHI, BasePtrIncSCEV->getValue(),
         MemI->hasName() ? MemI->getName() + ".inc" : "", InsPoint);
     PtrInc->setIsInBounds(IsPtrInBounds(BasePtr));
     for (pred_iterator PI = pred_begin(Header), PE = pred_end(Header);
@@ -341,9 +349,9 @@ bool PPCLoopPreIncPrep::runOnLoop(Loop *L) {
           PtrIP = PtrIP->getParent()->getFirstInsertionPt();
         else if (!PtrIP)
           PtrIP = I->second;
-  
-        GetElementPtrInst *NewPtr =
-          GetElementPtrInst::Create(PtrInc, Diff->getValue(),
+
+        GetElementPtrInst *NewPtr = GetElementPtrInst::Create(
+            I8Ty, PtrInc, Diff->getValue(),
             I->second->hasName() ? I->second->getName() + ".off" : "", PtrIP);
         if (!PtrIP)
           NewPtr->insertAfter(cast<Instruction>(PtrInc));

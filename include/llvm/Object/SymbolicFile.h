@@ -45,7 +45,9 @@ inline bool operator<(const DataRefImpl &a, const DataRefImpl &b) {
   return std::memcmp(&a, &b, sizeof(DataRefImpl)) < 0;
 }
 
-template <class content_type> class content_iterator {
+template <class content_type>
+class content_iterator
+    : public std::iterator<std::forward_iterator_tag, content_type> {
   content_type Current;
 
 public:
@@ -116,7 +118,7 @@ const uint64_t UnknownAddressOrSize = ~0ULL;
 
 class SymbolicFile : public Binary {
 public:
-  virtual ~SymbolicFile();
+  ~SymbolicFile() override;
   SymbolicFile(unsigned int Type, MemoryBufferRef Source);
 
   // virtual interface.

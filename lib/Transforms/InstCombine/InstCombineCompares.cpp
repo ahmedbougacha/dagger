@@ -229,10 +229,6 @@ static void ComputeUnsignedMinMaxValuesFromKnownBits(const APInt &KnownZero,
 Instruction *InstCombiner::
 FoldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP, GlobalVariable *GV,
                              CmpInst &ICI, ConstantInt *AndCst) {
-  // We need TD information to know the pointer size unless this is inbounds.
-  if (!GEP->isInBounds() && !DL)
-    return nullptr;
-
   Constant *Init = GV->getInitializer();
   if (!isa<ConstantArray>(Init) && !isa<ConstantDataArray>(Init))
     return nullptr;
@@ -302,7 +298,6 @@ FoldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP, GlobalVariable *GV,
   // comparison is true for element 'i'.  If there are 64 elements or less in
   // the array, this will fully represent all the comparison results.
   uint64_t MagicBitvector = 0;
-
 
   // Scan the array and see if one of our patterns matches.
   Constant *CompareRHS = cast<Constant>(ICI.getOperand(1));
@@ -398,7 +393,7 @@ FoldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP, GlobalVariable *GV,
   // index down like the GEP would do implicitly.  We don't have to do this for
   // an inbounds GEP because the index can't be out of range.
   if (!GEP->isInBounds()) {
-    Type *IntPtrTy = DL->getIntPtrType(GEP->getType());
+    Type *IntPtrTy = DL.getIntPtrType(GEP->getType());
     unsigned PtrSize = IntPtrTy->getIntegerBitWidth();
     if (Idx->getType()->getPrimitiveSizeInBits() > PtrSize)
       Idx = Builder->CreateTrunc(Idx, IntPtrTy);
@@ -487,10 +482,8 @@ FoldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP, GlobalVariable *GV,
     // - Default to i32
     if (ArrayElementCount <= Idx->getType()->getIntegerBitWidth())
       Ty = Idx->getType();
-    else if (DL)
-      Ty = DL->getSmallestLegalIntType(Init->getContext(), ArrayElementCount);
-    else if (ArrayElementCount <= 32)
-      Ty = Type::getInt32Ty(Init->getContext());
+    else
+      Ty = DL.getSmallestLegalIntType(Init->getContext(), ArrayElementCount);
 
     if (Ty) {
       Value *V = Builder->CreateIntCast(Idx, Ty, false);
@@ -514,8 +507,8 @@ FoldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP, GlobalVariable *GV,
 ///
 /// If we can't emit an optimized form for this expression, this returns null.
 ///
-static Value *EvaluateGEPOffsetExpression(User *GEP, InstCombiner &IC) {
-  const DataLayout &DL = *IC.getDataLayout();
+static Value *EvaluateGEPOffsetExpression(User *GEP, InstCombiner &IC,
+                                          const DataLayout &DL) {
   gep_type_iterator GTI = gep_type_begin(GEP);
 
   // Check to see if this gep only has a single variable index.  If so, and if
@@ -628,12 +621,12 @@ Instruction *InstCombiner::FoldGEPICmp(GEPOperator *GEPLHS, Value *RHS,
     RHS = RHS->stripPointerCasts();
 
   Value *PtrBase = GEPLHS->getOperand(0);
-  if (DL && PtrBase == RHS && GEPLHS->isInBounds()) {
+  if (PtrBase == RHS && GEPLHS->isInBounds()) {
     // ((gep Ptr, OFFSET) cmp Ptr)   ---> (OFFSET cmp 0).
     // This transformation (ignoring the base and scales) is valid because we
     // know pointers can't overflow since the gep is inbounds.  See if we can
     // output an optimized form.
-    Value *Offset = EvaluateGEPOffsetExpression(GEPLHS, *this);
+    Value *Offset = EvaluateGEPOffsetExpression(GEPLHS, *this, DL);
 
     // If not, synthesize the offset the hard way.
     if (!Offset)
@@ -661,11 +654,11 @@ Instruction *InstCombiner::FoldGEPICmp(GEPOperator *GEPLHS, Value *RHS,
       // If we're comparing GEPs with two base pointers that only differ in type
       // and both GEPs have only constant indices or just one use, then fold
       // the compare with the adjusted indices.
-      if (DL && GEPLHS->isInBounds() && GEPRHS->isInBounds() &&
+      if (GEPLHS->isInBounds() && GEPRHS->isInBounds() &&
           (GEPLHS->hasAllConstantIndices() || GEPLHS->hasOneUse()) &&
           (GEPRHS->hasAllConstantIndices() || GEPRHS->hasOneUse()) &&
           PtrBase->stripPointerCasts() ==
-            GEPRHS->getOperand(0)->stripPointerCasts()) {
+              GEPRHS->getOperand(0)->stripPointerCasts()) {
         Value *LOffset = EmitGEPOffset(GEPLHS);
         Value *ROffset = EmitGEPOffset(GEPRHS);
 
@@ -733,9 +726,7 @@ Instruction *InstCombiner::FoldGEPICmp(GEPOperator *GEPLHS, Value *RHS,
 
     // Only lower this if the icmp is the only user of the GEP or if we expect
     // the result to fold to a constant!
-    if (DL &&
-        GEPsInBounds &&
-        (isa<ConstantExpr>(GEPLHS) || GEPLHS->hasOneUse()) &&
+    if (GEPsInBounds && (isa<ConstantExpr>(GEPLHS) || GEPLHS->hasOneUse()) &&
         (isa<ConstantExpr>(GEPRHS) || GEPRHS->hasOneUse())) {
       // ((gep Ptr, OFFSET1) cmp (gep Ptr, OFFSET2)  --->  (OFFSET1 cmp OFFSET2)
       Value *L = EmitGEPOffset(GEPLHS);
@@ -1928,8 +1919,8 @@ Instruction *InstCombiner::visitICmpInstWithCastAndCast(ICmpInst &ICI) {
 
   // Turn icmp (ptrtoint x), (ptrtoint/c) into a compare of the input if the
   // integer type is the same size as the pointer type.
-  if (DL && LHSCI->getOpcode() == Instruction::PtrToInt &&
-      DL->getPointerTypeSizeInBits(SrcTy) == DestTy->getIntegerBitWidth()) {
+  if (LHSCI->getOpcode() == Instruction::PtrToInt &&
+      DL.getPointerTypeSizeInBits(SrcTy) == DestTy->getIntegerBitWidth()) {
     Value *RHSOp = nullptr;
     if (PtrToIntOperator *RHSC = dyn_cast<PtrToIntOperator>(ICI.getOperand(1))) {
       Value *RHSCIOp = RHSC->getOperand(0);
@@ -2118,33 +2109,111 @@ static Instruction *ProcessUGT_ADDCST_ADD(ICmpInst &I, Value *A, Value *B,
   return ExtractValueInst::Create(Call, 1, "sadd.overflow");
 }
 
-static Instruction *ProcessUAddIdiom(Instruction &I, Value *OrigAddV,
-                                     InstCombiner &IC) {
-  // Don't bother doing this transformation for pointers, don't do it for
-  // vectors.
-  if (!isa<IntegerType>(OrigAddV->getType())) return nullptr;
+bool InstCombiner::OptimizeOverflowCheck(OverflowCheckFlavor OCF, Value *LHS,
+                                         Value *RHS, Instruction &OrigI,
+                                         Value *&Result, Constant *&Overflow) {
+  assert(!(isa<Constant>(LHS) && !isa<Constant>(RHS)) &&
+         "call with a constant RHS if possible!");
 
-  // If the add is a constant expr, then we don't bother transforming it.
-  Instruction *OrigAdd = dyn_cast<Instruction>(OrigAddV);
-  if (!OrigAdd) return nullptr;
+  auto SetResult = [&](Value *OpResult, Constant *OverflowVal, bool ReuseName) {
+    Result = OpResult;
+    Overflow = OverflowVal;
+    if (ReuseName)
+      Result->takeName(&OrigI);
+    return true;
+  };
 
-  Value *LHS = OrigAdd->getOperand(0), *RHS = OrigAdd->getOperand(1);
+  switch (OCF) {
+  case OCF_INVALID:
+    llvm_unreachable("bad overflow check kind!");
 
-  // Put the new code above the original add, in case there are any uses of the
-  // add between the add and the compare.
-  InstCombiner::BuilderTy *Builder = IC.Builder;
-  Builder->SetInsertPoint(OrigAdd);
+  case OCF_UNSIGNED_ADD: {
+    OverflowResult OR = computeOverflowForUnsignedAdd(LHS, RHS, &OrigI);
+    if (OR == OverflowResult::NeverOverflows)
+      return SetResult(Builder->CreateNUWAdd(LHS, RHS), Builder->getFalse(),
+                       true);
 
-  Module *M = I.getParent()->getParent()->getParent();
-  Type *Ty = LHS->getType();
-  Value *F = Intrinsic::getDeclaration(M, Intrinsic::uadd_with_overflow, Ty);
-  CallInst *Call = Builder->CreateCall2(F, LHS, RHS, "uadd");
-  Value *Add = Builder->CreateExtractValue(Call, 0);
+    if (OR == OverflowResult::AlwaysOverflows)
+      return SetResult(Builder->CreateAdd(LHS, RHS), Builder->getTrue(), true);
+  }
+  // FALL THROUGH uadd into sadd
+  case OCF_SIGNED_ADD: {
+    // X + undef -> undef
+    if (isa<UndefValue>(RHS))
+      return SetResult(UndefValue::get(RHS->getType()),
+                       UndefValue::get(Builder->getInt1Ty()), false);
 
-  IC.ReplaceInstUsesWith(*OrigAdd, Add);
+    if (ConstantInt *ConstRHS = dyn_cast<ConstantInt>(RHS))
+      // X + 0 -> {X, false}
+      if (ConstRHS->isZero())
+        return SetResult(LHS, Builder->getFalse(), false);
 
-  // The original icmp gets replaced with the overflow value.
-  return ExtractValueInst::Create(Call, 1, "uadd.overflow");
+    // We can strength reduce this signed add into a regular add if we can prove
+    // that it will never overflow.
+    if (OCF == OCF_SIGNED_ADD)
+      if (WillNotOverflowSignedAdd(LHS, RHS, OrigI))
+        return SetResult(Builder->CreateNSWAdd(LHS, RHS), Builder->getFalse(),
+                         true);
+  }
+
+  case OCF_UNSIGNED_SUB:
+  case OCF_SIGNED_SUB: {
+    // undef - X -> undef
+    // X - undef -> undef
+    if (isa<UndefValue>(LHS) || isa<UndefValue>(RHS))
+      return SetResult(UndefValue::get(LHS->getType()),
+                       UndefValue::get(Builder->getInt1Ty()), false);
+
+    if (ConstantInt *ConstRHS = dyn_cast<ConstantInt>(RHS))
+      // X - 0 -> {X, false}
+      if (ConstRHS->isZero())
+        return SetResult(UndefValue::get(LHS->getType()), Builder->getFalse(),
+                         false);
+
+    if (OCF == OCF_SIGNED_SUB) {
+      if (WillNotOverflowSignedSub(LHS, RHS, OrigI))
+        return SetResult(Builder->CreateNSWSub(LHS, RHS), Builder->getFalse(),
+                         true);
+    } else {
+      if (WillNotOverflowUnsignedSub(LHS, RHS, OrigI))
+        return SetResult(Builder->CreateNUWSub(LHS, RHS), Builder->getFalse(),
+                         true);
+    }
+    break;
+  }
+
+  case OCF_UNSIGNED_MUL: {
+    OverflowResult OR = computeOverflowForUnsignedMul(LHS, RHS, &OrigI);
+    if (OR == OverflowResult::NeverOverflows)
+      return SetResult(Builder->CreateNUWMul(LHS, RHS), Builder->getFalse(),
+                       true);
+    if (OR == OverflowResult::AlwaysOverflows)
+      return SetResult(Builder->CreateMul(LHS, RHS), Builder->getTrue(), true);
+  } // FALL THROUGH
+  case OCF_SIGNED_MUL:
+    // X * undef -> undef
+    if (isa<UndefValue>(RHS))
+      return SetResult(UndefValue::get(LHS->getType()),
+                       UndefValue::get(Builder->getInt1Ty()), false);
+
+    if (ConstantInt *RHSI = dyn_cast<ConstantInt>(RHS)) {
+      // X * 0 -> {0, false}
+      if (RHSI->isZero())
+        return SetResult(Constant::getNullValue(RHS->getType()),
+                         Builder->getFalse(), false);
+
+      // X * 1 -> {X, false}
+      if (RHSI->equalsInt(1))
+        return SetResult(LHS, Builder->getFalse(), false);
+    }
+
+    if (OCF == OCF_SIGNED_MUL)
+      if (WillNotOverflowSignedMul(LHS, RHS, OrigI))
+        return SetResult(Builder->CreateNSWMul(LHS, RHS), Builder->getFalse(),
+                         true);
+  }
+
+  return false;
 }
 
 /// \brief Recognize and process idiom involving test for multiplication
@@ -2660,8 +2729,8 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
   unsigned BitWidth = 0;
   if (Ty->isIntOrIntVectorTy())
     BitWidth = Ty->getScalarSizeInBits();
-  else if (DL)  // Pointers require DL info to get their size.
-    BitWidth = DL->getTypeSizeInBits(Ty->getScalarType());
+  else // Get pointer size.
+    BitWidth = DL.getTypeSizeInBits(Ty->getScalarType());
 
   bool isSignBit = false;
 
@@ -2774,8 +2843,8 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
                              Op0KnownZero, Op0KnownOne, 0))
       return &I;
     if (SimplifyDemandedBits(I.getOperandUse(1),
-                             APInt::getAllOnesValue(BitWidth),
-                             Op1KnownZero, Op1KnownOne, 0))
+                             APInt::getAllOnesValue(BitWidth), Op1KnownZero,
+                             Op1KnownOne, 0))
       return &I;
 
     // Given the known and unknown bits, compute a range that the LHS could be
@@ -3094,9 +3163,8 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
       }
       case Instruction::IntToPtr:
         // icmp pred inttoptr(X), null -> icmp pred X, 0
-        if (RHSC->isNullValue() && DL &&
-            DL->getIntPtrType(RHSC->getType()) ==
-               LHSI->getOperand(0)->getType())
+        if (RHSC->isNullValue() &&
+            DL.getIntPtrType(RHSC->getType()) == LHSI->getOperand(0)->getType())
           return new ICmpInst(I.getPredicate(), LHSI->getOperand(0),
                         Constant::getNullValue(LHSI->getOperand(0)->getType()));
         break;
@@ -3428,7 +3496,7 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
     // if A is a power of 2.
     if (match(Op0, m_And(m_Value(A), m_Not(m_Value(B)))) &&
         match(Op1, m_Zero()) &&
-        isKnownToBeAPowerOfTwo(A, false, 0, AC, &I, DT) && I.isEquality())
+        isKnownToBeAPowerOfTwo(A, DL, false, 0, AC, &I, DT) && I.isEquality())
       return new ICmpInst(I.getInversePredicate(),
                           Builder->CreateAnd(A, B),
                           Op1);
@@ -3442,21 +3510,18 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
         return new ICmpInst(I.getPredicate(), ConstantExpr::getNot(RHSC), A);
     }
 
-    // (a+b) <u a  --> llvm.uadd.with.overflow.
-    // (a+b) <u b  --> llvm.uadd.with.overflow.
-    if (I.getPredicate() == ICmpInst::ICMP_ULT &&
-        match(Op0, m_Add(m_Value(A), m_Value(B))) &&
-        (Op1 == A || Op1 == B))
-      if (Instruction *R = ProcessUAddIdiom(I, Op0, *this))
-        return R;
-
-    // a >u (a+b)  --> llvm.uadd.with.overflow.
-    // b >u (a+b)  --> llvm.uadd.with.overflow.
-    if (I.getPredicate() == ICmpInst::ICMP_UGT &&
-        match(Op1, m_Add(m_Value(A), m_Value(B))) &&
-        (Op0 == A || Op0 == B))
-      if (Instruction *R = ProcessUAddIdiom(I, Op1, *this))
-        return R;
+    Instruction *AddI = nullptr;
+    if (match(&I, m_UAddWithOverflow(m_Value(A), m_Value(B),
+                                     m_Instruction(AddI))) &&
+        isa<IntegerType>(A->getType())) {
+      Value *Result;
+      Constant *Overflow;
+      if (OptimizeOverflowCheck(OCF_UNSIGNED_ADD, A, B, *AddI, Result,
+                                Overflow)) {
+        ReplaceInstUsesWith(*AddI, Result);
+        return ReplaceInstUsesWith(I, Overflow);
+      }
+    }
 
     // (zext a) * (zext b)  --> llvm.umul.with.overflow.
     if (match(Op0, m_Mul(m_ZExt(m_Value(A)), m_ZExt(m_Value(B))))) {
@@ -3560,6 +3625,21 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
         Value *Xor = Builder->CreateXor(A, B, I.getName() + ".unshifted");
         APInt CmpVal = APInt::getOneBitSet(TypeBits, ShAmt);
         return new ICmpInst(Pred, Xor, Builder->getInt(CmpVal));
+      }
+    }
+
+    // (A << C) == (B << C) --> ((A^B) & (~0U >> C)) == 0
+    if (match(Op0, m_OneUse(m_Shl(m_Value(A), m_ConstantInt(Cst1)))) &&
+        match(Op1, m_OneUse(m_Shl(m_Value(B), m_Specific(Cst1))))) {
+      unsigned TypeBits = Cst1->getBitWidth();
+      unsigned ShAmt = (unsigned)Cst1->getLimitedValue(TypeBits);
+      if (ShAmt < TypeBits && ShAmt != 0) {
+        Value *Xor = Builder->CreateXor(A, B, I.getName() + ".unshifted");
+        APInt AndVal = APInt::getLowBitsSet(TypeBits, TypeBits - ShAmt);
+        Value *And = Builder->CreateAnd(Xor, Builder->getInt(AndVal),
+                                        I.getName() + ".mask");
+        return new ICmpInst(I.getPredicate(), And,
+                            Constant::getNullValue(Cst1->getType()));
       }
     }
 

@@ -837,6 +837,10 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
     case Intrinsic::AMDGPU_rsq:
       // XXX - I'm assuming SI's RSQ_LEGACY matches R600's behavior.
       return DAG.getNode(AMDGPUISD::RSQ_LEGACY, DL, VT, Op.getOperand(1));
+
+    case AMDGPUIntrinsic::AMDGPU_fract:
+    case AMDGPUIntrinsic::AMDIL_fraction: // Legacy name.
+      return DAG.getNode(AMDGPUISD::FRACT, DL, VT, Op.getOperand(1));
     }
     // break out of case ISD::INTRINSIC_WO_CHAIN in switch(Op.getOpcode())
     break;
@@ -1479,8 +1483,8 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
 
   // Lower loads constant address space global variable loads
   if (LoadNode->getAddressSpace() == AMDGPUAS::CONSTANT_ADDRESS &&
-      isa<GlobalVariable>(
-          GetUnderlyingObject(LoadNode->getMemOperand()->getValue()))) {
+      isa<GlobalVariable>(GetUnderlyingObject(
+          LoadNode->getMemOperand()->getValue(), *getDataLayout()))) {
 
     SDValue Ptr = DAG.getZExtOrTrunc(LoadNode->getBasePtr(), DL,
         getPointerTy(AMDGPUAS::PRIVATE_ADDRESS));
@@ -1807,7 +1811,7 @@ SDValue Swz[4], SelectionDAG &DAG) const {
 
   BuildVector = CompactSwizzlableVector(DAG, BuildVector, SwizzleRemap);
   for (unsigned i = 0; i < 4; i++) {
-    unsigned Idx = dyn_cast<ConstantSDNode>(Swz[i])->getZExtValue();
+    unsigned Idx = cast<ConstantSDNode>(Swz[i])->getZExtValue();
     if (SwizzleRemap.find(Idx) != SwizzleRemap.end())
       Swz[i] = DAG.getConstant(SwizzleRemap[Idx], MVT::i32);
   }
@@ -1815,7 +1819,7 @@ SDValue Swz[4], SelectionDAG &DAG) const {
   SwizzleRemap.clear();
   BuildVector = ReorganizeVector(DAG, BuildVector, SwizzleRemap);
   for (unsigned i = 0; i < 4; i++) {
-    unsigned Idx = dyn_cast<ConstantSDNode>(Swz[i])->getZExtValue();
+    unsigned Idx = cast<ConstantSDNode>(Swz[i])->getZExtValue();
     if (SwizzleRemap.find(Idx) != SwizzleRemap.end())
       Swz[i] = DAG.getConstant(SwizzleRemap[Idx], MVT::i32);
   }
@@ -1867,7 +1871,7 @@ SDValue R600TargetLowering::PerformDAGCombine(SDNode *N,
                            SelectCC.getOperand(0), // LHS
                            SelectCC.getOperand(1), // RHS
                            DAG.getConstant(-1, MVT::i32), // True
-                           DAG.getConstant(0, MVT::i32),  // Flase
+                           DAG.getConstant(0, MVT::i32),  // False
                            SelectCC.getOperand(4)); // CC
 
     break;

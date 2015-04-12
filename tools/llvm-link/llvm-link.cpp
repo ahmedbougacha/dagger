@@ -13,7 +13,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Linker/Linker.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/IR/AutoUpgrade.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/LLVMContext.h"
@@ -68,6 +70,9 @@ loadFile(const char *argv0, const std::string &FN, LLVMContext &Context) {
   if (!Result)
     Err.print(argv0, errs());
 
+  Result->materializeMetadata();
+  UpgradeDebugInfo(*Result);
+
   return Result;
 }
 
@@ -111,6 +116,12 @@ int main(int argc, char **argv) {
       return 1;
     }
 
+    if (verifyModule(*M, &errs())) {
+      errs() << argv[0] << ": " << InputFilenames[i]
+             << ": error: input module is broken!\n";
+      return 1;
+    }
+
     if (Verbose) errs() << "Linking in '" << InputFilenames[i] << "'\n";
 
     if (L.linkInModule(M.get()))
@@ -126,8 +137,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (verifyModule(*Composite)) {
-    errs() << argv[0] << ": linked module is broken!\n";
+  if (verifyModule(*Composite, &errs())) {
+    errs() << argv[0] << ": error: linked module is broken!\n";
     return 1;
   }
 

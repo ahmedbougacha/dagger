@@ -21,7 +21,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Host.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Target/TargetMachine.h"
 #include <cstdlib>
@@ -69,6 +68,7 @@ void PPCSubtarget::initializeEnvironment() {
   HasVSX = false;
   HasP8Vector = false;
   HasP8Altivec = false;
+  HasP8Crypto = false;
   HasFCPSGN = false;
   HasFSQRT = false;
   HasFRE = false;
@@ -82,6 +82,8 @@ void PPCSubtarget::initializeEnvironment() {
   HasFPCVT = false;
   HasISEL = false;
   HasPOPCNTD = false;
+  HasBPERMD = false;
+  HasExtDiv = false;
   HasCMPB = false;
   HasLDBRX = false;
   IsBookE = false;
@@ -94,7 +96,10 @@ void PPCSubtarget::initializeEnvironment() {
   HasLazyResolverStubs = false;
   HasICBT = false;
   HasInvariantFunctionDescriptors = false;
+  HasPartwordAtomics = false;
+  HasDirectMove = false;
   IsQPXStackUnaligned = false;
+  HasHTM = false;
 }
 
 void PPCSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
@@ -107,11 +112,6 @@ void PPCSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
     else
       CPUName = "generic";
   }
-#if (defined(__APPLE__) || defined(__linux__)) && \
-    (defined(__ppc__) || defined(__powerpc__))
-  if (CPUName == "generic")
-    CPUName = sys::getHostCPUName();
-#endif
 
   // Initialize scheduling itinerary for the specified CPU.
   InstrItins = getInstrItineraryForCPU(CPUName);

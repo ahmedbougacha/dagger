@@ -26,7 +26,7 @@ class AArch64ELFObjectWriter : public MCELFObjectTargetWriter {
 public:
   AArch64ELFObjectWriter(uint8_t OSABI, bool IsLittleEndian);
 
-  virtual ~AArch64ELFObjectWriter();
+  ~AArch64ELFObjectWriter() override;
 
 protected:
   unsigned GetRelocType(const MCValue &Target, const MCFixup &Fixup,
@@ -249,8 +249,8 @@ unsigned AArch64ELFObjectWriter::GetRelocType(const MCValue &Target,
 }
 
 MCObjectWriter *llvm::createAArch64ELFObjectWriter(raw_ostream &OS,
-                                                 uint8_t OSABI,
-                                                 bool IsLittleEndian) {
+                                                   uint8_t OSABI,
+                                                   bool IsLittleEndian) {
   MCELFObjectTargetWriter *MOTW =
       new AArch64ELFObjectWriter(OSABI, IsLittleEndian);
   return createELFObjectWriter(MOTW, OS, IsLittleEndian);

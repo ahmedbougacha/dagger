@@ -87,6 +87,11 @@ EnableGEPOpt("aarch64-gep-opt", cl::Hidden,
              cl::desc("Enable optimizations on complex GEPs"),
              cl::init(true));
 
+// FIXME: Unify control over GlobalMerge.
+static cl::opt<cl::boolOrDefault>
+EnableGlobalMerge("aarch64-global-merge", cl::Hidden,
+                  cl::desc("Enable the global merge pass"));
+
 extern "C" void LLVMInitializeAArch64Target() {
   // Register the target.
   RegisterTargetMachine<AArch64leTargetMachine> X(TheAArch64leTarget);
@@ -104,6 +109,16 @@ static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
   return make_unique<AArch64_ELFTargetObjectFile>();
 }
 
+// Helper function to build a DataLayout string
+static std::string computeDataLayout(StringRef TT, bool LittleEndian) {
+  Triple Triple(TT);
+  if (Triple.isOSBinFormatMachO())
+    return "e-m:o-i64:64-i128:128-n32:64-S128";
+  if (LittleEndian)
+    return "e-m:e-i64:64-i128:128-n32:64-S128";
+  return "E-m:e-i64:64-i128:128-n32:64-S128";
+}
+
 /// TargetMachine ctor - Create an AArch64 architecture model.
 ///
 AArch64TargetMachine::AArch64TargetMachine(const Target &T, StringRef TT,
@@ -112,16 +127,12 @@ AArch64TargetMachine::AArch64TargetMachine(const Target &T, StringRef TT,
                                            Reloc::Model RM, CodeModel::Model CM,
                                            CodeGenOpt::Level OL,
                                            bool LittleEndian)
-    : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
-      // This nested ternary is horrible, but DL needs to be properly
-      // initialized
-      // before TLInfo is constructed.
-      DL(Triple(TT).isOSBinFormatMachO()
-             ? "e-m:o-i64:64-i128:128-n32:64-S128"
-             : (LittleEndian ? "e-m:e-i64:64-i128:128-n32:64-S128"
-                             : "E-m:e-i64:64-i128:128-n32:64-S128")),
+    // This nested ternary is horrible, but DL needs to be properly
+    // initialized before TLInfo is constructed.
+    : LLVMTargetMachine(T, computeDataLayout(TT, LittleEndian), TT, CPU, FS,
+                        Options, RM, CM, OL),
       TLOF(createTLOF(Triple(getTargetTriple()))),
-      Subtarget(TT, CPU, FS, *this, LittleEndian), isLittle(LittleEndian) {
+      isLittle(LittleEndian) {
   initAsmInfo();
 }
 
@@ -239,7 +250,9 @@ bool AArch64PassConfig::addPreISel() {
   // FIXME: On AArch64, this depends on the type.
   // Basically, the addressable offsets are up to 4095 * Ty.getSizeInBytes().
   // and the offset has to be a multiple of the related size in bytes.
-  if (TM->getOptLevel() != CodeGenOpt::None)
+  if ((TM->getOptLevel() == CodeGenOpt::Aggressive &&
+       EnableGlobalMerge == cl::BOU_UNSET) ||
+      EnableGlobalMerge == cl::BOU_TRUE)
     addPass(createGlobalMergePass(TM, 4095));
   if (TM->getOptLevel() != CodeGenOpt::None)
     addPass(createAArch64AddressTypePromotionPass());
@@ -287,10 +300,7 @@ void AArch64PassConfig::addPostRegAlloc() {
   // Change dead register definitions to refer to the zero register.
   if (TM->getOptLevel() != CodeGenOpt::None && EnableDeadRegisterElimination)
     addPass(createAArch64DeadRegisterDefinitions());
-  if (TM->getOptLevel() != CodeGenOpt::None &&
-      (TM->getSubtarget<AArch64Subtarget>().isCortexA53() ||
-       TM->getSubtarget<AArch64Subtarget>().isCortexA57()) &&
-      usingDefaultRegAlloc())
+  if (TM->getOptLevel() != CodeGenOpt::None && usingDefaultRegAlloc())
     // Improve performance for some FP/SIMD code for A57.
     addPass(createAArch64A57FPLoadBalancing());
 }

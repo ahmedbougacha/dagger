@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClassDefinitionDumper.h"
+#include "EnumDumper.h"
 #include "FunctionDumper.h"
 #include "LinePrinter.h"
 #include "llvm-pdbdump.h"
@@ -33,8 +34,29 @@ ClassDefinitionDumper::ClassDefinitionDumper(LinePrinter &P)
 
 void ClassDefinitionDumper::start(const PDBSymbolTypeUDT &Class) {
   std::string Name = Class.getName();
-  WithColor(Printer, PDB_ColorItem::Keyword).get() << "class ";
+  WithColor(Printer, PDB_ColorItem::Keyword).get() << Class.getUdtKind() << " ";
   WithColor(Printer, PDB_ColorItem::Type).get() << Class.getName();
+
+  auto Bases = Class.findAllChildren<PDBSymbolTypeBaseClass>();
+  if (Bases->getChildCount() > 0) {
+    Printer.Indent();
+    Printer.NewLine();
+    Printer << ":";
+    uint32_t BaseIndex = 0;
+    while (auto Base = Bases->getNext()) {
+      Printer << " ";
+      WithColor(Printer, PDB_ColorItem::Keyword).get() << Base->getAccess();
+      if (Base->isVirtualBaseClass())
+        WithColor(Printer, PDB_ColorItem::Keyword).get() << " virtual";
+      WithColor(Printer, PDB_ColorItem::Type).get() << " " << Base->getName();
+      if (++BaseIndex < Bases->getChildCount()) {
+        Printer.NewLine();
+        Printer << ",";
+      }
+    }
+    Printer.Unindent();
+  }
+
   Printer << " {";
   auto Children = Class.findAllChildren();
   if (Children->getChildCount() == 0) {
@@ -62,9 +84,10 @@ void ClassDefinitionDumper::start(const PDBSymbolTypeUDT &Class) {
     auto &AccessGroup = Groups.find((int)Access)->second;
 
     if (auto Func = dyn_cast<PDBSymbolFunc>(Child.get())) {
-      if (Func->isCompilerGenerated())
+      if (Func->isCompilerGenerated() && opts::ExcludeCompilerGenerated)
         continue;
-      if (Func->getLength() == 0 && !Func->isPureVirtual())
+      if (Func->getLength() == 0 && !Func->isPureVirtual() &&
+          !Func->isIntroVirtualFunction())
         continue;
       Child.release();
       AccessGroup.Functions.push_back(std::unique_ptr<PDBSymbolFunc>(Func));
@@ -151,8 +174,8 @@ void ClassDefinitionDumper::dump(const PDBSymbolTypeEnum &Symbol) {
     return;
 
   Printer.NewLine();
-  WithColor(Printer, PDB_ColorItem::Keyword).get() << "enum ";
-  WithColor(Printer, PDB_ColorItem::Type).get() << Symbol.getName();
+  EnumDumper Dumper(Printer);
+  Dumper.start(Symbol);
 }
 
 void ClassDefinitionDumper::dump(const PDBSymbolTypeTypedef &Symbol) {

@@ -20,16 +20,6 @@
 using namespace llvm;
 
 namespace llvm {
-namespace {
-// Helper for extensive error checking in debug builds.
-std::error_code Check(std::error_code Err) {
-  if (Err) {
-    report_fatal_error(Err.message());
-  }
-  return Err;
-}
-
-} // end anonymous namespace
 
 class RuntimeDyldELF : public RuntimeDyldImpl {
 
@@ -108,8 +98,9 @@ class RuntimeDyldELF : public RuntimeDyldImpl {
   SmallVector<SID, 2> RegisteredEHFrameSections;
 
 public:
-  RuntimeDyldELF(RTDyldMemoryManager *mm);
-  virtual ~RuntimeDyldELF();
+  RuntimeDyldELF(RuntimeDyld::MemoryManager &MemMgr,
+                 RuntimeDyld::SymbolResolver &Resolver);
+  ~RuntimeDyldELF() override;
 
   std::unique_ptr<RuntimeDyld::LoadedObjectInfo>
   loadObject(const object::ObjectFile &O) override;

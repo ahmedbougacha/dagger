@@ -1442,8 +1442,6 @@ public:
     TheInit(O.TheInit), IsAnonymous(O.IsAnonymous),
     ResolveFirst(O.ResolveFirst) { }
 
-  ~Record() {}
-
   static unsigned getNewUID() { return LastID++; }
 
   unsigned getID() const { return ID; }
@@ -1477,7 +1475,7 @@ public:
     return false;
   }
   bool isTemplateArg(StringRef Name) const {
-    return isTemplateArg(StringInit::get(Name.str()));
+    return isTemplateArg(StringInit::get(Name));
   }
 
   const RecordVal *getValue(const Init *Name) const {
@@ -1502,7 +1500,7 @@ public:
     TemplateArgs.push_back(Name);
   }
   void addTemplateArg(StringRef Name) {
-    addTemplateArg(StringInit::get(Name.str()));
+    addTemplateArg(StringInit::get(Name));
   }
 
   void addValue(const RecordVal &RV) {
@@ -1527,7 +1525,7 @@ public:
   }
 
   void removeValue(StringRef Name) {
-    removeValue(StringInit::get(Name.str()));
+    removeValue(StringInit::get(Name));
   }
 
   bool isSubClassOf(const Record *R) const {

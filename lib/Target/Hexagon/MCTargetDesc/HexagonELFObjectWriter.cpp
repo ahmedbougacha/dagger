@@ -11,6 +11,7 @@
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 
 #define DEBUG_TYPE "hexagon-elf-writer"
 
@@ -26,8 +27,8 @@ private:
 public:
   HexagonELFObjectWriter(uint8_t OSABI, StringRef C);
 
-  virtual unsigned GetRelocType(MCValue const &Target, MCFixup const &Fixup,
-                                bool IsPCRel) const override;
+  unsigned GetRelocType(MCValue const &Target, MCFixup const &Fixup,
+                        bool IsPCRel) const override;
 };
 }
 

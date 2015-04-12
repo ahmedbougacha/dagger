@@ -32,7 +32,7 @@ public:
     : MCII(mcii), Ctx(ctx) {
   }
 
-  ~SystemZMCCodeEmitter() {}
+  ~SystemZMCCodeEmitter() override {}
 
   // OVerride MCCodeEmitter.
   void EncodeInstruction(const MCInst &MI, raw_ostream &OS,
@@ -110,7 +110,6 @@ private:
 
 MCCodeEmitter *llvm::createSystemZMCCodeEmitter(const MCInstrInfo &MCII,
                                                 const MCRegisterInfo &MRI,
-                                                const MCSubtargetInfo &MCSTI,
                                                 MCContext &Ctx) {
   return new SystemZMCCodeEmitter(MCII, Ctx);
 }

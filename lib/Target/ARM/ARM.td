@@ -162,9 +162,12 @@ def HasV6Ops    : SubtargetFeature<"v6", "HasV6Ops", "true",
 def HasV6MOps   : SubtargetFeature<"v6m", "HasV6MOps", "true",
                                    "Support ARM v6M instructions",
                                    [HasV6Ops]>;
+def HasV6KOps   : SubtargetFeature<"v6k", "HasV6KOps", "true",
+                                   "Support ARM v6k instructions",
+                                   [HasV6Ops]>;
 def HasV6T2Ops  : SubtargetFeature<"v6t2", "HasV6T2Ops", "true",
                                    "Support ARM v6t2 instructions",
-                                   [HasV6MOps, FeatureThumb2]>;
+                                   [HasV6MOps, HasV6KOps, FeatureThumb2]>;
 def HasV7Ops    : SubtargetFeature<"v7", "HasV7Ops", "true",
                                    "Support ARM v7 instructions",
                                    [HasV6T2Ops, FeaturePerfMon]>;
@@ -172,6 +175,9 @@ def HasV8Ops    : SubtargetFeature<"v8", "HasV8Ops", "true",
                                    "Support ARM v8 instructions",
                                    [HasV7Ops, FeatureVirtualization,
                                     FeatureMP]>;
+def HasV8_1aOps : SubtargetFeature<"v8.1a", "HasV8_1aOps", "true",
+                                   "Support ARM v8.1a instructions",
+                                   [HasV8Ops, FeatureAClass, FeatureCRC]>;
 
 //===----------------------------------------------------------------------===//
 // ARM Processors supported.
@@ -249,6 +255,14 @@ def ProcA57     : SubtargetFeature<"a57", "ARMProcFamily", "CortexA57",
                                     FeatureTrustZone, FeatureT2XtPk,
                                     FeatureCrypto, FeatureCRC]>;
 
+def ProcR4      : SubtargetFeature<"r4", "ARMProcFamily", "CortexR4",
+                                   "Cortex-R4 ARM processors",
+                                   [FeatureHWDiv,
+                                    FeatureAvoidPartialCPSR,
+                                    FeatureDSPThumb2, FeatureT2XtPk,
+                                    HasV7Ops, FeatureDB, FeatureHasRAS,
+                                    FeatureRClass]>;
+
 def ProcR5      : SubtargetFeature<"r5", "ARMProcFamily", "CortexR5",
                                    "Cortex-R5 ARM processors",
                                    [FeatureSlowFPBrcc,
@@ -315,12 +329,6 @@ def : ProcNoItin<"iwmmxt",          [HasV5TEOps]>;
 def : Processor<"arm1136j-s",       ARMV6Itineraries, [HasV6Ops]>;
 def : Processor<"arm1136jf-s",      ARMV6Itineraries, [HasV6Ops, FeatureVFP2,
                                                        FeatureHasSlowFPVMLx]>;
-def : Processor<"arm1176jz-s",      ARMV6Itineraries, [HasV6Ops]>;
-def : Processor<"arm1176jzf-s",     ARMV6Itineraries, [HasV6Ops, FeatureVFP2,
-                                                       FeatureHasSlowFPVMLx]>;
-def : Processor<"mpcorenovfp",      ARMV6Itineraries, [HasV6Ops]>;
-def : Processor<"mpcore",           ARMV6Itineraries, [HasV6Ops, FeatureVFP2,
-                                                       FeatureHasSlowFPVMLx]>;
 
 // V6M Processors.
 def : Processor<"cortex-m0",        ARMV6Itineraries, [HasV6MOps, FeatureNoARM,
@@ -331,6 +339,14 @@ def : Processor<"cortex-m1",        ARMV6Itineraries, [HasV6MOps, FeatureNoARM,
                                                        FeatureDB, FeatureMClass]>;
 def : Processor<"sc000",            ARMV6Itineraries, [HasV6MOps, FeatureNoARM,
                                                        FeatureDB, FeatureMClass]>;
+
+// V6K Processors.
+def : Processor<"arm1176jz-s",      ARMV6Itineraries, [HasV6KOps]>;
+def : Processor<"arm1176jzf-s",     ARMV6Itineraries, [HasV6KOps, FeatureVFP2,
+                                                       FeatureHasSlowFPVMLx]>;
+def : Processor<"mpcorenovfp",      ARMV6Itineraries, [HasV6KOps]>;
+def : Processor<"mpcore",           ARMV6Itineraries, [HasV6KOps, FeatureVFP2,
+                                                       FeatureHasSlowFPVMLx]>;
 
 // V6T2 Processors.
 def : Processor<"arm1156t2-s",      ARMV6Itineraries, [HasV6T2Ops,
@@ -382,6 +398,16 @@ def : ProcessorModel<"krait",       CortexA9Model,
                                      FeatureNEON, FeatureDB,
                                      FeatureDSPThumb2, FeatureHasRAS,
                                      FeatureAClass]>;
+
+// FIXME: R4 has currently the same ProcessorModel as A8.
+def : ProcessorModel<"cortex-r4",   CortexA8Model,
+                                    [ProcR4]>;
+
+// FIXME: R4F has currently the same ProcessorModel as A8.
+def : ProcessorModel<"cortex-r4f",  CortexA8Model,
+                                    [ProcR4,
+                                     FeatureSlowFPBrcc, FeatureHasSlowFPVMLx,
+                                     FeatureVFP3, FeatureVFPOnlySP, FeatureD16]>;
 
 // FIXME: R5 has currently the same ProcessorModel as A8.
 def : ProcessorModel<"cortex-r5",   CortexA8Model,
@@ -464,7 +490,15 @@ def ARMInstrInfo : InstrInfo;
 // Declare the target which we are implementing
 //===----------------------------------------------------------------------===//
 
+def ARMAsmWriter : AsmWriter {
+  string AsmWriterClassName  = "InstPrinter";
+  int PassSubtarget = 1;
+  int Variant = 0;
+  bit isMCAsmWriter = 1;
+}
+
 def ARM : Target {
   // Pull in Instruction Info:
   let InstructionSet = ARMInstrInfo;
+  let AssemblyWriters = [ARMAsmWriter];
 }

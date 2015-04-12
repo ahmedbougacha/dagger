@@ -1,4 +1,4 @@
-; RUN: llc < %s -march=bpf | FileCheck %s
+; RUN: llc < %s -march=bpf -show-mc-encoding | FileCheck %s
 
 ; Function Attrs: nounwind uwtable
 define i32 @ld_b(i64 %foo, i64* nocapture %bar, i8* %ctx, i8* %ctx2) #0 {
@@ -48,3 +48,41 @@ define i32 @ld_w(i8* %ctx, i8* %ctx2, i32 %foo) #0 {
 }
 
 declare i64 @llvm.bpf.load.word(i8*, i64) #1
+
+define i32 @ld_pseudo() #0 {
+entry:
+  %call = tail call i64 @llvm.bpf.pseudo(i64 2, i64 3)
+  tail call void @bar(i64 %call, i32 4) #2
+  ret i32 0
+; CHECK-LABEL: ld_pseudo:
+; CHECK: ld_pseudo r1, 2, 3 # encoding: [0x18,0x21,0x00,0x00,0x03,0x00
+}
+
+declare void @bar(i64, i32) #1
+
+declare i64 @llvm.bpf.pseudo(i64, i64) #2
+
+define i32 @bswap(i64 %a, i64 %b, i64 %c) #0 {
+entry:
+  %0 = tail call i64 @llvm.bswap.i64(i64 %a)
+  %conv = trunc i64 %b to i32
+  %1 = tail call i32 @llvm.bswap.i32(i32 %conv)
+  %conv1 = zext i32 %1 to i64
+  %add = add i64 %conv1, %0
+  %conv2 = trunc i64 %c to i16
+  %2 = tail call i16 @llvm.bswap.i16(i16 %conv2)
+  %conv3 = zext i16 %2 to i64
+  %add4 = add i64 %add, %conv3
+  %conv5 = trunc i64 %add4 to i32
+  ret i32 %conv5
+; CHECK-LABEL: bswap:
+; CHECK: bswap64 r1     # encoding: [0xdc,0x01,0x00,0x00,0x40,0x00,0x00,0x00]
+; CHECK: bswap32 r2     # encoding: [0xdc,0x02,0x00,0x00,0x20,0x00,0x00,0x00]
+; CHECK: add     r2, r1 # encoding: [0x0f,0x12,0x00,0x00,0x00,0x00,0x00,0x00]
+; CHECK: bswap16 r3     # encoding: [0xdc,0x03,0x00,0x00,0x10,0x00,0x00,0x00]
+; CHECK: add     r2, r3 # encoding: [0x0f,0x32,0x00,0x00,0x00,0x00,0x00,0x00]
+}
+
+declare i64 @llvm.bswap.i64(i64) #1
+declare i32 @llvm.bswap.i32(i32) #1
+declare i16 @llvm.bswap.i16(i16) #1

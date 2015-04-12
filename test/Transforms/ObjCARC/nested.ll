@@ -3,7 +3,7 @@
 %struct.__objcFastEnumerationState = type { i64, i8**, i64*, [5 x i64] }
 
 @"\01L_OBJC_METH_VAR_NAME_" = internal global [43 x i8] c"countByEnumeratingWithState:objects:count:\00", section "__TEXT,__objc_methname,cstring_literals", align 1
-@"\01L_OBJC_SELECTOR_REFERENCES_" = internal global i8* getelementptr inbounds ([43 x i8]* @"\01L_OBJC_METH_VAR_NAME_", i64 0, i64 0), section "__DATA, __objc_selrefs, literal_pointers, no_dead_strip"
+@"\01L_OBJC_SELECTOR_REFERENCES_" = internal global i8* getelementptr inbounds ([43 x i8], [43 x i8]* @"\01L_OBJC_METH_VAR_NAME_", i64 0, i64 0), section "__DATA, __objc_selrefs, literal_pointers, no_dead_strip"
 @g = common global i8* null, align 8
 @"\01L_OBJC_IMAGE_INFO" = internal constant [2 x i32] [i32 0, i32 16], section "__DATA, __objc_imageinfo, regular, no_dead_strip"
 
@@ -229,7 +229,6 @@ entry:
   %items.ptr = alloca [16 x i8*], align 8
   %call = call i8* @returner()
   %0 = call i8* @objc_retainAutoreleasedReturnValue(i8* %call) nounwind
-  call void @callee()
   %tmp = bitcast %struct.__objcFastEnumerationState* %state.ptr to i8*
   call void @llvm.memset.p0i8.i64(i8* %tmp, i8 0, i64 64, i32 8, i1 false)
   %1 = call i8* @objc_retain(i8* %0) nounwind
@@ -283,13 +282,12 @@ forcoll.empty:
   ret void
 }
 
-; TODO: Delete a nested retain+release pair.
-; The optimizer currently can't do this, because isn't isn't sophisticated enough in
-; reasnoning about nesting.
-
+; We handle this now due to the fact that a release just needs a post dominating
+; use.
+;
 ; CHECK-LABEL: define void @test6(
 ; CHECK: call i8* @objc_retain
-; CHECK: @objc_retain
+; CHECK-NOT: @objc_retain
 ; CHECK: }
 define void @test6() nounwind {
 entry:

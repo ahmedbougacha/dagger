@@ -25,7 +25,7 @@ class PPCDisassembler : public MCDisassembler {
 public:
   PPCDisassembler(const MCSubtargetInfo &STI, MCContext &Ctx)
     : MCDisassembler(STI, Ctx) {}
-  virtual ~PPCDisassembler() {}
+  ~PPCDisassembler() override {}
 
   DecodeStatus getInstruction(MCInst &Instr, uint64_t &Size,
                               ArrayRef<uint8_t> Bytes, uint64_t Address,
@@ -184,6 +184,12 @@ static DecodeStatus decodeRegisterClass(MCInst &Inst, uint64_t RegNo,
 }
 
 static DecodeStatus DecodeCRRCRegisterClass(MCInst &Inst, uint64_t RegNo,
+                                            uint64_t Address,
+                                            const void *Decoder) {
+  return decodeRegisterClass(Inst, RegNo, CRRegs);
+}
+
+static DecodeStatus DecodeCRRC0RegisterClass(MCInst &Inst, uint64_t RegNo,
                                             uint64_t Address,
                                             const void *Decoder) {
   return decodeRegisterClass(Inst, RegNo, CRRegs);

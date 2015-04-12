@@ -127,7 +127,7 @@ public:
   bool UseBigObj;
 
   WinCOFFObjectWriter(MCWinCOFFObjectTargetWriter *MOTW, raw_ostream &OS);
-  
+
   void reset() override {
     memset(&Header, 0, sizeof(Header));
     Header.Machine = TargetObjectWriter->getMachine();
@@ -172,8 +172,11 @@ public:
 
   bool IsSymbolRefDifferenceFullyResolvedImpl(const MCAssembler &Asm,
                                               const MCSymbolData &DataA,
+                                              const MCSymbolData *DataB,
                                               const MCFragment &FB, bool InSet,
                                               bool IsPCRel) const override;
+
+  bool isWeak(const MCSymbolData &SD) const override;
 
   void RecordRelocation(MCAssembler &Asm, const MCAsmLayout &Layout,
                         const MCFragment *Fragment, const MCFixup &Fixup,
@@ -380,9 +383,7 @@ void WinCOFFObjectWriter::DefineSymbol(MCSymbolData const &SymbolData,
 
       coff_symbol->Other = GetOrCreateCOFFSymbol(&SymRef->getSymbol());
     } else {
-      std::string WeakName = std::string(".weak.")
-                           +  Symbol.getName().str()
-                           + ".default";
+      std::string WeakName = (".weak." + Symbol.getName() + ".default").str();
       COFFSymbol *WeakDefault = createSymbol(WeakName);
       WeakDefault->Data.SectionNumber = COFF::IMAGE_SYM_ABSOLUTE;
       WeakDefault->Data.StorageClass  = COFF::IMAGE_SYM_CLASS_EXTERNAL;
@@ -649,16 +650,23 @@ void WinCOFFObjectWriter::ExecutePostLayoutBinding(MCAssembler &Asm,
 }
 
 bool WinCOFFObjectWriter::IsSymbolRefDifferenceFullyResolvedImpl(
-    const MCAssembler &Asm, const MCSymbolData &DataA, const MCFragment &FB,
-    bool InSet, bool IsPCRel) const {
+    const MCAssembler &Asm, const MCSymbolData &DataA,
+    const MCSymbolData *DataB, const MCFragment &FB, bool InSet,
+    bool IsPCRel) const {
   // MS LINK expects to be able to replace all references to a function with a
   // thunk to implement their /INCREMENTAL feature.  Make sure we don't optimize
   // away any relocations to functions.
   if ((((DataA.getFlags() & COFF::SF_TypeMask) >> COFF::SF_TypeShift) >>
        COFF::SCT_COMPLEX_TYPE_SHIFT) == COFF::IMAGE_SYM_DTYPE_FUNCTION)
     return false;
-  return MCObjectWriter::IsSymbolRefDifferenceFullyResolvedImpl(Asm, DataA, FB,
-                                                                InSet, IsPCRel);
+  return MCObjectWriter::IsSymbolRefDifferenceFullyResolvedImpl(
+      Asm, DataA, DataB, FB, InSet, IsPCRel);
+}
+
+bool WinCOFFObjectWriter::isWeak(const MCSymbolData &SD) const {
+  // FIXME: this is for PR23025. Write a good description on
+  // why this is needed.
+  return SD.isExternal();
 }
 
 void WinCOFFObjectWriter::RecordRelocation(
@@ -1065,9 +1073,8 @@ void MCWinCOFFObjectTargetWriter::anchor() {}
 //------------------------------------------------------------------------------
 // WinCOFFObjectWriter factory function
 
-namespace llvm {
-  MCObjectWriter *createWinCOFFObjectWriter(MCWinCOFFObjectTargetWriter *MOTW,
-                                            raw_ostream &OS) {
-    return new WinCOFFObjectWriter(MOTW, OS);
-  }
+MCObjectWriter *
+llvm::createWinCOFFObjectWriter(MCWinCOFFObjectTargetWriter *MOTW,
+                                raw_ostream &OS) {
+  return new WinCOFFObjectWriter(MOTW, OS);
 }

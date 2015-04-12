@@ -158,33 +158,38 @@ if(NOT WIN32 AND NOT APPLE)
 endif()
 
 function(add_link_opts target_name)
-  # Pass -O3 to the linker. This enabled different optimizations on different
-  # linkers.
-  if(NOT (${CMAKE_SYSTEM_NAME} MATCHES "Darwin" OR WIN32))
-    set_property(TARGET ${target_name} APPEND_STRING PROPERTY
-                 LINK_FLAGS " -Wl,-O3")
-  endif()
+  # Don't use linker optimizations in debug builds since it slows down the
+  # linker in a context where the optimizations are not important.
+  if (NOT uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
 
-  if(LLVM_LINKER_IS_GOLD)
-    # With gold gc-sections is always safe.
-    set_property(TARGET ${target_name} APPEND_STRING PROPERTY
-                 LINK_FLAGS " -Wl,--gc-sections")
-    # Note that there is a bug with -Wl,--icf=safe so it is not safe
-    # to enable. See https://sourceware.org/bugzilla/show_bug.cgi?id=17704.
-  endif()
-
-  if(NOT LLVM_NO_DEAD_STRIP)
-    if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-      # ld64's implementation of -dead_strip breaks tools that use plugins.
+    # Pass -O3 to the linker. This enabled different optimizations on different
+    # linkers.
+    if(NOT (${CMAKE_SYSTEM_NAME} MATCHES "Darwin" OR WIN32))
       set_property(TARGET ${target_name} APPEND_STRING PROPERTY
-                   LINK_FLAGS " -Wl,-dead_strip")
-    elseif(NOT WIN32 AND NOT LLVM_LINKER_IS_GOLD)
-      # Object files are compiled with -ffunction-data-sections.
-      # Versions of bfd ld < 2.23.1 have a bug in --gc-sections that breaks
-      # tools that use plugins. Always pass --gc-sections once we require
-      # a newer linker.
+                   LINK_FLAGS " -Wl,-O3")
+    endif()
+
+    if(LLVM_LINKER_IS_GOLD)
+      # With gold gc-sections is always safe.
       set_property(TARGET ${target_name} APPEND_STRING PROPERTY
                    LINK_FLAGS " -Wl,--gc-sections")
+      # Note that there is a bug with -Wl,--icf=safe so it is not safe
+      # to enable. See https://sourceware.org/bugzilla/show_bug.cgi?id=17704.
+    endif()
+
+    if(NOT LLVM_NO_DEAD_STRIP)
+      if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+        # ld64's implementation of -dead_strip breaks tools that use plugins.
+        set_property(TARGET ${target_name} APPEND_STRING PROPERTY
+                     LINK_FLAGS " -Wl,-dead_strip")
+      elseif(NOT WIN32 AND NOT LLVM_LINKER_IS_GOLD)
+        # Object files are compiled with -ffunction-data-sections.
+        # Versions of bfd ld < 2.23.1 have a bug in --gc-sections that breaks
+        # tools that use plugins. Always pass --gc-sections once we require
+        # a newer linker.
+        set_property(TARGET ${target_name} APPEND_STRING PROPERTY
+                     LINK_FLAGS " -Wl,--gc-sections")
+      endif()
     endif()
   endif()
 endfunction(add_link_opts)
@@ -341,7 +346,7 @@ function(llvm_add_library name)
 
     set_target_properties(${name}
       PROPERTIES
-      SOVERSION ${LLVM_VERSION_MAJOR}
+      SOVERSION ${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}
       VERSION ${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}${LLVM_VERSION_SUFFIX})
   endif()
 
@@ -490,6 +495,12 @@ macro(add_llvm_executable name)
   endif( LLVM_COMMON_DEPENDS )
 endmacro(add_llvm_executable name)
 
+function(export_executable_symbols target)
+  if (NOT MSVC) # MSVC's linker doesn't support exporting all symbols.
+    set_target_properties(${target} PROPERTIES ENABLE_EXPORTS 1)
+  endif()
+endfunction()
+
 
 set (LLVM_TOOLCHAIN_TOOLS
   llvm-ar
@@ -541,6 +552,18 @@ endmacro(add_llvm_example name)
 macro(add_llvm_utility name)
   add_llvm_executable(${name} ${ARGN})
   set_target_properties(${name} PROPERTIES FOLDER "Utils")
+  if( LLVM_INSTALL_UTILS )
+    install (TARGETS ${name}
+      RUNTIME DESTINATION bin
+      COMPONENT ${name})
+    if (NOT CMAKE_CONFIGURATION_TYPES)
+      add_custom_target(install-${name}
+                        DEPENDS ${name}
+                        COMMAND "${CMAKE_COMMAND}"
+                                -DCMAKE_INSTALL_COMPONENT=${name}
+                                -P "${CMAKE_BINARY_DIR}/cmake_install.cmake")
+    endif()
+  endif()
 endmacro(add_llvm_utility name)
 
 
@@ -779,4 +802,31 @@ function(add_lit_testsuite target comment)
     DEPENDS ${ARG_DEPENDS}
     ARGS ${ARG_ARGS}
     )
+endfunction()
+
+function(add_lit_testsuites project directory)
+  if (NOT CMAKE_CONFIGURATION_TYPES)
+    parse_arguments(ARG "PARAMS;DEPENDS;ARGS" "" ${ARGN})
+    file(GLOB_RECURSE litCfg ${directory}/lit*.cfg)
+    set(lit_suites)
+    foreach(f ${litCfg})
+      get_filename_component(dir ${f} DIRECTORY)
+      set(lit_suites ${lit_suites} ${dir})
+    endforeach()
+    list(REMOVE_DUPLICATES lit_suites)
+    foreach(dir ${lit_suites})
+      string(REPLACE ${directory} "" name_slash ${dir})
+      if (name_slash)
+        string(REPLACE "/" "-" name_slash ${name_slash})
+        string(REPLACE "\\" "-" name_dashes ${name_slash})
+        string(TOLOWER "${project}${name_dashes}" name_var)
+        add_lit_target("check-${name_var}" "Running lit suite ${dir}"
+          ${dir}
+          PARAMS ${ARG_PARAMS}
+          DEPENDS ${ARG_DEPENDS}
+          ARGS ${ARG_ARGS}
+        )
+      endif()
+    endforeach()
+  endif()
 endfunction()

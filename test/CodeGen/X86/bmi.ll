@@ -145,6 +145,36 @@ define i64 @bextr64b(i64 %x) nounwind uwtable readnone ssp {
 ; CHECK: bextrq
 }
 
+define i64 @bextr64b_load(i64* %x) {
+  %1 = load i64, i64* %x, align 8
+  %2 = lshr i64 %1, 4
+  %3 = and i64 %2, 4095
+  ret i64 %3
+; CHECK-LABEL: bextr64b_load:
+; CHECK: bextrq {{.*}}, ({{.*}}), {{.*}}
+}
+
+define i32 @non_bextr32(i32 %x) {
+entry:
+  %shr = lshr i32 %x, 2
+  %and = and i32 %shr, 111
+  ret i32 %and
+; CHECK-LABEL: non_bextr32:
+; CHECK: shrl $2
+; CHECK: andl $111
+}
+
+define i64 @non_bextr64(i64 %x) {
+entry:
+  %shr = lshr i64 %x, 2
+  %and = and i64 %shr, 8589934590
+  ret i64 %and
+; CHECK-LABEL: non_bextr64:
+; CHECK: shrq $2
+; CHECK: movabsq $8589934590
+; CHECK: andq 
+}
+
 define i32 @bzhi32(i32 %x, i32 %y) nounwind readnone {
   %tmp = tail call i32 @llvm.x86.bmi.bzhi.32(i32 %x, i32 %y)
   ret i32 %tmp
@@ -230,7 +260,7 @@ entry:
   %and = and i64 %x, 2147483647
   ret i64 %and
 ; CHECK-LABEL: bzhi64_small_constant_mask:
-; CHECK: andq  $2147483647, %r[[ARG1]]
+; CHECK: andl  $2147483647, %e[[ARG1]]
 }
 
 define i32 @blsi32(i32 %x) nounwind readnone {

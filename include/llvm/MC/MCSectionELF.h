@@ -39,7 +39,7 @@ class MCSectionELF : public MCSection {
   /// below.
   unsigned Flags;
 
-  bool Unique;
+  unsigned UniqueID;
 
   /// EntrySize - The size of each entry in this section. This size only
   /// makes sense for sections that contain fixed-sized entries. If a
@@ -48,13 +48,18 @@ class MCSectionELF : public MCSection {
 
   const MCSymbol *Group;
 
+  /// Depending on the type of the section this is sh_link or sh_info.
+  const MCSectionELF *Associated;
+
 private:
   friend class MCContext;
   MCSectionELF(StringRef Section, unsigned type, unsigned flags, SectionKind K,
-               unsigned entrySize, const MCSymbol *group, bool Unique)
-      : MCSection(SV_ELF, K), SectionName(Section), Type(type), Flags(flags),
-        Unique(Unique), EntrySize(entrySize), Group(group) {}
-  ~MCSectionELF();
+               unsigned entrySize, const MCSymbol *group, unsigned UniqueID,
+               MCSymbol *Begin, const MCSectionELF *Associated)
+      : MCSection(SV_ELF, K, Begin), SectionName(Section), Type(type),
+        Flags(flags), UniqueID(UniqueID), EntrySize(entrySize), Group(group),
+        Associated(Associated) {}
+  ~MCSectionELF() override;
 
   void setSectionName(StringRef Name) { SectionName = Name; }
 
@@ -65,16 +70,6 @@ public:
   bool ShouldOmitSectionDirective(StringRef Name, const MCAsmInfo &MAI) const;
 
   StringRef getSectionName() const { return SectionName; }
-  std::string getLabelBeginName() const override {
-    if (Group)
-      return (SectionName.str() + '_' + Group->getName() + "_begin").str();
-    return SectionName.str() + "_begin";
-  }
-  std::string getLabelEndName() const override {
-    if (Group)
-      return (SectionName.str() + '_' + Group->getName() + "_end").str();
-    return SectionName.str() + "_end";
-  }
   unsigned getType() const { return Type; }
   unsigned getFlags() const { return Flags; }
   unsigned getEntrySize() const { return EntrySize; }
@@ -85,11 +80,10 @@ public:
   bool UseCodeAlign() const override;
   bool isVirtualSection() const override;
 
-  /// isBaseAddressKnownZero - We know that non-allocatable sections (like
-  /// debug info) have a base of zero.
-  bool isBaseAddressKnownZero() const override {
-    return (getFlags() & ELF::SHF_ALLOC) == 0;
-  }
+  bool isUnique() const { return UniqueID != ~0U; }
+  unsigned getUniqueID() const { return UniqueID; }
+
+  const MCSectionELF *getAssociatedSection() const { return Associated; }
 
   static bool classof(const MCSection *S) {
     return S->getVariant() == SV_ELF;

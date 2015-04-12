@@ -235,15 +235,19 @@ let usesCustomInserter = 1 in {
 }
 
 // Instructions to support atomic operations
+let mayLoad = 1, hasSideEffects = 0 in {
 def LDARX : XForm_1<31,  84, (outs g8rc:$rD), (ins memrr:$ptr),
-                   "ldarx $rD, $ptr", IIC_LdStLDARX,
-                   [(set i64:$rD, (PPClarx xoaddr:$ptr))]>;
+                    "ldarx $rD, $ptr", IIC_LdStLDARX, []>;
 
-let Defs = [CR0] in
+// Instruction to support lock versions of atomics
+// (EH=1 - see Power ISA 2.07 Book II 4.4.2)
+def LDARXL : XForm_1<31,  84, (outs g8rc:$rD), (ins memrr:$ptr),
+                     "ldarx $rD, $ptr, 1", IIC_LdStLDARX, []>, isDOT;
+}
+
+let Defs = [CR0], mayStore = 1, hasSideEffects = 0 in
 def STDCX : XForm_1<31, 214, (outs), (ins g8rc:$rS, memrr:$dst),
-                   "stdcx. $rS, $dst", IIC_LdStSTDCX,
-                   [(PPCstcx i64:$rS, xoaddr:$dst)]>,
-                   isDOT;
+                    "stdcx. $rS, $dst", IIC_LdStSTDCX, []>, isDOT;
 
 let Interpretation64Bit = 1, isCodeGenOnly = 1 in {
 let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1, Uses = [RM] in
@@ -324,6 +328,12 @@ let hasSideEffects = 1, isBarrier = 1, usesCustomInserter = 1 in {
                             [(PPCeh_sjlj_longjmp addr:$buf)]>,
                           Requires<[In64BitMode]>;
 }
+
+def MFSPR8 : XFXForm_1<31, 339, (outs g8rc:$RT), (ins i32imm:$SPR),
+                       "mfspr $RT, $SPR", IIC_SprMFSPR>;
+def MTSPR8 : XFXForm_1<31, 467, (outs), (ins i32imm:$SPR, g8rc:$RT),
+                       "mtspr $SPR, $RT", IIC_SprMTSPR>;
+
 
 //===----------------------------------------------------------------------===//
 // 64-bit SPR manipulation instrs.
@@ -593,6 +603,10 @@ defm CNTLZD : XForm_11r<31, 58, (outs g8rc:$rA), (ins g8rc:$rS),
 def POPCNTD : XForm_11<31, 506, (outs g8rc:$rA), (ins g8rc:$rS),
                        "popcntd $rA, $rS", IIC_IntGeneral,
                        [(set i64:$rA, (ctpop i64:$rS))]>;
+def BPERMD : XForm_6<31, 252, (outs g8rc:$rA), (ins g8rc:$rS, g8rc:$rB),
+                     "bpermd $rA, $rS, $rB", IIC_IntGeneral,
+                     [(set i64:$rA, (int_ppc_bpermd g8rc:$rS, g8rc:$rB))]>,
+                     isPPC64, Requires<[HasBPERMD]>;
 
 let isCodeGenOnly = 1, isCommutable = 1 in
 def CMPB8 : XForm_6<31, 508, (outs g8rc:$rA), (ins g8rc:$rS, g8rc:$rB),
@@ -606,14 +620,30 @@ def POPCNTW : XForm_11<31, 378, (outs gprc:$rA), (ins gprc:$rS),
                        "popcntw $rA, $rS", IIC_IntGeneral,
                        [(set i32:$rA, (ctpop i32:$rS))]>;
 
-defm DIVD  : XOForm_1r<31, 489, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
-                       "divd", "$rT, $rA, $rB", IIC_IntDivD,
-                       [(set i64:$rT, (sdiv i64:$rA, i64:$rB))]>, isPPC64,
-                       PPC970_DGroup_First, PPC970_DGroup_Cracked;
-defm DIVDU : XOForm_1r<31, 457, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
-                       "divdu", "$rT, $rA, $rB", IIC_IntDivD,
-                       [(set i64:$rT, (udiv i64:$rA, i64:$rB))]>, isPPC64,
-                       PPC970_DGroup_First, PPC970_DGroup_Cracked;
+defm DIVD  : XOForm_1rcr<31, 489, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
+                          "divd", "$rT, $rA, $rB", IIC_IntDivD,
+                          [(set i64:$rT, (sdiv i64:$rA, i64:$rB))]>, isPPC64;
+defm DIVDU : XOForm_1rcr<31, 457, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
+                          "divdu", "$rT, $rA, $rB", IIC_IntDivD,
+                          [(set i64:$rT, (udiv i64:$rA, i64:$rB))]>, isPPC64;
+def DIVDE : XOForm_1<31, 425, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
+                     "divde $rT, $rA, $rB", IIC_IntDivD,
+                     [(set i64:$rT, (int_ppc_divde g8rc:$rA, g8rc:$rB))]>,
+                     isPPC64, Requires<[HasExtDiv]>;
+let Defs = [CR0] in
+def DIVDEo : XOForm_1<31, 425, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
+                      "divde. $rT, $rA, $rB", IIC_IntDivD,
+                      []>, isDOT, PPC970_DGroup_Cracked, PPC970_DGroup_First,
+                      isPPC64, Requires<[HasExtDiv]>;
+def DIVDEU : XOForm_1<31, 393, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
+                      "divdeu $rT, $rA, $rB", IIC_IntDivD,
+                      [(set i64:$rT, (int_ppc_divdeu g8rc:$rA, g8rc:$rB))]>,
+                      isPPC64, Requires<[HasExtDiv]>;
+let Defs = [CR0] in
+def DIVDEUo : XOForm_1<31, 393, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
+                       "divdeu. $rT, $rA, $rB", IIC_IntDivD,
+                       []>, isDOT, PPC970_DGroup_Cracked, PPC970_DGroup_First,
+                        isPPC64, Requires<[HasExtDiv]>;
 let isCommutable = 1 in
 defm MULLD : XOForm_1r<31, 233, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
                        "mulld", "$rT, $rA, $rB", IIC_IntMulHD,
@@ -696,7 +726,7 @@ def ISEL8   : AForm_4<31, 15,
 
 
 // Sign extending loads.
-let canFoldAsLoad = 1, PPC970_Unit = 2 in {
+let PPC970_Unit = 2 in {
 let Interpretation64Bit = 1, isCodeGenOnly = 1 in
 def LHA8: DForm_1<42, (outs g8rc:$rD), (ins memri:$src),
                   "lha $rD, $src", IIC_LdStLHA,
@@ -752,7 +782,7 @@ def LWAUX : XForm_1<31, 373, (outs g8rc:$rD, ptr_rc_nor0:$ea_result),
 
 let Interpretation64Bit = 1, isCodeGenOnly = 1 in {
 // Zero extending loads.
-let canFoldAsLoad = 1, PPC970_Unit = 2 in {
+let PPC970_Unit = 2 in {
 def LBZ8 : DForm_1<34, (outs g8rc:$rD), (ins memri:$src),
                   "lbz $rD, $src", IIC_LdStLoad,
                   [(set i64:$rD, (zextloadi8 iaddr:$src))]>;
@@ -810,7 +840,7 @@ def LWZUX8 : XForm_1<31, 55, (outs g8rc:$rD, ptr_rc_nor0:$ea_result),
 
 
 // Full 8-byte loads.
-let canFoldAsLoad = 1, PPC970_Unit = 2 in {
+let PPC970_Unit = 2 in {
 def LD   : DSForm_1<58, 0, (outs g8rc:$rD), (ins memrix:$src),
                     "ld $rD, $src", IIC_LdStLD,
                     [(set i64:$rD, (aligned4load ixaddr:$src))]>, isPPC64;

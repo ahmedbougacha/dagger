@@ -30,7 +30,9 @@ void MCInstPrinter::printRegName(raw_ostream &OS, unsigned RegNo) const {
 }
 
 void MCInstPrinter::printMachineOperand(const MCInst *MI, unsigned OpType,
-                                        unsigned OpNo, raw_ostream &OS) {
+                                        unsigned OpNo,
+                                        const MCSubtargetInfo &STI,
+                                        raw_ostream &OS) {
   llvm_unreachable("Target should generate this");
 }
 

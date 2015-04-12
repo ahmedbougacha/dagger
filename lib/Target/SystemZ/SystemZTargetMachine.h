@@ -24,7 +24,6 @@ class TargetFrameLowering;
 
 class SystemZTargetMachine : public LLVMTargetMachine {
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
-  const DataLayout DL;
   SystemZSubtarget        Subtarget;
 
 public:
@@ -34,13 +33,13 @@ public:
                        CodeGenOpt::Level OL);
   ~SystemZTargetMachine() override;
 
-  // Override TargetMachine.
-  const DataLayout *getDataLayout() const override { return &DL; }
-  const SystemZSubtarget *getSubtargetImpl() const override {
+  const SystemZSubtarget *getSubtargetImpl() const { return &Subtarget; }
+  const SystemZSubtarget *getSubtargetImpl(const Function &) const override {
     return &Subtarget;
   }
   // Override LLVMTargetMachine
   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
+  TargetIRAnalysis getTargetIRAnalysis() override;
   TargetLoweringObjectFile *getObjFileLowering() const override {
     return TLOF.get();
   }

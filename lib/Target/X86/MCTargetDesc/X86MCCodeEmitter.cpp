@@ -39,7 +39,7 @@ public:
     : MCII(mcii), Ctx(ctx) {
   }
 
-  ~X86MCCodeEmitter() {}
+  ~X86MCCodeEmitter() override {}
 
   bool is64BitMode(const MCSubtargetInfo &STI) const {
     return (STI.getFeatureBits() & X86::Mode64Bit) != 0;
@@ -168,10 +168,8 @@ public:
 
 } // end anonymous namespace
 
-
 MCCodeEmitter *llvm::createX86MCCodeEmitter(const MCInstrInfo &MCII,
                                             const MCRegisterInfo &MRI,
-                                            const MCSubtargetInfo &STI,
                                             MCContext &Ctx) {
   return new X86MCCodeEmitter(MCII, Ctx);
 }

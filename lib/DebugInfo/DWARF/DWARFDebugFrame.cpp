@@ -9,6 +9,7 @@
 
 #include "llvm/DebugInfo/DWARF/DWARFDebugFrame.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/DataTypes.h"
@@ -196,8 +197,7 @@ public:
         DataAlignmentFactor(DataAlignmentFactor),
         ReturnAddressRegister(ReturnAddressRegister) {}
 
-  ~CIE() {
-  }
+  ~CIE() override {}
 
   uint64_t getCodeAlignmentFactor() const { return CodeAlignmentFactor; }
   int64_t getDataAlignmentFactor() const { return DataAlignmentFactor; }
@@ -244,8 +244,7 @@ public:
         InitialLocation(InitialLocation), AddressRange(AddressRange),
         LinkedCIE(Cie) {}
 
-  ~FDE() {
-  }
+  ~FDE() override {}
 
   CIE *getLinkedCIE() const { return LinkedCIE; }
 

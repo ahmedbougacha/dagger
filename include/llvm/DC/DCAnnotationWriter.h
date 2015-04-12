@@ -24,15 +24,18 @@ namespace llvm {
 class MCInstPrinter;
 class MCModule;
 class MCRegisterInfo;
+class MCSubtargetInfo;
 
 class DCAnnotationWriter : public AssemblyAnnotationWriter {
   const DCTranslatedInstTracker &DTIT;
   const MCRegisterInfo &MRI;
   MCInstPrinter &IP;
+  const MCSubtargetInfo &STI;
 
 public:
   DCAnnotationWriter(const DCTranslatedInstTracker &DTIT,
-                     const MCRegisterInfo &MRI, MCInstPrinter &IP);
+                     const MCRegisterInfo &MRI, MCInstPrinter &IP,
+                     const MCSubtargetInfo &STI);
 
   // Only for instructions, we don't care about global values
   void printInfoComment(const Value &, formatted_raw_ostream &) override;

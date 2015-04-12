@@ -183,7 +183,9 @@ void LLVMSetTargetMachineAsmVerbosity(LLVMTargetMachineRef T,
 }
 
 static LLVMBool LLVMTargetMachineEmit(LLVMTargetMachineRef T, LLVMModuleRef M,
-  formatted_raw_ostream &OS, LLVMCodeGenFileType codegen, char **ErrorMessage) {
+                                      raw_ostream &OS,
+                                      LLVMCodeGenFileType codegen,
+                                      char **ErrorMessage) {
   TargetMachine* TM = unwrap(T);
   Module* Mod = unwrap(M);
 
@@ -198,8 +200,7 @@ static LLVMBool LLVMTargetMachineEmit(LLVMTargetMachineRef T, LLVMModuleRef M,
     *ErrorMessage = strdup(error.c_str());
     return true;
   }
-  Mod->setDataLayout(td);
-  pass.add(new DataLayoutPass());
+  Mod->setDataLayout(*td);
 
   TargetMachine::CodeGenFileType ft;
   switch (codegen) {
@@ -230,8 +231,7 @@ LLVMBool LLVMTargetMachineEmitToFile(LLVMTargetMachineRef T, LLVMModuleRef M,
     *ErrorMessage = strdup(EC.message().c_str());
     return true;
   }
-  formatted_raw_ostream destf(dest);
-  bool Result = LLVMTargetMachineEmit(T, M, destf, codegen, ErrorMessage);
+  bool Result = LLVMTargetMachineEmit(T, M, dest, codegen, ErrorMessage);
   dest.flush();
   return Result;
 }
@@ -239,15 +239,14 @@ LLVMBool LLVMTargetMachineEmitToFile(LLVMTargetMachineRef T, LLVMModuleRef M,
 LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef T,
   LLVMModuleRef M, LLVMCodeGenFileType codegen, char** ErrorMessage,
   LLVMMemoryBufferRef *OutMemBuf) {
-  std::string CodeString;
-  raw_string_ostream OStream(CodeString);
-  formatted_raw_ostream Out(OStream);
-  bool Result = LLVMTargetMachineEmit(T, M, Out, codegen, ErrorMessage);
+  SmallString<0> CodeString;
+  raw_svector_ostream OStream(CodeString);
+  bool Result = LLVMTargetMachineEmit(T, M, OStream, codegen, ErrorMessage);
   OStream.flush();
 
-  std::string &Data = OStream.str();
-  *OutMemBuf = LLVMCreateMemoryBufferWithMemoryRangeCopy(Data.c_str(),
-                                                     Data.length(), "");
+  StringRef Data = OStream.str();
+  *OutMemBuf =
+      LLVMCreateMemoryBufferWithMemoryRangeCopy(Data.data(), Data.size(), "");
   return Result;
 }
 

@@ -10,6 +10,7 @@
 #include "llvm/MC/MCAnalysis/MCCachingDisassembler.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
 #define DEBUG_TYPE "mccachingdisasm"

@@ -1442,13 +1442,27 @@ SDValue SelectionDAGLegalize::ExpandExtractFromVectorThroughStack(SDValue Op) {
   Idx = DAG.getZExtOrTrunc(Idx, dl, TLI.getPointerTy());
   StackPtr = DAG.getNode(ISD::ADD, dl, Idx.getValueType(), Idx, StackPtr);
 
+  SDValue NewLoad;
+
   if (Op.getValueType().isVector())
-    return DAG.getLoad(Op.getValueType(), dl, Ch, StackPtr,MachinePointerInfo(),
-                       false, false, false, 0);
-  return DAG.getExtLoad(ISD::EXTLOAD, dl, Op.getValueType(), Ch, StackPtr,
-                        MachinePointerInfo(),
-                        Vec.getValueType().getVectorElementType(),
-                        false, false, false, 0);
+    NewLoad = DAG.getLoad(Op.getValueType(), dl, Ch, StackPtr,
+                          MachinePointerInfo(), false, false, false, 0);
+  else
+    NewLoad = DAG.getExtLoad(
+        ISD::EXTLOAD, dl, Op.getValueType(), Ch, StackPtr, MachinePointerInfo(),
+        Vec.getValueType().getVectorElementType(), false, false, false, 0);
+
+  // Replace the chain going out of the store, by the one out of the load.
+  DAG.ReplaceAllUsesOfValueWith(Ch, SDValue(NewLoad.getNode(), 1));
+
+  // We introduced a cycle though, so update the loads operands, making sure
+  // to use the original store's chain as an incoming chain.
+  SmallVector<SDValue, 6> NewLoadOperands(NewLoad->op_begin(),
+                                          NewLoad->op_end());
+  NewLoadOperands[0] = Ch;
+  NewLoad =
+      SDValue(DAG.UpdateNodeOperands(NewLoad.getNode(), NewLoadOperands), 0);
+  return NewLoad;
 }
 
 SDValue SelectionDAGLegalize::ExpandInsertToVectorThroughStack(SDValue Op) {
@@ -2817,132 +2831,8 @@ SDValue SelectionDAGLegalize::ExpandBitCount(unsigned Opc, SDValue Op,
 std::pair <SDValue, SDValue> SelectionDAGLegalize::ExpandAtomic(SDNode *Node) {
   unsigned Opc = Node->getOpcode();
   MVT VT = cast<AtomicSDNode>(Node)->getMemoryVT().getSimpleVT();
-  RTLIB::Libcall LC;
-
-  switch (Opc) {
-  default:
-    llvm_unreachable("Unhandled atomic intrinsic Expand!");
-  case ISD::ATOMIC_SWAP:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_LOCK_TEST_AND_SET_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_LOCK_TEST_AND_SET_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_LOCK_TEST_AND_SET_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_LOCK_TEST_AND_SET_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_LOCK_TEST_AND_SET_16;break;
-    }
-    break;
-  case ISD::ATOMIC_CMP_SWAP:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_VAL_COMPARE_AND_SWAP_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_VAL_COMPARE_AND_SWAP_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_VAL_COMPARE_AND_SWAP_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_VAL_COMPARE_AND_SWAP_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_VAL_COMPARE_AND_SWAP_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_ADD:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_ADD_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_ADD_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_ADD_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_ADD_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_ADD_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_SUB:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_SUB_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_SUB_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_SUB_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_SUB_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_SUB_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_AND:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_AND_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_AND_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_AND_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_AND_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_AND_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_OR:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_OR_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_OR_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_OR_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_OR_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_OR_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_XOR:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_XOR_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_XOR_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_XOR_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_XOR_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_XOR_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_NAND:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_NAND_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_NAND_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_NAND_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_NAND_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_NAND_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_MAX:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_MAX_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_MAX_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_MAX_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_MAX_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_MAX_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_UMAX:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_UMAX_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_UMAX_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_UMAX_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_UMAX_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_UMAX_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_MIN:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_MIN_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_MIN_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_MIN_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_MIN_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_MIN_16;break;
-    }
-    break;
-  case ISD::ATOMIC_LOAD_UMIN:
-    switch (VT.SimpleTy) {
-    default: llvm_unreachable("Unexpected value type for atomic!");
-    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_UMIN_1; break;
-    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_UMIN_2; break;
-    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_UMIN_4; break;
-    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_UMIN_8; break;
-    case MVT::i128:LC = RTLIB::SYNC_FETCH_AND_UMIN_16;break;
-    }
-    break;
-  }
+  RTLIB::Libcall LC = RTLIB::getATOMIC(Opc, VT);
+  assert(LC != RTLIB::UNKNOWN_LIBCALL && "Unexpected atomic op or value type!");
 
   return ExpandChainLibCall(LC, Node, false);
 }
@@ -4143,6 +4033,8 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
       Node->getOpcode() == ISD::SETCC) {
     OVT = Node->getOperand(0).getSimpleValueType();
   }
+  if (Node->getOpcode() == ISD::BR_CC)
+    OVT = Node->getOperand(2).getSimpleValueType();
   MVT NVT = TLI.getTypeToPromoteTo(Node->getOpcode(), OVT);
   SDLoc dl(Node);
   SDValue Tmp1, Tmp2, Tmp3;
@@ -4298,11 +4190,28 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
                                   Tmp1, Tmp2, Node->getOperand(2)));
     break;
   }
+  case ISD::BR_CC: {
+    unsigned ExtOp = ISD::FP_EXTEND;
+    if (NVT.isInteger()) {
+      ISD::CondCode CCCode =
+        cast<CondCodeSDNode>(Node->getOperand(1))->get();
+      ExtOp = isSignedIntSetCC(CCCode) ? ISD::SIGN_EXTEND : ISD::ZERO_EXTEND;
+    }
+    Tmp1 = DAG.getNode(ExtOp, dl, NVT, Node->getOperand(2));
+    Tmp2 = DAG.getNode(ExtOp, dl, NVT, Node->getOperand(3));
+    Results.push_back(DAG.getNode(ISD::BR_CC, dl, Node->getValueType(0),
+                                  Node->getOperand(0), Node->getOperand(1),
+                                  Tmp1, Tmp2, Node->getOperand(4)));
+    break;
+  }
   case ISD::FADD:
   case ISD::FSUB:
   case ISD::FMUL:
   case ISD::FDIV:
   case ISD::FREM:
+  case ISD::FMINNUM:
+  case ISD::FMAXNUM:
+  case ISD::FCOPYSIGN:
   case ISD::FPOW: {
     Tmp1 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(0));
     Tmp2 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(1));
@@ -4311,10 +4220,40 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
                                   Tmp3, DAG.getIntPtrConstant(0)));
     break;
   }
-  case ISD::FLOG2:
-  case ISD::FEXP2:
+  case ISD::FMA: {
+    Tmp1 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(0));
+    Tmp2 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(1));
+    Tmp3 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(2));
+    Results.push_back(
+        DAG.getNode(ISD::FP_ROUND, dl, OVT,
+                    DAG.getNode(Node->getOpcode(), dl, NVT, Tmp1, Tmp2, Tmp3),
+                    DAG.getIntPtrConstant(0)));
+    break;
+  }
+  case ISD::FPOWI: {
+    Tmp1 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(0));
+    Tmp2 = Node->getOperand(1);
+    Tmp3 = DAG.getNode(Node->getOpcode(), dl, NVT, Tmp1, Tmp2);
+    Results.push_back(DAG.getNode(ISD::FP_ROUND, dl, OVT,
+                                  Tmp3, DAG.getIntPtrConstant(0)));
+    break;
+  }
+  case ISD::FFLOOR:
+  case ISD::FCEIL:
+  case ISD::FRINT:
+  case ISD::FNEARBYINT:
+  case ISD::FROUND:
+  case ISD::FTRUNC:
+  case ISD::FNEG:
+  case ISD::FSQRT:
+  case ISD::FSIN:
+  case ISD::FCOS:
   case ISD::FLOG:
-  case ISD::FEXP: {
+  case ISD::FLOG2:
+  case ISD::FLOG10:
+  case ISD::FABS:
+  case ISD::FEXP:
+  case ISD::FEXP2: {
     Tmp1 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(0));
     Tmp2 = DAG.getNode(Node->getOpcode(), dl, NVT, Tmp1);
     Results.push_back(DAG.getNode(ISD::FP_ROUND, dl, OVT,

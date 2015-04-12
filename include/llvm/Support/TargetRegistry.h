@@ -22,16 +22,15 @@
 #include "llvm-c/Disassembler.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Support/CodeGen.h"
+#include "llvm/Support/FormattedStream.h"
 #include <cassert>
 #include <memory>
 #include <string>
 
 namespace llvm {
   class AsmPrinter;
-  class Module;
   class DCInstrSema;
   class DCRegisterSema;
-  class MCAssembler;
   class MCAsmBackend;
   class MCAsmInfo;
   class MCAsmParser;
@@ -56,10 +55,20 @@ namespace llvm {
   class formatted_raw_ostream;
 
   MCStreamer *createNullStreamer(MCContext &Ctx);
-  MCStreamer *createAsmStreamer(MCContext &Ctx, formatted_raw_ostream &OS,
+  MCStreamer *createAsmStreamer(MCContext &Ctx,
+                                std::unique_ptr<formatted_raw_ostream> OS,
                                 bool isVerboseAsm, bool useDwarfDirectory,
                                 MCInstPrinter *InstPrint, MCCodeEmitter *CE,
                                 MCAsmBackend *TAB, bool ShowInst);
+
+  /// Takes ownership of \p TAB and \p CE.
+  MCStreamer *createELFStreamer(MCContext &Ctx, MCAsmBackend &TAB,
+                                raw_ostream &OS, MCCodeEmitter *CE,
+                                bool RelaxAll);
+  MCStreamer *createMachOStreamer(MCContext &Ctx, MCAsmBackend &TAB,
+                                  raw_ostream &OS, MCCodeEmitter *CE,
+                                  bool RelaxAll, bool DWARFMustBeAtTheEnd,
+                                  bool LabelSections = false);
 
   MCRelocationInfo *createMCRelocationInfo(StringRef TT, MCContext &Ctx);
 
@@ -119,29 +128,31 @@ namespace llvm {
     typedef MCDisassembler *(*MCDisassemblerCtorTy)(const Target &T,
                                                     const MCSubtargetInfo &STI,
                                                     MCContext &Ctx);
-    typedef MCInstPrinter *(*MCInstPrinterCtorTy)(const Target &T,
+    typedef MCInstPrinter *(*MCInstPrinterCtorTy)(const Triple &T,
                                                   unsigned SyntaxVariant,
                                                   const MCAsmInfo &MAI,
                                                   const MCInstrInfo &MII,
-                                                  const MCRegisterInfo &MRI,
-                                                  const MCSubtargetInfo &STI);
+                                                  const MCRegisterInfo &MRI);
     typedef MCCodeEmitter *(*MCCodeEmitterCtorTy)(const MCInstrInfo &II,
                                                   const MCRegisterInfo &MRI,
-                                                  const MCSubtargetInfo &STI,
                                                   MCContext &Ctx);
-    typedef MCStreamer *(*MCObjectStreamerCtorTy)(
-        const Target &T, StringRef TT, MCContext &Ctx, MCAsmBackend &TAB,
-        raw_ostream &_OS, MCCodeEmitter *_Emitter, const MCSubtargetInfo &STI,
-        bool RelaxAll);
-    typedef MCStreamer *(*AsmStreamerCtorTy)(MCContext &Ctx,
-                                             formatted_raw_ostream &OS,
-                                             bool isVerboseAsm,
-                                             bool useDwarfDirectory,
-                                             MCInstPrinter *InstPrint,
-                                             MCCodeEmitter *CE,
-                                             MCAsmBackend *TAB,
-                                             bool ShowInst);
+    typedef MCStreamer *(*ELFStreamerCtorTy)(const Triple &T, MCContext &Ctx,
+                                             MCAsmBackend &TAB, raw_ostream &OS,
+                                             MCCodeEmitter *Emitter,
+                                             bool RelaxAll);
+    typedef MCStreamer *(*MachOStreamerCtorTy)(
+        MCContext &Ctx, MCAsmBackend &TAB, raw_ostream &OS,
+        MCCodeEmitter *Emitter, bool RelaxAll, bool DWARFMustBeAtTheEnd);
+    typedef MCStreamer *(*COFFStreamerCtorTy)(MCContext &Ctx, MCAsmBackend &TAB,
+                                              raw_ostream &OS,
+                                              MCCodeEmitter *Emitter,
+                                              bool RelaxAll);
     typedef MCTargetStreamer *(*NullTargetStreamerCtorTy)(MCStreamer &S);
+    typedef MCTargetStreamer *(*AsmTargetStreamerCtorTy)(
+        MCStreamer &S, formatted_raw_ostream &OS, MCInstPrinter *InstPrint,
+        bool IsVerboseAsm);
+    typedef MCTargetStreamer *(*ObjectTargetStreamerCtorTy)(
+        MCStreamer &S, const MCSubtargetInfo &STI);
     typedef MCRelocationInfo *(*MCRelocationInfoCtorTy)(StringRef TT,
                                                         MCContext &Ctx);
     typedef MCSymbolizer *(*MCSymbolizerCtorTy)(
@@ -225,17 +236,22 @@ namespace llvm {
     /// CodeEmitter, if registered.
     MCCodeEmitterCtorTy MCCodeEmitterCtorFn;
 
-    /// MCObjectStreamerCtorFn - Construction function for this target's
-    /// MCObjectStreamer, if registered.
-    MCObjectStreamerCtorTy MCObjectStreamerCtorFn;
-
-    /// AsmStreamerCtorFn - Construction function for this target's
-    /// AsmStreamer, if registered (default = llvm::createAsmStreamer).
-    AsmStreamerCtorTy AsmStreamerCtorFn;
+    // Construction functions for the various object formats, if registered.
+    COFFStreamerCtorTy COFFStreamerCtorFn;
+    MachOStreamerCtorTy MachOStreamerCtorFn;
+    ELFStreamerCtorTy ELFStreamerCtorFn;
 
     /// Construction function for this target's null TargetStreamer, if
     /// registered (default = nullptr).
     NullTargetStreamerCtorTy NullTargetStreamerCtorFn;
+
+    /// Construction function for this target's asm TargetStreamer, if
+    /// registered (default = nullptr).
+    AsmTargetStreamerCtorTy AsmTargetStreamerCtorFn;
+
+    /// Construction function for this target's obj TargetStreamer, if
+    /// registered (default = nullptr).
+    ObjectTargetStreamerCtorTy ObjectTargetStreamerCtorFn;
 
     /// MCRelocationInfoCtorFn - Construction function for this target's
     /// MCRelocationInfo, if registered (default = llvm::createMCRelocationInfo)
@@ -255,8 +271,10 @@ namespace llvm {
 
   public:
     Target()
-        : AsmStreamerCtorFn(nullptr), MCRelocationInfoCtorFn(nullptr),
-          MCSymbolizerCtorFn(nullptr) {}
+        : COFFStreamerCtorFn(nullptr), MachOStreamerCtorFn(nullptr),
+          ELFStreamerCtorFn(nullptr), NullTargetStreamerCtorFn(nullptr),
+          AsmTargetStreamerCtorFn(nullptr), ObjectTargetStreamerCtorFn(nullptr),
+          MCRelocationInfoCtorFn(nullptr), MCSymbolizerCtorFn(nullptr) {}
 
     /// @name Target Information
     /// @{
@@ -409,60 +427,87 @@ namespace llvm {
       return MCDisassemblerCtorFn(*this, STI, Ctx);
     }
 
-    MCInstPrinter *createMCInstPrinter(unsigned SyntaxVariant,
+    MCInstPrinter *createMCInstPrinter(const Triple &T, unsigned SyntaxVariant,
                                        const MCAsmInfo &MAI,
                                        const MCInstrInfo &MII,
-                                       const MCRegisterInfo &MRI,
-                                       const MCSubtargetInfo &STI) const {
+                                       const MCRegisterInfo &MRI) const {
       if (!MCInstPrinterCtorFn)
         return nullptr;
-      return MCInstPrinterCtorFn(*this, SyntaxVariant, MAI, MII, MRI, STI);
+      return MCInstPrinterCtorFn(T, SyntaxVariant, MAI, MII, MRI);
     }
 
 
     /// createMCCodeEmitter - Create a target specific code emitter.
     MCCodeEmitter *createMCCodeEmitter(const MCInstrInfo &II,
                                        const MCRegisterInfo &MRI,
-                                       const MCSubtargetInfo &STI,
                                        MCContext &Ctx) const {
       if (!MCCodeEmitterCtorFn)
         return nullptr;
-      return MCCodeEmitterCtorFn(II, MRI, STI, Ctx);
+      return MCCodeEmitterCtorFn(II, MRI, Ctx);
     }
 
-    /// createMCObjectStreamer - Create a target specific MCStreamer.
+    /// Create a target specific MCStreamer.
     ///
-    /// \param TT The target triple.
+    /// \param T The target triple.
     /// \param Ctx The target context.
     /// \param TAB The target assembler backend object. Takes ownership.
-    /// \param _OS The stream object.
-    /// \param _Emitter The target independent assembler object.Takes ownership.
+    /// \param OS The stream object.
+    /// \param Emitter The target independent assembler object.Takes ownership.
     /// \param RelaxAll Relax all fixups?
-    MCStreamer *createMCObjectStreamer(StringRef TT, MCContext &Ctx,
-                                       MCAsmBackend &TAB, raw_ostream &_OS,
-                                       MCCodeEmitter *_Emitter,
+    MCStreamer *createMCObjectStreamer(const Triple &T, MCContext &Ctx,
+                                       MCAsmBackend &TAB, raw_ostream &OS,
+                                       MCCodeEmitter *Emitter,
                                        const MCSubtargetInfo &STI,
-                                       bool RelaxAll) const {
-      if (!MCObjectStreamerCtorFn)
-        return nullptr;
-      return MCObjectStreamerCtorFn(*this, TT, Ctx, TAB, _OS, _Emitter, STI,
-                                    RelaxAll);
+                                       bool RelaxAll,
+                                       bool DWARFMustBeAtTheEnd) const {
+      MCStreamer *S;
+      switch (T.getObjectFormat()) {
+      default:
+        llvm_unreachable("Unknown object format");
+      case Triple::COFF:
+        assert(T.isOSWindows() && "only Windows COFF is supported");
+        S = COFFStreamerCtorFn(Ctx, TAB, OS, Emitter, RelaxAll);
+        break;
+      case Triple::MachO:
+        if (MachOStreamerCtorFn)
+          S = MachOStreamerCtorFn(Ctx, TAB, OS, Emitter, RelaxAll,
+                                  DWARFMustBeAtTheEnd);
+        else
+          S = createMachOStreamer(Ctx, TAB, OS, Emitter, RelaxAll,
+                                  DWARFMustBeAtTheEnd);
+        break;
+      case Triple::ELF:
+        if (ELFStreamerCtorFn)
+          S = ELFStreamerCtorFn(T, Ctx, TAB, OS, Emitter, RelaxAll);
+        else
+          S = createELFStreamer(Ctx, TAB, OS, Emitter, RelaxAll);
+        break;
+      }
+      if (ObjectTargetStreamerCtorFn)
+        ObjectTargetStreamerCtorFn(*S, STI);
+      return S;
     }
 
-    /// createAsmStreamer - Create a target specific MCStreamer.
     MCStreamer *createAsmStreamer(MCContext &Ctx,
-                                  formatted_raw_ostream &OS,
-                                  bool isVerboseAsm,
-                                  bool useDwarfDirectory,
-                                  MCInstPrinter *InstPrint,
-                                  MCCodeEmitter *CE,
-                                  MCAsmBackend *TAB,
-                                  bool ShowInst) const {
-      if (AsmStreamerCtorFn)
-        return AsmStreamerCtorFn(Ctx, OS, isVerboseAsm, useDwarfDirectory,
-                                 InstPrint, CE, TAB, ShowInst);
-      return llvm::createAsmStreamer(Ctx, OS, isVerboseAsm, useDwarfDirectory,
-                                     InstPrint, CE, TAB, ShowInst);
+                                  std::unique_ptr<formatted_raw_ostream> OS,
+                                  bool IsVerboseAsm, bool UseDwarfDirectory,
+                                  MCInstPrinter *InstPrint, MCCodeEmitter *CE,
+                                  MCAsmBackend *TAB, bool ShowInst) const {
+      formatted_raw_ostream &OSRef = *OS;
+      MCStreamer *S = llvm::createAsmStreamer(Ctx, std::move(OS), IsVerboseAsm,
+                                              UseDwarfDirectory, InstPrint, CE,
+                                              TAB, ShowInst);
+      createAsmTargetStreamer(*S, OSRef, InstPrint, IsVerboseAsm);
+      return S;
+    }
+
+    MCTargetStreamer *createAsmTargetStreamer(MCStreamer &S,
+                                              formatted_raw_ostream &OS,
+                                              MCInstPrinter *InstPrint,
+                                              bool IsVerboseAsm) const {
+      if (AsmTargetStreamerCtorFn)
+        return AsmTargetStreamerCtorFn(S, OS, InstPrint, IsVerboseAsm);
+      return nullptr;
     }
 
     MCStreamer *createNullStreamer(MCContext &Ctx) const {
@@ -515,8 +560,6 @@ namespace llvm {
     createDCRegisterSema(StringRef TT,
                          const MCRegisterInfo &MRI,
                          const MCInstrInfo &MII) const {
-      if (!DCRegisterSemaCtorFn)
-        return 0;
       return DCRegisterSemaCtorFn(TT, MRI, MII);
     }
 
@@ -528,8 +571,6 @@ namespace llvm {
                       DCRegisterSema &DRS,
                       const MCRegisterInfo &MRI,
                       const MCInstrInfo &MII) const {
-      if (!DCInstrSemaCtorFn)
-        return 0;
       return DCInstrSemaCtorFn(TT, DRS, MRI, MII);
     }
 
@@ -801,36 +842,33 @@ namespace llvm {
       T.MCCodeEmitterCtorFn = Fn;
     }
 
-    /// RegisterMCObjectStreamer - Register a object code MCStreamer
-    /// implementation for the given target.
-    ///
-    /// Clients are responsible for ensuring that registration doesn't occur
-    /// while another thread is attempting to access the registry. Typically
-    /// this is done by initializing all targets at program startup.
-    ///
-    /// @param T - The target being registered.
-    /// @param Fn - A function to construct an MCStreamer for the target.
-    static void RegisterMCObjectStreamer(Target &T,
-                                         Target::MCObjectStreamerCtorTy Fn) {
-      T.MCObjectStreamerCtorFn = Fn;
+    static void RegisterCOFFStreamer(Target &T, Target::COFFStreamerCtorTy Fn) {
+      T.COFFStreamerCtorFn = Fn;
     }
 
-    /// RegisterAsmStreamer - Register an assembly MCStreamer implementation
-    /// for the given target.
-    ///
-    /// Clients are responsible for ensuring that registration doesn't occur
-    /// while another thread is attempting to access the registry. Typically
-    /// this is done by initializing all targets at program startup.
-    ///
-    /// @param T - The target being registered.
-    /// @param Fn - A function to construct an MCStreamer for the target.
-    static void RegisterAsmStreamer(Target &T, Target::AsmStreamerCtorTy Fn) {
-      T.AsmStreamerCtorFn = Fn;
+    static void RegisterMachOStreamer(Target &T,
+                                      Target::MachOStreamerCtorTy Fn) {
+      T.MachOStreamerCtorFn = Fn;
+    }
+
+    static void RegisterELFStreamer(Target &T, Target::ELFStreamerCtorTy Fn) {
+      T.ELFStreamerCtorFn = Fn;
     }
 
     static void
     RegisterNullTargetStreamer(Target &T, Target::NullTargetStreamerCtorTy Fn) {
       T.NullTargetStreamerCtorFn = Fn;
+    }
+
+    static void RegisterAsmTargetStreamer(Target &T,
+                                          Target::AsmTargetStreamerCtorTy Fn) {
+      T.AsmTargetStreamerCtorFn = Fn;
+    }
+
+    static void
+    RegisterObjectTargetStreamer(Target &T,
+                                 Target::ObjectTargetStreamerCtorTy Fn) {
+      T.ObjectTargetStreamerCtorFn = Fn;
     }
 
     /// RegisterMCRelocationInfo - Register an MCRelocationInfo
@@ -1224,10 +1262,9 @@ namespace llvm {
     }
 
   private:
-    static MCCodeEmitter *Allocator(const MCInstrInfo &/*II*/,
-                                    const MCRegisterInfo &/*MRI*/,
-                                    const MCSubtargetInfo &/*STI*/,
-                                    MCContext &/*Ctx*/) {
+    static MCCodeEmitter *Allocator(const MCInstrInfo & /*II*/,
+                                    const MCRegisterInfo & /*MRI*/,
+                                    MCContext & /*Ctx*/) {
       return new MCCodeEmitterImpl();
     }
   };

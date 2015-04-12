@@ -38,11 +38,9 @@ class AArch64MCCodeEmitter : public MCCodeEmitter {
   AArch64MCCodeEmitter(const AArch64MCCodeEmitter &); // DO NOT IMPLEMENT
   void operator=(const AArch64MCCodeEmitter &);     // DO NOT IMPLEMENT
 public:
-  AArch64MCCodeEmitter(const MCInstrInfo &mcii, const MCSubtargetInfo &sti,
-                     MCContext &ctx)
-      : Ctx(ctx) {}
+  AArch64MCCodeEmitter(const MCInstrInfo &mcii, MCContext &ctx) : Ctx(ctx) {}
 
-  ~AArch64MCCodeEmitter() {}
+  ~AArch64MCCodeEmitter() override {}
 
   // getBinaryCodeForInstr - TableGen'erated function for getting the
   // binary encoding for an instruction.
@@ -205,9 +203,8 @@ public:
 
 MCCodeEmitter *llvm::createAArch64MCCodeEmitter(const MCInstrInfo &MCII,
                                                 const MCRegisterInfo &MRI,
-                                                const MCSubtargetInfo &STI,
                                                 MCContext &Ctx) {
-  return new AArch64MCCodeEmitter(MCII, STI, Ctx);
+  return new AArch64MCCodeEmitter(MCII, Ctx);
 }
 
 /// getMachineOpValue - Return binary encoding of operand. If the machine

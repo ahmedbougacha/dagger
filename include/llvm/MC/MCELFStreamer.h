@@ -34,12 +34,7 @@ public:
       : MCObjectStreamer(Context, TAB, OS, Emitter),
         SeenIdent(false) {}
 
-  MCELFStreamer(MCContext &Context, MCAsmBackend &TAB, raw_ostream &OS,
-                MCCodeEmitter *Emitter, MCAssembler *Assembler)
-      : MCObjectStreamer(Context, TAB, OS, Emitter, Assembler),
-        SeenIdent(false) {}
-
-  virtual ~MCELFStreamer();
+  ~MCELFStreamer() override;
 
   /// state management
   void reset() override {

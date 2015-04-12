@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<MCInstPrinter> MIP(
-    TheTarget->createMCInstPrinter(0, *MAI, *MII, *MRI, *STI));
+    TheTarget->createMCInstPrinter(Triple(TripleName), 0, *MAI, *MII, *MRI));
   if (!MIP) {
     errs() << "error: no instprinter for target " << TripleName << "\n";
     return 1;
@@ -184,9 +184,9 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  std::unique_ptr<DCTranslator> DT(
-      new DCTranslator(getGlobalContext(), /*DataLayoutStr=*/"", TOLvl, *DIS,
-                       *DRS, *MIP, *MCM, /* MCOD= */ 0, AnnotateIROutput));
+  std::unique_ptr<DCTranslator> DT(new DCTranslator(
+      getGlobalContext(), /*DataLayoutStr=*/"", TOLvl, *DIS, *DRS, *MIP, *STI,
+      *MCM, /* MCOD= */ 0, AnnotateIROutput));
 
   DT->translateAllKnownFunctions();
   DT->printCurrentModule(outs());

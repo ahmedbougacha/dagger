@@ -31,6 +31,7 @@
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/MC/MCValue.h"
 #include "llvm/Support/Dwarf.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -244,9 +245,11 @@ static StringRef getSectionPrefixForGlobal(SectionKind Kind) {
   return ".data.rel.ro";
 }
 
-static const MCSectionELF *selectELFSectionForGlobal(
-    MCContext &Ctx, const GlobalValue *GV, SectionKind Kind, Mangler &Mang,
-    const TargetMachine &TM, bool EmitUniqueSection, unsigned Flags) {
+static const MCSectionELF *
+selectELFSectionForGlobal(MCContext &Ctx, const GlobalValue *GV,
+                          SectionKind Kind, Mangler &Mang,
+                          const TargetMachine &TM, bool EmitUniqueSection,
+                          unsigned Flags, unsigned *NextUniqueID) {
   unsigned EntrySize = 0;
   if (Kind.isMergeableCString()) {
     if (Kind.isMergeable2ByteCString()) {
@@ -296,9 +299,13 @@ static const MCSectionELF *selectELFSectionForGlobal(
     Name.push_back('.');
     TM.getNameWithPrefix(Name, GV, Mang, true);
   }
+  unsigned UniqueID = ~0;
+  if (EmitUniqueSection && !UniqueSectionNames) {
+    UniqueID = *NextUniqueID;
+    (*NextUniqueID)++;
+  }
   return Ctx.getELFSection(Name, getELFSectionType(Name, Kind), Flags,
-                           EntrySize, Group,
-                           EmitUniqueSection && !UniqueSectionNames);
+                           EntrySize, Group, UniqueID);
 }
 
 const MCSection *TargetLoweringObjectFileELF::SelectSectionForGlobal(
@@ -318,7 +325,7 @@ const MCSection *TargetLoweringObjectFileELF::SelectSectionForGlobal(
   EmitUniqueSection |= GV->hasComdat();
 
   return selectELFSectionForGlobal(getContext(), GV, Kind, Mang, TM,
-                                   EmitUniqueSection, Flags);
+                                   EmitUniqueSection, Flags, &NextUniqueID);
 }
 
 const MCSection *TargetLoweringObjectFileELF::getSectionForJumpTable(
@@ -331,7 +338,8 @@ const MCSection *TargetLoweringObjectFileELF::getSectionForJumpTable(
     return ReadOnlySection;
 
   return selectELFSectionForGlobal(getContext(), &F, SectionKind::getReadOnly(),
-                                   Mang, TM, EmitUniqueSection, ELF::SHF_ALLOC);
+                                   Mang, TM, EmitUniqueSection, ELF::SHF_ALLOC,
+                                   &NextUniqueID);
 }
 
 bool TargetLoweringObjectFileELF::shouldPutJumpTableInFunctionSection(
@@ -430,6 +438,11 @@ TargetLoweringObjectFileELF::InitializeELF(bool UseInitArray_) {
 //===----------------------------------------------------------------------===//
 //                                 MachO
 //===----------------------------------------------------------------------===//
+
+TargetLoweringObjectFileMachO::TargetLoweringObjectFileMachO()
+  : TargetLoweringObjectFile() {
+  SupportIndirectSymViaGOTPCRel = true;
+}
 
 /// getDepLibFromLinkerOpt - Extract the dependent library name from a linker
 /// option string. Returns StringRef() if the option does not specify a library.
@@ -705,6 +718,66 @@ MCSymbol *TargetLoweringObjectFileMachO::getCFIPersonalitySymbol(
   return SSym;
 }
 
+const MCExpr *TargetLoweringObjectFileMachO::getIndirectSymViaGOTPCRel(
+    const MCSymbol *Sym, const MCValue &MV, int64_t Offset,
+    MachineModuleInfo *MMI, MCStreamer &Streamer) const {
+  // Although MachO 32-bit targets do not explictly have a GOTPCREL relocation
+  // as 64-bit do, we replace the GOT equivalent by accessing the final symbol
+  // through a non_lazy_ptr stub instead. One advantage is that it allows the
+  // computation of deltas to final external symbols. Example:
+  //
+  //    _extgotequiv:
+  //       .long   _extfoo
+  //
+  //    _delta:
+  //       .long   _extgotequiv-_delta
+  //
+  // is transformed to:
+  //
+  //    _delta:
+  //       .long   L_extfoo$non_lazy_ptr-(_delta+0)
+  //
+  //       .section        __IMPORT,__pointers,non_lazy_symbol_pointers
+  //    L_extfoo$non_lazy_ptr:
+  //       .indirect_symbol        _extfoo
+  //       .long   0
+  //
+  MachineModuleInfoMachO &MachOMMI =
+    MMI->getObjFileInfo<MachineModuleInfoMachO>();
+  MCContext &Ctx = getContext();
+
+  // The offset must consider the original displacement from the base symbol
+  // since 32-bit targets don't have a GOTPCREL to fold the PC displacement.
+  Offset = -MV.getConstant();
+  const MCSymbol *BaseSym = &MV.getSymB()->getSymbol();
+
+  // Access the final symbol via sym$non_lazy_ptr and generate the appropriated
+  // non_lazy_ptr stubs.
+  SmallString<128> Name;
+  StringRef Suffix = "$non_lazy_ptr";
+  Name += DL->getPrivateGlobalPrefix();
+  Name += Sym->getName();
+  Name += Suffix;
+  MCSymbol *Stub = Ctx.GetOrCreateSymbol(Name);
+
+  MachineModuleInfoImpl::StubValueTy &StubSym = MachOMMI.getGVStubEntry(Stub);
+  if (!StubSym.getPointer())
+    StubSym = MachineModuleInfoImpl::
+      StubValueTy(const_cast<MCSymbol *>(Sym), true /* access indirectly */);
+
+  const MCExpr *BSymExpr =
+    MCSymbolRefExpr::Create(BaseSym, MCSymbolRefExpr::VK_None, Ctx);
+  const MCExpr *LHS =
+    MCSymbolRefExpr::Create(Stub, MCSymbolRefExpr::VK_None, Ctx);
+
+  if (!Offset)
+    return MCBinaryExpr::CreateSub(LHS, BSymExpr, Ctx);
+
+  const MCExpr *RHS =
+    MCBinaryExpr::CreateAdd(BSymExpr, MCConstantExpr::Create(Offset, Ctx), Ctx);
+  return MCBinaryExpr::CreateSub(LHS, RHS, Ctx);
+}
+
 //===----------------------------------------------------------------------===//
 //                                  COFF
 //===----------------------------------------------------------------------===//
@@ -861,6 +934,11 @@ SelectSectionForGlobal(const GlobalValue *GV, SectionKind Kind,
       StringRef COMDATSymName = Sym->getName();
       return getContext().getCOFFSection(Name, Characteristics, Kind,
                                          COMDATSymName, Selection);
+    } else {
+      SmallString<256> TmpData;
+      getNameWithPrefix(TmpData, GV, /*CannotUsePrivateLabel=*/true, Mang, TM);
+      return getContext().getCOFFSection(Name, Characteristics, Kind, TmpData,
+                                         Selection);
     }
   }
 
@@ -880,6 +958,42 @@ SelectSectionForGlobal(const GlobalValue *GV, SectionKind Kind,
     return BSSSection;
 
   return DataSection;
+}
+
+void TargetLoweringObjectFileCOFF::getNameWithPrefix(
+    SmallVectorImpl<char> &OutName, const GlobalValue *GV,
+    bool CannotUsePrivateLabel, Mangler &Mang, const TargetMachine &TM) const {
+  if (GV->hasPrivateLinkage() &&
+      ((isa<Function>(GV) && TM.getFunctionSections()) ||
+       (isa<GlobalVariable>(GV) && TM.getDataSections())))
+    CannotUsePrivateLabel = true;
+
+  Mang.getNameWithPrefix(OutName, GV, CannotUsePrivateLabel);
+}
+
+const MCSection *TargetLoweringObjectFileCOFF::getSectionForJumpTable(
+    const Function &F, Mangler &Mang, const TargetMachine &TM) const {
+  // If the function can be removed, produce a unique section so that
+  // the table doesn't prevent the removal.
+  const Comdat *C = F.getComdat();
+  bool EmitUniqueSection = TM.getFunctionSections() || C;
+  if (!EmitUniqueSection)
+    return ReadOnlySection;
+
+  // FIXME: we should produce a symbol for F instead.
+  if (F.hasPrivateLinkage())
+    return ReadOnlySection;
+
+  MCSymbol *Sym = TM.getSymbol(&F, Mang);
+  StringRef COMDATSymName = Sym->getName();
+
+  SectionKind Kind = SectionKind::getReadOnly();
+  const char *Name = getCOFFSectionNameForUniqueGlobal(Kind);
+  unsigned Characteristics = getCOFFSectionFlags(Kind);
+  Characteristics |= COFF::IMAGE_SCN_LNK_COMDAT;
+
+  return getContext().getCOFFSection(Name, Characteristics, Kind, COMDATSymName,
+                                     COFF::IMAGE_COMDAT_SELECT_ASSOCIATIVE);
 }
 
 StringRef TargetLoweringObjectFileCOFF::

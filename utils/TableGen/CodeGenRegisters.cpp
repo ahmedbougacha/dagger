@@ -108,6 +108,7 @@ CodeGenRegister::CodeGenRegister(Record *R, unsigned Enum)
     EnumValue(Enum),
     CostPerUse(R->getValueAsInt("CostPerUse")),
     CoveredBySubRegs(R->getValueAsBit("CoveredBySubRegs")),
+    HasDisjunctSubRegs(false),
     SubRegsComplete(false),
     SuperRegsComplete(false),
     TopoSig(~0u)
@@ -217,6 +218,8 @@ CodeGenRegister::computeSubRegs(CodeGenRegBank &RegBank) {
     return SubRegs;
   SubRegsComplete = true;
 
+  HasDisjunctSubRegs = ExplicitSubRegs.size() > 1;
+
   // First insert the explicit subregs and make sure they are fully indexed.
   for (unsigned i = 0, e = ExplicitSubRegs.size(); i != e; ++i) {
     CodeGenRegister *SR = ExplicitSubRegs[i];
@@ -237,6 +240,7 @@ CodeGenRegister::computeSubRegs(CodeGenRegBank &RegBank) {
   for (unsigned i = 0, e = ExplicitSubRegs.size(); i != e; ++i) {
     CodeGenRegister *SR = ExplicitSubRegs[i];
     const SubRegMap &Map = SR->computeSubRegs(RegBank);
+    HasDisjunctSubRegs |= SR->HasDisjunctSubRegs;
 
     for (SubRegMap::const_iterator SI = Map.begin(), SE = Map.end(); SI != SE;
          ++SI) {
@@ -258,8 +262,6 @@ CodeGenRegister::computeSubRegs(CodeGenRegBank &RegBank) {
 
     // Look at the possible compositions of Idx.
     // They may not all be supported by SR.
-    // NOTE: Iteration order does not matter here because the EnumValue's
-    // of subreg indices are unique.
     for (CodeGenSubRegIndex::CompMap::const_iterator I = Comps.begin(),
            E = Comps.end(); I != E; ++I) {
       SubRegMap::const_iterator SRI = Map.find(I->first);
@@ -709,6 +711,10 @@ CodeGenRegisterClass::CodeGenRegisterClass(CodeGenRegBank &RegBank, Record *R)
   CopyCost = R->getValueAsInt("CopyCost");
   Allocatable = R->getValueAsBit("isAllocatable");
   AltOrderSelect = R->getValueAsString("AltOrderSelect");
+  int AllocationPriority = R->getValueAsInt("AllocationPriority");
+  if (AllocationPriority < 0 || AllocationPriority > 63)
+    PrintFatalError(R->getLoc(), "AllocationPriority out of range [0,63]");
+  this->AllocationPriority = AllocationPriority;
 }
 
 // Create an inferred register class that was missing from the .td files.
@@ -724,7 +730,8 @@ CodeGenRegisterClass::CodeGenRegisterClass(CodeGenRegBank &RegBank,
     SpillSize(Props.SpillSize),
     SpillAlignment(Props.SpillAlignment),
     CopyCost(0),
-    Allocatable(true) {
+    Allocatable(true),
+    AllocationPriority(0) {
   for (const auto R : Members)
     TopoSigs.set(R->getTopoSig());
 }
@@ -744,6 +751,7 @@ void CodeGenRegisterClass::inheritProperties(CodeGenRegBank &RegBank) {
   CopyCost = Super.CopyCost;
   Allocatable = Super.Allocatable;
   AltOrderSelect = Super.AltOrderSelect;
+  AllocationPriority = Super.AllocationPriority;
 
   // Copy all allocation orders, filter out foreign registers from the larger
   // super-class.
@@ -1262,7 +1270,7 @@ void CodeGenRegBank::computeSubRegLaneMasks() {
   for (auto &RegClass : RegClasses) {
     unsigned LaneMask = 0;
     for (const auto &SubRegIndex : SubRegIndices) {
-      if (RegClass.getSubClassWithSubReg(&SubRegIndex) != &RegClass)
+      if (RegClass.getSubClassWithSubReg(&SubRegIndex) == nullptr)
         continue;
       LaneMask |= SubRegIndex.LaneMask;
     }
@@ -1804,6 +1812,13 @@ void CodeGenRegBank::computeDerivedInfo() {
   computeRegUnitSets();
 
   computeRegUnitLaneMasks();
+
+  // Compute register class HasDisjunctSubRegs flag.
+  for (CodeGenRegisterClass &RC : RegClasses) {
+    RC.HasDisjunctSubRegs = false;
+    for (const CodeGenRegister *Reg : RC.getMembers())
+      RC.HasDisjunctSubRegs |= Reg->HasDisjunctSubRegs;
+  }
 
   // Get the weight of each set.
   for (unsigned Idx = 0, EndIdx = RegUnitSets.size(); Idx != EndIdx; ++Idx)

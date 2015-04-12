@@ -202,8 +202,8 @@ Instruction *InstCombiner::visitExtractElementInst(ExtractElementInst &EI) {
       APInt UndefElts(VectorWidth, 0);
       APInt DemandedMask(VectorWidth, 0);
       DemandedMask.setBit(IndexVal);
-      if (Value *V = SimplifyDemandedVectorElts(EI.getOperand(0),
-                                                DemandedMask, UndefElts)) {
+      if (Value *V = SimplifyDemandedVectorElts(EI.getOperand(0), DemandedMask,
+                                                UndefElts)) {
         EI.setOperand(0, V);
         return &EI;
       }
@@ -733,7 +733,8 @@ static Value *BuildNew(Instruction *I, ArrayRef<Value*> NewOps) {
     case Instruction::GetElementPtr: {
       Value *Ptr = NewOps[0];
       ArrayRef<Value*> Idx = NewOps.slice(1);
-      GetElementPtrInst *GEP = GetElementPtrInst::Create(Ptr, Idx, "", I);
+      GetElementPtrInst *GEP = GetElementPtrInst::Create(
+          cast<GetElementPtrInst>(I)->getSourceElementType(), Ptr, Idx, "", I);
       GEP->setIsInBounds(cast<GetElementPtrInst>(I)->isInBounds());
       return GEP;
     }
@@ -986,8 +987,7 @@ Instruction *InstCombiner::visitShuffleVectorInst(ShuffleVectorInst &SVI) {
     unsigned BegIdx = Mask.front();
     VectorType *SrcTy = cast<VectorType>(V->getType());
     unsigned VecBitWidth = SrcTy->getBitWidth();
-    unsigned SrcElemBitWidth =
-        SrcTy->getElementType()->getPrimitiveSizeInBits();
+    unsigned SrcElemBitWidth = DL.getTypeSizeInBits(SrcTy->getElementType());
     assert(SrcElemBitWidth && "vector elements must have a bitwidth");
     unsigned SrcNumElems = SrcTy->getNumElements();
     SmallVector<BitCastInst *, 8> BCs;
@@ -999,7 +999,7 @@ Instruction *InstCombiner::visitShuffleVectorInst(ShuffleVectorInst &SVI) {
           BCs.push_back(BC);
     for (BitCastInst *BC : BCs) {
       Type *TgtTy = BC->getDestTy();
-      unsigned TgtElemBitWidth = TgtTy->getPrimitiveSizeInBits();
+      unsigned TgtElemBitWidth = DL.getTypeSizeInBits(TgtTy);
       if (!TgtElemBitWidth)
         continue;
       unsigned TgtNumElems = VecBitWidth / TgtElemBitWidth;

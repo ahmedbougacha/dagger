@@ -248,7 +248,7 @@ void InstrInfoEmitter::emitOperandNameMappings(raw_ostream &OS,
 
   OS << "#ifdef GET_INSTRINFO_OPERAND_ENUM\n";
   OS << "#undef GET_INSTRINFO_OPERAND_ENUM\n";
-  OS << "namespace llvm {";
+  OS << "namespace llvm {\n";
   OS << "namespace " << Namespace << " {\n";
   OS << "namespace " << OpNameNS << " { \n";
   OS << "enum {\n";
@@ -265,7 +265,7 @@ void InstrInfoEmitter::emitOperandNameMappings(raw_ostream &OS,
 
   OS << "#ifdef GET_INSTRINFO_NAMED_OPS\n";
   OS << "#undef GET_INSTRINFO_NAMED_OPS\n";
-  OS << "namespace llvm {";
+  OS << "namespace llvm {\n";
   OS << "namespace " << Namespace << " {\n";
   OS << "LLVM_READONLY\n";
   OS << "int16_t getNamedOperandIdx(uint16_t Opcode, uint16_t NamedIdx) {\n";
@@ -316,7 +316,7 @@ void InstrInfoEmitter::emitOperandTypesEnum(raw_ostream &OS,
 
   OS << "\n#ifdef GET_INSTRINFO_OPERAND_TYPES_ENUM\n";
   OS << "#undef GET_INSTRINFO_OPERAND_TYPES_ENUM\n";
-  OS << "namespace llvm {";
+  OS << "namespace llvm {\n";
   OS << "namespace " << Namespace << " {\n";
   OS << "namespace OpTypes { \n";
   OS << "enum OperandType {\n";
@@ -432,7 +432,8 @@ void InstrInfoEmitter::run(raw_ostream &OS) {
   std::string ClassName = TargetName + "GenInstrInfo";
   OS << "namespace llvm {\n";
   OS << "struct " << ClassName << " : public TargetInstrInfo {\n"
-     << "  explicit " << ClassName << "(int SO = -1, int DO = -1);\n"
+     << "  explicit " << ClassName
+     << "(int CFSetupOpcode = -1, int CFDestroyOpcode = -1);\n"
      << "  virtual ~" << ClassName << "();\n"
      << "};\n";
   OS << "} // End llvm namespace \n";
@@ -446,10 +447,11 @@ void InstrInfoEmitter::run(raw_ostream &OS) {
   OS << "extern const MCInstrDesc " << TargetName << "Insts[];\n";
   OS << "extern const unsigned " << TargetName << "InstrNameIndices[];\n";
   OS << "extern const char " << TargetName << "InstrNameData[];\n";
-  OS << ClassName << "::" << ClassName << "(int SO, int DO)\n"
-     << "  : TargetInstrInfo(SO, DO) {\n"
-     << "  InitMCInstrInfo(" << TargetName << "Insts, "
-     << TargetName << "InstrNameIndices, " << TargetName << "InstrNameData, "
+  OS << ClassName << "::" << ClassName
+     << "(int CFSetupOpcode, int CFDestroyOpcode)\n"
+     << "  : TargetInstrInfo(CFSetupOpcode, CFDestroyOpcode) {\n"
+     << "  InitMCInstrInfo(" << TargetName << "Insts, " << TargetName
+     << "InstrNameIndices, " << TargetName << "InstrNameData, "
      << NumberedInstructions.size() << ");\n}\n"
      << ClassName << "::~" << ClassName << "() {}\n";
   OS << "} // End llvm namespace \n";

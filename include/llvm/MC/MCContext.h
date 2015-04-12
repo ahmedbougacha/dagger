@@ -15,8 +15,8 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/MC/MCDwarf.h"
-#include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/SectionKind.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Compiler.h"
@@ -37,14 +37,12 @@ namespace llvm {
   class MCRegisterInfo;
   class MCLineSection;
   class SMLoc;
-  class StringRef;
-  class Twine;
   class MCSectionMachO;
   class MCSectionELF;
   class MCSectionCOFF;
 
-  /// MCContext - Context object for machine code objects.  This class owns all
-  /// of the sections that it creates.
+  /// Context object for machine code objects.  This class owns all of the
+  /// sections that it creates.
   ///
   class MCContext {
     MCContext(const MCContext&) = delete;
@@ -64,13 +62,13 @@ namespace llvm {
     /// The MCObjectFileInfo for this target.
     const MCObjectFileInfo *MOFI;
 
-    /// Allocator - Allocator object used for creating machine code objects.
+    /// Allocator object used for creating machine code objects.
     ///
     /// We use a bump pointer allocator to avoid the need to track all allocated
     /// objects.
     BumpPtrAllocator Allocator;
 
-    /// Symbols - Bindings of names to symbols.
+    /// Bindings of names to symbols.
     SymbolTable Symbols;
 
     /// ELF sections can have a corresponding symbol. This maps one to the
@@ -85,13 +83,13 @@ namespace llvm {
     /// We have three labels represented by the pairs (1, 0), (2, 0) and (1, 1)
     DenseMap<std::pair<unsigned, unsigned>, MCSymbol*> LocalSymbols;
 
-    /// UsedNames - Keeps tracks of names that were used both for used declared
-    /// and artificial symbols.
+    /// Keeps tracks of names that were used both for used declared and
+    /// artificial symbols.
     StringMap<bool, BumpPtrAllocator&> UsedNames;
 
-    /// NextUniqueID - The next ID to dole out to an unnamed assembler temporary
-    /// symbol.
-    unsigned NextUniqueID;
+    /// The next ID to dole out to an unnamed assembler temporary symbol with
+    /// a given prefix.
+    StringMap<unsigned> NextID;
 
     /// Instances of directional local labels.
     DenseMap<unsigned, MCLabel *> Instances;
@@ -164,17 +162,49 @@ namespace llvm {
     /// The Compile Unit ID that we are currently processing.
     unsigned DwarfCompileUnitID;
 
-    typedef std::pair<std::string, std::string> SectionGroupPair;
-    typedef std::tuple<std::string, std::string, int> SectionGroupTriple;
+    struct ELFSectionKey {
+      std::string SectionName;
+      StringRef GroupName;
+      unsigned UniqueID;
+      ELFSectionKey(StringRef SectionName, StringRef GroupName,
+                    unsigned UniqueID)
+          : SectionName(SectionName), GroupName(GroupName), UniqueID(UniqueID) {
+      }
+      bool operator<(const ELFSectionKey &Other) const {
+        if (SectionName != Other.SectionName)
+          return SectionName < Other.SectionName;
+        if (GroupName != Other.GroupName)
+          return GroupName < Other.GroupName;
+        return UniqueID < Other.UniqueID;
+      }
+    };
+
+    struct COFFSectionKey {
+      std::string SectionName;
+      StringRef GroupName;
+      int SelectionKey;
+      COFFSectionKey(StringRef SectionName, StringRef GroupName,
+                     int SelectionKey)
+          : SectionName(SectionName), GroupName(GroupName),
+            SelectionKey(SelectionKey) {}
+      bool operator<(const COFFSectionKey &Other) const {
+        if (SectionName != Other.SectionName)
+          return SectionName < Other.SectionName;
+        if (GroupName != Other.GroupName)
+          return GroupName < Other.GroupName;
+        return SelectionKey < Other.SelectionKey;
+      }
+    };
 
     StringMap<const MCSectionMachO*> MachOUniquingMap;
-    std::map<SectionGroupPair, const MCSectionELF *> ELFUniquingMap;
-    std::map<SectionGroupTriple, const MCSectionCOFF *> COFFUniquingMap;
+    std::map<ELFSectionKey, const MCSectionELF *> ELFUniquingMap;
+    std::map<COFFSectionKey, const MCSectionCOFF *> COFFUniquingMap;
+    StringMap<bool> ELFRelSecNames;
 
     /// Do automatic reset in destructor
     bool AutoReset;
 
-    MCSymbol *CreateSymbol(StringRef Name);
+    MCSymbol *CreateSymbol(StringRef Name, bool AlwaysAddSuffix);
 
     MCSymbol *getOrCreateDirectionalLocalSymbol(unsigned LocalLabelVal,
                                                 unsigned Instance);
@@ -207,19 +237,15 @@ namespace llvm {
     /// @name Symbol Management
     /// @{
 
-    /// CreateLinkerPrivateTempSymbol - Create and return a new linker temporary
-    /// symbol with a unique but unspecified name.
+    /// Create and return a new linker temporary symbol with a unique but
+    /// unspecified name.
     MCSymbol *CreateLinkerPrivateTempSymbol();
 
-    /// CreateTempSymbol - Create and return a new assembler temporary symbol
-    /// with a unique but unspecified name.
+    /// Create and return a new assembler temporary symbol with a unique but
+    /// unspecified name.
     MCSymbol *CreateTempSymbol();
 
-    MCSymbol *createTempSymbol(const Twine &Name);
-
-    /// getUniqueSymbolID() - Return a unique identifier for use in constructing
-    /// symbol names.
-    unsigned getUniqueSymbolID() { return NextUniqueID++; }
+    MCSymbol *createTempSymbol(const Twine &Name, bool AlwaysAddSuffix);
 
     /// Create the definition of a directional local symbol for numbered label
     /// (used for "1:" definitions).
@@ -229,20 +255,23 @@ namespace llvm {
     /// for "1b" or 1f" references).
     MCSymbol *GetDirectionalLocalSymbol(unsigned LocalLabelVal, bool Before);
 
-    /// GetOrCreateSymbol - Lookup the symbol inside with the specified
-    /// @p Name.  If it exists, return it.  If not, create a forward
-    /// reference and return it.
+    /// Lookup the symbol inside with the specified @p Name.  If it exists,
+    /// return it.  If not, create a forward reference and return it.
     ///
     /// @param Name - The symbol name, which must be unique across all symbols.
-    MCSymbol *GetOrCreateSymbol(StringRef Name);
     MCSymbol *GetOrCreateSymbol(const Twine &Name);
 
     MCSymbol *getOrCreateSectionSymbol(const MCSectionELF &Section);
 
-    MCSymbol *getOrCreateFrameAllocSymbol(StringRef FuncName);
+    /// Gets a symbol that will be defined to the final stack offset of a local
+    /// variable after codegen.
+    ///
+    /// @param Idx - The index of a local variable passed to @llvm.frameescape.
+    MCSymbol *getOrCreateFrameAllocSymbol(StringRef FuncName, unsigned Idx);
 
-    /// LookupSymbol - Get the symbol for \p Name, or null.
-    MCSymbol *LookupSymbol(StringRef Name) const;
+    MCSymbol *getOrCreateParentFrameOffsetSymbol(StringRef FuncName);
+
+    /// Get the symbol for \p Name, or null.
     MCSymbol *LookupSymbol(const Twine &Name) const;
 
     /// getSymbols - Get a reference for the symbol table for clients that
@@ -258,30 +287,68 @@ namespace llvm {
     /// @name Section Management
     /// @{
 
-    /// getMachOSection - Return the MCSection for the specified mach-o section.
-    /// This requires the operands to be valid.
-    const MCSectionMachO *getMachOSection(StringRef Segment,
-                                          StringRef Section,
+    /// Return the MCSection for the specified mach-o section.  This requires
+    /// the operands to be valid.
+    const MCSectionMachO *getMachOSection(StringRef Segment, StringRef Section,
                                           unsigned TypeAndAttributes,
-                                          unsigned Reserved2,
-                                          SectionKind K);
-    const MCSectionMachO *getMachOSection(StringRef Segment,
-                                          StringRef Section,
+                                          unsigned Reserved2, SectionKind K,
+                                          const char *BeginSymName = nullptr);
+
+    const MCSectionMachO *getMachOSection(StringRef Segment, StringRef Section,
                                           unsigned TypeAndAttributes,
-                                          SectionKind K) {
-      return getMachOSection(Segment, Section, TypeAndAttributes, 0, K);
+                                          SectionKind K,
+                                          const char *BeginSymName = nullptr) {
+      return getMachOSection(Segment, Section, TypeAndAttributes, 0, K,
+                             BeginSymName);
     }
 
     const MCSectionELF *getELFSection(StringRef Section, unsigned Type,
-                                      unsigned Flags);
+                                      unsigned Flags) {
+      return getELFSection(Section, Type, Flags, nullptr);
+    }
+
+    const MCSectionELF *getELFSection(StringRef Section, unsigned Type,
+                                      unsigned Flags,
+                                      const char *BeginSymName) {
+      return getELFSection(Section, Type, Flags, 0, "", BeginSymName);
+    }
 
     const MCSectionELF *getELFSection(StringRef Section, unsigned Type,
                                       unsigned Flags, unsigned EntrySize,
-                                      StringRef Group);
+                                      StringRef Group) {
+      return getELFSection(Section, Type, Flags, EntrySize, Group, nullptr);
+    }
 
     const MCSectionELF *getELFSection(StringRef Section, unsigned Type,
                                       unsigned Flags, unsigned EntrySize,
-                                      StringRef Group, bool Unique);
+                                      StringRef Group,
+                                      const char *BeginSymName) {
+      return getELFSection(Section, Type, Flags, EntrySize, Group, ~0,
+                           BeginSymName);
+    }
+
+    const MCSectionELF *getELFSection(StringRef Section, unsigned Type,
+                                      unsigned Flags, unsigned EntrySize,
+                                      StringRef Group, unsigned UniqueID) {
+      return getELFSection(Section, Type, Flags, EntrySize, Group, UniqueID,
+                           nullptr);
+    }
+
+    const MCSectionELF *getELFSection(StringRef Section, unsigned Type,
+                                      unsigned Flags, unsigned EntrySize,
+                                      StringRef Group, unsigned UniqueID,
+                                      const char *BeginSymName);
+
+    const MCSectionELF *getELFSection(StringRef Section, unsigned Type,
+                                      unsigned Flags, unsigned EntrySize,
+                                      const MCSymbol *Group, unsigned UniqueID,
+                                      const char *BeginSymName,
+                                      const MCSectionELF *Associated);
+
+    const MCSectionELF *createELFRelSection(StringRef Name, unsigned Type,
+                                            unsigned Flags, unsigned EntrySize,
+                                            const MCSymbol *Group,
+                                            const MCSectionELF *Associated);
 
     void renameELFSection(const MCSectionELF *Section, StringRef Name);
 
@@ -290,11 +357,13 @@ namespace llvm {
     const MCSectionCOFF *getCOFFSection(StringRef Section,
                                         unsigned Characteristics,
                                         SectionKind Kind,
-                                        StringRef COMDATSymName, int Selection);
+                                        StringRef COMDATSymName, int Selection,
+                                        const char *BeginSymName = nullptr);
 
     const MCSectionCOFF *getCOFFSection(StringRef Section,
                                         unsigned Characteristics,
-                                        SectionKind Kind);
+                                        SectionKind Kind,
+                                        const char *BeginSymName = nullptr);
 
     const MCSectionCOFF *getCOFFSection(StringRef Section);
 
@@ -329,7 +398,7 @@ namespace llvm {
     /// \brief Set the main file name and override the default.
     void setMainFileName(StringRef S) { MainFileName = S; }
 
-    /// GetDwarfFile - creates an entry in the dwarf file and directory tables.
+    /// Creates an entry in the dwarf file and directory tables.
     unsigned GetDwarfFile(StringRef Directory, StringRef FileName,
                           unsigned FileNumber, unsigned CUID);
 
@@ -372,10 +441,10 @@ namespace llvm {
       getMCDwarfLineTable(CUID).setCompilationDir(CompilationDir);
     }
 
-    /// setCurrentDwarfLoc - saves the information from the currently parsed
-    /// dwarf .loc directive and sets DwarfLocSeen.  When the next instruction
-    /// is assembled an entry in the line number table with this information and
-    /// the address of the instruction will be created.
+    /// Saves the information from the currently parsed dwarf .loc directive
+    /// and sets DwarfLocSeen.  When the next instruction is assembled an entry
+    /// in the line number table with this information and the address of the
+    /// instruction will be created.
     void setCurrentDwarfLoc(unsigned FileNum, unsigned Line, unsigned Column,
                             unsigned Flags, unsigned Isa,
                             unsigned Discriminator) {

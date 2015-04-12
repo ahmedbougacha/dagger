@@ -47,15 +47,6 @@ static MCRegisterInfo *createHexagonMCRegisterInfo(StringRef TT) {
   return X;
 }
 
-static MCStreamer *
-createHexagonELFStreamer(MCContext &Context, MCAsmBackend &MAB,
-                         raw_ostream &OS, MCCodeEmitter *CE,
-                         bool RelaxAll) {
-  MCELFStreamer *ES = new MCELFStreamer(Context, MAB, OS, CE);
-  return ES;
-}
-
-
 static MCSubtargetInfo *
 createHexagonMCSubtargetInfo(StringRef TT, StringRef CPU, StringRef FS) {
   MCSubtargetInfo *X = new MCSubtargetInfo();
@@ -75,16 +66,6 @@ static MCAsmInfo *createHexagonMCAsmInfo(const MCRegisterInfo &MRI,
   return MAI;
 }
 
-static MCStreamer *createMCStreamer(Target const &T, StringRef TT,
-                                    MCContext &Context, MCAsmBackend &MAB,
-                                    raw_ostream &OS, MCCodeEmitter *Emitter,
-                                    MCSubtargetInfo const &STI, bool RelaxAll) {
-  MCStreamer *ES = createHexagonELFStreamer(Context, MAB, OS, Emitter, RelaxAll);
-  new MCTargetStreamer(*ES);
-  return ES;
-}
-
-
 static MCCodeGenInfo *createHexagonMCCodeGenInfo(StringRef TT, Reloc::Model RM,
                                                  CodeModel::Model CM,
                                                  CodeGenOpt::Level OL) {
@@ -94,13 +75,16 @@ static MCCodeGenInfo *createHexagonMCCodeGenInfo(StringRef TT, Reloc::Model RM,
   X->InitMCCodeGenInfo(Reloc::Static, CM, OL);
   return X;
 }
-static MCInstPrinter *createHexagonMCInstPrinter(const Target &T,
+
+static MCInstPrinter *createHexagonMCInstPrinter(const Triple &T,
                                                  unsigned SyntaxVariant,
                                                  const MCAsmInfo &MAI,
                                                  const MCInstrInfo &MII,
-                                                 const MCRegisterInfo &MRI,
-                                                 const MCSubtargetInfo &STI) {
-    return new HexagonInstPrinter(MAI, MII, MRI);
+                                                 const MCRegisterInfo &MRI) {
+  if (SyntaxVariant == 0)
+    return(new HexagonInstPrinter(MAI, MII, MRI));
+  else
+   return nullptr;
 }
 
 // Force static initialization.
@@ -135,7 +119,4 @@ extern "C" void LLVMInitializeHexagonTargetMC() {
   // Register the asm backend
   TargetRegistry::RegisterMCAsmBackend(TheHexagonTarget,
                                        createHexagonAsmBackend);
-
-  // Register the obj streamer
-  TargetRegistry::RegisterMCObjectStreamer(TheHexagonTarget, createMCStreamer);
 }

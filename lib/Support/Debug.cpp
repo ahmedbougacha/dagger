@@ -28,6 +28,7 @@
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/circular_raw_ostream.h"
+#include "llvm/Support/raw_ostream.h"
 
 #undef isCurrentDebugType
 #undef setCurrentDebugType
@@ -113,9 +114,9 @@ static void debug_user_sig_handler(void *Cookie) {
   // know that debug mode is enabled and dbgs() really is a
   // circular_raw_ostream.  If NDEBUG is defined, then dbgs() ==
   // errs() but this will never be invoked.
-  llvm::circular_raw_ostream *dbgout =
-    static_cast<llvm::circular_raw_ostream *>(&llvm::dbgs());
-  dbgout->flushBufferWithBanner();
+  llvm::circular_raw_ostream &dbgout =
+      static_cast<circular_raw_ostream &>(llvm::dbgs());
+  dbgout.flushBufferWithBanner();
 }
 
 /// dbgs - Return a circular-buffered debug stream.

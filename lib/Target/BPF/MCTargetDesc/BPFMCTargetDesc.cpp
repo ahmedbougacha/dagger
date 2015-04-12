@@ -61,19 +61,18 @@ static MCCodeGenInfo *createBPFMCCodeGenInfo(StringRef TT, Reloc::Model RM,
   return X;
 }
 
-static MCStreamer *createBPFMCStreamer(const Target &T, StringRef TT,
+static MCStreamer *createBPFMCStreamer(const Triple &T,
                                        MCContext &Ctx, MCAsmBackend &MAB,
-                                       raw_ostream &_OS,
-                                       MCCodeEmitter *_Emitter,
-                                       const MCSubtargetInfo &STI,
+                                       raw_ostream &OS, MCCodeEmitter *Emitter,
                                        bool RelaxAll) {
-  return createELFStreamer(Ctx, MAB, _OS, _Emitter, RelaxAll);
+  return createELFStreamer(Ctx, MAB, OS, Emitter, RelaxAll);
 }
 
-static MCInstPrinter *
-createBPFMCInstPrinter(const Target &T, unsigned SyntaxVariant,
-                       const MCAsmInfo &MAI, const MCInstrInfo &MII,
-                       const MCRegisterInfo &MRI, const MCSubtargetInfo &STI) {
+static MCInstPrinter *createBPFMCInstPrinter(const Triple &T,
+                                             unsigned SyntaxVariant,
+                                             const MCAsmInfo &MAI,
+                                             const MCInstrInfo &MII,
+                                             const MCRegisterInfo &MRI) {
   if (SyntaxVariant == 0)
     return new BPFInstPrinter(MAI, MII, MRI);
   return 0;
@@ -104,7 +103,7 @@ extern "C" void LLVMInitializeBPFTargetMC() {
   TargetRegistry::RegisterMCAsmBackend(TheBPFTarget, createBPFAsmBackend);
 
   // Register the object streamer
-  TargetRegistry::RegisterMCObjectStreamer(TheBPFTarget, createBPFMCStreamer);
+  TargetRegistry::RegisterELFStreamer(TheBPFTarget, createBPFMCStreamer);
 
   // Register the MCInstPrinter.
   TargetRegistry::RegisterMCInstPrinter(TheBPFTarget, createBPFMCInstPrinter);

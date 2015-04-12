@@ -10,6 +10,7 @@
 #ifndef LLVM_LIB_DEBUGINFO_DWARFUNIT_H
 #define LLVM_LIB_DEBUGINFO_DWARFUNIT_H
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugAbbrev.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugInfoEntry.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugRangeList.h"
@@ -45,7 +46,7 @@ protected:
                          const DWARFDebugAbbrev *DA, StringRef RS, StringRef SS,
                          StringRef SOS, StringRef AOS, bool isLittleEndian) = 0;
 
-  ~DWARFUnitSectionBase() {}
+  ~DWARFUnitSectionBase() = default;
 };
 
 /// Concrete instance of DWARFUnitSection, specialized for one Unit type.

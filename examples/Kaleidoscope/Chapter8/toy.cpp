@@ -1,3 +1,4 @@
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
@@ -220,10 +221,10 @@ class NumberExprAST : public ExprAST {
 
 public:
   NumberExprAST(double val) : Val(val) {}
-  virtual std::ostream &dump(std::ostream &out, int ind) {
+  std::ostream &dump(std::ostream &out, int ind) override {
     return ExprAST::dump(out << Val, ind);
   }
-  virtual Value *Codegen();
+  Value *Codegen() override;
 };
 
 /// VariableExprAST - Expression class for referencing a variable, like "a".
@@ -234,10 +235,10 @@ public:
   VariableExprAST(SourceLocation Loc, const std::string &name)
       : ExprAST(Loc), Name(name) {}
   const std::string &getName() const { return Name; }
-  virtual std::ostream &dump(std::ostream &out, int ind) {
+  std::ostream &dump(std::ostream &out, int ind) override {
     return ExprAST::dump(out << Name, ind);
   }
-  virtual Value *Codegen();
+  Value *Codegen() override;
 };
 
 /// UnaryExprAST - Expression class for a unary operator.
@@ -248,12 +249,12 @@ class UnaryExprAST : public ExprAST {
 public:
   UnaryExprAST(char opcode, ExprAST *operand)
       : Opcode(opcode), Operand(operand) {}
-  virtual std::ostream &dump(std::ostream &out, int ind) {
+  std::ostream &dump(std::ostream &out, int ind) override {
     ExprAST::dump(out << "unary" << Opcode, ind);
     Operand->dump(out, ind + 1);
     return out;
   }
-  virtual Value *Codegen();
+  Value *Codegen() override;
 };
 
 /// BinaryExprAST - Expression class for a binary operator.
@@ -264,13 +265,13 @@ class BinaryExprAST : public ExprAST {
 public:
   BinaryExprAST(SourceLocation Loc, char op, ExprAST *lhs, ExprAST *rhs)
       : ExprAST(Loc), Op(op), LHS(lhs), RHS(rhs) {}
-  virtual std::ostream &dump(std::ostream &out, int ind) {
+  std::ostream &dump(std::ostream &out, int ind) override {
     ExprAST::dump(out << "binary" << Op, ind);
     LHS->dump(indent(out, ind) << "LHS:", ind + 1);
     RHS->dump(indent(out, ind) << "RHS:", ind + 1);
     return out;
   }
-  virtual Value *Codegen();
+  Value *Codegen() override;
 };
 
 /// CallExprAST - Expression class for function calls.
@@ -282,13 +283,13 @@ public:
   CallExprAST(SourceLocation Loc, const std::string &callee,
               std::vector<ExprAST *> &args)
       : ExprAST(Loc), Callee(callee), Args(args) {}
-  virtual std::ostream &dump(std::ostream &out, int ind) {
+  std::ostream &dump(std::ostream &out, int ind) override {
     ExprAST::dump(out << "call " << Callee, ind);
     for (ExprAST *Arg : Args)
       Arg->dump(indent(out, ind + 1), ind + 1);
     return out;
   }
-  virtual Value *Codegen();
+  Value *Codegen() override;
 };
 
 /// IfExprAST - Expression class for if/then/else.
@@ -298,14 +299,14 @@ class IfExprAST : public ExprAST {
 public:
   IfExprAST(SourceLocation Loc, ExprAST *cond, ExprAST *then, ExprAST *_else)
       : ExprAST(Loc), Cond(cond), Then(then), Else(_else) {}
-  virtual std::ostream &dump(std::ostream &out, int ind) {
+  std::ostream &dump(std::ostream &out, int ind) override {
     ExprAST::dump(out << "if", ind);
     Cond->dump(indent(out, ind) << "Cond:", ind + 1);
     Then->dump(indent(out, ind) << "Then:", ind + 1);
     Else->dump(indent(out, ind) << "Else:", ind + 1);
     return out;
   }
-  virtual Value *Codegen();
+  Value *Codegen() override;
 };
 
 /// ForExprAST - Expression class for for/in.
@@ -317,7 +318,7 @@ public:
   ForExprAST(const std::string &varname, ExprAST *start, ExprAST *end,
              ExprAST *step, ExprAST *body)
       : VarName(varname), Start(start), End(end), Step(step), Body(body) {}
-  virtual std::ostream &dump(std::ostream &out, int ind) {
+  std::ostream &dump(std::ostream &out, int ind) override {
     ExprAST::dump(out << "for", ind);
     Start->dump(indent(out, ind) << "Cond:", ind + 1);
     End->dump(indent(out, ind) << "End:", ind + 1);
@@ -325,7 +326,7 @@ public:
     Body->dump(indent(out, ind) << "Body:", ind + 1);
     return out;
   }
-  virtual Value *Codegen();
+  Value *Codegen() override;
 };
 
 /// VarExprAST - Expression class for var/in
@@ -338,14 +339,14 @@ public:
              ExprAST *body)
       : VarNames(varnames), Body(body) {}
 
-  virtual std::ostream &dump(std::ostream &out, int ind) {
+  std::ostream &dump(std::ostream &out, int ind) override {
     ExprAST::dump(out << "var", ind);
     for (const auto &NamedVar : VarNames)
       NamedVar.second->dump(indent(out, ind) << NamedVar.first << ':', ind + 1);
     Body->dump(indent(out, ind) << "Body:", ind + 1);
     return out;
   }
-  virtual Value *Codegen();
+  Value *Codegen() override;
 };
 
 /// PrototypeAST - This class represents the "prototype" for a function,
@@ -1458,8 +1459,7 @@ int main() {
 
   // Set up the optimizer pipeline.  Start with registering info about how the
   // target lays out data structures.
-  TheModule->setDataLayout(TheExecutionEngine->getDataLayout());
-  OurFPM.add(new DataLayoutPass());
+  TheModule->setDataLayout(*TheExecutionEngine->getDataLayout());
 #if 0
   // Provide basic AliasAnalysis support for GVN.
   OurFPM.add(createBasicAliasAnalysisPass());

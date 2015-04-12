@@ -30,15 +30,15 @@ using namespace llvm;
 DCTranslator::DCTranslator(LLVMContext &Ctx, StringRef DataLayoutStr,
                            TransOpt::Level TransOptLevel, DCInstrSema &DIS,
                            DCRegisterSema &DRS, MCInstPrinter &IP,
-                           MCModule &MCM, MCObjectDisassembler *MCOD,
-                           bool EnableIRAnnotation)
+                           const MCSubtargetInfo &STI, MCModule &MCM,
+                           MCObjectDisassembler *MCOD, bool EnableIRAnnotation)
     : Ctx(Ctx), DataLayoutStr(DataLayoutStr), ModuleSet(), MCOD(MCOD), MCM(MCM),
       CurrentModule(nullptr), CurrentFPM(), DTIT(), AnnotWriter(), DIS(DIS),
       OptLevel(TransOptLevel) {
 
   // FIXME: now this can move to print, we don't need to keep it around
   if (EnableIRAnnotation)
-    AnnotWriter.reset(new DCAnnotationWriter(DTIT, DRS.MRI, IP));
+    AnnotWriter.reset(new DCAnnotationWriter(DTIT, DRS.MRI, IP, STI));
 
   finalizeTranslationModule();
 }

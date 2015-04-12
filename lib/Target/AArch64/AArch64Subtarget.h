@@ -37,6 +37,8 @@ protected:
   /// ARMProcFamily - ARM processor family: Cortex-A53, Cortex-A57, and others.
   ARMProcFamilyEnum ARMProcFamily;
 
+  bool HasV8_1aOps;
+
   bool HasFPARMv8;
   bool HasNEON;
   bool HasCrypto;
@@ -86,10 +88,13 @@ public:
   const AArch64RegisterInfo *getRegisterInfo() const override {
     return &getInstrInfo()->getRegisterInfo();
   }
+  const Triple &getTargetTriple() const { return TargetTriple; }
   bool enableMachineScheduler() const override { return true; }
   bool enablePostMachineScheduler() const override {
     return isCortexA53() || isCortexA57();
   }
+
+  bool hasV8_1aOps() const { return HasV8_1aOps; }
 
   bool hasZeroCycleRegMove() const { return HasZeroCycleRegMove; }
 

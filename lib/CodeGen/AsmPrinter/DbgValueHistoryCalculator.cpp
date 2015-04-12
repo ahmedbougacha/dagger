@@ -14,6 +14,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include <algorithm>
 #include <map>
@@ -203,6 +204,8 @@ void llvm::calculateDbgValueHistory(const MachineFunction *MF,
       // as index into History. The full variables including the
       // piece expressions are attached to the MI.
       DIVariable Var = MI.getDebugVariable();
+      assert(Var->isValidLocationForIntrinsic(MI.getDebugLoc()) &&
+             "Expected inlined-at fields to agree");
 
       if (unsigned PrevReg = Result.getRegisterForVar(Var))
         dropRegDescribedVar(RegVars, PrevReg, Var);

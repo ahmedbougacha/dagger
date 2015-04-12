@@ -72,8 +72,8 @@ class DCTranslator {
 public:
   DCTranslator(LLVMContext &Ctx, StringRef DataLayoutStr,
                TransOpt::Level OptLevel, DCInstrSema &DIS, DCRegisterSema &DRS,
-               MCInstPrinter &IP, MCModule &MCM, MCObjectDisassembler *MCOD = 0,
-               bool EnableIRAnnotation = false);
+               MCInstPrinter &IP, const MCSubtargetInfo &STI, MCModule &MCM,
+               MCObjectDisassembler *MCOD = 0, bool EnableIRAnnotation = false);
   ~DCTranslator();
 
   Function *getInitRegSetFunction();

@@ -172,21 +172,12 @@ static MCCodeGenInfo *createSystemZMCCodeGenInfo(StringRef TT, Reloc::Model RM,
   return X;
 }
 
-static MCInstPrinter *createSystemZMCInstPrinter(const Target &T,
+static MCInstPrinter *createSystemZMCInstPrinter(const Triple &T,
                                                  unsigned SyntaxVariant,
                                                  const MCAsmInfo &MAI,
                                                  const MCInstrInfo &MII,
-                                                 const MCRegisterInfo &MRI,
-                                                 const MCSubtargetInfo &STI) {
+                                                 const MCRegisterInfo &MRI) {
   return new SystemZInstPrinter(MAI, MII, MRI);
-}
-
-static MCStreamer *
-createSystemZMCObjectStreamer(const Target &T, StringRef TT, MCContext &Ctx,
-                              MCAsmBackend &MAB, raw_ostream &OS,
-                              MCCodeEmitter *Emitter,
-                              const MCSubtargetInfo &STI, bool RelaxAll) {
-  return createELFStreamer(Ctx, MAB, OS, Emitter, RelaxAll);
 }
 
 extern "C" void LLVMInitializeSystemZTargetMC() {
@@ -221,8 +212,4 @@ extern "C" void LLVMInitializeSystemZTargetMC() {
   // Register the MCInstPrinter.
   TargetRegistry::RegisterMCInstPrinter(TheSystemZTarget,
                                         createSystemZMCInstPrinter);
-
-  // Register the MCObjectStreamer;
-  TargetRegistry::RegisterMCObjectStreamer(TheSystemZTarget,
-                                           createSystemZMCObjectStreamer);
 }

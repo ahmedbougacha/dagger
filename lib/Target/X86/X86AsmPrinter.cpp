@@ -63,9 +63,6 @@ bool X86AsmPrinter::runOnMachineFunction(MachineFunction &MF) {
     OutStreamer.EndCOFFSymbolDef();
   }
 
-  // Have common code print out the function header with linkage info etc.
-  EmitFunctionHeader();
-
   // Emit the rest of the function body.
   EmitFunctionBody();
 
@@ -526,7 +523,6 @@ void X86AsmPrinter::EmitStartOfAsmFile(Module &M) {
       // must be registered in .sxdata.  Use of any unregistered handlers will
       // cause the process to terminate immediately.  LLVM does not know how to
       // register any SEH handlers, so its object files should be safe.
-      S->setAbsolute();
       OutStreamer.EmitSymbolAttribute(S, MCSA_Global);
       OutStreamer.EmitAssignment(
           S, MCConstantExpr::Create(int64_t(1), MMI->getContext()));
@@ -726,28 +722,8 @@ void X86AsmPrinter::EmitEndOfAsmFile(Module &M) {
     }
   }
 
-  if (TT.isOSBinFormatELF()) {
-    const TargetLoweringObjectFileELF &TLOFELF =
-      static_cast<const TargetLoweringObjectFileELF &>(getObjFileLowering());
-
-    MachineModuleInfoELF &MMIELF = MMI->getObjFileInfo<MachineModuleInfoELF>();
-
-    // Output stubs for external and common global variables.
-    MachineModuleInfoELF::SymbolListTy Stubs = MMIELF.GetGVStubList();
-    if (!Stubs.empty()) {
-      OutStreamer.SwitchSection(TLOFELF.getDataRelSection());
-      const DataLayout *TD = TM.getDataLayout();
-
-      for (const auto &Stub : Stubs) {
-        OutStreamer.EmitLabel(Stub.first);
-        OutStreamer.EmitSymbolValue(Stub.second.getPointer(),
-                                    TD->getPointerSize());
-      }
-      Stubs.clear();
-    }
-
+  if (TT.isOSBinFormatELF())
     SM.serializeToStackMapSection();
-  }
 }
 
 //===----------------------------------------------------------------------===//

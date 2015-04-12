@@ -57,11 +57,11 @@ namespace llvm {
     Module &M;
     LLVMContext &VMContext;
 
-    MDNode *TempEnumTypes;
-    MDNode *TempRetainTypes;
-    MDNode *TempSubprograms;
-    MDNode *TempGVs;
-    MDNode *TempImportedModules;
+    TempMDTuple TempEnumTypes;
+    TempMDTuple TempRetainTypes;
+    TempMDTuple TempSubprograms;
+    TempMDTuple TempGVs;
+    TempMDTuple TempImportedModules;
 
     Function *DeclareFn;     // llvm.dbg.declare
     Function *ValueFn;       // llvm.dbg.value
@@ -464,7 +464,7 @@ namespace llvm {
     /// @param Decl        Reference to the corresponding declaration.
     DIGlobalVariable createGlobalVariable(DIDescriptor Context, StringRef Name,
                                           StringRef LinkageName, DIFile File,
-                                          unsigned LineNo, DITypeRef Ty,
+                                          unsigned LineNo, DIType Ty,
                                           bool isLocalToUnit,
                                           llvm::Constant *Val,
                                           MDNode *Decl = nullptr);
@@ -473,7 +473,7 @@ namespace llvm {
     /// except that the resulting DbgNode is temporary and meant to be RAUWed.
     DIGlobalVariable createTempGlobalVariableFwdDecl(
         DIDescriptor Context, StringRef Name, StringRef LinkageName,
-        DIFile File, unsigned LineNo, DITypeRef Ty, bool isLocalToUnit,
+        DIFile File, unsigned LineNo, DIType Ty, bool isLocalToUnit,
         llvm::Constant *Val, MDNode *Decl = nullptr);
 
     /// createLocalVariable - Create a new descriptor for the specified
@@ -491,11 +491,9 @@ namespace llvm {
     /// @param ArgNo       If this variable is an argument then this argument's
     ///                    number. 1 indicates 1st argument.
     DIVariable createLocalVariable(unsigned Tag, DIDescriptor Scope,
-                                   StringRef Name,
-                                   DIFile File, unsigned LineNo,
-                                   DITypeRef Ty, bool AlwaysPreserve = false,
-                                   unsigned Flags = 0,
-                                   unsigned ArgNo = 0);
+                                   StringRef Name, DIFile File, unsigned LineNo,
+                                   DIType Ty, bool AlwaysPreserve = false,
+                                   unsigned Flags = 0, unsigned ArgNo = 0);
 
     /// createExpression - Create a new descriptor for the specified
     /// variable which has a complex address expression for its address.
@@ -703,6 +701,23 @@ namespace llvm {
     /// resolve cycles.
     void replaceArrays(DICompositeType &T, DIArray Elements,
                        DIArray TParems = DIArray());
+
+    /// \brief Replace a temporary node.
+    ///
+    /// Call \a MDNode::replaceAllUsesWith() on \c N, replacing it with \c
+    /// Replacement.
+    ///
+    /// If \c Replacement is the same as \c N.get(), instead call \a
+    /// MDNode::replaceWithUniqued().  In this case, the uniqued node could
+    /// have a different address, so we return the final address.
+    template <class NodeTy>
+    NodeTy *replaceTemporary(TempMDNode &&N, NodeTy *Replacement) {
+      if (N.get() == Replacement)
+        return cast<NodeTy>(MDNode::replaceWithUniqued(std::move(N)));
+
+      N->replaceAllUsesWith(Replacement);
+      return Replacement;
+    }
   };
 } // end namespace llvm
 

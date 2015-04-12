@@ -14,6 +14,7 @@
 #define DEBUG_TYPE "ppc-loop-data-prefetch"
 #include "PPC.h"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CodeMetrics.h"
@@ -104,17 +105,15 @@ FunctionPass *llvm::createPPCLoopDataPrefetchPass() { return new PPCLoopDataPref
 bool PPCLoopDataPrefetch::runOnFunction(Function &F) {
   LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   SE = &getAnalysis<ScalarEvolution>();
-  DL = F.getParent()->getDataLayout();
+  DL = &F.getParent()->getDataLayout();
   AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
   TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
 
   bool MadeChange = false;
 
-  for (LoopInfo::iterator I = LI->begin(), E = LI->end();
-       I != E; ++I) {
-    Loop *L = *I;
-    MadeChange |= runOnLoop(L);
-  }
+  for (auto I = LI->begin(), IE = LI->end(); I != IE; ++I)
+    for (auto L = df_begin(*I), LE = df_end(*I); L != LE; ++L)
+      MadeChange |= runOnLoop(*L);
 
   return MadeChange;
 }
@@ -192,7 +191,7 @@ bool PPCLoopDataPrefetch::runOnLoop(Loop *L) {
         const SCEV *PtrDiff = SE->getMinusSCEV(LSCEVAddRec, K->second);
         if (const SCEVConstant *ConstPtrDiff =
             dyn_cast<SCEVConstant>(PtrDiff)) {
-          int64_t PD = abs64(ConstPtrDiff->getValue()->getSExtValue());
+          int64_t PD = std::abs(ConstPtrDiff->getValue()->getSExtValue());
           if (PD < (int64_t) CacheLineSize) {
             DupPref = true;
             break;
@@ -211,7 +210,7 @@ bool PPCLoopDataPrefetch::runOnLoop(Loop *L) {
       PrefLoads.push_back(std::make_pair(MemI, LSCEVAddRec));
 
       Type *I8Ptr = Type::getInt8PtrTy((*I)->getContext(), PtrAddrSpace);
-      SCEVExpander SCEVE(*SE, "prefaddr");
+      SCEVExpander SCEVE(*SE, J->getModule()->getDataLayout(), "prefaddr");
       Value *PrefPtrValue = SCEVE.expandCodeFor(NextLSCEV, I8Ptr, MemI);
 
       IRBuilder<> Builder(MemI);

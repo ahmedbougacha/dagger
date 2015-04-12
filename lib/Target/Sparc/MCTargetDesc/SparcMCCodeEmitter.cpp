@@ -38,7 +38,7 @@ class SparcMCCodeEmitter : public MCCodeEmitter {
 public:
   SparcMCCodeEmitter(MCContext &ctx): Ctx(ctx) {}
 
-  ~SparcMCCodeEmitter() {}
+  ~SparcMCCodeEmitter() override {}
 
   void EncodeInstruction(const MCInst &MI, raw_ostream &OS,
                          SmallVectorImpl<MCFixup> &Fixups,
@@ -74,7 +74,6 @@ public:
 
 MCCodeEmitter *llvm::createSparcMCCodeEmitter(const MCInstrInfo &MCII,
                                               const MCRegisterInfo &MRI,
-                                              const MCSubtargetInfo &STI,
                                               MCContext &Ctx) {
   return new SparcMCCodeEmitter(Ctx);
 }

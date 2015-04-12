@@ -70,6 +70,7 @@ representation.
    CommandGuide/index
    GettingStarted
    GettingStartedVS
+   BuildingLLVMWithAutotools
    FAQ
    Lexicon
    HowToAddABuilder
@@ -104,6 +105,10 @@ representation.
 :doc:`GettingStartedVS`
    An addendum to the main Getting Started guide for those using Visual Studio
    on Windows.
+
+:doc:`BuildingLLVMWithAutotools`
+   An addendum to the Getting Started guide with instructions for building LLVM
+   with the Autotools build system.
 
 :doc:`tutorial/index`
    Tutorials about using LLVM. Includes a tutorial about making a custom
@@ -172,6 +177,7 @@ For developers of applications which use LLVM as a library.
    HowToSetUpLLVMStyleRTTI
    ProgrammersManual
    Extensions
+   LibFuzzer
 
 :doc:`LLVM Language Reference Manual <LangRef>`
   Defines the LLVM intermediate representation and the assembly form of the
@@ -212,6 +218,9 @@ For developers of applications which use LLVM as a library.
 
 :doc:`CompilerWriterInfo`
   A list of helpful links for compiler writers.
+
+:doc:`LibFuzzer`
+  A library for writing in-process guided fuzzers.
 
 Subsystem Documentation
 =======================
