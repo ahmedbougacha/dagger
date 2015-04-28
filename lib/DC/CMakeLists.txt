@@ -5,3 +5,5 @@ add_llvm_library(LLVMDC
   DCTranslatedInstTracker.cpp
   DCTranslator.cpp
   )
+
+add_dependencies(LLVMDC intrinsics_gen)
