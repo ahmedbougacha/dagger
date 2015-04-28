@@ -51,7 +51,7 @@ Module *DCTranslator::finalizeTranslationModule() {
           (Twine("dct module #") + utohexstr(ModuleSet.size())).str(), Ctx));
   CurrentModule->setDataLayout(DataLayoutStr);
 
-  CurrentFPM.reset(new FunctionPassManager(CurrentModule));
+  CurrentFPM.reset(new legacy::FunctionPassManager(CurrentModule));
   if (OptLevel >= TransOpt::Less)
     CurrentFPM->add(createPromoteMemoryToRegisterPass());
   if (OptLevel >= TransOpt::Default)

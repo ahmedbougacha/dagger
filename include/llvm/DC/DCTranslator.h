@@ -22,11 +22,11 @@
 #include "llvm/DC/DCAnnotationWriter.h"
 #include "llvm/DC/DCTranslatedInstTracker.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCObjectDisassembler.h"
-#include "llvm/PassManager.h"
 #include <vector>
 
 namespace llvm {
@@ -59,7 +59,7 @@ class DCTranslator {
   MCModule &MCM;
 
   Module *CurrentModule;
-  std::unique_ptr<FunctionPassManager> CurrentFPM;
+  std::unique_ptr<legacy::FunctionPassManager> CurrentFPM;
 
   DCTranslatedInstTracker DTIT;
 
