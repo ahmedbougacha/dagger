@@ -441,11 +441,11 @@ def vecshiftL64 : Operand<i32>, ImmLeaf<i32, [{
 // instructions for splatting repeating bit patterns across the immediate.
 def logical_imm32_XFORM : SDNodeXForm<imm, [{
   uint64_t enc = AArch64_AM::encodeLogicalImmediate(N->getZExtValue(), 32);
-  return CurDAG->getTargetConstant(enc, MVT::i32);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i32);
 }]>;
 def logical_imm64_XFORM : SDNodeXForm<imm, [{
   uint64_t enc = AArch64_AM::encodeLogicalImmediate(N->getZExtValue(), 64);
-  return CurDAG->getTargetConstant(enc, MVT::i32);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i32);
 }]>;
 
 let DiagnosticType = "LogicalSecondSource" in {
@@ -682,7 +682,7 @@ def fpimm32 : Operand<f32>,
     }], SDNodeXForm<fpimm, [{
       APFloat InVal = N->getValueAPF();
       uint32_t enc = AArch64_AM::getFP32Imm(InVal);
-      return CurDAG->getTargetConstant(enc, MVT::i32);
+      return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i32);
     }]>> {
   let ParserMatchClass = FPImmOperand;
   let PrintMethod = "printFPImmOperand";
@@ -693,7 +693,7 @@ def fpimm64 : Operand<f64>,
     }], SDNodeXForm<fpimm, [{
       APFloat InVal = N->getValueAPF();
       uint32_t enc = AArch64_AM::getFP64Imm(InVal);
-      return CurDAG->getTargetConstant(enc, MVT::i32);
+      return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i32);
     }]>> {
   let ParserMatchClass = FPImmOperand;
   let PrintMethod = "printFPImmOperand";
@@ -768,7 +768,7 @@ def simdimmtype10 : Operand<i32>,
       uint32_t enc = AArch64_AM::encodeAdvSIMDModImmType10(N->getValueAPF()
                                                            .bitcastToAPInt()
                                                            .getZExtValue());
-      return CurDAG->getTargetConstant(enc, MVT::i32);
+      return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i32);
     }]>> {
   let ParserMatchClass = SIMDImmType10Operand;
   let PrintMethod = "printSIMDType10Operand";
@@ -2192,7 +2192,8 @@ class BaseCondSelectOp<bit op, bits<2> op2, RegisterClass regtype, string asm,
 
 def inv_cond_XFORM : SDNodeXForm<imm, [{
   AArch64CC::CondCode CC = static_cast<AArch64CC::CondCode>(N->getZExtValue());
-  return CurDAG->getTargetConstant(AArch64CC::getInvertedCondCode(CC), MVT::i32);
+  return CurDAG->getTargetConstant(AArch64CC::getInvertedCondCode(CC), SDLoc(N),
+                                   MVT::i32);
 }]>;
 
 multiclass CondSelectOp<bit op, bits<2> op2, string asm, PatFrag frag> {
@@ -3288,6 +3289,10 @@ class LoadStoreExclusiveSimple<bits<2> sz, bit o2, bit L, bit o1, bit o0,
     : BaseLoadStoreExclusive<sz, o2, L, o1, o0, oops, iops, asm, operands> {
   bits<5> Rt;
   bits<5> Rn;
+  let Inst{20-16} = 0b11111;
+  let Unpredictable{20-16} = 0b11111;
+  let Inst{14-10} = 0b11111;
+  let Unpredictable{14-10} = 0b11111;
   let Inst{9-5} = Rn;
   let Inst{4-0} = Rt;
 
@@ -5922,7 +5927,7 @@ multiclass SIMDIns {
     let Inst{20-18} = idx;
     let Inst{17-16} = 0b10;
     let Inst{14-12} = idx2;
-    let Inst{11} = 0;
+    let Inst{11} = {?};
   }
   def vi32lane : SIMDInsFromElement<".s", v4i32, i32, VectorIndexS> {
     bits<2> idx;
@@ -5930,7 +5935,7 @@ multiclass SIMDIns {
     let Inst{20-19} = idx;
     let Inst{18-16} = 0b100;
     let Inst{14-13} = idx2;
-    let Inst{12-11} = 0;
+    let Inst{12-11} = {?,?};
   }
   def vi64lane : SIMDInsFromElement<".d", v2i64, i64, VectorIndexD> {
     bits<1> idx;
@@ -5938,7 +5943,7 @@ multiclass SIMDIns {
     let Inst{20} = idx;
     let Inst{19-16} = 0b1000;
     let Inst{14} = idx2;
-    let Inst{13-11} = 0;
+    let Inst{13-11} = {?,?,?};
   }
 
   // For all forms of the INS instruction, the "mov" mnemonic is the

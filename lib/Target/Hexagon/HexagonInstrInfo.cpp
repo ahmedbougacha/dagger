@@ -573,6 +573,12 @@ HexagonInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
   unsigned Opc = MI->getOpcode();
 
   switch (Opc) {
+    case Hexagon::ALIGNA:
+      BuildMI(MBB, MI, DL, get(Hexagon::A2_andir), MI->getOperand(0).getReg())
+          .addReg(TRI.getFrameRegister())
+          .addImm(-MI->getOperand(1).getImm());
+      MBB.erase(MI);
+      return true;
     case Hexagon::TFR_PdTrue: {
       unsigned Reg = MI->getOperand(0).getReg();
       BuildMI(MBB, MI, DL, get(Hexagon::C2_orn), Reg)
@@ -1165,10 +1171,10 @@ bool HexagonInstrInfo::isDeallocRet(const MachineInstr *MI) const {
 }
 
 
-bool HexagonInstrInfo::
-isValidOffset(const int Opcode, const int Offset) const {
+bool HexagonInstrInfo::isValidOffset(unsigned Opcode, int Offset,
+      bool Extend) const {
   // This function is to check whether the "Offset" is in the correct range of
-  // the given "Opcode". If "Offset" is not in the correct range, "ADD_ri" is
+  // the given "Opcode". If "Offset" is not in the correct range, "A2_addi" is
   // inserted to calculate the final address. Due to this reason, the function
   // assumes that the "Offset" has correct alignment.
   // We used to assert if the offset was not properly aligned, however,
@@ -1176,8 +1182,16 @@ isValidOffset(const int Opcode, const int Offset) const {
   // problem, and we need to allow for it. The front end warns of such
   // misaligns with respect to load size.
 
-  switch(Opcode) {
+  switch (Opcode) {
+  case Hexagon::J2_loop0i:
+  case Hexagon::J2_loop1i:
+    return isUInt<10>(Offset);
+  }
 
+  if (Extend)
+    return true;
+
+  switch (Opcode) {
   case Hexagon::L2_loadri_io:
   case Hexagon::S2_storeri_io:
     return (Offset >= Hexagon_MEMW_OFFSET_MIN) &&
@@ -1201,7 +1215,6 @@ isValidOffset(const int Opcode, const int Offset) const {
       (Offset <= Hexagon_MEMB_OFFSET_MAX);
 
   case Hexagon::A2_addi:
-  case Hexagon::TFR_FI:
     return (Offset >= Hexagon_ADDI_OFFSET_MIN) &&
       (Offset <= Hexagon_ADDI_OFFSET_MAX);
 
@@ -1235,10 +1248,8 @@ isValidOffset(const int Opcode, const int Offset) const {
   case Hexagon::LDriw_pred:
     return true;
 
-  case Hexagon::J2_loop0i:
-    return isUInt<10>(Offset);
-
-  // INLINEASM is very special.
+  case Hexagon::TFR_FI:
+  case Hexagon::TFR_FIA:
   case Hexagon::INLINEASM:
     return true;
   }
@@ -1731,14 +1742,14 @@ bool HexagonInstrInfo::isSchedulingBoundary(const MachineInstr *MI,
   return false;
 }
 
-bool HexagonInstrInfo::isConstExtended(MachineInstr *MI) const {
+bool HexagonInstrInfo::isConstExtended(const MachineInstr *MI) const {
   const uint64_t F = MI->getDesc().TSFlags;
   unsigned isExtended = (F >> HexagonII::ExtendedPos) & HexagonII::ExtendedMask;
   if (isExtended) // Instruction must be extended.
     return true;
 
-  unsigned isExtendable = (F >> HexagonII::ExtendablePos)
-                          & HexagonII::ExtendableMask;
+  unsigned isExtendable =
+    (F >> HexagonII::ExtendablePos) & HexagonII::ExtendableMask;
   if (!isExtendable)
     return false;
 
@@ -1759,7 +1770,8 @@ bool HexagonInstrInfo::isConstExtended(MachineInstr *MI) const {
   // We currently only handle isGlobal() because it is the only kind of
   // object we are going to end up with here for now.
   // In the future we probably should add isSymbol(), etc.
-  if (MO.isGlobal() || MO.isSymbol() || MO.isBlockAddress())
+  if (MO.isGlobal() || MO.isSymbol() || MO.isBlockAddress() ||
+      MO.isJTI() || MO.isCPI())
     return true;
 
   // If the extendable operand is not 'Immediate' type, the instruction should
@@ -1771,6 +1783,27 @@ bool HexagonInstrInfo::isConstExtended(MachineInstr *MI) const {
   int ImmValue = MO.getImm();
 
   return (ImmValue < MinValue || ImmValue > MaxValue);
+}
+
+// Return the number of bytes required to encode the instruction.
+// Hexagon instructions are fixed length, 4 bytes, unless they
+// use a constant extender, which requires another 4 bytes.
+// For debug instructions and prolog labels, return 0.
+unsigned HexagonInstrInfo::getSize(const MachineInstr *MI) const {
+
+  if (MI->isDebugValue() || MI->isPosition())
+    return 0;
+
+  unsigned Size = MI->getDesc().getSize();
+  if (!Size)
+    // Assume the default insn size in case it cannot be determined
+    // for whatever reason.
+    Size = HEXAGON_INSTR_SIZE;
+
+  if (isConstExtended(MI) || isExtended(MI))
+    Size += HEXAGON_INSTR_SIZE;
+
+  return Size;
 }
 
 // Returns the opcode to use when converting MI, which is a conditional jump,

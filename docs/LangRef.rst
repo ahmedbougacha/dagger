@@ -1012,6 +1012,19 @@ Currently, only the following parameter attributes are defined:
     array), however ``dereferenceable(<n>)`` does imply ``nonnull`` in
     ``addrspace(0)`` (which is the default address space).
 
+``dereferenceable_or_null(<n>)``
+    This indicates that the parameter or return value isn't both
+    non-null and non-dereferenceable (up to ``<n>`` bytes) at the same
+    time.  All non-null pointers tagged with
+    ``dereferenceable_or_null(<n>)`` are ``dereferenceable(<n>)``.
+    For address space 0 ``dereferenceable_or_null(<n>)`` implies that
+    a pointer is exactly one of ``dereferenceable(<n>)`` or ``null``,
+    and in other address spaces ``dereferenceable_or_null(<n>)``
+    implies that a pointer is at least one of ``dereferenceable(<n>)``
+    or ``null`` (i.e. it may be both ``null`` and
+    ``dereferenceable(<n>)``).  This attribute may only be applied to
+    pointer typed parameters.
+
 .. _gc:
 
 Garbage Collector Strategy Names
@@ -3235,21 +3248,15 @@ arguments (``DW_TAG_arg_variable``).  In the latter case, the ``arg:`` field
 specifies the argument position, and this variable will be included in the
 ``variables:`` field of its :ref:`MDSubprogram`.
 
-If set, the ``inlinedAt:`` field points at an :ref:`MDLocation`, and the
-variable represents an inlined version of a variable (with all other fields
-duplicated from the non-inlined version).
-
 .. code-block:: llvm
 
     !0 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "this", arg: 0,
                           scope: !3, file: !2, line: 7, type: !3,
-                          flags: DIFlagArtificial, inlinedAt: !4)
+                          flags: DIFlagArtificial)
     !1 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "x", arg: 1,
-                          scope: !4, file: !2, line: 7, type: !3,
-                          inlinedAt: !6)
+                          scope: !4, file: !2, line: 7, type: !3)
     !1 = !MDLocalVariable(tag: DW_TAG_auto_variable, name: "y",
-                          scope: !5, file: !2, line: 7, type: !3,
-                          inlinedAt: !6)
+                          scope: !5, file: !2, line: 7, type: !3)
 
 MDExpression
 """"""""""""
@@ -3370,7 +3377,7 @@ instructions (loads, stores, memory-accessing calls, etc.) that carry
 ``noalias`` metadata can specifically be specified not to alias with some other
 collection of memory access instructions that carry ``alias.scope`` metadata.
 Each type of metadata specifies a list of scopes where each scope has an id and
-a domain. When evaluating an aliasing query, if for some some domain, the set
+a domain. When evaluating an aliasing query, if for some domain, the set
 of scopes with that domain in one instruction's ``alias.scope`` list is a
 subset of (or equal to) the set of scopes for that domain in another
 instruction's ``noalias`` list, then the two memory accesses are assumed not to
@@ -5053,7 +5060,7 @@ Semantics:
 
 The value produced is ``op1`` \* 2\ :sup:`op2` mod 2\ :sup:`n`,
 where ``n`` is the width of the result. If ``op2`` is (statically or
-dynamically) negative or equal to or larger than the number of bits in
+dynamically) equal to or larger than the number of bits in
 ``op1``, the result is undefined. If the arguments are vectors, each
 vector element of ``op1`` is shifted by the corresponding shift amount
 in ``op2``.
@@ -6577,7 +6584,7 @@ Arguments:
 """"""""""
 
 The '``ptrtoint``' instruction takes a ``value`` to cast, which must be
-a a value of type :ref:`pointer <t_pointer>` or a vector of pointers, and a
+a value of type :ref:`pointer <t_pointer>` or a vector of pointers, and a
 type to cast it to ``ty2``, which must be an :ref:`integer <t_integer>` or
 a vector of integers type.
 
@@ -10277,6 +10284,8 @@ Semantics:
 """"""""""
 
 This intrinsic is lowered to the ``val``.
+
+.. _int_assume:
 
 '``llvm.assume``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

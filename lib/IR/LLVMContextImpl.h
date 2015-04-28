@@ -736,29 +736,24 @@ template <> struct MDNodeKeyImpl<MDLocalVariable> {
   Metadata *Type;
   unsigned Arg;
   unsigned Flags;
-  Metadata *InlinedAt;
 
   MDNodeKeyImpl(unsigned Tag, Metadata *Scope, StringRef Name, Metadata *File,
-                unsigned Line, Metadata *Type, unsigned Arg, unsigned Flags,
-                Metadata *InlinedAt)
+                unsigned Line, Metadata *Type, unsigned Arg, unsigned Flags)
       : Tag(Tag), Scope(Scope), Name(Name), File(File), Line(Line), Type(Type),
-        Arg(Arg), Flags(Flags), InlinedAt(InlinedAt) {}
+        Arg(Arg), Flags(Flags) {}
   MDNodeKeyImpl(const MDLocalVariable *N)
       : Tag(N->getTag()), Scope(N->getRawScope()), Name(N->getName()),
         File(N->getRawFile()), Line(N->getLine()), Type(N->getRawType()),
-        Arg(N->getArg()), Flags(N->getFlags()),
-        InlinedAt(N->getRawInlinedAt()) {}
+        Arg(N->getArg()), Flags(N->getFlags()) {}
 
   bool isKeyOf(const MDLocalVariable *RHS) const {
     return Tag == RHS->getTag() && Scope == RHS->getRawScope() &&
            Name == RHS->getName() && File == RHS->getRawFile() &&
            Line == RHS->getLine() && Type == RHS->getRawType() &&
-           Arg == RHS->getArg() && Flags == RHS->getFlags() &&
-           InlinedAt == RHS->getRawInlinedAt();
+           Arg == RHS->getArg() && Flags == RHS->getFlags();
   }
   unsigned getHashValue() const {
-    return hash_combine(Tag, Scope, Name, File, Line, Type, Arg, Flags,
-                        InlinedAt);
+    return hash_combine(Tag, Scope, Name, File, Line, Type, Arg, Flags);
   }
 };
 
@@ -857,6 +852,44 @@ template <class NodeTy> struct MDNodeInfo {
 #define HANDLE_MDNODE_LEAF(CLASS) typedef MDNodeInfo<CLASS> CLASS##Info;
 #include "llvm/IR/Metadata.def"
 
+/// \brief Map-like storage for metadata attachments.
+class MDAttachmentMap {
+  SmallVector<std::pair<unsigned, TrackingMDNodeRef>, 2> Attachments;
+
+public:
+  bool empty() const { return Attachments.empty(); }
+  size_t size() const { return Attachments.size(); }
+
+  /// \brief Get a particular attachment (if any).
+  MDNode *lookup(unsigned ID) const;
+
+  /// \brief Set an attachment to a particular node.
+  ///
+  /// Set the \c ID attachment to \c MD, replacing the current attachment at \c
+  /// ID (if anyway).
+  void set(unsigned ID, MDNode &MD);
+
+  /// \brief Remove an attachment.
+  ///
+  /// Remove the attachment at \c ID, if any.
+  void erase(unsigned ID);
+
+  /// \brief Copy out all the attachments.
+  ///
+  /// Copies all the current attachments into \c Result, sorting by attachment
+  /// ID.  This function does \em not clear \c Result.
+  void getAll(SmallVectorImpl<std::pair<unsigned, MDNode *>> &Result) const;
+
+  /// \brief Erase matching attachments.
+  ///
+  /// Erases all attachments matching the \c shouldRemove predicate.
+  template <class PredTy> void remove_if(PredTy shouldRemove) {
+    Attachments.erase(
+        std::remove_if(Attachments.begin(), Attachments.end(), shouldRemove),
+        Attachments.end());
+  }
+};
+
 class LLVMContextImpl {
 public:
   /// OwnedModules - The set of modules instantiated in this context, and which
@@ -925,7 +958,7 @@ public:
   // Basic type instances.
   Type VoidTy, LabelTy, HalfTy, FloatTy, DoubleTy, MetadataTy;
   Type X86_FP80Ty, FP128Ty, PPC_FP128Ty, X86_MMXTy;
-  IntegerType Int1Ty, Int8Ty, Int16Ty, Int32Ty, Int64Ty;
+  IntegerType Int1Ty, Int8Ty, Int16Ty, Int32Ty, Int64Ty, Int128Ty;
 
   
   /// TypeAllocator - All dynamically allocated types are allocated from this.
@@ -956,13 +989,12 @@ public:
   /// CustomMDKindNames - Map to hold the metadata string to ID mapping.
   StringMap<unsigned> CustomMDKindNames;
 
-  typedef std::pair<unsigned, TrackingMDNodeRef> MDPairTy;
-  typedef SmallVector<MDPairTy, 2> MDMapTy;
+  /// Collection of per-instruction metadata used in this context.
+  DenseMap<const Instruction *, MDAttachmentMap> InstructionMetadata;
 
-  /// MetadataStore - Collection of per-instruction metadata used in this
-  /// context.
-  DenseMap<const Instruction *, MDMapTy> MetadataStore;
-  
+  /// Collection of per-function metadata used in this context.
+  DenseMap<const Function *, MDAttachmentMap> FunctionMetadata;
+
   /// DiscriminatorTable - This table maps file:line locations to an
   /// integer representing the next DWARF path discriminator to assign to
   /// instructions in different blocks at the same location.

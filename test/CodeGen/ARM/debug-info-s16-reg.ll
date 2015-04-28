@@ -19,7 +19,7 @@ entry:
   tail call void @llvm.dbg.value(metadata i8 %c, i64 0, metadata !12, metadata !MDExpression()), !dbg !26
   %conv = fpext float %val to double, !dbg !27
   %conv3 = zext i8 %c to i32, !dbg !27
-  %call = tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %ptr, double %conv, i32 %conv3) nounwind optsize, !dbg !27
+  %call = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %ptr, double %conv, i32 %conv3) nounwind optsize, !dbg !27
   ret i32 0, !dbg !29
 }
 
@@ -32,7 +32,7 @@ entry:
   tail call void @llvm.dbg.value(metadata i8 %c, i64 0, metadata !16, metadata !MDExpression()), !dbg !32
   %conv = fpext float %val to double, !dbg !33
   %conv3 = zext i8 %c to i32, !dbg !33
-  %call = tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %ptr, double %conv, i32 %conv3) nounwind optsize, !dbg !33
+  %call = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %ptr, double %conv, i32 %conv3) nounwind optsize, !dbg !33
   ret i32 0, !dbg !35
 }
 
@@ -53,7 +53,7 @@ entry:
   tail call void @llvm.dbg.value(metadata i8 %conv6, i64 0, metadata !62, metadata !MDExpression()) nounwind, !dbg !43
   %conv.i = fpext float %conv1 to double, !dbg !44
   %conv3.i = and i32 %add5, 255, !dbg !44
-  %call.i = tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %add.ptr, double %conv.i, i32 %conv3.i) nounwind optsize, !dbg !44
+  %call.i = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %add.ptr, double %conv.i, i32 %conv3.i) nounwind optsize, !dbg !44
   %call14 = tail call i32 @printer(i8* %add.ptr, float %conv1, i8 zeroext %conv6) optsize, !dbg !45
   ret i32 0, !dbg !46
 }
@@ -80,9 +80,9 @@ declare void @llvm.dbg.value(metadata, i64, metadata, metadata) nounwind readnon
 !12 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "c", line: 4, arg: 3, scope: !0, file: !1, type: !13)
 !13 = !MDBasicType(tag: DW_TAG_base_type, name: "unsigned char", size: 8, align: 8, encoding: DW_ATE_unsigned_char)
 
-!58 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "ptr", line: 4, arg: 1, scope: !0, file: !1, type: !9, inlinedAt: !40)
-!60 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "val", line: 4, arg: 2, scope: !0, file: !1, type: !11, inlinedAt: !40)
-!62 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "c", line: 4, arg: 3, scope: !0, file: !1, type: !13, inlinedAt: !40)
+!58 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "ptr", line: 4, arg: 1, scope: !0, file: !1, type: !9)
+!60 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "val", line: 4, arg: 2, scope: !0, file: !1, type: !11)
+!62 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "c", line: 4, arg: 3, scope: !0, file: !1, type: !13)
 
 !14 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "ptr", line: 11, arg: 1, scope: !6, file: !1, type: !9)
 !15 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "val", line: 11, arg: 2, scope: !6, file: !1, type: !11)

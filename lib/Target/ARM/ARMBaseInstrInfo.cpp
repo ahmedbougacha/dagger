@@ -410,6 +410,8 @@ ARMBaseInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
   assert((Cond.size() == 2 || Cond.size() == 0) &&
          "ARM branch conditions have two components!");
 
+  // For conditional branches, we use addOperand to preserve CPSR flags.
+
   if (!FBB) {
     if (Cond.empty()) { // Unconditional branch?
       if (isThumb)
@@ -418,13 +420,13 @@ ARMBaseInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
         BuildMI(&MBB, DL, get(BOpc)).addMBB(TBB);
     } else
       BuildMI(&MBB, DL, get(BccOpc)).addMBB(TBB)
-        .addImm(Cond[0].getImm()).addReg(Cond[1].getReg());
+        .addImm(Cond[0].getImm()).addOperand(Cond[1]);
     return 1;
   }
 
   // Two-way conditional branch.
   BuildMI(&MBB, DL, get(BccOpc)).addMBB(TBB)
-    .addImm(Cond[0].getImm()).addReg(Cond[1].getReg());
+    .addImm(Cond[0].getImm()).addOperand(Cond[1]);
   if (isThumb)
     BuildMI(&MBB, DL, get(BOpc)).addMBB(FBB).addImm(ARMCC::AL).addReg(0);
   else
@@ -1684,6 +1686,33 @@ isProfitableToIfCvt(MachineBasicBlock &MBB,
                     const BranchProbability &Probability) const {
   if (!NumCycles)
     return false;
+
+  // If we are optimizing for size, see if the branch in the predecessor can be
+  // lowered to cbn?z by the constant island lowering pass, and return false if
+  // so. This results in a shorter instruction sequence.
+  const Function *F = MBB.getParent()->getFunction();
+  if (F->hasFnAttribute(Attribute::OptimizeForSize) ||
+      F->hasFnAttribute(Attribute::MinSize)) {
+    MachineBasicBlock *Pred = *MBB.pred_begin();
+    if (!Pred->empty()) {
+      MachineInstr *LastMI = &*Pred->rbegin();
+      if (LastMI->getOpcode() == ARM::t2Bcc) {
+        MachineBasicBlock::iterator CmpMI = LastMI;
+        if (CmpMI != Pred->begin()) {
+          --CmpMI;
+          if (CmpMI->getOpcode() == ARM::tCMPi8 ||
+              CmpMI->getOpcode() == ARM::t2CMPri) {
+            unsigned Reg = CmpMI->getOperand(0).getReg();
+            unsigned PredReg = 0;
+            ARMCC::CondCodes P = getInstrPredicate(CmpMI, PredReg);
+            if (P == ARMCC::AL && CmpMI->getOperand(1).getImm() == 0 &&
+                isARMLowRegister(Reg))
+              return false;
+          }
+        }
+      }
+    }
+  }
 
   // Attempt to estimate the relative costs of predication versus branching.
   unsigned UnpredCost = Probability.getNumerator() * NumCycles;

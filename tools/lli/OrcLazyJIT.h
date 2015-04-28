@@ -20,6 +20,7 @@
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
+#include "llvm/ExecutionEngine/Orc/IRTransformLayer.h"
 #include "llvm/ExecutionEngine/Orc/LazyEmittingLayer.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
@@ -33,13 +34,16 @@ public:
   typedef orc::JITCompileCallbackManagerBase CompileCallbackMgr;
   typedef orc::ObjectLinkingLayer<> ObjLayerT;
   typedef orc::IRCompileLayer<ObjLayerT> CompileLayerT;
-  typedef orc::LazyEmittingLayer<CompileLayerT> LazyEmitLayerT;
+  typedef std::function<std::unique_ptr<Module>(std::unique_ptr<Module>)>
+    TransformFtor;
+  typedef orc::IRTransformLayer<CompileLayerT, TransformFtor> IRDumpLayerT;
+  typedef orc::LazyEmittingLayer<IRDumpLayerT> LazyEmitLayerT;
   typedef orc::CompileOnDemandLayer<LazyEmitLayerT,
                                     CompileCallbackMgr> CODLayerT;
   typedef CODLayerT::ModuleSetHandleT ModuleHandleT;
 
   typedef std::function<
-            std::unique_ptr<CompileCallbackMgr>(CompileLayerT&,
+            std::unique_ptr<CompileCallbackMgr>(IRDumpLayerT&,
                                                 RuntimeDyld::MemoryManager&,
                                                 LLVMContext&)>
     CallbackManagerBuilder;
@@ -52,8 +56,9 @@ public:
       Mang(this->TM->getDataLayout()),
       ObjectLayer(),
       CompileLayer(ObjectLayer, orc::SimpleCompiler(*this->TM)),
-      LazyEmitLayer(CompileLayer),
-      CCMgr(BuildCallbackMgr(CompileLayer, CCMgrMemMgr, Context)),
+      IRDumpLayer(CompileLayer, createDebugDumper()),
+      LazyEmitLayer(IRDumpLayer),
+      CCMgr(BuildCallbackMgr(IRDumpLayer, CCMgrMemMgr, Context)),
       CODLayer(LazyEmitLayer, *CCMgr),
       CXXRuntimeOverrides([this](const std::string &S) { return mangle(S); }) {}
 
@@ -87,25 +92,28 @@ public:
     //   1) Search the JIT symbols.
     //   2) Check for C++ runtime overrides.
     //   3) Search the host process (LLI)'s symbol table.
-    auto FallbackLookup =
-      [this](const std::string &Name) {
+    auto Resolver =
+      orc::createLambdaResolver(
+        [this](const std::string &Name) {
 
-        if (auto Sym = CODLayer.findSymbol(Name, true))
-          return RuntimeDyld::SymbolInfo(Sym.getAddress(), Sym.getFlags());
+          if (auto Sym = CODLayer.findSymbol(Name, true))
+            return RuntimeDyld::SymbolInfo(Sym.getAddress(), Sym.getFlags());
 
-        if (auto Sym = CXXRuntimeOverrides.searchOverrides(Name))
-          return Sym;
+          if (auto Sym = CXXRuntimeOverrides.searchOverrides(Name))
+            return Sym;
 
-        if (auto Addr = RTDyldMemoryManager::getSymbolAddressInProcess(Name))
-          return RuntimeDyld::SymbolInfo(Addr, JITSymbolFlags::Exported);
+          if (auto Addr = RTDyldMemoryManager::getSymbolAddressInProcess(Name))
+            return RuntimeDyld::SymbolInfo(Addr, JITSymbolFlags::Exported);
 
-        return RuntimeDyld::SymbolInfo(nullptr);
-      };
+          return RuntimeDyld::SymbolInfo(nullptr);
+        },
+        [](const std::string &Name) { return RuntimeDyld::SymbolInfo(nullptr); }
+      );
 
     // Add the module to the JIT.
     std::vector<std::unique_ptr<Module>> S;
     S.push_back(std::move(M));
-    auto H = CODLayer.addModuleSet(std::move(S), std::move(FallbackLookup));
+    auto H = CODLayer.addModuleSet(std::move(S), nullptr, std::move(Resolver));
 
     // Run the static constructors, and save the static destructor runner for
     // execution when the JIT is torn down.
@@ -137,12 +145,15 @@ private:
     return MangledName;
   }
 
+  static TransformFtor createDebugDumper();
+
   std::unique_ptr<TargetMachine> TM;
   Mangler Mang;
   SectionMemoryManager CCMgrMemMgr;
 
   ObjLayerT ObjectLayer;
   CompileLayerT CompileLayer;
+  IRDumpLayerT IRDumpLayer;
   LazyEmitLayerT LazyEmitLayer;
   std::unique_ptr<CompileCallbackMgr> CCMgr;
   CODLayerT CODLayer;

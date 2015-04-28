@@ -202,8 +202,9 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
       // during the initial isel pass through the IR so that it is done
       // in a predictable order.
       if (const DbgDeclareInst *DI = dyn_cast<DbgDeclareInst>(I)) {
-        DIVariable DIVar = DI->getVariable();
-        if (MMI.hasDebugInfo() && DIVar && DI->getDebugLoc()) {
+        assert(DI->getVariable() && "Missing variable");
+        assert(DI->getDebugLoc() && "Missing location");
+        if (MMI.hasDebugInfo()) {
           // Don't handle byval struct arguments or VLAs, for example.
           // Non-byval arguments are handled here (they refer to the stack
           // temporary alloca at this point).
@@ -270,20 +271,79 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
   }
 
   // Mark landing pad blocks.
-  for (BB = Fn->begin(); BB != EB; ++BB)
+  SmallVector<const LandingPadInst *, 4> LPads;
+  for (BB = Fn->begin(); BB != EB; ++BB) {
     if (const auto *Invoke = dyn_cast<InvokeInst>(BB->getTerminator()))
       MBBMap[Invoke->getSuccessor(1)]->setIsLandingPad();
+    if (BB->isLandingPad())
+      LPads.push_back(BB->getLandingPadInst());
+  }
 
-  // Calculate EH numbers for WinEH.
-  if (fn.hasFnAttribute("wineh-parent")) {
+  // If this is an MSVC EH personality, we need to do a bit more work.
+  EHPersonality Personality = EHPersonality::Unknown;
+  if (!LPads.empty())
+    Personality = classifyEHPersonality(LPads.back()->getPersonalityFn());
+  if (!isMSVCEHPersonality(Personality))
+    return;
+
+  WinEHFuncInfo *EHInfo = nullptr;
+  if (Personality == EHPersonality::MSVC_Win64SEH) {
+    addSEHHandlersForLPads(LPads);
+  } else if (Personality == EHPersonality::MSVC_CXX) {
     const Function *WinEHParentFn = MMI.getWinEHParent(&fn);
-    WinEHFuncInfo &FI = MMI.getWinEHFuncInfo(WinEHParentFn);
-    if (FI.LandingPadStateMap.empty()) {
-      WinEHNumbering Num(FI);
+    EHInfo = &MMI.getWinEHFuncInfo(WinEHParentFn);
+    if (EHInfo->LandingPadStateMap.empty()) {
+      WinEHNumbering Num(*EHInfo);
       Num.calculateStateNumbers(*WinEHParentFn);
       // Pop everything on the handler stack.
       Num.processCallSite(None, ImmutableCallSite());
     }
+
+    // Copy the state numbers to LandingPadInfo for the current function, which
+    // could be a handler or the parent.
+    for (const LandingPadInst *LP : LPads) {
+      MachineBasicBlock *LPadMBB = MBBMap[LP->getParent()];
+      MMI.addWinEHState(LPadMBB, EHInfo->LandingPadStateMap[LP]);
+    }
+  }
+}
+
+void FunctionLoweringInfo::addSEHHandlersForLPads(
+    ArrayRef<const LandingPadInst *> LPads) {
+  MachineModuleInfo &MMI = MF->getMMI();
+
+  // Iterate over all landing pads with llvm.eh.actions calls.
+  for (const LandingPadInst *LP : LPads) {
+    const IntrinsicInst *ActionsCall =
+        dyn_cast<IntrinsicInst>(LP->getNextNode());
+    if (!ActionsCall ||
+        ActionsCall->getIntrinsicID() != Intrinsic::eh_actions)
+      continue;
+
+    // Parse the llvm.eh.actions call we found.
+    MachineBasicBlock *LPadMBB = MBBMap[LP->getParent()];
+    SmallVector<ActionHandler *, 4> Actions;
+    parseEHActions(ActionsCall, Actions);
+
+    // Iterate EH actions from most to least precedence, which means
+    // iterating in reverse.
+    for (auto I = Actions.rbegin(), E = Actions.rend(); I != E; ++I) {
+      ActionHandler *Action = *I;
+      if (auto *CH = dyn_cast<CatchHandler>(Action)) {
+        const auto *Filter =
+            dyn_cast<Function>(CH->getSelector()->stripPointerCasts());
+        assert((Filter || CH->getSelector()->isNullValue()) &&
+               "expected function or catch-all");
+        const auto *RecoverBA =
+            cast<BlockAddress>(CH->getHandlerBlockOrFunc());
+        MMI.addSEHCatchHandler(LPadMBB, Filter, RecoverBA);
+      } else {
+        assert(isa<CleanupHandler>(Action));
+        const auto *Fini = cast<Function>(Action->getHandlerBlockOrFunc());
+        MMI.addSEHCleanupHandler(LPadMBB, Fini);
+      }
+    }
+    DeleteContainerPointers(Actions);
   }
 }
 
@@ -652,8 +712,7 @@ void llvm::ComputeUsesVAFloatArgument(const CallInst &I,
   if (FT->isVarArg() && !MMI->usesVAFloatArgument()) {
     for (unsigned i = 0, e = I.getNumArgOperands(); i != e; ++i) {
       Type* T = I.getArgOperand(i)->getType();
-      for (po_iterator<Type*> i = po_begin(T), e = po_end(T);
-           i != e; ++i) {
+      for (auto i : post_order(T)) {
         if (i->isFloatingPointTy()) {
           MMI->setUsesVAFloatArgument(true);
           return;

@@ -29,7 +29,7 @@ namespace llvm {
                    const MCSubtargetInfo &STI) override;
     virtual StringRef getOpcodeName(unsigned Opcode) const;
     void printInstruction(const MCInst *MI, raw_ostream &O);
-    StringRef getRegName(unsigned RegNo) const;
+    void printRegName(raw_ostream &OS, unsigned RegNo) const override;
     static const char *getRegisterName(unsigned RegNo);
 
     void printOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O) const;
@@ -56,6 +56,7 @@ namespace llvm {
     void printGlobalOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O)
            const;
     void printJumpTable(const MCInst *MI, unsigned OpNo, raw_ostream &O) const;
+    void printExtBrtarget(const MCInst *MI, unsigned OpNo, raw_ostream &O) const;
 
     void printConstantPool(const MCInst *MI, unsigned OpNo,
                            raw_ostream &O) const;

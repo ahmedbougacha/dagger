@@ -1,6 +1,7 @@
 #include "DwarfCompileUnit.h"
 #include "DwarfExpression.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -15,7 +16,7 @@
 
 namespace llvm {
 
-DwarfCompileUnit::DwarfCompileUnit(unsigned UID, DICompileUnit Node,
+DwarfCompileUnit::DwarfCompileUnit(unsigned UID, const MDCompileUnit *Node,
                                    AsmPrinter *A, DwarfDebug *DW,
                                    DwarfFile *DWU)
     : DwarfUnit(UID, dwarf::DW_TAG_compile_unit, Node, A, DW, DWU),
@@ -63,9 +64,9 @@ unsigned DwarfCompileUnit::getOrCreateSourceID(StringRef FileName,
 
   // FIXME: add a better feature test than hasRawTextSupport. Even better,
   // extend .file to support this.
-  return Asm->OutStreamer.EmitDwarfFileDirective(
+  return Asm->OutStreamer->EmitDwarfFileDirective(
       0, DirName, FileName,
-      Asm->OutStreamer.hasRawTextSupport() ? 0 : getUniqueID());
+      Asm->OutStreamer->hasRawTextSupport() ? 0 : getUniqueID());
 }
 
 // Return const expression if value is a GEP to access merged global
@@ -96,56 +97,57 @@ static const ConstantExpr *getMergedGlobalExpr(const Value *V) {
 }
 
 /// getOrCreateGlobalVariableDIE - get or create global variable DIE.
-DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(DIGlobalVariable GV) {
+DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(
+    const MDGlobalVariable *GV) {
   // Check for pre-existence.
   if (DIE *Die = getDIE(GV))
     return Die;
 
   assert(GV);
 
-  DIScope GVContext = GV.getContext();
-  DIType GTy = DD->resolve(GV.getType());
+  auto *GVContext = GV->getScope();
+  auto *GTy = DD->resolve(GV->getType());
 
   // Construct the context before querying for the existence of the DIE in
   // case such construction creates the DIE.
   DIE *ContextDIE = getOrCreateContextDIE(GVContext);
 
   // Add to map.
-  DIE *VariableDIE = &createAndAddDIE(GV.getTag(), *ContextDIE, GV);
-  DIScope DeclContext;
-
-  if (DIDerivedType SDMDecl = GV.getStaticDataMemberDeclaration()) {
-    DeclContext = resolve(SDMDecl.getContext());
-    assert(SDMDecl.isStaticMember() && "Expected static member decl");
-    assert(GV.isDefinition());
+  DIE *VariableDIE = &createAndAddDIE(GV->getTag(), *ContextDIE, GV);
+  MDScope *DeclContext;
+  if (auto *SDMDecl = GV->getStaticDataMemberDeclaration()) {
+    DeclContext = resolve(SDMDecl->getScope());
+    assert(SDMDecl->isStaticMember() && "Expected static member decl");
+    assert(GV->isDefinition());
     // We need the declaration DIE that is in the static member's class.
     DIE *VariableSpecDIE = getOrCreateStaticMemberDIE(SDMDecl);
     addDIEEntry(*VariableDIE, dwarf::DW_AT_specification, *VariableSpecDIE);
   } else {
-    DeclContext = GV.getContext();
+    DeclContext = GV->getScope();
     // Add name and type.
-    addString(*VariableDIE, dwarf::DW_AT_name, GV.getDisplayName());
+    addString(*VariableDIE, dwarf::DW_AT_name, GV->getDisplayName());
     addType(*VariableDIE, GTy);
 
     // Add scoping info.
-    if (!GV.isLocalToUnit())
+    if (!GV->isLocalToUnit())
       addFlag(*VariableDIE, dwarf::DW_AT_external);
 
     // Add line number info.
     addSourceLine(*VariableDIE, GV);
   }
 
-  if (!GV.isDefinition())
+  if (!GV->isDefinition())
     addFlag(*VariableDIE, dwarf::DW_AT_declaration);
+  else
+    addGlobalName(GV->getName(), *VariableDIE, DeclContext);
 
   // Add location.
   bool addToAccelTable = false;
-  bool isGlobalVariable = GV.getGlobal() != nullptr;
-  if (isGlobalVariable) {
+  if (auto *Global = dyn_cast_or_null<GlobalVariable>(GV->getVariable())) {
     addToAccelTable = true;
     DIELoc *Loc = new (DIEValueAllocator) DIELoc();
-    const MCSymbol *Sym = Asm->getSymbol(GV.getGlobal());
-    if (GV.getGlobal()->isThreadLocal()) {
+    const MCSymbol *Sym = Asm->getSymbol(Global);
+    if (Global->isThreadLocal()) {
       // FIXME: Make this work with -gsplit-dwarf.
       unsigned PointerSize = Asm->getDataLayout().getPointerSize();
       assert((PointerSize == 4 || PointerSize == 8) &&
@@ -174,11 +176,11 @@ DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(DIGlobalVariable GV) {
     }
 
     addBlock(*VariableDIE, dwarf::DW_AT_location, Loc);
-    addLinkageName(*VariableDIE, GV.getLinkageName());
+    addLinkageName(*VariableDIE, GV->getLinkageName());
   } else if (const ConstantInt *CI =
-                 dyn_cast_or_null<ConstantInt>(GV.getConstant())) {
+                 dyn_cast_or_null<ConstantInt>(GV->getVariable())) {
     addConstantValue(*VariableDIE, CI, GTy);
-  } else if (const ConstantExpr *CE = getMergedGlobalExpr(GV.getConstant())) {
+  } else if (const ConstantExpr *CE = getMergedGlobalExpr(GV->getVariable())) {
     addToAccelTable = true;
     // GV is a merged global.
     DIELoc *Loc = new (DIEValueAllocator) DIELoc();
@@ -195,15 +197,14 @@ DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(DIGlobalVariable GV) {
   }
 
   if (addToAccelTable) {
-    DD->addAccelName(GV.getName(), *VariableDIE);
+    DD->addAccelName(GV->getName(), *VariableDIE);
 
     // If the linkage name is different than the name, go ahead and output
     // that as well into the name table.
-    if (GV.getLinkageName() != "" && GV.getName() != GV.getLinkageName())
-      DD->addAccelName(GV.getLinkageName(), *VariableDIE);
+    if (GV->getLinkageName() != "" && GV->getName() != GV->getLinkageName())
+      DD->addAccelName(GV->getLinkageName(), *VariableDIE);
   }
 
-  addGlobalName(GV.getName(), *VariableDIE, DeclContext);
   return VariableDIE;
 }
 
@@ -239,7 +240,7 @@ void DwarfCompileUnit::addSectionLabel(DIE &Die, dwarf::Attribute Attribute,
 void DwarfCompileUnit::initStmtList() {
   // Define start line table label for each Compile Unit.
   MCSymbol *LineTableStartSym =
-      Asm->OutStreamer.getDwarfLineTableSymbol(getUniqueID());
+      Asm->OutStreamer->getDwarfLineTableSymbol(getUniqueID());
 
   stmtListIndex = UnitDie.getValues().size();
 
@@ -276,7 +277,7 @@ void DwarfCompileUnit::attachLowHighPC(DIE &D, const MCSymbol *Begin,
 // Find DIE for the given subprogram and attach appropriate DW_AT_low_pc
 // and DW_AT_high_pc attributes. If there are global variables in this
 // scope then create and insert DIEs for these variables.
-DIE &DwarfCompileUnit::updateSubprogramScopeDIE(DISubprogram SP) {
+DIE &DwarfCompileUnit::updateSubprogramScopeDIE(const MDSubprogram *SP) {
   DIE *SPDie = getOrCreateSubprogramDIE(SP, includeMinimalInlineScopes());
 
   attachLowHighPC(*SPDie, Asm->getFunctionBegin(), Asm->getFunctionEnd());
@@ -305,7 +306,7 @@ void DwarfCompileUnit::constructScopeDIE(
   if (!Scope || !Scope->getScopeNode())
     return;
 
-  DIScope DS(Scope->getScopeNode());
+  auto *DS = Scope->getScopeNode();
 
   assert((Scope->getInlinedAt() || !isa<MDSubprogram>(DS)) &&
          "Only handle inlined subprograms here, use "
@@ -418,8 +419,8 @@ void DwarfCompileUnit::attachRangesOrLowHighPC(
 std::unique_ptr<DIE>
 DwarfCompileUnit::constructInlinedScopeDIE(LexicalScope *Scope) {
   assert(Scope->getScopeNode());
-  DIScope DS(Scope->getScopeNode());
-  DISubprogram InlinedSP = getDISubprogram(DS);
+  auto *DS = Scope->getScopeNode();
+  auto *InlinedSP = getDISubprogram(DS);
   // Find the subprogram's DwarfCompileUnit in the SPMap in case the subprogram
   // was inlined from another compile unit.
   DIE *OriginDIE = DU->getAbstractSPDies()[InlinedSP];
@@ -431,10 +432,10 @@ DwarfCompileUnit::constructInlinedScopeDIE(LexicalScope *Scope) {
   attachRangesOrLowHighPC(*ScopeDIE, Scope->getRanges());
 
   // Add the call site information to the DIE.
-  DILocation DL(Scope->getInlinedAt());
+  const MDLocation *IA = Scope->getInlinedAt();
   addUInt(*ScopeDIE, dwarf::DW_AT_call_file, None,
-          getOrCreateSourceID(DL.getFilename(), DL.getDirectory()));
-  addUInt(*ScopeDIE, dwarf::DW_AT_call_line, None, DL.getLineNumber());
+          getOrCreateSourceID(IA->getFilename(), IA->getDirectory()));
+  addUInt(*ScopeDIE, dwarf::DW_AT_call_line, None, IA->getLine());
 
   // Add name to the name table, we do this here because we're guaranteed
   // to have concrete versions of our DW_TAG_inlined_subprogram nodes.
@@ -480,7 +481,7 @@ DwarfCompileUnit::constructVariableDIEImpl(const DbgVariable &DV,
 
   // Add variable address.
 
-  unsigned Offset = DV.getDotDebugLocOffset();
+  unsigned Offset = DV.getDebugLocListIndex();
   if (Offset != ~0U) {
     addLocationList(*VariableDie, dwarf::DW_AT_location, Offset);
     return VariableDie;
@@ -562,14 +563,14 @@ void DwarfCompileUnit::constructSubprogramScopeDIE(LexicalScope *Scope) {
   assert(Scope && Scope->getScopeNode());
   assert(!Scope->getInlinedAt());
   assert(!Scope->isAbstractScope());
-  DISubprogram Sub = cast<MDSubprogram>(Scope->getScopeNode());
+  auto *Sub = cast<MDSubprogram>(Scope->getScopeNode());
 
   DD->getProcessedSPNodes().insert(Sub);
 
   DIE &ScopeDIE = updateSubprogramScopeDIE(Sub);
 
   // If this is a variadic function, add an unspecified parameter.
-  DITypeArray FnArgs = Sub.getType().getTypeArray();
+  MDTypeRefArray FnArgs = Sub->getType()->getTypeArray();
 
   // Collect lexical scope children first.
   // ObjectPointer might be a local (non-argument) local variable if it's a
@@ -604,26 +605,25 @@ DwarfCompileUnit::constructAbstractSubprogramScopeDIE(LexicalScope *Scope) {
   if (AbsDef)
     return;
 
-  DISubprogram SP = cast<MDSubprogram>(Scope->getScopeNode());
+  auto *SP = cast<MDSubprogram>(Scope->getScopeNode());
 
   DIE *ContextDIE;
 
   if (includeMinimalInlineScopes())
     ContextDIE = &getUnitDie();
   // Some of this is duplicated from DwarfUnit::getOrCreateSubprogramDIE, with
-  // the important distinction that the DIDescriptor is not associated with the
-  // DIE (since the DIDescriptor will be associated with the concrete DIE, if
+  // the important distinction that the debug node is not associated with the
+  // DIE (since the debug node will be associated with the concrete DIE, if
   // any). It could be refactored to some common utility function.
-  else if (DISubprogram SPDecl = SP.getFunctionDeclaration()) {
+  else if (auto *SPDecl = SP->getDeclaration()) {
     ContextDIE = &getUnitDie();
     getOrCreateSubprogramDIE(SPDecl);
   } else
-    ContextDIE = getOrCreateContextDIE(resolve(SP.getContext()));
+    ContextDIE = getOrCreateContextDIE(resolve(SP->getScope()));
 
-  // Passing null as the associated DIDescriptor because the abstract definition
+  // Passing null as the associated node because the abstract definition
   // shouldn't be found by lookup.
-  AbsDef =
-      &createAndAddDIE(dwarf::DW_TAG_subprogram, *ContextDIE, DIDescriptor());
+  AbsDef = &createAndAddDIE(dwarf::DW_TAG_subprogram, *ContextDIE, nullptr);
   applySubprogramAttributesToDefinition(SP, *AbsDef);
 
   if (!includeMinimalInlineScopes())
@@ -633,11 +633,11 @@ DwarfCompileUnit::constructAbstractSubprogramScopeDIE(LexicalScope *Scope) {
 }
 
 std::unique_ptr<DIE>
-DwarfCompileUnit::constructImportedEntityDIE(const DIImportedEntity &Module) {
-  std::unique_ptr<DIE> IMDie = make_unique<DIE>((dwarf::Tag)Module.getTag());
+DwarfCompileUnit::constructImportedEntityDIE(const MDImportedEntity *Module) {
+  std::unique_ptr<DIE> IMDie = make_unique<DIE>((dwarf::Tag)Module->getTag());
   insertDIE(Module, IMDie.get());
   DIE *EntityDie;
-  DIDescriptor Entity = resolve(Module.getEntity());
+  auto *Entity = resolve(Module->getEntity());
   if (auto *NS = dyn_cast<MDNamespace>(Entity))
     EntityDie = getOrCreateNameSpace(NS);
   else if (auto *SP = dyn_cast<MDSubprogram>(Entity))
@@ -649,18 +649,17 @@ DwarfCompileUnit::constructImportedEntityDIE(const DIImportedEntity &Module) {
   else
     EntityDie = getDIE(Entity);
   assert(EntityDie);
-  addSourceLine(*IMDie, Module.getLineNumber(),
-                Module.getContext().getFilename(),
-                Module.getContext().getDirectory());
+  addSourceLine(*IMDie, Module->getLine(), Module->getScope()->getFilename(),
+                Module->getScope()->getDirectory());
   addDIEEntry(*IMDie, dwarf::DW_AT_import, *EntityDie);
-  StringRef Name = Module.getName();
+  StringRef Name = Module->getName();
   if (!Name.empty())
     addString(*IMDie, dwarf::DW_AT_name, Name);
 
   return IMDie;
 }
 
-void DwarfCompileUnit::finishSubprogramDefinition(DISubprogram SP) {
+void DwarfCompileUnit::finishSubprogramDefinition(const MDSubprogram *SP) {
   DIE *D = getDIE(SP);
   if (DIE *AbsSPDIE = DU->getAbstractSPDies().lookup(SP)) {
     if (D)
@@ -677,9 +676,9 @@ void DwarfCompileUnit::finishSubprogramDefinition(DISubprogram SP) {
       applySubprogramAttributesToDefinition(SP, *D);
   }
 }
-void DwarfCompileUnit::collectDeadVariables(DISubprogram SP) {
+void DwarfCompileUnit::collectDeadVariables(const MDSubprogram *SP) {
   assert(SP && "CU's subprogram list contains a non-subprogram");
-  assert(SP.isDefinition() &&
+  assert(SP->isDefinition() &&
          "CU's subprogram list contains a subprogram declaration");
   auto Variables = SP->getVariables();
   if (Variables.size() == 0)
@@ -689,8 +688,8 @@ void DwarfCompileUnit::collectDeadVariables(DISubprogram SP) {
   if (!SPDIE)
     SPDIE = getDIE(SP);
   assert(SPDIE);
-  for (DIVariable DV : Variables) {
-    DbgVariable NewVar(DV, DIExpression(), DD);
+  for (const MDLocalVariable *DV : Variables) {
+    DbgVariable NewVar(DV, /* IA */ nullptr, /* Expr */ nullptr, DD);
     auto VariableDie = constructVariableDIE(NewVar);
     applyVariableAttributes(NewVar, *VariableDie);
     SPDIE->addChild(std::move(VariableDie));
@@ -701,7 +700,7 @@ void DwarfCompileUnit::emitHeader(bool UseOffsets) {
   // Don't bother labeling the .dwo unit, as its offset isn't used.
   if (!Skeleton) {
     LabelBegin = Asm->createTempSymbol("cu_begin");
-    Asm->OutStreamer.EmitLabel(LabelBegin);
+    Asm->OutStreamer->EmitLabel(LabelBegin);
   }
 
   DwarfUnit::emitHeader(UseOffsets);
@@ -709,7 +708,7 @@ void DwarfCompileUnit::emitHeader(bool UseOffsets) {
 
 /// addGlobalName - Add a new global name to the compile unit.
 void DwarfCompileUnit::addGlobalName(StringRef Name, DIE &Die,
-                                     DIScope Context) {
+                                     const MDScope *Context) {
   if (includeMinimalInlineScopes())
     return;
   std::string FullName = getParentContextString(Context) + Name.str();
@@ -717,11 +716,11 @@ void DwarfCompileUnit::addGlobalName(StringRef Name, DIE &Die,
 }
 
 /// Add a new global type to the unit.
-void DwarfCompileUnit::addGlobalType(DIType Ty, const DIE &Die,
-                                     DIScope Context) {
+void DwarfCompileUnit::addGlobalType(const MDType *Ty, const DIE &Die,
+                                     const MDScope *Context) {
   if (includeMinimalInlineScopes())
     return;
-  std::string FullName = getParentContextString(Context) + Ty.getName().str();
+  std::string FullName = getParentContextString(Context) + Ty->getName().str();
   GlobalTypes[FullName] = &Die;
 }
 
@@ -765,7 +764,7 @@ void DwarfCompileUnit::addComplexAddress(const DbgVariable &DV, DIE &Die,
   DIELoc *Loc = new (DIEValueAllocator) DIELoc();
   DIEDwarfExpression DwarfExpr(*Asm, *this, *Loc);
   assert(DV.getExpression().size() == 1);
-  DIExpression Expr = DV.getExpression().back();
+  const MDExpression *Expr = DV.getExpression().back();
   bool ValidReg;
   if (Location.getOffset()) {
     ValidReg = DwarfExpr.AddMachineRegIndirect(Location.getReg(),
@@ -807,12 +806,12 @@ void DwarfCompileUnit::addExpr(DIELoc &Die, dwarf::Form Form,
   Die.addValue((dwarf::Attribute)0, Form, Value);
 }
 
-void DwarfCompileUnit::applySubprogramAttributesToDefinition(DISubprogram SP,
-                                                             DIE &SPDie) {
-  DISubprogram SPDecl = SP.getFunctionDeclaration();
-  DIScope Context = resolve(SPDecl ? SPDecl.getContext() : SP.getContext());
+void DwarfCompileUnit::applySubprogramAttributesToDefinition(
+    const MDSubprogram *SP, DIE &SPDie) {
+  auto *SPDecl = SP->getDeclaration();
+  auto *Context = resolve(SPDecl ? SPDecl->getScope() : SP->getScope());
   applySubprogramAttributes(SP, SPDie, includeMinimalInlineScopes());
-  addGlobalName(SP.getName(), SPDie, Context);
+  addGlobalName(SP->getName(), SPDie, Context);
 }
 
 bool DwarfCompileUnit::isDwoUnit() const {
@@ -820,7 +819,7 @@ bool DwarfCompileUnit::isDwoUnit() const {
 }
 
 bool DwarfCompileUnit::includeMinimalInlineScopes() const {
-  return getCUNode().getEmissionKind() == DIBuilder::LineTablesOnly ||
+  return getCUNode()->getEmissionKind() == DIBuilder::LineTablesOnly ||
          (DD->useSplitDwarf() && !Skeleton);
 }
 } // end llvm namespace

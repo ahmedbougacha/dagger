@@ -498,7 +498,7 @@ def i64imm_32bit : ImmLeaf<i64, [{
 }]>;
 
 def trunc_imm : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getZExtValue(), MVT::i32);
+  return CurDAG->getTargetConstant(N->getZExtValue(), SDLoc(N), MVT::i32);
 }]>;
 
 def : Pat<(i64 i64imm_32bit:$src),
@@ -507,12 +507,12 @@ def : Pat<(i64 i64imm_32bit:$src),
 // Materialize FP constants via MOVi32imm/MOVi64imm (MachO large code model).
 def bitcast_fpimm_to_i32 : SDNodeXForm<fpimm, [{
 return CurDAG->getTargetConstant(
-  N->getValueAPF().bitcastToAPInt().getZExtValue(), MVT::i32);
+  N->getValueAPF().bitcastToAPInt().getZExtValue(), SDLoc(N), MVT::i32);
 }]>;
 
 def bitcast_fpimm_to_i64 : SDNodeXForm<fpimm, [{
 return CurDAG->getTargetConstant(
-  N->getValueAPF().bitcastToAPInt().getZExtValue(), MVT::i64);
+  N->getValueAPF().bitcastToAPInt().getZExtValue(), SDLoc(N), MVT::i64);
 }]>;
 
 
@@ -857,57 +857,57 @@ defm UBFM : BitfieldImm<0b10, "ubfm">;
 
 def i32shift_a : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = (32 - N->getZExtValue()) & 0x1f;
-  return CurDAG->getTargetConstant(enc, MVT::i64);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i64);
 }]>;
 
 def i32shift_b : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 31 - N->getZExtValue();
-  return CurDAG->getTargetConstant(enc, MVT::i64);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i64);
 }]>;
 
 // min(7, 31 - shift_amt)
 def i32shift_sext_i8 : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 31 - N->getZExtValue();
   enc = enc > 7 ? 7 : enc;
-  return CurDAG->getTargetConstant(enc, MVT::i64);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i64);
 }]>;
 
 // min(15, 31 - shift_amt)
 def i32shift_sext_i16 : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 31 - N->getZExtValue();
   enc = enc > 15 ? 15 : enc;
-  return CurDAG->getTargetConstant(enc, MVT::i64);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i64);
 }]>;
 
 def i64shift_a : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = (64 - N->getZExtValue()) & 0x3f;
-  return CurDAG->getTargetConstant(enc, MVT::i64);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i64);
 }]>;
 
 def i64shift_b : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 63 - N->getZExtValue();
-  return CurDAG->getTargetConstant(enc, MVT::i64);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i64);
 }]>;
 
 // min(7, 63 - shift_amt)
 def i64shift_sext_i8 : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 63 - N->getZExtValue();
   enc = enc > 7 ? 7 : enc;
-  return CurDAG->getTargetConstant(enc, MVT::i64);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i64);
 }]>;
 
 // min(15, 63 - shift_amt)
 def i64shift_sext_i16 : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 63 - N->getZExtValue();
   enc = enc > 15 ? 15 : enc;
-  return CurDAG->getTargetConstant(enc, MVT::i64);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i64);
 }]>;
 
 // min(31, 63 - shift_amt)
 def i64shift_sext_i32 : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 63 - N->getZExtValue();
   enc = enc > 31 ? 31 : enc;
-  return CurDAG->getTargetConstant(enc, MVT::i64);
+  return CurDAG->getTargetConstant(enc, SDLoc(N), MVT::i64);
 }]>;
 
 def : Pat<(shl GPR32:$Rn, (i64 imm0_31:$imm)),
@@ -2314,6 +2314,20 @@ def STLXPX : StoreExclusivePair<0b11, 0, 0, 1, 1, GPR64, "stlxp">;
 def STXPW  : StoreExclusivePair<0b10, 0, 0, 1, 0, GPR32, "stxp">;
 def STXPX  : StoreExclusivePair<0b11, 0, 0, 1, 0, GPR64, "stxp">;
 
+let Predicates = [HasV8_1a] in {
+  // v8.1a "Limited Order Region" extension load-acquire instructions
+  def LDLARW  : LoadAcquire   <0b10, 1, 1, 0, 0, GPR32, "ldlar">;
+  def LDLARX  : LoadAcquire   <0b11, 1, 1, 0, 0, GPR64, "ldlar">;
+  def LDLARB  : LoadAcquire   <0b00, 1, 1, 0, 0, GPR32, "ldlarb">;
+  def LDLARH  : LoadAcquire   <0b01, 1, 1, 0, 0, GPR32, "ldlarh">;
+
+  // v8.1a "Limited Order Region" extension store-release instructions
+  def STLLRW  : StoreRelease   <0b10, 1, 0, 0, 0, GPR32, "stllr">;
+  def STLLRX  : StoreRelease   <0b11, 1, 0, 0, 0, GPR64, "stllr">;
+  def STLLRB  : StoreRelease   <0b00, 1, 0, 0, 0, GPR32, "stllrb">;
+  def STLLRH  : StoreRelease   <0b01, 1, 0, 0, 0, GPR32, "stllrh">;
+}
+
 //===----------------------------------------------------------------------===//
 // Scaled floating point to integer conversion instructions.
 //===----------------------------------------------------------------------===//
@@ -3496,13 +3510,13 @@ def : Pat<(f64 (int_aarch64_neon_fminv (v2f64 V128:$Rn))),
 // AdvSIMD INS/DUP instructions
 //----------------------------------------------------------------------------
 
-def DUPv8i8gpr  : SIMDDupFromMain<0, 0b00001, ".8b", v8i8, V64, GPR32>;
-def DUPv16i8gpr : SIMDDupFromMain<1, 0b00001, ".16b", v16i8, V128, GPR32>;
-def DUPv4i16gpr : SIMDDupFromMain<0, 0b00010, ".4h", v4i16, V64, GPR32>;
-def DUPv8i16gpr : SIMDDupFromMain<1, 0b00010, ".8h", v8i16, V128, GPR32>;
-def DUPv2i32gpr : SIMDDupFromMain<0, 0b00100, ".2s", v2i32, V64, GPR32>;
-def DUPv4i32gpr : SIMDDupFromMain<1, 0b00100, ".4s", v4i32, V128, GPR32>;
-def DUPv2i64gpr : SIMDDupFromMain<1, 0b01000, ".2d", v2i64, V128, GPR64>;
+def DUPv8i8gpr  : SIMDDupFromMain<0, {?,?,?,?,1}, ".8b", v8i8, V64, GPR32>;
+def DUPv16i8gpr : SIMDDupFromMain<1, {?,?,?,?,1}, ".16b", v16i8, V128, GPR32>;
+def DUPv4i16gpr : SIMDDupFromMain<0, {?,?,?,1,0}, ".4h", v4i16, V64, GPR32>;
+def DUPv8i16gpr : SIMDDupFromMain<1, {?,?,?,1,0}, ".8h", v8i16, V128, GPR32>;
+def DUPv2i32gpr : SIMDDupFromMain<0, {?,?,1,0,0}, ".2s", v2i32, V64, GPR32>;
+def DUPv4i32gpr : SIMDDupFromMain<1, {?,?,1,0,0}, ".4s", v4i32, V128, GPR32>;
+def DUPv2i64gpr : SIMDDupFromMain<1, {?,1,0,0,0}, ".2d", v2i64, V128, GPR64>;
 
 def DUPv2i64lane : SIMDDup64FromElement;
 def DUPv2i32lane : SIMDDup32FromElement<0, ".2s", v2i32, V64>;
@@ -3549,13 +3563,13 @@ def : Pat<(v2f64 (AArch64duplane64 (v2f64 V128:$Rn), VectorIndexD:$imm)),
 // instruction even if the types don't match: we just have to remap the lane
 // carefully. N.b. this trick only applies to truncations.
 def VecIndex_x2 : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(2 * N->getZExtValue(), MVT::i64);
+  return CurDAG->getTargetConstant(2 * N->getZExtValue(), SDLoc(N), MVT::i64);
 }]>;
 def VecIndex_x4 : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(4 * N->getZExtValue(), MVT::i64);
+  return CurDAG->getTargetConstant(4 * N->getZExtValue(), SDLoc(N), MVT::i64);
 }]>;
 def VecIndex_x8 : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(8 * N->getZExtValue(), MVT::i64);
+  return CurDAG->getTargetConstant(8 * N->getZExtValue(), SDLoc(N), MVT::i64);
 }]>;
 
 multiclass DUPWithTruncPats<ValueType ResVT, ValueType Src64VT,
@@ -5114,22 +5128,26 @@ def : Pat<(trap), (BRK 1)>;
 // Natural vector casts (64 bit)
 def : Pat<(v8i8 (AArch64NvCast (v2i32 FPR64:$src))), (v8i8 FPR64:$src)>;
 def : Pat<(v4i16 (AArch64NvCast (v2i32 FPR64:$src))), (v4i16 FPR64:$src)>;
+def : Pat<(v4f16 (AArch64NvCast (v2i32 FPR64:$src))), (v4f16 FPR64:$src)>;
 def : Pat<(v2i32 (AArch64NvCast (v2i32 FPR64:$src))), (v2i32 FPR64:$src)>;
 def : Pat<(v2f32 (AArch64NvCast (v2i32 FPR64:$src))), (v2f32 FPR64:$src)>;
 def : Pat<(v1i64 (AArch64NvCast (v2i32 FPR64:$src))), (v1i64 FPR64:$src)>;
 
 def : Pat<(v8i8 (AArch64NvCast (v4i16 FPR64:$src))), (v8i8 FPR64:$src)>;
 def : Pat<(v4i16 (AArch64NvCast (v4i16 FPR64:$src))), (v4i16 FPR64:$src)>;
+def : Pat<(v4f16 (AArch64NvCast (v4i16 FPR64:$src))), (v4f16 FPR64:$src)>;
 def : Pat<(v2i32 (AArch64NvCast (v4i16 FPR64:$src))), (v2i32 FPR64:$src)>;
 def : Pat<(v1i64 (AArch64NvCast (v4i16 FPR64:$src))), (v1i64 FPR64:$src)>;
 
 def : Pat<(v8i8 (AArch64NvCast (v8i8 FPR64:$src))), (v8i8 FPR64:$src)>;
 def : Pat<(v4i16 (AArch64NvCast (v8i8 FPR64:$src))), (v4i16 FPR64:$src)>;
+def : Pat<(v4f16 (AArch64NvCast (v8i8 FPR64:$src))), (v4f16 FPR64:$src)>;
 def : Pat<(v2i32 (AArch64NvCast (v8i8 FPR64:$src))), (v2i32 FPR64:$src)>;
 def : Pat<(v1i64 (AArch64NvCast (v8i8 FPR64:$src))), (v1i64 FPR64:$src)>;
 
 def : Pat<(v8i8 (AArch64NvCast (f64 FPR64:$src))), (v8i8 FPR64:$src)>;
 def : Pat<(v4i16 (AArch64NvCast (f64 FPR64:$src))), (v4i16 FPR64:$src)>;
+def : Pat<(v4f16 (AArch64NvCast (f64 FPR64:$src))), (v4f16 FPR64:$src)>;
 def : Pat<(v2i32 (AArch64NvCast (f64 FPR64:$src))), (v2i32 FPR64:$src)>;
 def : Pat<(v2f32 (AArch64NvCast (f64 FPR64:$src))), (v2f32 FPR64:$src)>;
 def : Pat<(v1i64 (AArch64NvCast (f64 FPR64:$src))), (v1i64 FPR64:$src)>;
@@ -5144,22 +5162,26 @@ def : Pat<(v1i64 (AArch64NvCast (v2f32 FPR64:$src))), (v1i64 FPR64:$src)>;
 // Natural vector casts (128 bit)
 def : Pat<(v16i8 (AArch64NvCast (v4i32 FPR128:$src))), (v16i8 FPR128:$src)>;
 def : Pat<(v8i16 (AArch64NvCast (v4i32 FPR128:$src))), (v8i16 FPR128:$src)>;
+def : Pat<(v8f16 (AArch64NvCast (v4i32 FPR128:$src))), (v8f16 FPR128:$src)>;
 def : Pat<(v4i32 (AArch64NvCast (v4i32 FPR128:$src))), (v4i32 FPR128:$src)>;
 def : Pat<(v4f32 (AArch64NvCast (v4i32 FPR128:$src))), (v4f32 FPR128:$src)>;
 def : Pat<(v2i64 (AArch64NvCast (v4i32 FPR128:$src))), (v2i64 FPR128:$src)>;
 
 def : Pat<(v16i8 (AArch64NvCast (v8i16 FPR128:$src))), (v16i8 FPR128:$src)>;
 def : Pat<(v8i16 (AArch64NvCast (v8i16 FPR128:$src))), (v8i16 FPR128:$src)>;
+def : Pat<(v8f16 (AArch64NvCast (v8i16 FPR128:$src))), (v8f16 FPR128:$src)>;
 def : Pat<(v4i32 (AArch64NvCast (v8i16 FPR128:$src))), (v4i32 FPR128:$src)>;
 def : Pat<(v2i64 (AArch64NvCast (v8i16 FPR128:$src))), (v2i64 FPR128:$src)>;
 
 def : Pat<(v16i8 (AArch64NvCast (v16i8 FPR128:$src))), (v16i8 FPR128:$src)>;
 def : Pat<(v8i16 (AArch64NvCast (v16i8 FPR128:$src))), (v8i16 FPR128:$src)>;
+def : Pat<(v8f16 (AArch64NvCast (v16i8 FPR128:$src))), (v8f16 FPR128:$src)>;
 def : Pat<(v4i32 (AArch64NvCast (v16i8 FPR128:$src))), (v4i32 FPR128:$src)>;
 def : Pat<(v2i64 (AArch64NvCast (v16i8 FPR128:$src))), (v2i64 FPR128:$src)>;
 
 def : Pat<(v16i8 (AArch64NvCast (v2i64 FPR128:$src))), (v16i8 FPR128:$src)>;
 def : Pat<(v8i16 (AArch64NvCast (v2i64 FPR128:$src))), (v8i16 FPR128:$src)>;
+def : Pat<(v8f16 (AArch64NvCast (v2i64 FPR128:$src))), (v8f16 FPR128:$src)>;
 def : Pat<(v4i32 (AArch64NvCast (v2i64 FPR128:$src))), (v4i32 FPR128:$src)>;
 def : Pat<(v2i64 (AArch64NvCast (v2i64 FPR128:$src))), (v2i64 FPR128:$src)>;
 def : Pat<(v4f32 (AArch64NvCast (v2i64 FPR128:$src))), (v4f32 FPR128:$src)>;

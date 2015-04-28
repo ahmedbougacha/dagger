@@ -228,41 +228,42 @@ def PPCdynalloc   : SDNode<"PPCISD::DYNALLOC", SDTDynOp, [SDNPHasChain]>;
 
 def SHL32 : SDNodeXForm<imm, [{
   // Transformation function: 31 - imm
-  return getI32Imm(31 - N->getZExtValue());
+  return getI32Imm(31 - N->getZExtValue(), SDLoc(N));
 }]>;
 
 def SRL32 : SDNodeXForm<imm, [{
   // Transformation function: 32 - imm
-  return N->getZExtValue() ? getI32Imm(32 - N->getZExtValue()) : getI32Imm(0);
+  return N->getZExtValue() ? getI32Imm(32 - N->getZExtValue(), SDLoc(N))
+                           : getI32Imm(0, SDLoc(N));
 }]>;
 
 def LO16 : SDNodeXForm<imm, [{
   // Transformation function: get the low 16 bits.
-  return getI32Imm((unsigned short)N->getZExtValue());
+  return getI32Imm((unsigned short)N->getZExtValue(), SDLoc(N));
 }]>;
 
 def HI16 : SDNodeXForm<imm, [{
   // Transformation function: shift the immediate value down into the low bits.
-  return getI32Imm((unsigned)N->getZExtValue() >> 16);
+  return getI32Imm((unsigned)N->getZExtValue() >> 16, SDLoc(N));
 }]>;
 
 def HA16 : SDNodeXForm<imm, [{
   // Transformation function: shift the immediate value down into the low bits.
   signed int Val = N->getZExtValue();
-  return getI32Imm((Val - (signed short)Val) >> 16);
+  return getI32Imm((Val - (signed short)Val) >> 16, SDLoc(N));
 }]>;
 def MB : SDNodeXForm<imm, [{
   // Transformation function: get the start bit of a mask
   unsigned mb = 0, me;
   (void)isRunOfOnes((unsigned)N->getZExtValue(), mb, me);
-  return getI32Imm(mb);
+  return getI32Imm(mb, SDLoc(N));
 }]>;
 
 def ME : SDNodeXForm<imm, [{
   // Transformation function: get the end bit of a mask
   unsigned mb, me = 0;
   (void)isRunOfOnes((unsigned)N->getZExtValue(), mb, me);
-  return getI32Imm(me);
+  return getI32Imm(me, SDLoc(N));
 }]>;
 def maskimm32 : PatLeaf<(imm), [{
   // maskImm predicate - True if immediate is a run of ones.
@@ -1369,12 +1370,6 @@ def DCBI   : DCB_Form<470, 0, (outs), (ins memrr:$dst), "dcbi $dst",
 def DCBST  : DCB_Form<54, 0, (outs), (ins memrr:$dst), "dcbst $dst",
                       IIC_LdStDCBF, [(int_ppc_dcbst xoaddr:$dst)]>,
                       PPC970_DGroup_Single;
-def DCBT   : DCB_Form<278, 0, (outs), (ins memrr:$dst), "dcbt $dst",
-                      IIC_LdStDCBF, [(int_ppc_dcbt xoaddr:$dst)]>,
-                      PPC970_DGroup_Single;
-def DCBTST : DCB_Form<246, 0, (outs), (ins memrr:$dst), "dcbtst $dst",
-                      IIC_LdStDCBF, [(int_ppc_dcbtst xoaddr:$dst)]>,
-                      PPC970_DGroup_Single;
 def DCBZ   : DCB_Form<1014, 0, (outs), (ins memrr:$dst), "dcbz $dst",
                       IIC_LdStDCBF, [(int_ppc_dcbz xoaddr:$dst)]>,
                       PPC970_DGroup_Single;
@@ -1382,13 +1377,27 @@ def DCBZL  : DCB_Form<1014, 1, (outs), (ins memrr:$dst), "dcbzl $dst",
                       IIC_LdStDCBF, [(int_ppc_dcbzl xoaddr:$dst)]>,
                       PPC970_DGroup_Single;
 
+let hasSideEffects = 0, mayLoad = 1, mayStore = 1 in {
+def DCBT   : DCB_Form_hint<278, (outs), (ins u5imm:$TH, memrr:$dst),
+                      "dcbt $dst, $TH", IIC_LdStDCBF, []>,
+                      PPC970_DGroup_Single;
+def DCBTST : DCB_Form_hint<246, (outs), (ins u5imm:$TH, memrr:$dst),
+                      "dcbtst $dst, $TH", IIC_LdStDCBF, []>,
+                      PPC970_DGroup_Single;
+} // hasSideEffects = 0
+
 def ICBT  : XForm_icbt<31, 22, (outs), (ins u4imm:$CT, memrr:$src),
                        "icbt $CT, $src", IIC_LdStLoad>, Requires<[HasICBT]>;
 
+def : Pat<(int_ppc_dcbt xoaddr:$dst),
+          (DCBT 0, xoaddr:$dst)>;
+def : Pat<(int_ppc_dcbtst xoaddr:$dst),
+          (DCBTST 0, xoaddr:$dst)>;
+
 def : Pat<(prefetch xoaddr:$dst, (i32 0), imm, (i32 1)),
-          (DCBT xoaddr:$dst)>;   // data prefetch for loads
+          (DCBT 0, xoaddr:$dst)>;   // data prefetch for loads
 def : Pat<(prefetch xoaddr:$dst, (i32 1), imm, (i32 1)),
-          (DCBTST xoaddr:$dst)>; // data prefetch for stores
+          (DCBTST 0, xoaddr:$dst)>; // data prefetch for stores
 def : Pat<(prefetch xoaddr:$dst, (i32 0), imm, (i32 0)),
           (ICBT 0, xoaddr:$dst)>, Requires<[HasICBT]>; // inst prefetch (for read)
 
@@ -3476,7 +3485,7 @@ class PPCAsmPseudo<string asm, dag iops>
 def : InstAlias<"sc", (SC 0)>;
 
 def : InstAlias<"sync", (SYNC 0)>, Requires<[HasSYNC]>;
-def : InstAlias<"msync", (SYNC 0)>, Requires<[HasSYNC]>;
+def : InstAlias<"msync", (SYNC 0), 0>, Requires<[HasSYNC]>;
 def : InstAlias<"lwsync", (SYNC 1)>, Requires<[HasSYNC]>;
 def : InstAlias<"ptesync", (SYNC 2)>, Requires<[HasSYNC]>;
 
@@ -3485,6 +3494,17 @@ def : InstAlias<"waitrsv", (WAIT 1)>;
 def : InstAlias<"waitimpl", (WAIT 2)>;
 
 def : InstAlias<"mbar", (MBAR 0)>, Requires<[IsBookE]>;
+
+def DCBTx   : PPCAsmPseudo<"dcbt $dst", (ins memrr:$dst)>;
+def DCBTSTx : PPCAsmPseudo<"dcbtst $dst", (ins memrr:$dst)>;
+
+def DCBTCT : PPCAsmPseudo<"dcbtct $dst, $TH", (ins memrr:$dst, u5imm:$TH)>;
+def DCBTDS : PPCAsmPseudo<"dcbtds $dst, $TH", (ins memrr:$dst, u5imm:$TH)>;
+def DCBTT  : PPCAsmPseudo<"dcbtt $dst", (ins memrr:$dst)>;
+
+def DCBTSTCT : PPCAsmPseudo<"dcbtstct $dst, $TH", (ins memrr:$dst, u5imm:$TH)>;
+def DCBTSTDS : PPCAsmPseudo<"dcbtstds $dst, $TH", (ins memrr:$dst, u5imm:$TH)>;
+def DCBTSTT  : PPCAsmPseudo<"dcbtstt $dst", (ins memrr:$dst)>;
 
 def : InstAlias<"crset $bx", (CREQV crbitrc:$bx, crbitrc:$bx, crbitrc:$bx)>;
 def : InstAlias<"crclr $bx", (CRXOR crbitrc:$bx, crbitrc:$bx, crbitrc:$bx)>;

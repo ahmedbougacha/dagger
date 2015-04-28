@@ -178,11 +178,13 @@ def X86ptest   : SDNode<"X86ISD::PTEST", SDTX86CmpPTest>;
 def X86testp   : SDNode<"X86ISD::TESTP", SDTX86CmpPTest>;
 def X86kortest : SDNode<"X86ISD::KORTEST", SDTX86CmpPTest>;
 def X86testm   : SDNode<"X86ISD::TESTM", SDTypeProfile<1, 2, [SDTCisVec<0>,
-                                          SDTCisVec<1>,
-                                          SDTCisSameAs<2, 1>]>>;
+                                          SDTCisVec<1>, SDTCisSameAs<2, 1>,
+                                          SDTCVecEltisVT<0, i1>,
+                                          SDTCisSameNumEltsAs<0, 1>]>>;
 def X86testnm  : SDNode<"X86ISD::TESTNM", SDTypeProfile<1, 2, [SDTCisVec<0>,
-                                          SDTCisVec<1>,
-                                          SDTCisSameAs<2, 1>]>>;
+                                          SDTCisVec<1>, SDTCisSameAs<2, 1>,
+                                          SDTCVecEltisVT<0, i1>,
+                                          SDTCisSameNumEltsAs<0, 1>]>>;
 def X86select  : SDNode<"X86ISD::SELECT"     , SDTSelect>;
 
 def X86pmuludq : SDNode<"X86ISD::PMULUDQ",
@@ -564,7 +566,7 @@ def fp32imm0 : PatLeaf<(f32 fpimm), [{
 
 def I8Imm : SDNodeXForm<imm, [{
   // Transformation function: get the low 8 bits.
-  return getI8Imm((uint8_t)N->getZExtValue());
+  return getI8Imm((uint8_t)N->getZExtValue(), SDLoc(N));
 }]>;
 
 def FROUND_NO_EXC : ImmLeaf<i32, [{ return Imm == 8; }]>;
@@ -575,31 +577,31 @@ def FROUND_CURRENT : ImmLeaf<i32, [{
 // BYTE_imm - Transform bit immediates into byte immediates.
 def BYTE_imm  : SDNodeXForm<imm, [{
   // Transformation function: imm >> 3
-  return getI32Imm(N->getZExtValue() >> 3);
+  return getI32Imm(N->getZExtValue() >> 3, SDLoc(N));
 }]>;
 
 // EXTRACT_get_vextract128_imm xform function: convert extract_subvector index
 // to VEXTRACTF128/VEXTRACTI128 imm.
 def EXTRACT_get_vextract128_imm : SDNodeXForm<extract_subvector, [{
-  return getI8Imm(X86::getExtractVEXTRACT128Immediate(N));
+  return getI8Imm(X86::getExtractVEXTRACT128Immediate(N), SDLoc(N));
 }]>;
 
 // INSERT_get_vinsert128_imm xform function: convert insert_subvector index to
 // VINSERTF128/VINSERTI128 imm.
 def INSERT_get_vinsert128_imm : SDNodeXForm<insert_subvector, [{
-  return getI8Imm(X86::getInsertVINSERT128Immediate(N));
+  return getI8Imm(X86::getInsertVINSERT128Immediate(N), SDLoc(N));
 }]>;
 
 // EXTRACT_get_vextract256_imm xform function: convert extract_subvector index
 // to VEXTRACTF64x4 imm.
 def EXTRACT_get_vextract256_imm : SDNodeXForm<extract_subvector, [{
-  return getI8Imm(X86::getExtractVEXTRACT256Immediate(N));
+  return getI8Imm(X86::getExtractVEXTRACT256Immediate(N), SDLoc(N));
 }]>;
 
 // INSERT_get_vinsert256_imm xform function: convert insert_subvector index to
 // VINSERTF64x4 imm.
 def INSERT_get_vinsert256_imm : SDNodeXForm<insert_subvector, [{
-  return getI8Imm(X86::getInsertVINSERT256Immediate(N));
+  return getI8Imm(X86::getInsertVINSERT256Immediate(N), SDLoc(N));
 }]>;
 
 def vextract128_extract : PatFrag<(ops node:$bigvec, node:$index),

@@ -54,6 +54,11 @@ static cl::opt<bool>
 ShowAnnotations("show-annotations",
                 cl::desc("Add informational comments to the .ll file"));
 
+static cl::opt<bool> PreserveAssemblyUseListOrder(
+    "preserve-ll-uselistorder",
+    cl::desc("Preserve use-list order when writing LLVM assembly."),
+    cl::init(false), cl::Hidden);
+
 namespace {
 
 static void printDebugLoc(const DebugLoc &DL, formatted_raw_ostream &OS) {
@@ -89,20 +94,18 @@ public:
         OS << "]";
       }
       if (const DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(I)) {
-        DIVariable Var(DDI->getVariable());
         if (!Padded) {
           OS.PadToColumn(50);
           OS << ";";
         }
-        OS << " [debug variable = " << Var.getName() << "]";
+        OS << " [debug variable = " << DDI->getVariable()->getName() << "]";
       }
       else if (const DbgValueInst *DVI = dyn_cast<DbgValueInst>(I)) {
-        DIVariable Var(DVI->getVariable());
         if (!Padded) {
           OS.PadToColumn(50);
           OS << ";";
         }
-        OS << " [debug variable = " << Var.getName() << "]";
+        OS << " [debug variable = " << DVI->getVariable()->getName() << "]";
       }
     }
   }
@@ -189,7 +192,7 @@ int main(int argc, char **argv) {
 
   // All that llvm-dis does is write the assembly to a file.
   if (!DontPrint)
-    M->print(Out->os(), Annotator.get());
+    M->print(Out->os(), Annotator.get(), PreserveAssemblyUseListOrder);
 
   // Declare success.
   Out->keep();

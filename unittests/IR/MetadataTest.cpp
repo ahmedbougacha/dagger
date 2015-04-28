@@ -17,6 +17,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include "gtest/gtest.h"
 using namespace llvm;
@@ -947,15 +948,15 @@ TEST_F(MDTypeTest, setFlags) {
 
   MDType *D = MDSubroutineType::getDistinct(Context, 0u, Types);
   EXPECT_EQ(0u, D->getFlags());
-  D->setFlags(DIDescriptor::FlagRValueReference);
-  EXPECT_EQ(DIDescriptor::FlagRValueReference, D->getFlags());
+  D->setFlags(DebugNode::FlagRValueReference);
+  EXPECT_EQ(DebugNode::FlagRValueReference, D->getFlags());
   D->setFlags(0u);
   EXPECT_EQ(0u, D->getFlags());
 
   TempMDType T = MDSubroutineType::getTemporary(Context, 0u, Types);
   EXPECT_EQ(0u, T->getFlags());
-  T->setFlags(DIDescriptor::FlagRValueReference);
-  EXPECT_EQ(DIDescriptor::FlagRValueReference, T->getFlags());
+  T->setFlags(DebugNode::FlagRValueReference);
+  EXPECT_EQ(DebugNode::FlagRValueReference, T->getFlags());
   T->setFlags(0u);
   EXPECT_EQ(0u, T->getFlags());
 }
@@ -1813,11 +1814,9 @@ TEST_F(MDLocalVariableTest, get) {
   MDTypeRef Type = getDerivedType();
   unsigned Arg = 6;
   unsigned Flags = 7;
-  MDLocation *InlinedAt =
-      MDLocation::getDistinct(Context, 10, 20, getSubprogram());
 
   auto *N = MDLocalVariable::get(Context, Tag, Scope, Name, File, Line, Type,
-                                 Arg, Flags, InlinedAt);
+                                 Arg, Flags);
   EXPECT_EQ(Tag, N->getTag());
   EXPECT_EQ(Scope, N->getScope());
   EXPECT_EQ(Name, N->getName());
@@ -1826,46 +1825,48 @@ TEST_F(MDLocalVariableTest, get) {
   EXPECT_EQ(Type, N->getType());
   EXPECT_EQ(Arg, N->getArg());
   EXPECT_EQ(Flags, N->getFlags());
-  EXPECT_EQ(InlinedAt, N->getInlinedAt());
   EXPECT_EQ(N, MDLocalVariable::get(Context, Tag, Scope, Name, File, Line, Type,
-                                    Arg, Flags, InlinedAt));
+                                    Arg, Flags));
 
   EXPECT_NE(N, MDLocalVariable::get(Context, dwarf::DW_TAG_auto_variable, Scope,
-                                    Name, File, Line, Type, Arg, Flags,
-                                    InlinedAt));
+                                    Name, File, Line, Type, Arg, Flags));
   EXPECT_NE(N, MDLocalVariable::get(Context, Tag, getSubprogram(), Name, File,
-                                    Line, Type, Arg, Flags, InlinedAt));
+                                    Line, Type, Arg, Flags));
   EXPECT_NE(N, MDLocalVariable::get(Context, Tag, Scope, "other", File, Line,
-                                    Type, Arg, Flags, InlinedAt));
+                                    Type, Arg, Flags));
   EXPECT_NE(N, MDLocalVariable::get(Context, Tag, Scope, Name, getFile(), Line,
-                                    Type, Arg, Flags, InlinedAt));
+                                    Type, Arg, Flags));
   EXPECT_NE(N, MDLocalVariable::get(Context, Tag, Scope, Name, File, Line + 1,
-                                    Type, Arg, Flags, InlinedAt));
+                                    Type, Arg, Flags));
   EXPECT_NE(N, MDLocalVariable::get(Context, Tag, Scope, Name, File, Line,
-                                    getDerivedType(), Arg, Flags, InlinedAt));
+                                    getDerivedType(), Arg, Flags));
   EXPECT_NE(N, MDLocalVariable::get(Context, Tag, Scope, Name, File, Line, Type,
-                                    Arg + 1, Flags, InlinedAt));
+                                    Arg + 1, Flags));
   EXPECT_NE(N, MDLocalVariable::get(Context, Tag, Scope, Name, File, Line, Type,
-                                    Arg, ~Flags, InlinedAt));
-  EXPECT_NE(N, MDLocalVariable::get(
-                   Context, Tag, Scope, Name, File, Line, Type, Arg, Flags,
-                   MDLocation::getDistinct(Context, 10, 20, getSubprogram())));
+                                    Arg, ~Flags));
 
   TempMDLocalVariable Temp = N->clone();
   EXPECT_EQ(N, MDNode::replaceWithUniqued(std::move(Temp)));
+}
 
-  auto *Inlined = N->withoutInline();
-  EXPECT_NE(N, Inlined);
-  EXPECT_EQ(N->getTag(), Inlined->getTag());
-  EXPECT_EQ(N->getScope(), Inlined->getScope());
-  EXPECT_EQ(N->getName(), Inlined->getName());
-  EXPECT_EQ(N->getFile(), Inlined->getFile());
-  EXPECT_EQ(N->getLine(), Inlined->getLine());
-  EXPECT_EQ(N->getType(), Inlined->getType());
-  EXPECT_EQ(N->getArg(), Inlined->getArg());
-  EXPECT_EQ(N->getFlags(), Inlined->getFlags());
-  EXPECT_EQ(nullptr, Inlined->getInlinedAt());
-  EXPECT_EQ(N, Inlined->withInline(cast<MDLocation>(InlinedAt)));
+TEST_F(MDLocalVariableTest, getArg256) {
+  EXPECT_EQ(255u, MDLocalVariable::get(Context, dwarf::DW_TAG_arg_variable,
+                                       getSubprogram(), "", getFile(), 0,
+                                       nullptr, 255, 0)
+                      ->getArg());
+  EXPECT_EQ(256u, MDLocalVariable::get(Context, dwarf::DW_TAG_arg_variable,
+                                       getSubprogram(), "", getFile(), 0,
+                                       nullptr, 256, 0)
+                      ->getArg());
+  EXPECT_EQ(257u, MDLocalVariable::get(Context, dwarf::DW_TAG_arg_variable,
+                                       getSubprogram(), "", getFile(), 0,
+                                       nullptr, 257, 0)
+                      ->getArg());
+  unsigned Max = UINT16_MAX;
+  EXPECT_EQ(Max, MDLocalVariable::get(Context, dwarf::DW_TAG_arg_variable,
+                                      getSubprogram(), "", getFile(), 0,
+                                      nullptr, Max, 0)
+                     ->getArg());
 }
 
 typedef MetadataTest MDExpressionTest;
@@ -2145,4 +2146,129 @@ TEST(NamedMDNodeTest, Search) {
   EXPECT_STREQ("!llvm.NMD1 = !{!0, !1}\n",
                oss.str().c_str());
 }
+
+typedef MetadataTest FunctionAttachmentTest;
+TEST_F(FunctionAttachmentTest, setMetadata) {
+  Function *F = getFunction("foo");
+  ASSERT_FALSE(F->hasMetadata());
+  EXPECT_EQ(nullptr, F->getMetadata(LLVMContext::MD_dbg));
+  EXPECT_EQ(nullptr, F->getMetadata("dbg"));
+  EXPECT_EQ(nullptr, F->getMetadata("other"));
+
+  MDSubprogram *SP1 = getSubprogram();
+  MDSubprogram *SP2 = getSubprogram();
+  ASSERT_NE(SP1, SP2);
+
+  F->setMetadata("dbg", SP1);
+  EXPECT_TRUE(F->hasMetadata());
+  EXPECT_EQ(SP1, F->getMetadata(LLVMContext::MD_dbg));
+  EXPECT_EQ(SP1, F->getMetadata("dbg"));
+  EXPECT_EQ(nullptr, F->getMetadata("other"));
+
+  F->setMetadata(LLVMContext::MD_dbg, SP2);
+  EXPECT_TRUE(F->hasMetadata());
+  EXPECT_EQ(SP2, F->getMetadata(LLVMContext::MD_dbg));
+  EXPECT_EQ(SP2, F->getMetadata("dbg"));
+  EXPECT_EQ(nullptr, F->getMetadata("other"));
+
+  F->setMetadata("dbg", nullptr);
+  EXPECT_FALSE(F->hasMetadata());
+  EXPECT_EQ(nullptr, F->getMetadata(LLVMContext::MD_dbg));
+  EXPECT_EQ(nullptr, F->getMetadata("dbg"));
+  EXPECT_EQ(nullptr, F->getMetadata("other"));
+
+  MDTuple *T1 = getTuple();
+  MDTuple *T2 = getTuple();
+  ASSERT_NE(T1, T2);
+
+  F->setMetadata("other1", T1);
+  F->setMetadata("other2", T2);
+  EXPECT_TRUE(F->hasMetadata());
+  EXPECT_EQ(T1, F->getMetadata("other1"));
+  EXPECT_EQ(T2, F->getMetadata("other2"));
+  EXPECT_EQ(nullptr, F->getMetadata("dbg"));
+
+  F->setMetadata("other1", T2);
+  F->setMetadata("other2", T1);
+  EXPECT_EQ(T2, F->getMetadata("other1"));
+  EXPECT_EQ(T1, F->getMetadata("other2"));
+
+  F->setMetadata("other1", nullptr);
+  F->setMetadata("other2", nullptr);
+  EXPECT_FALSE(F->hasMetadata());
+  EXPECT_EQ(nullptr, F->getMetadata("other1"));
+  EXPECT_EQ(nullptr, F->getMetadata("other2"));
+}
+
+TEST_F(FunctionAttachmentTest, getAll) {
+  Function *F = getFunction("foo");
+
+  MDTuple *T1 = getTuple();
+  MDTuple *T2 = getTuple();
+  MDTuple *P = getTuple();
+  MDSubprogram *SP = getSubprogram();
+
+  F->setMetadata("other1", T2);
+  F->setMetadata(LLVMContext::MD_dbg, SP);
+  F->setMetadata("other2", T1);
+  F->setMetadata(LLVMContext::MD_prof, P);
+  F->setMetadata("other2", T2);
+  F->setMetadata("other1", T1);
+
+  SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
+  F->getAllMetadata(MDs);
+  ASSERT_EQ(4u, MDs.size());
+  EXPECT_EQ(LLVMContext::MD_dbg, MDs[0].first);
+  EXPECT_EQ(LLVMContext::MD_prof, MDs[1].first);
+  EXPECT_EQ(Context.getMDKindID("other1"), MDs[2].first);
+  EXPECT_EQ(Context.getMDKindID("other2"), MDs[3].first);
+  EXPECT_EQ(SP, MDs[0].second);
+  EXPECT_EQ(P, MDs[1].second);
+  EXPECT_EQ(T1, MDs[2].second);
+  EXPECT_EQ(T2, MDs[3].second);
+}
+
+TEST_F(FunctionAttachmentTest, dropUnknownMetadata) {
+  Function *F = getFunction("foo");
+
+  MDTuple *T1 = getTuple();
+  MDTuple *T2 = getTuple();
+  MDTuple *P = getTuple();
+  MDSubprogram *SP = getSubprogram();
+
+  F->setMetadata("other1", T1);
+  F->setMetadata(LLVMContext::MD_dbg, SP);
+  F->setMetadata("other2", T2);
+  F->setMetadata(LLVMContext::MD_prof, P);
+
+  unsigned Known[] = {Context.getMDKindID("other2"), LLVMContext::MD_prof};
+  F->dropUnknownMetadata(Known);
+
+  EXPECT_EQ(T2, F->getMetadata("other2"));
+  EXPECT_EQ(P, F->getMetadata(LLVMContext::MD_prof));
+  EXPECT_EQ(nullptr, F->getMetadata("other1"));
+  EXPECT_EQ(nullptr, F->getMetadata(LLVMContext::MD_dbg));
+
+  F->setMetadata("other2", nullptr);
+  F->setMetadata(LLVMContext::MD_prof, nullptr);
+  EXPECT_FALSE(F->hasMetadata());
+}
+
+TEST_F(FunctionAttachmentTest, Verifier) {
+  Function *F = getFunction("foo");
+  F->setMetadata("attach", getTuple());
+
+  // Confirm this has no body.
+  ASSERT_TRUE(F->empty());
+
+  // Functions without a body cannot have metadata attachments (they also can't
+  // be verified directly, so check that the module fails to verify).
+  EXPECT_TRUE(verifyModule(*F->getParent()));
+
+  // Functions with a body can.
+  (void)new UnreachableInst(Context, BasicBlock::Create(Context, "bb", F));
+  EXPECT_FALSE(verifyModule(*F->getParent()));
+  EXPECT_FALSE(verifyFunction(*F));
+}
+
 }

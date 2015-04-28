@@ -6,15 +6,13 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-def isSICI : Predicate<
-  "Subtarget->getGeneration() == AMDGPUSubtarget::SOUTHERN_ISLANDS ||"
-  "Subtarget->getGeneration() == AMDGPUSubtarget::SEA_ISLANDS"
->, AssemblerPredicate<"FeatureGCN1Encoding">;
 def isCI : Predicate<"Subtarget->getGeneration() "
                       ">= AMDGPUSubtarget::SEA_ISLANDS">;
 def isVI : Predicate <
   "Subtarget->getGeneration() >= AMDGPUSubtarget::VOLCANIC_ISLANDS">,
   AssemblerPredicate<"FeatureGCN3Encoding">;
+
+def DisableInst : Predicate <"false">, AssemblerPredicate<"FeatureDisable">;
 
 class vop {
   field bits<9> SI3;
@@ -128,7 +126,8 @@ def SIconstdata_ptr : SDNode<
 
 // Transformation function, extract the lower 32bit of a 64bit immediate
 def LO32 : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getZExtValue() & 0xffffffff, MVT::i32);
+  return CurDAG->getTargetConstant(N->getZExtValue() & 0xffffffff, SDLoc(N),
+                                   MVT::i32);
 }]>;
 
 def LO32f : SDNodeXForm<fpimm, [{
@@ -138,12 +137,13 @@ def LO32f : SDNodeXForm<fpimm, [{
 
 // Transformation function, extract the upper 32bit of a 64bit immediate
 def HI32 : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getZExtValue() >> 32, MVT::i32);
+  return CurDAG->getTargetConstant(N->getZExtValue() >> 32, SDLoc(N), MVT::i32);
 }]>;
 
 def HI32f : SDNodeXForm<fpimm, [{
   APInt V = N->getValueAPF().bitcastToAPInt().lshr(32).trunc(32);
-  return CurDAG->getTargetConstantFP(APFloat(APFloat::IEEEsingle, V), MVT::f32);
+  return CurDAG->getTargetConstantFP(APFloat(APFloat::IEEEsingle, V), SDLoc(N),
+                                     MVT::f32);
 }]>;
 
 def IMM8bitDWORD : PatLeaf <(imm),
@@ -151,39 +151,39 @@ def IMM8bitDWORD : PatLeaf <(imm),
 >;
 
 def as_dword_i32imm : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getZExtValue() >> 2, MVT::i32);
+  return CurDAG->getTargetConstant(N->getZExtValue() >> 2, SDLoc(N), MVT::i32);
 }]>;
 
 def as_i1imm : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getZExtValue(), MVT::i1);
+  return CurDAG->getTargetConstant(N->getZExtValue(), SDLoc(N), MVT::i1);
 }]>;
 
 def as_i8imm : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getZExtValue(), MVT::i8);
+  return CurDAG->getTargetConstant(N->getZExtValue(), SDLoc(N), MVT::i8);
 }]>;
 
 def as_i16imm : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getSExtValue(), MVT::i16);
+  return CurDAG->getTargetConstant(N->getSExtValue(), SDLoc(N), MVT::i16);
 }]>;
 
 def as_i32imm: SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getSExtValue(), MVT::i32);
+  return CurDAG->getTargetConstant(N->getSExtValue(), SDLoc(N), MVT::i32);
 }]>;
 
 def as_i64imm: SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getSExtValue(), MVT::i64);
+  return CurDAG->getTargetConstant(N->getSExtValue(), SDLoc(N), MVT::i64);
 }]>;
 
 // Copied from the AArch64 backend:
 def bitcast_fpimm_to_i32 : SDNodeXForm<fpimm, [{
 return CurDAG->getTargetConstant(
-  N->getValueAPF().bitcastToAPInt().getZExtValue(), MVT::i32);
+  N->getValueAPF().bitcastToAPInt().getZExtValue(), SDLoc(N), MVT::i32);
 }]>;
 
 // Copied from the AArch64 backend:
 def bitcast_fpimm_to_i64 : SDNodeXForm<fpimm, [{
 return CurDAG->getTargetConstant(
-  N->getValueAPF().bitcastToAPInt().getZExtValue(), MVT::i64);
+  N->getValueAPF().bitcastToAPInt().getZExtValue(), SDLoc(N), MVT::i64);
 }]>;
 
 def IMM8bit : PatLeaf <(imm),
@@ -933,6 +933,12 @@ class VOPProfile <list<ValueType> _ArgVT> {
   field string Asm64 = getAsm64<NumSrcArgs, HasModifiers>.ret;
 }
 
+// FIXME: I think these F16 profiles will need to use f16 types in order
+//        for the instruction patterns to work.
+def VOP_F16_F16 : VOPProfile <[f32, f32, untyped, untyped]>;
+def VOP_F16_I16 : VOPProfile <[f32, i32, untyped, untyped]>;
+def VOP_I16_F16 : VOPProfile <[i32, f32, untyped, untyped]>;
+
 def VOP_F32_F32 : VOPProfile <[f32, f32, untyped, untyped]>;
 def VOP_F32_F64 : VOPProfile <[f32, f64, untyped, untyped]>;
 def VOP_F32_I32 : VOPProfile <[f32, i32, untyped, untyped]>;
@@ -1011,11 +1017,15 @@ class VOP1_Pseudo <dag outs, dag ins, list<dag> pattern, string opName> :
 
 class VOP1_Real_si <string opName, vop1 op, dag outs, dag ins, string asm> :
   VOP1<op.SI, outs, ins, asm, []>,
-  SIMCInstr <opName#"_e32", SISubtarget.SI>;
+  SIMCInstr <opName#"_e32", SISubtarget.SI> {
+  let AssemblerPredicate = SIAssemblerPredicate;
+}
 
 class VOP1_Real_vi <string opName, vop1 op, dag outs, dag ins, string asm> :
   VOP1<op.VI, outs, ins, asm, []>,
-  SIMCInstr <opName#"_e32", SISubtarget.VI>;
+  SIMCInstr <opName#"_e32", SISubtarget.VI> {
+  let AssemblerPredicates = [isVI];
+}
 
 multiclass VOP1_m <vop1 op, dag outs, dag ins, string asm, list<dag> pattern,
                    string opName> {

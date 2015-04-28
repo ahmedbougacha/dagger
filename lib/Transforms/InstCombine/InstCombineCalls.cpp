@@ -197,12 +197,68 @@ Instruction *InstCombiner::SimplifyMemSet(MemSetInst *MI) {
   return nullptr;
 }
 
+static Value *SimplifyX86insertps(const IntrinsicInst &II,
+                                  InstCombiner::BuilderTy &Builder) {
+  if (auto *CInt = dyn_cast<ConstantInt>(II.getArgOperand(2))) {
+    VectorType *VecTy = cast<VectorType>(II.getType());
+    assert(VecTy->getNumElements() == 4 && "insertps with wrong vector type");
+    
+    // The immediate permute control byte looks like this:
+    //    [3:0] - zero mask for each 32-bit lane
+    //    [5:4] - select one 32-bit destination lane
+    //    [7:6] - select one 32-bit source lane
+
+    uint8_t Imm = CInt->getZExtValue();
+    uint8_t ZMask = Imm & 0xf;
+    uint8_t DestLane = (Imm >> 4) & 0x3;
+    uint8_t SourceLane = (Imm >> 6) & 0x3;
+
+    ConstantAggregateZero *ZeroVector = ConstantAggregateZero::get(VecTy);
+
+    // If all zero mask bits are set, this was just a weird way to
+    // generate a zero vector.
+    if (ZMask == 0xf)
+      return ZeroVector;
+
+    // Initialize by passing all of the first source bits through.
+    int ShuffleMask[4] = { 0, 1, 2, 3 };
+
+    // We may replace the second operand with the zero vector.
+    Value *V1 = II.getArgOperand(1);
+
+    if (ZMask) {
+      // If the zero mask is being used with a single input or the zero mask
+      // overrides the destination lane, this is a shuffle with the zero vector.
+      if ((II.getArgOperand(0) == II.getArgOperand(1)) ||
+          (ZMask & (1 << DestLane))) {
+        V1 = ZeroVector;
+        // We may still move 32-bits of the first source vector from one lane
+        // to another.
+        ShuffleMask[DestLane] = SourceLane;
+        // The zero mask may override the previous insert operation.
+        for (unsigned i = 0; i < 4; ++i)
+          if ((ZMask >> i) & 0x1)
+            ShuffleMask[i] = i + 4;
+      } else {
+        // TODO: Model this case as 2 shuffles or a 'logical and' plus shuffle?
+        return nullptr;
+      }
+    } else {
+      // Replace the selected destination lane with the selected source lane.
+      ShuffleMask[DestLane] = SourceLane + 4;
+    }
+  
+    return Builder.CreateShuffleVector(II.getArgOperand(0), V1, ShuffleMask);
+  }
+  return nullptr;
+}
+
 /// The shuffle mask for a perm2*128 selects any two halves of two 256-bit
 /// source vectors, unless a zero bit is set. If a zero bit is set,
 /// then ignore that half of the mask and clear that half of the vector.
 static Value *SimplifyX86vperm2(const IntrinsicInst &II,
                                 InstCombiner::BuilderTy &Builder) {
-  if (auto CInt = dyn_cast<ConstantInt>(II.getArgOperand(2))) {
+  if (auto *CInt = dyn_cast<ConstantInt>(II.getArgOperand(2))) {
     VectorType *VecTy = cast<VectorType>(II.getType());
     ConstantAggregateZero *ZeroVector = ConstantAggregateZero::get(VecTy);
 
@@ -416,12 +472,10 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     }
     break;
 
-    case Intrinsic::uadd_with_overflow: // FALLTHROUGH
-    case Intrinsic::sadd_with_overflow: // FALLTHROUGH
-    case Intrinsic::usub_with_overflow: // FALLTHROUGH
-    case Intrinsic::ssub_with_overflow: // FALLTHROUGH
-    case Intrinsic::umul_with_overflow: // FALLTHROUGH
-    case Intrinsic::smul_with_overflow: {
+  case Intrinsic::uadd_with_overflow:
+  case Intrinsic::sadd_with_overflow:
+  case Intrinsic::umul_with_overflow:
+  case Intrinsic::smul_with_overflow:
     if (isa<Constant>(II->getArgOperand(0)) &&
         !isa<Constant>(II->getArgOperand(1))) {
       // Canonicalize constants into the RHS.
@@ -430,7 +484,10 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
       II->setArgOperand(1, LHS);
       return II;
     }
+    // fall through
 
+  case Intrinsic::usub_with_overflow:
+  case Intrinsic::ssub_with_overflow: {
     OverflowCheckFlavor OCF =
         IntrinsicIDToOverflowCheckFlavor(II->getIntrinsicID());
     assert(OCF != OCF_INVALID && "unexpected!");
@@ -729,7 +786,11 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     }
     break;
   }
-
+  case Intrinsic::x86_sse41_insertps:
+    if (Value *V = SimplifyX86insertps(*II, *Builder))
+      return ReplaceInstUsesWith(*II, V);
+    break;
+    
   case Intrinsic::x86_sse4a_insertqi: {
     // insertqi x, y, 64, 0 can just copy y's lower bits and leave the top
     // ones undef
@@ -1160,7 +1221,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
       II->addAttribute(AttributeSet::ReturnIndex, Attribute::NonNull);
 
     // isDereferenceablePointer -> deref attribute
-    if (DerivedPtr->isDereferenceablePointer(DL)) {
+    if (isDereferenceablePointer(DerivedPtr, DL)) {
       if (Argument *A = dyn_cast<Argument>(DerivedPtr)) {
         uint64_t Bytes = A->getDereferenceableBytes();
         II->addDereferenceableAttr(AttributeSet::ReturnIndex, Bytes);

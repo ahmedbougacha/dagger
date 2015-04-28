@@ -1,3 +1,4 @@
+
 //===- HexagonInstrInfo.h - Hexagon Instruction Information -----*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
@@ -160,7 +161,7 @@ public:
   bool isSchedulingBoundary(const MachineInstr *MI,
                             const MachineBasicBlock *MBB,
                             const MachineFunction &MF) const override;
-  bool isValidOffset(const int Opcode, const int Offset) const;
+  bool isValidOffset(unsigned Opcode, int Offset, bool Extend = true) const;
   bool isValidAutoIncImm(const EVT VT, const int Offset) const;
   bool isMemOp(const MachineInstr *MI) const;
   bool isSpillPredRegOp(const MachineInstr *MI) const;
@@ -203,7 +204,8 @@ public:
 
 
   void immediateExtend(MachineInstr *MI) const;
-  bool isConstExtended(MachineInstr *MI) const;
+  bool isConstExtended(const MachineInstr *MI) const;
+  unsigned getSize(const MachineInstr *MI) const;  
   int getDotNewPredJumpOp(MachineInstr *MI,
                       const MachineBranchProbabilityInfo *MBPI) const;
   unsigned getAddrMode(const MachineInstr* MI) const;

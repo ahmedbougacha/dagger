@@ -1,6 +1,6 @@
-; RUN: llc  %s -mtriple=armv7-linux-gnueabi -O3 -filetype=obj -o - | \
+; RUN: llc  %s -mtriple=armv7-linux-gnueabi -filetype=obj -o - | \
 ; RUN:    llvm-readobj -s -t | FileCheck  -check-prefix=OBJ %s
-; RUN: llc  %s -mtriple=armv7-linux-gnueabi -O3 -o - | \
+; RUN: llc  %s -mtriple=armv7-linux-gnueabi -o - | \
 ; RUN:    FileCheck  -check-prefix=ASM %s
 
 
@@ -12,13 +12,8 @@
 ; ASM:          .type   array00,%object         @ @array00
 ; ASM-NEXT:     .local  array00
 ; ASM-NEXT:     .comm   array00,80,1
-; ASM-NEXT:     .type   _MergedGlobals,%object  @ @_MergedGlobals
+; ASM-NEXT:     .type   sum,%object  @ @sum
 
-
-; OBJ:      Sections [
-; OBJ:        Section {
-; OBJ:          Index: 4
-; OBJ-NEXT:     Name: .bss
 
 ; OBJ:      Symbols [
 ; OBJ:        Symbol {

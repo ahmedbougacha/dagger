@@ -263,14 +263,13 @@ void LandingPadInst::addClause(Constant *Val) {
 CallInst::~CallInst() {
 }
 
-void CallInst::init(Value *Func, ArrayRef<Value *> Args, const Twine &NameStr) {
+void CallInst::init(FunctionType *FTy, Value *Func, ArrayRef<Value *> Args,
+                    const Twine &NameStr) {
+  this->FTy = FTy;
   assert(NumOperands == Args.size() + 1 && "NumOperands not set up?");
   Op<-1>() = Func;
 
 #ifndef NDEBUG
-  FunctionType *FTy =
-    cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
-
   assert((Args.size() == FTy->getNumParams() ||
           (FTy->isVarArg() && Args.size() > FTy->getNumParams())) &&
          "Calling a function with bad signature!");
@@ -286,15 +285,12 @@ void CallInst::init(Value *Func, ArrayRef<Value *> Args, const Twine &NameStr) {
 }
 
 void CallInst::init(Value *Func, const Twine &NameStr) {
+  FTy =
+      cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
   assert(NumOperands == 1 && "NumOperands not set up?");
   Op<-1>() = Func;
 
-#ifndef NDEBUG
-  FunctionType *FTy =
-    cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
-
   assert(FTy->getNumParams() == 0 && "Calling a function with bad signature");
-#endif
 
   setName(NameStr);
 }
@@ -320,10 +316,10 @@ CallInst::CallInst(Value *Func, const Twine &Name,
 }
 
 CallInst::CallInst(const CallInst &CI)
-  : Instruction(CI.getType(), Instruction::Call,
-                OperandTraits<CallInst>::op_end(this) - CI.getNumOperands(),
-                CI.getNumOperands()) {
-  setAttributes(CI.getAttributes());
+    : Instruction(CI.getType(), Instruction::Call,
+                  OperandTraits<CallInst>::op_end(this) - CI.getNumOperands(),
+                  CI.getNumOperands()),
+      AttributeList(CI.AttributeList), FTy(CI.FTy) {
   setTailCallKind(CI.getTailCallKind());
   setCallingConv(CI.getCallingConv());
     
@@ -349,6 +345,12 @@ void CallInst::removeAttribute(unsigned i, Attribute attr) {
 void CallInst::addDereferenceableAttr(unsigned i, uint64_t Bytes) {
   AttributeSet PAL = getAttributes();
   PAL = PAL.addDereferenceableAttr(getContext(), i, Bytes);
+  setAttributes(PAL);
+}
+
+void CallInst::addDereferenceableOrNullAttr(unsigned i, uint64_t Bytes) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.addDereferenceableOrNullAttr(getContext(), i, Bytes);
   setAttributes(PAL);
 }
 
@@ -537,15 +539,14 @@ Instruction* CallInst::CreateFree(Value* Source, BasicBlock *InsertAtEnd) {
 
 void InvokeInst::init(Value *Fn, BasicBlock *IfNormal, BasicBlock *IfException,
                       ArrayRef<Value *> Args, const Twine &NameStr) {
+  FTy = cast<FunctionType>(cast<PointerType>(Fn->getType())->getElementType());
+
   assert(NumOperands == 3 + Args.size() && "NumOperands not set up?");
   Op<-3>() = Fn;
   Op<-2>() = IfNormal;
   Op<-1>() = IfException;
 
 #ifndef NDEBUG
-  FunctionType *FTy =
-    cast<FunctionType>(cast<PointerType>(Fn->getType())->getElementType());
-
   assert(((Args.size() == FTy->getNumParams()) ||
           (FTy->isVarArg() && Args.size() > FTy->getNumParams())) &&
          "Invoking a function with bad signature");
@@ -561,11 +562,11 @@ void InvokeInst::init(Value *Fn, BasicBlock *IfNormal, BasicBlock *IfException,
 }
 
 InvokeInst::InvokeInst(const InvokeInst &II)
-  : TerminatorInst(II.getType(), Instruction::Invoke,
-                   OperandTraits<InvokeInst>::op_end(this)
-                   - II.getNumOperands(),
-                   II.getNumOperands()) {
-  setAttributes(II.getAttributes());
+    : TerminatorInst(II.getType(), Instruction::Invoke,
+                     OperandTraits<InvokeInst>::op_end(this) -
+                         II.getNumOperands(),
+                     II.getNumOperands()),
+      AttributeList(II.AttributeList), FTy(II.FTy) {
   setCallingConv(II.getCallingConv());
   std::copy(II.op_begin(), II.op_end(), op_begin());
   SubclassOptionalData = II.SubclassOptionalData;
@@ -614,6 +615,12 @@ void InvokeInst::removeAttribute(unsigned i, Attribute attr) {
 void InvokeInst::addDereferenceableAttr(unsigned i, uint64_t Bytes) {
   AttributeSet PAL = getAttributes();
   PAL = PAL.addDereferenceableAttr(getContext(), i, Bytes);
+  setAttributes(PAL);
+}
+
+void InvokeInst::addDereferenceableOrNullAttr(unsigned i, uint64_t Bytes) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.addDereferenceableOrNullAttr(getContext(), i, Bytes);
   setAttributes(PAL);
 }
 
@@ -933,9 +940,9 @@ LoadInst::LoadInst(Value *Ptr, const Twine &Name, bool isVolatile,
                    BasicBlock *InsertAE)
     : LoadInst(Ptr, Name, isVolatile, /*Align=*/0, InsertAE) {}
 
-LoadInst::LoadInst(Value *Ptr, const Twine &Name, bool isVolatile,
+LoadInst::LoadInst(Type *Ty, Value *Ptr, const Twine &Name, bool isVolatile,
                    unsigned Align, Instruction *InsertBef)
-    : LoadInst(Ptr, Name, isVolatile, Align, NotAtomic, CrossThread,
+    : LoadInst(Ty, Ptr, Name, isVolatile, Align, NotAtomic, CrossThread,
                InsertBef) {}
 
 LoadInst::LoadInst(Value *Ptr, const Twine &Name, bool isVolatile,
@@ -2106,7 +2113,7 @@ unsigned CastInst::isEliminableCastPair(
     // N  X  X  U  S  F  F  N  X  N  2  V  V   |
     // C  T  T  I  I  P  P  C  T  T  P  T  T  -+
     {  1, 0, 0,99,99, 0, 0,99,99,99, 0, 3, 0}, // Trunc         -+
-    {  8, 1, 9,99,99, 2, 0,99,99,99, 2, 3, 0}, // ZExt           |
+    {  8, 1, 9,99,99, 2,17,99,99,99, 2, 3, 0}, // ZExt           |
     {  8, 0, 1,99,99, 0, 2,99,99,99, 0, 3, 0}, // SExt           |
     {  0, 0, 0,99,99, 0, 0,99,99,99, 0, 3, 0}, // FPToUI         |
     {  0, 0, 0,99,99, 0, 0,99,99,99, 0, 3, 0}, // FPToSI         |
@@ -2273,6 +2280,9 @@ unsigned CastInst::isEliminableCastPair(
         "Illegal bitcast, ptrtoint sequence!");
       // Allowed, use second cast's opcode
       return secondOp;
+    case 17:
+      // (sitofp (zext x)) -> (uitofp x)
+      return Instruction::UIToFP;
     case 99: 
       // Cast combination can't happen (error in input). This is for all cases
       // where the MidTy is not the same for the two cast instructions.

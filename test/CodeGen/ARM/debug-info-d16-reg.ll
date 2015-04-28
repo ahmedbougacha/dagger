@@ -16,7 +16,7 @@ entry:
   tail call void @llvm.dbg.value(metadata double %val, i64 0, metadata !20, metadata !MDExpression()), !dbg !26
   tail call void @llvm.dbg.value(metadata i8 %c, i64 0, metadata !21, metadata !MDExpression()), !dbg !26
   %0 = zext i8 %c to i32, !dbg !27
-  %1 = tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %ptr, double %val, i32 %0) nounwind, !dbg !27
+  %1 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %ptr, double %val, i32 %0) nounwind, !dbg !27
   ret i32 0, !dbg !29
 }
 
@@ -26,7 +26,7 @@ entry:
   tail call void @llvm.dbg.value(metadata double %val, i64 0, metadata !17, metadata !MDExpression()), !dbg !30
   tail call void @llvm.dbg.value(metadata i8 %c, i64 0, metadata !18, metadata !MDExpression()), !dbg !30
   %0 = zext i8 %c to i32, !dbg !31
-  %1 = tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %ptr, double %val, i32 %0) nounwind, !dbg !31
+  %1 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %ptr, double %val, i32 %0) nounwind, !dbg !31
   ret i32 0, !dbg !33
 }
 
@@ -49,7 +49,7 @@ entry:
   tail call void @llvm.dbg.value(metadata double %1, i64 0, metadata !50, metadata !MDExpression()) nounwind, !dbg !38
   tail call void @llvm.dbg.value(metadata i8 %5, i64 0, metadata !51, metadata !MDExpression()) nounwind, !dbg !38
   %6 = zext i8 %5 to i32, !dbg !39
-  %7 = tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %3, double %1, i32 %6) nounwind, !dbg !39
+  %7 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), i8* %3, double %1, i32 %6) nounwind, !dbg !39
   %8 = tail call i32 @printer(i8* %3, double %1, i8 zeroext %5) nounwind, !dbg !40
   ret i32 0, !dbg !41
 }
@@ -82,9 +82,9 @@ declare i32 @puts(i8* nocapture) nounwind
 !20 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "val", line: 4, arg: 2, scope: !9, file: !1, type: !7)
 !21 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "c", line: 4, arg: 3, scope: !9, file: !1, type: !8)
 
-!49 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "ptr", line: 4, arg: 1, scope: !9, file: !1, type: !6, inlinedAt: !37)
-!50 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "val", line: 4, arg: 2, scope: !9, file: !1, type: !7, inlinedAt: !37)
-!51 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "c", line: 4, arg: 2, scope: !9, file: !1, type: !8, inlinedAt: !37)
+!49 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "ptr", line: 4, arg: 1, scope: !9, file: !1, type: !6)
+!50 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "val", line: 4, arg: 2, scope: !9, file: !1, type: !7)
+!51 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "c", line: 4, arg: 2, scope: !9, file: !1, type: !8)
 
 !22 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "argc", line: 17, arg: 0, scope: !10, file: !1, type: !5)
 !23 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "argv", line: 17, arg: 0, scope: !10, file: !1, type: !13)

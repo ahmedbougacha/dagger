@@ -16,8 +16,8 @@ using namespace llvm;
 //===----------------------------------------------------------------------===//
 // DebugLoc Implementation
 //===----------------------------------------------------------------------===//
-DebugLoc::DebugLoc(MDLocation *L) : Loc(L) {}
-DebugLoc::DebugLoc(MDNode *L) : Loc(L) {}
+DebugLoc::DebugLoc(const MDLocation *L) : Loc(const_cast<MDLocation *>(L)) {}
+DebugLoc::DebugLoc(const MDNode *L) : Loc(const_cast<MDNode *>(L)) {}
 
 MDLocation *DebugLoc::get() const {
   return cast_or_null<MDLocation>(Loc.get());
@@ -50,19 +50,21 @@ MDNode *DebugLoc::getInlinedAtScope() const {
 DebugLoc DebugLoc::getFnDebugLoc() const {
   // FIXME: Add a method on \a MDLocation that does this work.
   const MDNode *Scope = getInlinedAtScope();
-  if (DISubprogram SP = getDISubprogram(Scope))
-    return DebugLoc::get(SP.getScopeLineNumber(), 0, SP);
+  if (auto *SP = getDISubprogram(Scope))
+    return DebugLoc::get(SP->getScopeLine(), 0, SP);
 
   return DebugLoc();
 }
 
-DebugLoc DebugLoc::get(unsigned Line, unsigned Col,
-                       MDNode *Scope, MDNode *InlinedAt) {
+DebugLoc DebugLoc::get(unsigned Line, unsigned Col, const MDNode *Scope,
+                       const MDNode *InlinedAt) {
   // If no scope is available, this is an unknown location.
   if (!Scope)
     return DebugLoc();
 
-  return MDLocation::get(Scope->getContext(), Line, Col, Scope, InlinedAt);
+  return MDLocation::get(Scope->getContext(), Line, Col,
+                         const_cast<MDNode *>(Scope),
+                         const_cast<MDNode *>(InlinedAt));
 }
 
 void DebugLoc::dump() const {
@@ -86,8 +88,8 @@ void DebugLoc::print(raw_ostream &OS) const {
     return;
 
   // Print source line info.
-  DIScope Scope = cast<MDScope>(getScope());
-  OS << Scope.getFilename();
+  auto *Scope = cast<MDScope>(getScope());
+  OS << Scope->getFilename();
   OS << ':' << getLine();
   if (getCol() != 0)
     OS << ':' << getCol();

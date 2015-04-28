@@ -36,6 +36,7 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/CallGraphSCCPass.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constants.h"
@@ -89,7 +90,7 @@ namespace {
     bool doInitialization(CallGraph &CG) override;
     /// The maximum number of elements to expand, or 0 for unlimited.
     unsigned maxElements;
-    DenseMap<const Function *, DISubprogram> FunctionDIs;
+    DenseMap<const Function *, MDSubprogram *> FunctionDIs;
   };
 }
 
@@ -321,7 +322,7 @@ static bool AllCallersPassInValidPointerForArgument(Argument *Arg) {
     CallSite CS(U);
     assert(CS && "Should only have direct calls!");
 
-    if (!CS.getArgument(ArgNo)->isDereferenceablePointer(DL))
+    if (!isDereferenceablePointer(CS.getArgument(ArgNo), DL))
       return false;
   }
   return true;
@@ -705,8 +706,8 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
   // Patch the pointer to LLVM function in debug info descriptor.
   auto DI = FunctionDIs.find(F);
   if (DI != FunctionDIs.end()) {
-    DISubprogram SP = DI->second;
-    SP.replaceFunction(NF);
+    MDSubprogram *SP = DI->second;
+    SP->replaceFunction(NF);
     // Ensure the map is updated so it can be reused on subsequent argument
     // promotions of the same function.
     FunctionDIs.erase(DI);

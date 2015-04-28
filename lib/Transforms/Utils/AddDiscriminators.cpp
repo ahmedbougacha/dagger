@@ -174,14 +174,14 @@ bool AddDiscriminators::runOnFunction(Function &F) {
   for (Function::iterator I = F.begin(), E = F.end(); I != E; ++I) {
     BasicBlock *B = I;
     TerminatorInst *Last = B->getTerminator();
-    DILocation LastDIL = Last->getDebugLoc().get();
+    const MDLocation *LastDIL = Last->getDebugLoc();
     if (!LastDIL)
       continue;
 
     for (unsigned I = 0; I < Last->getNumSuccessors(); ++I) {
       BasicBlock *Succ = Last->getSuccessor(I);
       Instruction *First = Succ->getFirstNonPHIOrDbgOrLifetime();
-      DILocation FirstDIL = First->getDebugLoc().get();
+      const MDLocation *FirstDIL = First->getDebugLoc();
       if (!FirstDIL)
         continue;
 
@@ -192,14 +192,22 @@ bool AddDiscriminators::runOnFunction(Function &F) {
       if (!FirstDIL->canDiscriminate(*LastDIL)) {
         // Create a new lexical scope and compute a new discriminator
         // number for it.
-        StringRef Filename = FirstDIL.getFilename();
-        DIScope Scope = FirstDIL.getScope();
-        DIFile File = Builder.createFile(Filename, Scope.getDirectory());
-        unsigned Discriminator = FirstDIL.computeNewDiscriminator(Ctx);
-        DILexicalBlockFile NewScope =
+        StringRef Filename = FirstDIL->getFilename();
+        auto *Scope = FirstDIL->getScope();
+        auto *File = Builder.createFile(Filename, Scope->getDirectory());
+
+        // FIXME: Calculate the discriminator here, based on local information,
+        // and delete MDLocation::computeNewDiscriminator().  The current
+        // solution gives different results depending on other modules in the
+        // same context.  All we really need is to discriminate between
+        // FirstDIL and LastDIL -- a local map would suffice.
+        unsigned Discriminator = FirstDIL->computeNewDiscriminator();
+        auto *NewScope =
             Builder.createLexicalBlockFile(Scope, File, Discriminator);
-        DILocation NewDIL = FirstDIL.copyWithNewScope(Ctx, NewScope);
-        DebugLoc newDebugLoc = NewDIL.get();
+        auto *NewDIL =
+            MDLocation::get(Ctx, FirstDIL->getLine(), FirstDIL->getColumn(),
+                            NewScope, FirstDIL->getInlinedAt());
+        DebugLoc newDebugLoc = NewDIL;
 
         // Attach this new debug location to First and every
         // instruction following First that shares the same location.
@@ -208,9 +216,9 @@ bool AddDiscriminators::runOnFunction(Function &F) {
           if (I1->getDebugLoc().get() != FirstDIL)
             break;
           I1->setDebugLoc(newDebugLoc);
-          DEBUG(dbgs() << NewDIL.getFilename() << ":" << NewDIL.getLineNumber()
-                       << ":" << NewDIL.getColumnNumber() << ":"
-                       << NewDIL.getDiscriminator() << *I1 << "\n");
+          DEBUG(dbgs() << NewDIL->getFilename() << ":" << NewDIL->getLine()
+                       << ":" << NewDIL->getColumn() << ":"
+                       << NewDIL->getDiscriminator() << *I1 << "\n");
         }
         DEBUG(dbgs() << "\n");
         Changed = true;

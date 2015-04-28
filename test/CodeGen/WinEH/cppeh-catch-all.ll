@@ -22,7 +22,7 @@ target triple = "x86_64-pc-windows-msvc"
 ; CHECK: define void @_Z4testv()
 ; CHECK: entry:
 ; CHECK:   invoke void @_Z9may_throwv()
-; CHECK:           to label %invoke.cont unwind label %[[LPAD_LABEL:lpad[0-9]+]]
+; CHECK:           to label %invoke.cont unwind label %[[LPAD_LABEL:lpad[0-9]*]]
 
 ; Function Attrs: uwtable
 define void @_Z4testv() #0 {
@@ -38,7 +38,7 @@ invoke.cont:                                      ; preds = %entry
 ; CHECK: [[LPAD_LABEL]]:{{[ ]+}}; preds = %entry
 ; CHECK:   landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
 ; CHECK-NEXT:           catch i8* null
-; CHECK-NEXT:   [[RECOVER:\%.+]] = call i8* (...)* @llvm.eh.actions(i32 1, i8* null, i32 -1, i8* (i8*, i8*)* @_Z4testv.catch)
+; CHECK-NEXT:   [[RECOVER:\%.+]] = call i8* (...) @llvm.eh.actions(i32 1, i8* null, i32 -1, i8* (i8*, i8*)* @_Z4testv.catch)
 ; CHECK-NEXT:   indirectbr i8* [[RECOVER]], [label %try.cont]
 
 lpad:                                             ; preds = %entry

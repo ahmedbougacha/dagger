@@ -147,6 +147,9 @@ private:
   /// Boolean tracking whether macro substitution is enabled.
   unsigned MacrosEnabledFlag : 1;
 
+  /// \brief Keeps track of how many .macro's have been instantiated.
+  unsigned NumOfMacroInstantiations;
+
   /// Flag tracking whether any errors have been encountered.
   unsigned HadError : 1;
 
@@ -182,6 +185,10 @@ public:
   void addDirectiveHandler(StringRef Directive,
                            ExtensionDirectiveHandler Handler) override {
     ExtensionDirectiveMap[Directive] = Handler;
+  }
+
+  void addAliasForDirective(StringRef Directive, StringRef Alias) override {
+    DirectiveKindMap[Directive] = DirectiveKindMap[Alias];
   }
 
 public:
@@ -247,7 +254,7 @@ private:
                         ArrayRef<MCAsmMacroParameter> Parameters);
   bool expandMacro(raw_svector_ostream &OS, StringRef Body,
                    ArrayRef<MCAsmMacroParameter> Parameters,
-                   ArrayRef<MCAsmMacroArgument> A,
+                   ArrayRef<MCAsmMacroArgument> A, bool EnableAtPseudoVariable,
                    const SMLoc &L);
 
   /// \brief Are macros enabled in the parser?
@@ -318,6 +325,9 @@ private:
 
   bool parseAssignment(StringRef Name, bool allow_redef,
                        bool NoDeadStrip = false);
+
+  unsigned getBinOpPrecedence(AsmToken::TokenKind K,
+                              MCBinaryExpr::Opcode &Kind);
 
   bool parseBinOpRHS(unsigned Precedence, const MCExpr *&Res, SMLoc &EndLoc);
   bool parseParenExpr(const MCExpr *&Res, SMLoc &EndLoc);
@@ -515,6 +525,8 @@ AsmParser::AsmParser(SourceMgr &SM, MCContext &Ctx, MCStreamer &Out,
 
   PlatformParser->Initialize(*this);
   initializeDirectiveKindMap();
+
+  NumOfMacroInstantiations = 0;
 }
 
 AsmParser::~AsmParser() {
@@ -1063,8 +1075,8 @@ bool AsmParser::parseAbsoluteExpression(int64_t &Res) {
   return false;
 }
 
-static unsigned getBinOpPrecedence(AsmToken::TokenKind K,
-                                   MCBinaryExpr::Opcode &Kind) {
+unsigned AsmParser::getBinOpPrecedence(AsmToken::TokenKind K,
+                                       MCBinaryExpr::Opcode &Kind) {
   switch (K) {
   default:
     return 0; // not a binop.
@@ -1116,7 +1128,7 @@ static unsigned getBinOpPrecedence(AsmToken::TokenKind K,
     Kind = MCBinaryExpr::Shl;
     return 4;
   case AsmToken::GreaterGreater:
-    Kind = MCBinaryExpr::Shr;
+    Kind = MAI.shouldUseLogicalShr() ? MCBinaryExpr::LShr : MCBinaryExpr::AShr;
     return 4;
 
   // High Intermediate Precedence: +, -
@@ -1760,7 +1772,8 @@ static bool isIdentifierChar(char c) {
 
 bool AsmParser::expandMacro(raw_svector_ostream &OS, StringRef Body,
                             ArrayRef<MCAsmMacroParameter> Parameters,
-                            ArrayRef<MCAsmMacroArgument> A, const SMLoc &L) {
+                            ArrayRef<MCAsmMacroArgument> A,
+                            bool EnableAtPseudoVariable, const SMLoc &L) {
   unsigned NParameters = Parameters.size();
   bool HasVararg = NParameters ? Parameters.back().Vararg : false;
   if ((!IsDarwin || NParameters != 0) && NParameters != A.size())
@@ -1826,36 +1839,47 @@ bool AsmParser::expandMacro(raw_svector_ostream &OS, StringRef Body,
       Pos += 2;
     } else {
       unsigned I = Pos + 1;
-      while (isIdentifierChar(Body[I]) && I + 1 != End)
+
+      // Check for the \@ pseudo-variable.
+      if (EnableAtPseudoVariable && Body[I] == '@' && I + 1 != End)
         ++I;
+      else
+        while (isIdentifierChar(Body[I]) && I + 1 != End)
+          ++I;
 
       const char *Begin = Body.data() + Pos + 1;
       StringRef Argument(Begin, I - (Pos + 1));
       unsigned Index = 0;
-      for (; Index < NParameters; ++Index)
-        if (Parameters[Index].Name == Argument)
-          break;
 
-      if (Index == NParameters) {
-        if (Body[Pos + 1] == '(' && Body[Pos + 2] == ')')
-          Pos += 3;
-        else {
-          OS << '\\' << Argument;
-          Pos = I;
-        }
+      if (Argument == "@") {
+        OS << NumOfMacroInstantiations;
+        Pos += 2;
       } else {
-        bool VarargParameter = HasVararg && Index == (NParameters - 1);
-        for (MCAsmMacroArgument::const_iterator it = A[Index].begin(),
-                                                ie = A[Index].end();
-             it != ie; ++it)
-          // We expect no quotes around the string's contents when
-          // parsing for varargs.
-          if (it->getKind() != AsmToken::String || VarargParameter)
-            OS << it->getString();
-          else
-            OS << it->getStringContents();
+        for (; Index < NParameters; ++Index)
+          if (Parameters[Index].Name == Argument)
+            break;
 
-        Pos += 1 + Argument.size();
+        if (Index == NParameters) {
+          if (Body[Pos + 1] == '(' && Body[Pos + 2] == ')')
+            Pos += 3;
+          else {
+            OS << '\\' << Argument;
+            Pos = I;
+          }
+        } else {
+          bool VarargParameter = HasVararg && Index == (NParameters - 1);
+          for (MCAsmMacroArgument::const_iterator it = A[Index].begin(),
+                                                  ie = A[Index].end();
+               it != ie; ++it)
+            // We expect no quotes around the string's contents when
+            // parsing for varargs.
+            if (it->getKind() != AsmToken::String || VarargParameter)
+              OS << it->getString();
+            else
+              OS << it->getStringContents();
+
+          Pos += 1 + Argument.size();
+        }
       }
     }
     // Update the scan point.
@@ -2113,7 +2137,7 @@ bool AsmParser::handleMacroEntry(const MCAsmMacro *M, SMLoc NameLoc) {
   StringRef Body = M->Body;
   raw_svector_ostream OS(Buf);
 
-  if (expandMacro(OS, Body, M->Parameters, A, getTok().getLoc()))
+  if (expandMacro(OS, Body, M->Parameters, A, true, getTok().getLoc()))
     return true;
 
   // We include the .endmacro in the buffer as our cue to exit the macro
@@ -2128,6 +2152,8 @@ bool AsmParser::handleMacroEntry(const MCAsmMacro *M, SMLoc NameLoc) {
   MacroInstantiation *MI = new MacroInstantiation(
       NameLoc, CurBuffer, getTok().getLoc(), TheCondStack.size());
   ActiveMacros.push_back(MI);
+
+  ++NumOfMacroInstantiations;
 
   // Jump to the macro instantiation and prime the lexer.
   CurBuffer = SrcMgr.AddNewSourceBuffer(std::move(Instantiation), SMLoc());
@@ -4374,7 +4400,8 @@ bool AsmParser::parseDirectiveRept(SMLoc DirectiveLoc, StringRef Dir) {
   SmallString<256> Buf;
   raw_svector_ostream OS(Buf);
   while (Count--) {
-    if (expandMacro(OS, M->Body, None, None, getTok().getLoc()))
+    // Note that the AtPseudoVariable is disabled for instantiations of .rep(t).
+    if (expandMacro(OS, M->Body, None, None, false, getTok().getLoc()))
       return true;
   }
   instantiateMacroLikeBody(M, DirectiveLoc, OS);
@@ -4413,7 +4440,9 @@ bool AsmParser::parseDirectiveIrp(SMLoc DirectiveLoc) {
   raw_svector_ostream OS(Buf);
 
   for (MCAsmMacroArguments::iterator i = A.begin(), e = A.end(); i != e; ++i) {
-    if (expandMacro(OS, M->Body, Parameter, *i, getTok().getLoc()))
+    // Note that the AtPseudoVariable is enabled for instantiations of .irp.
+    // This is undocumented, but GAS seems to support it.
+    if (expandMacro(OS, M->Body, Parameter, *i, true, getTok().getLoc()))
       return true;
   }
 
@@ -4460,7 +4489,9 @@ bool AsmParser::parseDirectiveIrpc(SMLoc DirectiveLoc) {
     MCAsmMacroArgument Arg;
     Arg.push_back(AsmToken(AsmToken::Identifier, Values.slice(I, I + 1)));
 
-    if (expandMacro(OS, M->Body, Parameter, Arg, getTok().getLoc()))
+    // Note that the AtPseudoVariable is enabled for instantiations of .irpc.
+    // This is undocumented, but GAS seems to support it.
+    if (expandMacro(OS, M->Body, Parameter, Arg, true, getTok().getLoc()))
       return true;
   }
 

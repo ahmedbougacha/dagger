@@ -904,19 +904,6 @@ static void fixupLineNumbers(Function *Fn, Function::iterator FI,
         BI->setDebugLoc(TheCallDL);
       } else {
         BI->setDebugLoc(updateInlinedAtInfo(DL, InlinedAtNode, BI->getContext(), IANodes));
-        if (DbgValueInst *DVI = dyn_cast<DbgValueInst>(BI)) {
-          LLVMContext &Ctx = BI->getContext();
-          MDNode *InlinedAt = BI->getDebugLoc().getInlinedAt();
-          DVI->setOperand(2, MetadataAsValue::get(
-                                 Ctx, createInlinedVariable(DVI->getVariable(),
-                                                            InlinedAt, Ctx)));
-        } else if (DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(BI)) {
-          LLVMContext &Ctx = BI->getContext();
-          MDNode *InlinedAt = BI->getDebugLoc().getInlinedAt();
-          DDI->setOperand(1, MetadataAsValue::get(
-                                 Ctx, createInlinedVariable(DDI->getVariable(),
-                                                            InlinedAt, Ctx)));
-        }
       }
     }
   }
@@ -1180,7 +1167,11 @@ bool llvm::InlineFunction(CallSite CS, InlineFunctionInfo &IFI,
         Type *AllocaType = AI->getAllocatedType();
         uint64_t AllocaTypeSize = DL.getTypeAllocSize(AllocaType);
         uint64_t AllocaArraySize = AIArraySize->getLimitedValue();
-        assert(AllocaArraySize > 0 && "array size of AllocaInst is zero");
+
+        // Don't add markers for zero-sized allocas.
+        if (AllocaArraySize == 0)
+          continue;
+
         // Check that array size doesn't saturate uint64_t and doesn't
         // overflow when it's multiplied by type size.
         if (AllocaArraySize != ~0ULL &&

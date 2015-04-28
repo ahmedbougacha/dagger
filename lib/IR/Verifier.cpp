@@ -181,9 +181,6 @@ class Verifier : public InstVisitor<Verifier>, VerifierSupport {
   /// \brief Track unresolved string-based type references.
   SmallDenseMap<const MDString *, const MDNode *, 32> UnresolvedTypeRefs;
 
-  /// \brief Track queue of bit piece expressions to verify.
-  SmallVector<const DbgInfoIntrinsic *, 32> QueuedBitPieceExpressions;
-
   /// \brief The personality function referenced by the LandingPadInsts.
   /// All LandingPadInsts within the same function must use the same
   /// personality function.
@@ -994,7 +991,7 @@ void Verifier::visitMDSubprogram(const MDSubprogram &N) {
         continue;
 
       // FIXME: Once N is canonical, check "SP == &N".
-      Assert(DISubprogram(SP).describes(F),
+      Assert(SP->describes(F),
              "!dbg attachment points at wrong subprogram for function", &N, F,
              &I, DL, Scope, SP);
     }
@@ -1078,9 +1075,6 @@ void Verifier::visitMDLocalVariable(const MDLocalVariable &N) {
          "invalid tag", &N);
   Assert(N.getRawScope() && isa<MDLocalScope>(N.getRawScope()),
          "local variable requires a valid scope", &N, N.getRawScope());
-  if (auto *IA = N.getRawInlinedAt())
-    Assert(isa<MDLocation>(IA), "local variable requires a valid scope", &N,
-           IA);
 }
 
 void Verifier::visitMDExpression(const MDExpression &N) {
@@ -1675,11 +1669,20 @@ void Verifier::visitFunction(const Function &F) {
              "Function takes metadata but isn't an intrinsic", I, &F);
   }
 
+  // Get the function metadata attachments.
+  SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
+  F.getAllMetadata(MDs);
+  assert(F.hasMetadata() != MDs.empty() && "Bit out-of-sync");
+
   if (F.isMaterializable()) {
     // Function has a body somewhere we can't see.
+    Assert(MDs.empty(), "unmaterialized function cannot have metadata", &F,
+           MDs.empty() ? nullptr : MDs.front().second);
   } else if (F.isDeclaration()) {
     Assert(F.hasExternalLinkage() || F.hasExternalWeakLinkage(),
            "invalid linkage type for function declaration", &F);
+    Assert(MDs.empty(), "function without a body cannot have metadata", &F,
+           MDs.empty() ? nullptr : MDs.front().second);
   } else {
     // Verify that this function (which has a body) is not named "llvm.*".  It
     // is not legal to define intrinsics.
@@ -1695,6 +1698,10 @@ void Verifier::visitFunction(const Function &F) {
       Assert(!BlockAddress::lookup(Entry)->isConstantUsed(),
              "blockaddress may not be used with the entry block!", Entry);
     }
+
+    // Visit metadata attachments.
+    for (const auto &I : MDs)
+      visitMDNode(*I.second);
   }
 
   // If this function is actually an intrinsic, verify that it is only used in
@@ -2126,7 +2133,11 @@ void Verifier::VerifyCallSite(CallSite CS) {
 
   Assert(FPTy->getElementType()->isFunctionTy(),
          "Called function is not pointer to function type!", I);
-  FunctionType *FTy = cast<FunctionType>(FPTy->getElementType());
+
+  Assert(FPTy->getElementType() == CS.getFunctionType(),
+         "Called function is not the same type as the call!", I);
+
+  FunctionType *FTy = CS.getFunctionType();
 
   // Verify that the correct number of arguments are being passed
   if (FTy->isVarArg())
@@ -2245,12 +2256,8 @@ void Verifier::verifyMustTailCall(CallInst &CI) {
   //   parameters or return types may differ in pointee type, but not
   //   address space.
   Function *F = CI.getParent()->getParent();
-  auto GetFnTy = [](Value *V) {
-    return cast<FunctionType>(
-        cast<PointerType>(V->getType())->getElementType());
-  };
-  FunctionType *CallerTy = GetFnTy(F);
-  FunctionType *CalleeTy = GetFnTy(CI.getCalledValue());
+  FunctionType *CallerTy = F->getFunctionType();
+  FunctionType *CalleeTy = CI.getFunctionType();
   Assert(CallerTy->getNumParams() == CalleeTy->getNumParams(),
          "cannot guarantee tail call due to mismatched parameter counts", &CI);
   Assert(CallerTy->isVarArg() == CalleeTy->isVarArg(),
@@ -2457,8 +2464,7 @@ void Verifier::visitGetElementPtrInst(GetElementPtrInst &GEP) {
 
   Assert(isa<PointerType>(TargetTy),
          "GEP base pointer is not a vector or a vector of pointers", &GEP);
-  Assert(cast<PointerType>(TargetTy)->getElementType()->isSized(),
-         "GEP into unsized type!", &GEP);
+  Assert(GEP.getSourceElementType()->isSized(), "GEP into unsized type!", &GEP);
   Assert(GEP.getPointerOperandType()->isVectorTy() ==
              GEP.getType()->isVectorTy(),
          "Vector GEP must return a vector value", &GEP);
@@ -2469,8 +2475,7 @@ void Verifier::visitGetElementPtrInst(GetElementPtrInst &GEP) {
   Assert(ElTy, "Invalid indices for GEP pointer type!", &GEP);
 
   Assert(GEP.getType()->getScalarType()->isPointerTy() &&
-             cast<PointerType>(GEP.getType()->getScalarType())
-                     ->getElementType() == ElTy,
+             GEP.getResultElementType() == ElTy,
          "GEP is not of right type for indices!", &GEP, ElTy);
 
   if (GEP.getPointerOperandType()->isVectorTy()) {
@@ -2604,7 +2609,7 @@ void Verifier::visitAllocaInst(AllocaInst &AI) {
   Assert(PTy->getAddressSpace() == 0,
          "Allocation instruction pointer not in the generic address space!",
          &AI);
-  Assert(PTy->getElementType()->isSized(&Visited),
+  Assert(AI.getAllocatedType()->isSized(&Visited),
          "Cannot allocate unsized type", &AI);
   Assert(AI.getArraySize()->getType()->isIntegerTy(),
          "Alloca array size must have integer type", &AI);
@@ -3364,6 +3369,25 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
   };
 }
 
+/// \brief Carefully grab the subprogram from a local scope.
+///
+/// This carefully grabs the subprogram from a local scope, avoiding the
+/// built-in assertions that would typically fire.
+static MDSubprogram *getSubprogram(Metadata *LocalScope) {
+  if (!LocalScope)
+    return nullptr;
+
+  if (auto *SP = dyn_cast<MDSubprogram>(LocalScope))
+    return SP;
+
+  if (auto *LB = dyn_cast<MDLexicalBlockBase>(LocalScope))
+    return getSubprogram(LB->getRawScope());
+
+  // Just return null; broken scope chains are checked elsewhere.
+  assert(!isa<MDLocalScope>(LocalScope) && "Unknown type of local scope");
+  return nullptr;
+}
+
 template <class DbgIntrinsicTy>
 void Verifier::visitDbgIntrinsic(StringRef Kind, DbgIntrinsicTy &DII) {
   auto *MD = cast<MetadataAsValue>(DII.getArgOperand(0))->getMetadata();
@@ -3377,24 +3401,29 @@ void Verifier::visitDbgIntrinsic(StringRef Kind, DbgIntrinsicTy &DII) {
          "invalid llvm.dbg." + Kind + " intrinsic expression", &DII,
          DII.getRawExpression());
 
-  // Queue up bit piece expressions to be verified once we can resolve
-  // typerefs.
-  if (DII.getExpression()->isValid() && DII.getExpression()->isBitPiece())
-    QueuedBitPieceExpressions.push_back(&DII);
-
   // Ignore broken !dbg attachments; they're checked elsewhere.
   if (MDNode *N = DII.getDebugLoc().getAsMDNode())
     if (!isa<MDLocation>(N))
       return;
 
-  // The inlined-at attachments for variables and !dbg attachments must agree.
-  MDLocalVariable *Var = DII.getVariable();
-  MDLocation *VarIA = Var->getInlinedAt();
-  MDLocation *Loc = DII.getDebugLoc();
-  MDLocation *LocIA = Loc ? Loc->getInlinedAt() : nullptr;
   BasicBlock *BB = DII.getParent();
-  Assert(VarIA == LocIA, "mismatched variable and !dbg inlined-at", &DII, BB,
-         BB ? BB->getParent() : nullptr, Var, VarIA, Loc, LocIA);
+  Function *F = BB ? BB->getParent() : nullptr;
+
+  // The scopes for variables and !dbg attachments must agree.
+  MDLocalVariable *Var = DII.getVariable();
+  MDLocation *Loc = DII.getDebugLoc();
+  Assert(Loc, "llvm.dbg." + Kind + " intrinsic requires a !dbg attachment",
+         &DII, BB, F);
+
+  MDSubprogram *VarSP = getSubprogram(Var->getRawScope());
+  MDSubprogram *LocSP = getSubprogram(Loc->getRawScope());
+  if (!VarSP || !LocSP)
+    return; // Broken scope chains are checked elsewhere.
+
+  Assert(VarSP == LocSP, "mismatched subprogram between llvm.dbg." + Kind +
+                             " variable and !dbg attachment",
+         &DII, BB, F, Var, Var->getScope()->getSubprogram(), Loc,
+         Loc->getScope()->getSubprogram());
 }
 
 template <class MapTy>
@@ -3433,16 +3462,21 @@ void Verifier::verifyBitPieceExpression(const DbgInfoIntrinsic &I,
   MDLocalVariable *V;
   MDExpression *E;
   if (auto *DVI = dyn_cast<DbgValueInst>(&I)) {
-    V = DVI->getVariable();
-    E = DVI->getExpression();
+    V = dyn_cast_or_null<MDLocalVariable>(DVI->getRawVariable());
+    E = dyn_cast_or_null<MDExpression>(DVI->getRawExpression());
   } else {
     auto *DDI = cast<DbgDeclareInst>(&I);
-    V = DDI->getVariable();
-    E = DDI->getExpression();
+    V = dyn_cast_or_null<MDLocalVariable>(DDI->getRawVariable());
+    E = dyn_cast_or_null<MDExpression>(DDI->getRawExpression());
   }
 
-  assert(V && E->isValid() && E->isBitPiece() &&
-         "Expected valid bitpieces here");
+  // We don't know whether this intrinsic verified correctly.
+  if (!V || !E || !E->isValid())
+    return;
+
+  // Nothing to do if this isn't a bit piece expression.
+  if (!E->isBitPiece())
+    return;
 
   // If there's no size, the type is broken, but that should be checked
   // elsewhere.
@@ -3479,9 +3513,15 @@ void Verifier::verifyTypeRefs() {
             TypeRefs.insert(std::make_pair(S, T));
           }
 
-  // Verify debug intrinsic bit piece expressions.
-  for (auto *DII : QueuedBitPieceExpressions)
-    verifyBitPieceExpression(*DII, TypeRefs);
+  // Verify debug info intrinsic bit piece expressions.  This needs a second
+  // pass through the intructions, since we haven't built TypeRefs yet when
+  // verifying functions, and simply queuing the DbgInfoIntrinsics to evaluate
+  // later/now would queue up some that could be later deleted.
+  for (const Function &F : *M)
+    for (const BasicBlock &BB : F)
+      for (const Instruction &I : BB)
+        if (auto *DII = dyn_cast<DbgInfoIntrinsic>(&I))
+          verifyBitPieceExpression(*DII, TypeRefs);
 
   // Return early if all typerefs were resolved.
   if (UnresolvedTypeRefs.empty())

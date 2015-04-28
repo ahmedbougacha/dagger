@@ -305,37 +305,31 @@ bool StripDeadDebugInfo::runOnModule(Module &M) {
   SmallVector<Metadata *, 64> LiveSubprograms;
   DenseSet<const MDNode *> VisitedSet;
 
-  for (DICompileUnit DIC : F.compile_units()) {
+  for (MDCompileUnit *DIC : F.compile_units()) {
     // Create our live subprogram list.
-    MDSubprogramArray SPs = DIC->getSubprograms();
     bool SubprogramChange = false;
-    for (unsigned i = 0, e = SPs.size(); i != e; ++i) {
-      DISubprogram DISP = SPs[i];
-
+    for (MDSubprogram *DISP : DIC->getSubprograms()) {
       // Make sure we visit each subprogram only once.
       if (!VisitedSet.insert(DISP).second)
         continue;
 
       // If the function referenced by DISP is not null, the function is live.
-      if (DISP.getFunction())
+      if (DISP->getFunction())
         LiveSubprograms.push_back(DISP);
       else
         SubprogramChange = true;
     }
 
     // Create our live global variable list.
-    MDGlobalVariableArray GVs = DIC->getGlobalVariables();
     bool GlobalVariableChange = false;
-    for (unsigned i = 0, e = GVs.size(); i != e; ++i) {
-      DIGlobalVariable DIG = GVs[i];
-
+    for (MDGlobalVariable *DIG : DIC->getGlobalVariables()) {
       // Make sure we only visit each global variable only once.
       if (!VisitedSet.insert(DIG).second)
         continue;
 
       // If the global variable referenced by DIG is not null, the global
       // variable is live.
-      if (DIG.getGlobal())
+      if (DIG->getVariable())
         LiveGlobalVariables.push_back(DIG);
       else
         GlobalVariableChange = true;
@@ -345,12 +339,12 @@ bool StripDeadDebugInfo::runOnModule(Module &M) {
     // subprogram list/global variable list with our new live subprogram/global
     // variable list.
     if (SubprogramChange) {
-      DIC.replaceSubprograms(DIArray(MDNode::get(C, LiveSubprograms)));
+      DIC->replaceSubprograms(MDTuple::get(C, LiveSubprograms));
       Changed = true;
     }
 
     if (GlobalVariableChange) {
-      DIC.replaceGlobalVariables(DIArray(MDNode::get(C, LiveGlobalVariables)));
+      DIC->replaceGlobalVariables(MDTuple::get(C, LiveGlobalVariables));
       Changed = true;
     }
 

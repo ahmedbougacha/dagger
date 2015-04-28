@@ -321,6 +321,11 @@ public:
     return Type::getInt64Ty(Context);
   }
 
+  /// \brief Fetch the type representing a 128-bit integer.
+  IntegerType *getInt128Ty() {
+    return Type::getInt128Ty(Context);
+  }
+  
   /// \brief Fetch the type representing an N-bit integer.
   IntegerType *getIntNTy(unsigned N) {
     return Type::getIntNTy(Context, N);
@@ -1443,8 +1448,14 @@ public:
   }
   CallInst *CreateCall2(Value *Callee, Value *Arg1, Value *Arg2,
                         const Twine &Name = "") {
+    return CreateCall2(cast<FunctionType>(cast<PointerType>(Callee->getType())
+                                              ->getElementType()),
+                       Callee, Arg1, Arg2, Name);
+  }
+  CallInst *CreateCall2(FunctionType *Ty, Value *Callee, Value *Arg1,
+                        Value *Arg2, const Twine &Name = "") {
     Value *Args[] = { Arg1, Arg2 };
-    return Insert(CallInst::Create(Callee, Args), Name);
+    return Insert(CallInst::Create(Ty, Callee, Args), Name);
   }
   CallInst *CreateCall3(Value *Callee, Value *Arg1, Value *Arg2, Value *Arg3,
                         const Twine &Name = "") {

@@ -83,9 +83,9 @@ bool InstCombiner::SimplifyDemandedInstructionBits(Instruction &Inst) {
 bool InstCombiner::SimplifyDemandedBits(Use &U, APInt DemandedMask,
                                         APInt &KnownZero, APInt &KnownOne,
                                         unsigned Depth) {
-  Value *NewVal =
-      SimplifyDemandedUseBits(U.get(), DemandedMask, KnownZero, KnownOne, Depth,
-                              dyn_cast<Instruction>(U.getUser()));
+  auto *UserI = dyn_cast<Instruction>(U.getUser());
+  Value *NewVal = SimplifyDemandedUseBits(U.get(), DemandedMask, KnownZero,
+                                          KnownOne, Depth, UserI);
   if (!NewVal) return false;
   U = NewVal;
   return true;
@@ -600,8 +600,11 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
         if (SimplifyDemandedBits(I->getOperandUse(0), DemandedFromOps,
                                  LHSKnownZero, LHSKnownOne, Depth + 1) ||
             SimplifyDemandedBits(I->getOperandUse(1), DemandedFromOps,
-                                 LHSKnownZero, LHSKnownOne, Depth + 1))
+                                 LHSKnownZero, LHSKnownOne, Depth + 1)) {
+          cast<BinaryOperator>(I)->setHasNoSignedWrap(false);
+          cast<BinaryOperator>(I)->setHasNoUnsignedWrap(false);
           return I;
+        }
       }
     }
     break;
@@ -617,8 +620,11 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       if (SimplifyDemandedBits(I->getOperandUse(0), DemandedFromOps,
                                LHSKnownZero, LHSKnownOne, Depth + 1) ||
           SimplifyDemandedBits(I->getOperandUse(1), DemandedFromOps,
-                               LHSKnownZero, LHSKnownOne, Depth + 1))
+                               LHSKnownZero, LHSKnownOne, Depth + 1)) {
+        cast<BinaryOperator>(I)->setHasNoSignedWrap(false);
+        cast<BinaryOperator>(I)->setHasNoUnsignedWrap(false);
         return I;
+      }
     }
 
     // Otherwise just hand the sub off to computeKnownBits to fill in

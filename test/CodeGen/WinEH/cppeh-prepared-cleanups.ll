@@ -56,7 +56,7 @@ entry:
   %ehselector.slot = alloca i32
   store i32 0, i32* %tmp
   %0 = bitcast i32* %tmp to i8*
-  call void (...)* @llvm.frameescape()
+  call void (...) @llvm.frameescape()
   store volatile i64 -2, i64* %unwindhelp
   %1 = bitcast i64* %unwindhelp to i8*
   call void @llvm.eh.unwindhelp(i8* %1)
@@ -66,7 +66,7 @@ entry:
 lpad1:                                            ; preds = %entry
   %2 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
           cleanup
-  %recover = call i8* (...)* @llvm.eh.actions(i32 0, void (i8*, i8*)* @"\01?test1@@YAXXZ.cleanup")
+  %recover = call i8* (...) @llvm.eh.actions(i32 0, void (i8*, i8*)* @"\01?test1@@YAXXZ.cleanup")
   indirectbr i8* %recover, []
 
 unreachable:                                      ; preds = %entry
@@ -124,7 +124,7 @@ define void @"\01?test2@@YAX_N@Z"(i1 zeroext %b) #2 {
   %s1 = alloca %struct.S, align 1
   %frombool = zext i1 %b to i8
   store i8 %frombool, i8* %b.addr, align 1
-  call void (...)* @llvm.frameescape(%struct.S* %s, %struct.S* %s1)
+  call void (...) @llvm.frameescape(%struct.S* %s, %struct.S* %s1)
   call void @"\01?may_throw@@YAXXZ"()
   invoke void @"\01?may_throw@@YAXXZ"()
           to label %invoke.cont unwind label %lpad1
@@ -145,13 +145,13 @@ invoke.cont3:                                     ; preds = %if.then
 lpad1:                                            ; preds = %entry, %if.end
   %2 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
           cleanup
-  %recover = call i8* (...)* @llvm.eh.actions(i32 0, void (i8*, i8*)* @"\01?test2@@YAX_N@Z.cleanup")
+  %recover = call i8* (...) @llvm.eh.actions(i32 0, void (i8*, i8*)* @"\01?test2@@YAX_N@Z.cleanup")
   indirectbr i8* %recover, []
 
 lpad3:                                            ; preds = %if.then
   %3 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
           cleanup
-  %recover4 = call i8* (...)* @llvm.eh.actions(i32 0, void (i8*, i8*)* @"\01?test2@@YAX_N@Z.cleanup1", i32 0, void (i8*, i8*)* @"\01?test2@@YAX_N@Z.cleanup")
+  %recover4 = call i8* (...) @llvm.eh.actions(i32 0, void (i8*, i8*)* @"\01?test2@@YAX_N@Z.cleanup1", i32 0, void (i8*, i8*)* @"\01?test2@@YAX_N@Z.cleanup")
   indirectbr i8* %recover4, []
 
 if.else:                                          ; preds = %invoke.cont
@@ -199,7 +199,16 @@ entry:
   %s.i8 = call i8* @llvm.framerecover(i8* bitcast (void (i1)* @"\01?test2@@YAX_N@Z" to i8*), i8* %1, i32 0)
   %s = bitcast i8* %s.i8 to %struct.S*
   call void @"\01??_DS@@QEAA@XZ"(%struct.S* %s) #4
+  invoke void @llvm.donothing()
+          to label %entry.split unwind label %stub
+
+entry.split:                                      ; preds = %entry
   ret void
+
+stub:                                             ; preds = %entry
+  %2 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
+          cleanup
+  unreachable
 }
 
 define internal void @"\01?test2@@YAX_N@Z.cleanup1"(i8*, i8*) #7 {
@@ -207,8 +216,19 @@ entry:
   %s1.i8 = call i8* @llvm.framerecover(i8* bitcast (void (i1)* @"\01?test2@@YAX_N@Z" to i8*), i8* %1, i32 1)
   %s1 = bitcast i8* %s1.i8 to %struct.S*
   call void @"\01??_DS@@QEAA@XZ"(%struct.S* %s1) #4
+  invoke void @llvm.donothing()
+          to label %entry.split unwind label %stub
+
+entry.split:                                      ; preds = %entry
   ret void
+
+stub:                                             ; preds = %entry
+  %2 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
+          cleanup
+  unreachable
 }
+
+declare void @llvm.donothing()
 
 attributes #0 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" "wineh-parent"="?test1@@YAXXZ" }
 attributes #1 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-realign-stack" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }

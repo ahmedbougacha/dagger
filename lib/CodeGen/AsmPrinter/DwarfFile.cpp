@@ -51,7 +51,7 @@ void DwarfFile::emitUnits(bool UseOffsets) {
   for (const auto &TheU : CUs) {
     DIE &Die = TheU->getUnitDie();
     const MCSection *USection = TheU->getSection();
-    Asm->OutStreamer.SwitchSection(USection);
+    Asm->OutStreamer->SwitchSection(USection);
 
     TheU->emitHeader(UseOffsets);
 
@@ -124,7 +124,7 @@ void DwarfFile::emitAbbrevs(const MCSection *Section) {
   // Check to see if it is worth the effort.
   if (!Abbreviations.empty()) {
     // Start the debug abbrev section.
-    Asm->OutStreamer.SwitchSection(Section);
+    Asm->OutStreamer->SwitchSection(Section);
     Asm->emitDwarfAbbrevs(Abbreviations);
   }
 }
@@ -137,9 +137,9 @@ void DwarfFile::emitStrings(const MCSection *StrSection,
 
 bool DwarfFile::addScopeVariable(LexicalScope *LS, DbgVariable *Var) {
   SmallVectorImpl<DbgVariable *> &Vars = ScopeVariables[LS];
-  DIVariable DV = Var->getVariable();
+  const MDLocalVariable *DV = Var->getVariable();
   // Variables with positive arg numbers are parameters.
-  if (unsigned ArgNum = DV.getArgNumber()) {
+  if (unsigned ArgNum = DV->getArg()) {
     // Keep all parameters in order at the start of the variable list to ensure
     // function types are correct (no out-of-order parameters)
     //
@@ -149,7 +149,7 @@ bool DwarfFile::addScopeVariable(LexicalScope *LS, DbgVariable *Var) {
     // rather than linear search.
     auto I = Vars.begin();
     while (I != Vars.end()) {
-      unsigned CurNum = (*I)->getVariable().getArgNumber();
+      unsigned CurNum = (*I)->getVariable()->getArg();
       // A local (non-parameter) variable has been found, insert immediately
       // before it.
       if (CurNum == 0)

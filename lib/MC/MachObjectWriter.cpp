@@ -321,11 +321,23 @@ MachObjectWriter::findSymbolData(const MCSymbol &Sym) {
   return nullptr;
 }
 
+const MCSymbol &MachObjectWriter::findAliasedSymbol(const MCSymbol &Sym) const {
+  const MCSymbol *S = &Sym;
+  while (S->isVariable()) {
+    const MCExpr *Value = S->getVariableValue();
+    const auto *Ref = dyn_cast<MCSymbolRefExpr>(Value);
+    if (!Ref)
+      return *S;
+    S = &Ref->getSymbol();
+  }
+  return *S;
+}
+
 void MachObjectWriter::WriteNlist(MachSymbolData &MSD,
                                   const MCAsmLayout &Layout) {
   MCSymbolData &Data = *MSD.SymbolData;
   const MCSymbol *Symbol = &Data.getSymbol();
-  const MCSymbol *AliasedSymbol = &Symbol->AliasedSymbol();
+  const MCSymbol *AliasedSymbol = &findAliasedSymbol(*Symbol);
   uint8_t SectionIndex = MSD.SectionIndex;
   uint8_t Type = 0;
   uint16_t Flags = Data.getFlags();
@@ -657,13 +669,9 @@ void MachObjectWriter::ExecutePostLayoutBinding(MCAssembler &Asm,
   BindIndirectSymbols(Asm);
 }
 
-bool MachObjectWriter::
-IsSymbolRefDifferenceFullyResolvedImpl(const MCAssembler &Asm,
-                                       const MCSymbolData &DataA,
-                                       const MCSymbolData *DataB,
-                                       const MCFragment &FB,
-                                       bool InSet,
-                                       bool IsPCRel) const {
+bool MachObjectWriter::IsSymbolRefDifferenceFullyResolvedImpl(
+    const MCAssembler &Asm, const MCSymbolData &DataA, const MCFragment &FB,
+    bool InSet, bool IsPCRel) const {
   if (InSet)
     return true;
 
@@ -674,7 +682,7 @@ IsSymbolRefDifferenceFullyResolvedImpl(const MCAssembler &Asm,
   //  addr(atom(A)) - addr(atom(B)) == 0.
   const MCSymbolData *A_Base = nullptr, *B_Base = nullptr;
 
-  const MCSymbol &SA = DataA.getSymbol().AliasedSymbol();
+  const MCSymbol &SA = findAliasedSymbol(DataA.getSymbol());
   const MCSection &SecA = SA.getSection();
   const MCSection &SecB = FB.getParent()->getSection();
 
@@ -915,8 +923,7 @@ void MachObjectWriter::WriteObject(MCAssembler &Asm,
     Asm.writeSectionData(it, Layout);
 
     uint64_t Pad = getPaddingSize(it, Layout);
-    for (unsigned int i = 0; i < Pad; ++i)
-      Write8(0);
+    WriteZeros(Pad);
   }
 
   // Write the extra padding.
@@ -1007,7 +1014,7 @@ void MachObjectWriter::WriteObject(MCAssembler &Asm,
 }
 
 MCObjectWriter *llvm::createMachObjectWriter(MCMachObjectTargetWriter *MOTW,
-                                             raw_ostream &OS,
+                                             raw_pwrite_stream &OS,
                                              bool IsLittleEndian) {
   return new MachObjectWriter(MOTW, OS, IsLittleEndian);
 }

@@ -25,10 +25,10 @@ entry:
   %a12 = load i64, i64* %a11, align 4, !dbg !7         ; <i64> [#uses=1]
   call void @llvm.dbg.declare(metadata i64* %data_addr.i17, metadata !8, metadata !MDExpression()) nounwind, !dbg !14
   store i64 %a12, i64* %data_addr.i17, align 8
-  call void @llvm.dbg.value(metadata !6, i64 0, metadata !15, metadata !MDExpression()) nounwind
-  call void @llvm.dbg.value(metadata i32 0, i64 0, metadata !19, metadata !MDExpression()) nounwind
-  call void @llvm.dbg.declare(metadata !6, metadata !23, metadata !MDExpression()) nounwind
-  call void @llvm.dbg.value(metadata i64* %data_addr.i17, i64 0, metadata !34, metadata !MDExpression()) nounwind
+  call void @llvm.dbg.value(metadata !6, i64 0, metadata !15, metadata !MDExpression()) nounwind, !dbg !MDLocation(scope: !16)
+  call void @llvm.dbg.value(metadata i32 0, i64 0, metadata !19, metadata !MDExpression()) nounwind, !dbg !MDLocation(scope: !16)
+  call void @llvm.dbg.declare(metadata !6, metadata !23, metadata !MDExpression()) nounwind, !dbg !MDLocation(scope: !24)
+  call void @llvm.dbg.value(metadata i64* %data_addr.i17, i64 0, metadata !34, metadata !MDExpression()) nounwind, !dbg !MDLocation(scope: !24)
   %a13 = load volatile i64, i64* %data_addr.i17, align 8 ; <i64> [#uses=1]
   %a14 = call i64 @llvm.bswap.i64(i64 %a13) nounwind ; <i64> [#uses=2]
   %a15 = add i64 %a10, %a14, !dbg !7              ; <i64> [#uses=1]
@@ -58,7 +58,7 @@ declare void @uuid_LtoB(i8*, i8*)
 !5 = !MDSubroutineType(types: !6)
 !6 = !{null}
 !7 = !MDLocation(line: 810, scope: !1)
-!8 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "data", line: 201, arg: 0, scope: !9, file: !10, type: !11, inlinedAt: !7)
+!8 = !MDLocalVariable(tag: DW_TAG_arg_variable, name: "data", line: 201, arg: 0, scope: !9, file: !10, type: !11)
 !9 = !MDSubprogram(name: "_OSSwapInt64", linkageName: "_OSSwapInt64", line: 202, isLocal: true, isDefinition: true, virtualIndex: 6, isOptimized: false, file: !10, scope: null, type: !5)
 !10 = !MDFile(filename: "OSByteOrder.h", directory: "/usr/include/libkern/ppc")
 !11 = !MDDerivedType(tag: DW_TAG_typedef, name: "uint64_t", line: 59, file: !36, scope: !3, baseType: !13)

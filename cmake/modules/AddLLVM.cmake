@@ -108,7 +108,7 @@ function(add_llvm_symbol_exports target_name export_file)
       COMMENT "Creating export file for ${target_name}")
     set(export_file_linker_flag "${CMAKE_CURRENT_BINARY_DIR}/${native_export_file}")
     if(MSVC)
-      set(export_file_linker_flag "/DEF:${export_file_linker_flag}")
+      set(export_file_linker_flag "/DEF:\"${export_file_linker_flag}\"")
     endif()
     set_property(TARGET ${target_name} APPEND_STRING PROPERTY
                  LINK_FLAGS " ${export_file_linker_flag}")
@@ -407,6 +407,11 @@ function(llvm_add_library name)
 endfunction()
 
 macro(add_llvm_library name)
+  cmake_parse_arguments(ARG
+    "SHARED"
+    ""
+    ""
+    ${ARGN})
   if( BUILD_SHARED_LIBS )
     llvm_add_library(${name} SHARED ${ARGN})
   else()
@@ -418,12 +423,20 @@ macro(add_llvm_library name)
     set_target_properties( ${name} PROPERTIES EXCLUDE_FROM_ALL ON)
   else()
     if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "LTO")
+      if(ARG_SHARED OR BUILD_SHARED_LIBS)
+        if(WIN32 OR CYGWIN)
+          set(install_type RUNTIME)
+        else()
+          set(install_type LIBRARY)
+        endif()
+      else()
+        set(install_type ARCHIVE)
+      endif()
+
       install(TARGETS ${name}
-        EXPORT LLVMExports
-        RUNTIME DESTINATION bin
-        LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-        ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-        COMPONENT ${name})
+            EXPORT LLVMExports
+            ${install_type} DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+            COMPONENT ${name})
 
       if (NOT CMAKE_CONFIGURATION_TYPES)
         add_custom_target(install-${name}

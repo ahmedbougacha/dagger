@@ -304,7 +304,15 @@ if( MSVC )
     -wd4611 # Suppress 'interaction between '_setjmp' and C++ object destruction is non-portable'
     -wd4805 # Suppress 'unsafe mix of type <type> and type <type> in operation'
     -wd4204 # Suppress 'nonstandard extension used : non-constant aggregate initializer'
-    
+
+	# Idelly, we'd like this warning to be enabled, but MSVC 2013 doesn't
+	# support the 'aligned' attribute in the way that clang sources requires (for
+	# any code that uses the LLVM_ALIGNAS marco), so this is must be disabled to
+	# avoid unwanted alignment warnings.
+	# When we switch to requiring a version of MSVC that supports the 'alignas'
+	# specifier (MSVC 2015?) this warning can be re-enabled.
+    -wd4324 # Suppress 'structure was padded due to __declspec(align())'
+	    
     # Promoted warnings.
     -w14062 # Promote 'enumerator in switch of enum is not handled' to level 1 warning.
 
@@ -315,6 +323,13 @@ if( MSVC )
   # Enable warnings
   if (LLVM_ENABLE_WARNINGS)
     append("/W4" msvc_warning_flags)
+    # CMake appends /W3 by default, and having /W3 followed by /W4 will result in 
+    # cl : Command line warning D9025 : overriding '/W3' with '/W4'.  Since this is
+    # a command line warning and not a compiler warning, it cannot be suppressed except
+    # by fixing the command line.
+    string(REGEX REPLACE " /W[0-4]" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+    string(REGEX REPLACE " /W[0-4]" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+
     if (LLVM_ENABLE_PEDANTIC)
       # No MSVC equivalent available
     endif (LLVM_ENABLE_PEDANTIC)

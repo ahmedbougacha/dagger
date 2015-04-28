@@ -65,24 +65,12 @@ const char* LTOCodeGenerator::getVersionString() {
 
 LTOCodeGenerator::LTOCodeGenerator()
     : Context(getGlobalContext()), IRLinker(new Module("ld-temp.o", Context)) {
-  initialize();
+  initializeLTOPasses();
 }
 
 LTOCodeGenerator::LTOCodeGenerator(std::unique_ptr<LLVMContext> Context)
     : OwnedContext(std::move(Context)), Context(*OwnedContext),
-      IRLinker(new Module("ld-temp.o", *OwnedContext)), OptLevel(2) {
-  initialize();
-}
-
-void LTOCodeGenerator::initialize() {
-  TargetMach = nullptr;
-  EmitDwarfDebugInfo = false;
-  ScopeRestrictionsDone = false;
-  CodeModel = LTO_CODEGEN_PIC_MODEL_DEFAULT;
-  DiagHandler = nullptr;
-  DiagContext = nullptr;
-  OwnedModule = nullptr;
-
+      IRLinker(new Module("ld-temp.o", *OwnedContext)) {
   initializeLTOPasses();
 }
 
@@ -214,7 +202,7 @@ bool LTOCodeGenerator::writeMergedModules(const char *path,
   }
 
   // write bitcode to it
-  WriteBitcodeToFile(IRLinker.getModule(), Out.os());
+  WriteBitcodeToFile(IRLinker.getModule(), Out.os(), ShouldEmbedUselists);
   Out.os().close();
 
   if (Out.os().has_error()) {
@@ -463,7 +451,7 @@ static void accumulateAndSortLibcalls(std::vector<StringRef> &Libcalls,
 }
 
 void LTOCodeGenerator::applyScopeRestrictions() {
-  if (ScopeRestrictionsDone)
+  if (ScopeRestrictionsDone || !ShouldInternalize)
     return;
   Module *mergedModule = IRLinker.getModule();
 
@@ -565,7 +553,8 @@ bool LTOCodeGenerator::optimize(bool DisableInline,
   return true;
 }
 
-bool LTOCodeGenerator::compileOptimized(raw_ostream &out, std::string &errMsg) {
+bool LTOCodeGenerator::compileOptimized(raw_pwrite_stream &out,
+                                        std::string &errMsg) {
   if (!this->determineTarget(errMsg))
     return false;
 

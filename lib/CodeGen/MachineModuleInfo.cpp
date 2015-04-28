@@ -461,12 +461,23 @@ void MachineModuleInfo::addCleanup(MachineBasicBlock *LandingPad) {
   LP.TypeIds.push_back(0);
 }
 
-MCSymbol *
-MachineModuleInfo::addClauseForLandingPad(MachineBasicBlock *LandingPad) {
-  MCSymbol *ClauseLabel = Context.CreateTempSymbol();
+void MachineModuleInfo::addSEHCatchHandler(MachineBasicBlock *LandingPad,
+                                           const Function *Filter,
+                                           const BlockAddress *RecoverBA) {
   LandingPadInfo &LP = getOrCreateLandingPadInfo(LandingPad);
-  LP.ClauseLabels.push_back(ClauseLabel);
-  return ClauseLabel;
+  SEHHandler Handler;
+  Handler.FilterOrFinally = Filter;
+  Handler.RecoverBA = RecoverBA;
+  LP.SEHHandlers.push_back(Handler);
+}
+
+void MachineModuleInfo::addSEHCleanupHandler(MachineBasicBlock *LandingPad,
+                                             const Function *Cleanup) {
+  LandingPadInfo &LP = getOrCreateLandingPadInfo(LandingPad);
+  SEHHandler Handler;
+  Handler.FilterOrFinally = Cleanup;
+  Handler.RecoverBA = nullptr;
+  LP.SEHHandlers.push_back(Handler);
 }
 
 /// TidyLandingPads - Remap landing pad labels and remove any deleted landing
@@ -570,10 +581,13 @@ const Function *MachineModuleInfo::getPersonality() const {
 }
 
 EHPersonality MachineModuleInfo::getPersonalityType() {
-  if (PersonalityTypeCache == EHPersonality::Unknown)
-    PersonalityTypeCache = classifyEHPersonality(getPersonality());
+  if (PersonalityTypeCache == EHPersonality::Unknown) {
+    if (const Function *F = getPersonality())
+      PersonalityTypeCache = classifyEHPersonality(F);
+  }
   return PersonalityTypeCache;
 }
+
 /// getPersonalityIndex - Return unique index for current personality
 /// function. NULL/first personality function should always get zero index.
 unsigned MachineModuleInfo::getPersonalityIndex() const {

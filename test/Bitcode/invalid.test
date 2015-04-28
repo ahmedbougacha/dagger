@@ -18,6 +18,14 @@ RUN: not llvm-dis -disable-output %p/Inputs/invalid-load-mismatched-explicit-typ
 RUN:   FileCheck --check-prefix=MISMATCHED-EXPLICIT-LOAD %s
 RUN: not llvm-dis -disable-output %p/Inputs/invalid-gep-operator-mismatched-explicit-type.bc 2>&1 | \
 RUN:   FileCheck --check-prefix=MISMATCHED-EXPLICIT-GEP-OPERATOR %s
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-call-mismatched-explicit-type.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=MISMATCHED-EXPLICIT-CALL %s
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-call-non-function-explicit-type.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=NON-FUNCTION-EXPLICIT-CALL %s
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-invoke-mismatched-explicit-type.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=MISMATCHED-EXPLICIT-INVOKE %s
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-invoke-non-function-explicit-type.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=NON-FUNCTION-EXPLICIT-INVOKE %s
 
 INVALID-ENCODING: Invalid encoding
 BAD-ABBREV: Abbreviation starts with an Array or a Blob
@@ -29,6 +37,10 @@ BAD-ALIGN: Invalid alignment value
 MISMATCHED-EXPLICIT-GEP: Explicit gep type does not match pointee type of pointer operand
 MISMATCHED-EXPLICIT-LOAD: Explicit load type does not match pointee type of pointer operand
 MISMATCHED-EXPLICIT-GEP-OPERATOR: Explicit gep operator type does not match pointee type of pointer operand
+MISMATCHED-EXPLICIT-CALL: Explicit call type does not match pointee type of callee operand
+NON-FUNCTION-EXPLICIT-CALL: Explicit call type is not a function type
+MISMATCHED-EXPLICIT-INVOKE: Explicit invoke type does not match pointee type of callee operand
+NON-FUNCTION-EXPLICIT-INVOKE: Explicit invoke type is not a function type
 
 RUN: not llvm-dis -disable-output %p/Inputs/invalid-extractval-array-idx.bc 2>&1 | \
 RUN:   FileCheck --check-prefix=EXTRACT-ARRAY %s
@@ -50,3 +62,34 @@ EXTRACT-IDXS: EXTRACTVAL: Invalid type
 INSERT-ARRAY: INSERTVAL: Invalid array index
 INSERT-STRUCT: INSERTVAL: Invalid struct index
 INSERT-IDXS: INSERTVAL: Invalid type
+
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-no-proper-module.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=NO-MODULE %s
+
+NO-MODULE: Malformed IR file
+
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-fp-shift.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=FP-SHIFT %s
+
+FP-SHIFT: Invalid record
+
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-abbrev-vbr-size-too-big.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=HUGE-ABBREV-OP %s
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-abbrev-fixed-size-too-big.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=HUGE-ABBREV-OP %s
+
+HUGE-ABBREV-OP: Fixed or VBR abbrev record with size > MaxChunkData
+
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-array-type.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=ARRAY-TYPE %s
+
+ARRAY-TYPE: Array element type can't be an Array or a Blob
+
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-non-vector-extractelement.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=INVALID-TYPE %s
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-non-vector-insertelement.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=INVALID-TYPE %s
+RUN: not llvm-dis -disable-output %p/Inputs/invalid-non-vector-shufflevector.bc 2>&1 | \
+RUN:   FileCheck --check-prefix=INVALID-TYPE %s
+
+INVALID-TYPE: Invalid type for value

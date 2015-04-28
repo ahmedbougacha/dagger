@@ -54,12 +54,14 @@ def t2_so_reg : Operand<i32>,    // reg imm
 
 // t2_so_imm_not_XFORM - Return the complement of a t2_so_imm value
 def t2_so_imm_not_XFORM : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(~((uint32_t)N->getZExtValue()), MVT::i32);
+  return CurDAG->getTargetConstant(~((uint32_t)N->getZExtValue()), SDLoc(N),
+                                   MVT::i32);
 }]>;
 
 // t2_so_imm_neg_XFORM - Return the negation of a t2_so_imm value
 def t2_so_imm_neg_XFORM : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(-((int)N->getZExtValue()), MVT::i32);
+  return CurDAG->getTargetConstant(-((int)N->getZExtValue()), SDLoc(N),
+                                   MVT::i32);
 }]>;
 
 // so_imm_notSext_XFORM - Return a so_imm value packed into the format
@@ -68,7 +70,7 @@ def t2_so_imm_neg_XFORM : SDNodeXForm<imm, [{
 def t2_so_imm_notSext16_XFORM : SDNodeXForm<imm, [{
   APInt apIntN = N->getAPIntValue();
   unsigned N16bitSignExt = apIntN.trunc(16).sext(32).getZExtValue();
-  return CurDAG->getTargetConstant(~N16bitSignExt, MVT::i32);
+  return CurDAG->getTargetConstant(~N16bitSignExt, SDLoc(N), MVT::i32);
 }]>;
 
 // t2_so_imm - Match a 32-bit immediate operand, which is an
@@ -3630,8 +3632,8 @@ def t2IT : Thumb2XI<(outs), (ins it_pred:$cc, it_mask:$mask),
 
 // Branch and Exchange Jazelle -- for disassembly only
 // Rm = Inst{19-16}
-def t2BXJ : T2I<(outs), (ins rGPR:$func), NoItinerary, "bxj", "\t$func", []>,
-    Sched<[WriteBr]>, Requires<[IsThumb2, IsNotMClass, PreV8]> {
+def t2BXJ : T2I<(outs), (ins GPRnopc:$func), NoItinerary, "bxj", "\t$func", []>,
+    Sched<[WriteBr]>, Requires<[IsThumb2, IsNotMClass]> {
   bits<4> func;
   let Inst{31-27} = 0b11110;
   let Inst{26} = 0;
@@ -4279,6 +4281,23 @@ def t2CDP2 : T2Cop<0b1111, (outs), (ins p_imm:$cop, imm0_15:$opc1,
 }
 
 
+
+//===----------------------------------------------------------------------===//
+// ARMv8.1 Privilege Access Never extension
+//
+// SETPAN #imm1
+
+def t2SETPAN : T1I<(outs), (ins imm0_1:$imm), NoItinerary, "setpan\t$imm", []>,
+               T1Misc<0b0110000>, Requires<[IsThumb2, HasV8, HasV8_1a]> {
+  bits<1> imm;
+
+  let Inst{4} = 0b1;
+  let Inst{3} = imm;
+  let Inst{2-0} = 0b000;
+
+  let Unpredictable{4} = 0b1;
+  let Unpredictable{2-0} = 0b111;
+}
 
 //===----------------------------------------------------------------------===//
 // Non-Instruction Patterns

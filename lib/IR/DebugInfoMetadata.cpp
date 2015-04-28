@@ -66,6 +66,23 @@ MDLocation *MDLocation::getImpl(LLVMContext &Context, unsigned Line,
                    Storage, Context.pImpl->MDLocations);
 }
 
+unsigned MDLocation::computeNewDiscriminator() const {
+  // FIXME: This seems completely wrong.
+  //
+  //  1. If two modules are generated in the same context, then the second
+  //     Module will get different discriminators than it would have if it were
+  //     generated in its own context.
+  //  2. If this function is called after round-tripping to bitcode instead of
+  //     before, it will give a different (and potentially incorrect!) return.
+  //
+  // The discriminator should instead be calculated from local information
+  // where it's actually needed.  This logic should be moved to
+  // AddDiscriminators::runOnFunction(), where it doesn't pollute the
+  // LLVMContext.
+  std::pair<const char *, unsigned> Key(getFilename().data(), getLine());
+  return ++getContext().pImpl->DiscriminatorTable[Key];
+}
+
 unsigned DebugNode::getFlag(StringRef Flag) {
   return StringSwitch<unsigned>(Flag)
 #define HANDLE_DI_FLAG(ID, NAME) .Case("DIFlag" #NAME, Flag##NAME)
@@ -348,6 +365,16 @@ Function *MDSubprogram::getFunction() const {
   return dyn_cast_or_null<Function>(getFunctionConstant());
 }
 
+bool MDSubprogram::describes(const Function *F) const {
+  assert(F && "Invalid function");
+  if (F == getFunction())
+    return true;
+  StringRef Name = getLinkageName();
+  if (Name.empty())
+    Name = getName();
+  return F->getName() == Name;
+}
+
 void MDSubprogram::replaceFunction(Function *F) {
   replaceFunction(F ? ConstantAsMetadata::get(F)
                     : static_cast<ConstantAsMetadata *>(nullptr));
@@ -423,21 +450,20 @@ MDGlobalVariable::getImpl(LLVMContext &Context, Metadata *Scope, MDString *Name,
                        Ops);
 }
 
-MDLocalVariable *MDLocalVariable::getImpl(
-    LLVMContext &Context, unsigned Tag, Metadata *Scope, MDString *Name,
-    Metadata *File, unsigned Line, Metadata *Type, unsigned Arg, unsigned Flags,
-    Metadata *InlinedAt, StorageType Storage, bool ShouldCreate) {
-  // Truncate Arg to 8 bits.
-  //
-  // FIXME: This is gross (and should be changed to an assert or removed), but
-  // it matches historical behaviour for now.
-  Arg &= (1u << 8) - 1;
+MDLocalVariable *MDLocalVariable::getImpl(LLVMContext &Context, unsigned Tag,
+                                          Metadata *Scope, MDString *Name,
+                                          Metadata *File, unsigned Line,
+                                          Metadata *Type, unsigned Arg,
+                                          unsigned Flags, StorageType Storage,
+                                          bool ShouldCreate) {
+  // 64K ought to be enough for any frontend.
+  assert(Arg <= UINT16_MAX && "Expected argument number to fit in 16-bits");
 
   assert(Scope && "Expected scope");
   assert(isCanonical(Name) && "Expected canonical MDString");
   DEFINE_GETIMPL_LOOKUP(MDLocalVariable, (Tag, Scope, getString(Name), File,
-                                          Line, Type, Arg, Flags, InlinedAt));
-  Metadata *Ops[] = {Scope, Name, File, Type, InlinedAt};
+                                          Line, Type, Arg, Flags));
+  Metadata *Ops[] = {Scope, Name, File, Type};
   DEFINE_GETIMPL_STORE(MDLocalVariable, (Tag, Line, Arg, Flags), Ops);
 }
 

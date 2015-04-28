@@ -726,6 +726,13 @@ public:
       return;
     }
 
+    // A simple case when N/1. The quotient is N.
+    if (Denominator->isOne()) {
+      *Quotient = Numerator;
+      *Remainder = D.Zero;
+      return;
+    }
+
     // Split the Denominator when it is a product.
     if (const SCEVMulExpr *T = dyn_cast<const SCEVMulExpr>(Denominator)) {
       const SCEV *Q, *R;
@@ -788,6 +795,14 @@ public:
     assert(Numerator->isAffine() && "Numerator should be affine");
     divide(SE, Numerator->getStart(), Denominator, &StartQ, &StartR);
     divide(SE, Numerator->getStepRecurrence(SE), Denominator, &StepQ, &StepR);
+    // Bail out if the types do not match.
+    Type *Ty = Denominator->getType();
+    if (Ty != StartQ->getType() || Ty != StartR->getType() ||
+        Ty != StepQ->getType() || Ty != StepR->getType()) {
+      Quotient = Zero;
+      Remainder = Numerator;
+      return;
+    }
     Quotient = SE.getAddRecExpr(StartQ, StepQ, Numerator->getLoop(),
                                 Numerator->getNoWrapFlags());
     Remainder = SE.getAddRecExpr(StartR, StepR, Numerator->getLoop(),

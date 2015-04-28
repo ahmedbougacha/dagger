@@ -248,7 +248,7 @@ class DataFlowSanitizer : public ModulePass {
   DFSanABIList ABIList;
   DenseMap<Value *, Function *> UnwrappedFnMap;
   AttributeSet ReadOnlyNoneAttrs;
-  DenseMap<const Function *, DISubprogram> FunctionDIs;
+  DenseMap<const Function *, MDSubprogram *> FunctionDIs;
 
   Value *getShadowAddress(Value *Addr, Instruction *Pos);
   bool isInstrumented(const Function *F);
@@ -753,7 +753,7 @@ bool DataFlowSanitizer::runOnModule(Module &M) {
       // Patch the pointer to LLVM function in debug info descriptor.
       auto DI = FunctionDIs.find(&F);
       if (DI != FunctionDIs.end())
-        DI->second.replaceFunction(&F);
+        DI->second->replaceFunction(&F);
 
       UnwrappedFnMap[WrappedFnCst] = &F;
       *i = NewF;

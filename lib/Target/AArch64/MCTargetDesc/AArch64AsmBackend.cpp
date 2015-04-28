@@ -247,10 +247,7 @@ bool AArch64AsmBackend::writeNopData(uint64_t Count, MCObjectWriter *OW) const {
   // If the count is not 4-byte aligned, we must be writing data into the text
   // section (otherwise we have unaligned instructions, and thus have far
   // bigger problems), so just write zeros instead.
-  if ((Count & 3) != 0) {
-    for (uint64_t i = 0, e = (Count & 3); i != e; ++i)
-      OW->Write8(0);
-  }
+  OW->WriteZeros(Count % 4);
 
   // We are properly aligned, so write NOPs as requested.
   Count /= 4;
@@ -313,7 +310,7 @@ public:
   DarwinAArch64AsmBackend(const Target &T, const MCRegisterInfo &MRI)
       : AArch64AsmBackend(T), MRI(MRI) {}
 
-  MCObjectWriter *createObjectWriter(raw_ostream &OS) const override {
+  MCObjectWriter *createObjectWriter(raw_pwrite_stream &OS) const override {
     return createAArch64MachObjectWriter(OS, MachO::CPU_TYPE_ARM64,
                                          MachO::CPU_SUBTYPE_ARM64_ALL);
   }
@@ -461,7 +458,7 @@ public:
   ELFAArch64AsmBackend(const Target &T, uint8_t OSABI, bool IsLittleEndian)
     : AArch64AsmBackend(T), OSABI(OSABI), IsLittleEndian(IsLittleEndian) {}
 
-  MCObjectWriter *createObjectWriter(raw_ostream &OS) const override {
+  MCObjectWriter *createObjectWriter(raw_pwrite_stream &OS) const override {
     return createAArch64ELFObjectWriter(OS, OSABI, IsLittleEndian);
   }
 

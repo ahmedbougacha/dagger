@@ -158,10 +158,10 @@ public:
   UserValue *getNext() const { return next; }
 
   /// match - Does this UserValue match the parameters?
-  bool match(const MDNode *Var, const MDNode *Expr, unsigned Offset,
-             bool indirect) const {
-    return Var == Variable && Expr == Expression && Offset == offset &&
-           indirect == IsIndirect;
+  bool match(const MDNode *Var, const MDNode *Expr, const MDLocation *IA,
+             unsigned Offset, bool indirect) const {
+    return Var == Variable && Expr == Expression && dl->getInlinedAt() == IA &&
+           Offset == offset && indirect == IsIndirect;
   }
 
   /// merge - Merge equivalence classes.
@@ -357,10 +357,47 @@ public:
 };
 } // namespace
 
+static void printDebugLoc(DebugLoc DL, raw_ostream &CommentOS,
+                          const LLVMContext &Ctx) {
+  if (!DL)
+    return;
+
+  auto *Scope = cast<MDScope>(DL.getScope());
+  // Omit the directory, because it's likely to be long and uninteresting.
+  CommentOS << Scope->getFilename();
+  CommentOS << ':' << DL.getLine();
+  if (DL.getCol() != 0)
+    CommentOS << ':' << DL.getCol();
+
+  DebugLoc InlinedAtDL = DL.getInlinedAt();
+  if (!InlinedAtDL)
+    return;
+
+  CommentOS << " @[ ";
+  printDebugLoc(InlinedAtDL, CommentOS, Ctx);
+  CommentOS << " ]";
+}
+
+static void printExtendedName(raw_ostream &OS, const MDLocalVariable *V,
+                              const MDLocation *DL) {
+  const LLVMContext &Ctx = V->getContext();
+  StringRef Res = V->getName();
+  if (!Res.empty())
+    OS << Res << "," << V->getLine();
+  if (auto *InlinedAt = DL->getInlinedAt()) {
+    if (DebugLoc InlinedAtDL = InlinedAt) {
+      OS << " @[";
+      printDebugLoc(InlinedAtDL, OS, Ctx);
+      OS << "]";
+    }
+  }
+}
+
 void UserValue::print(raw_ostream &OS, const TargetRegisterInfo *TRI) {
-  DIVariable DV = cast<MDLocalVariable>(Variable);
+  auto *DV = cast<MDLocalVariable>(Variable);
   OS << "!\"";
-  DV.printExtendedName(OS);
+  printExtendedName(OS, DV, dl);
+
   OS << "\"\t";
   if (offset)
     OS << '+' << offset;
@@ -427,7 +464,7 @@ UserValue *LDVImpl::getUserValue(const MDNode *Var, const MDNode *Expr,
     UserValue *UV = Leader->getLeader();
     Leader = UV;
     for (; UV; UV = UV->getNext())
-      if (UV->match(Var, Expr, Offset, IsIndirect))
+      if (UV->match(Var, Expr, DL->getInlinedAt(), Offset, IsIndirect))
         return UV;
   }
 

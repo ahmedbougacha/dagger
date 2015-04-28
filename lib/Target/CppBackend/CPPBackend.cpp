@@ -1724,7 +1724,7 @@ void CppWriter::printFunctionUses(const Function* F) {
   // initializers.
   if (GenerationType != GenFunction) {
     nl(Out) << "// Global Variable Definitions"; nl(Out);
-    for (const auto &GV : gvs) {
+    for (auto *GV : gvs) {
       if (GlobalVariable *Var = dyn_cast<GlobalVariable>(GV))
         printVariableBody(Var);
     }
@@ -2149,11 +2149,9 @@ char CppWriter::ID = 0;
 //                       External Interface declaration
 //===----------------------------------------------------------------------===//
 
-bool CPPTargetMachine::addPassesToEmitFile(PassManagerBase &PM, raw_ostream &o,
-                                           CodeGenFileType FileType,
-                                           bool DisableVerify,
-                                           AnalysisID StartAfter,
-                                           AnalysisID StopAfter) {
+bool CPPTargetMachine::addPassesToEmitFile(
+    PassManagerBase &PM, raw_pwrite_stream &o, CodeGenFileType FileType,
+    bool DisableVerify, AnalysisID StartAfter, AnalysisID StopAfter) {
   if (FileType != TargetMachine::CGFT_AssemblyFile)
     return true;
   auto FOut = llvm::make_unique<formatted_raw_ostream>(o);

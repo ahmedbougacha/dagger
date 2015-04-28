@@ -739,7 +739,7 @@ static void saveBCFile(StringRef Path, Module &M) {
   raw_fd_ostream OS(Path, EC, sys::fs::OpenFlags::F_None);
   if (EC)
     message(LDPL_FATAL, "Failed to write the output file.");
-  WriteBitcodeToFile(&M, OS);
+  WriteBitcodeToFile(&M, OS, /* ShouldPreserveUseListOrder */ true);
 }
 
 static void codegen(Module &M) {

@@ -223,7 +223,7 @@ namespace llvm {
     bool ParseOptionalDLLStorageClass(unsigned &DLLStorageClass);
     bool ParseOptionalCallingConv(unsigned &CC);
     bool ParseOptionalAlignment(unsigned &Alignment);
-    bool ParseOptionalDereferenceableBytes(uint64_t &Bytes);
+    bool ParseOptionalDerefAttrBytes(lltok::Kind AttrKind, uint64_t &Bytes);
     bool ParseScopeAndOrdering(bool isAtomic, SynchronizationScope &Scope,
                                AtomicOrdering &Ordering);
     bool ParseOrdering(AtomicOrdering &Ordering);
@@ -392,7 +392,9 @@ namespace llvm {
     bool ParseMDNode(MDNode *&MD);
     bool ParseMDNodeTail(MDNode *&MD);
     bool ParseMDNodeVector(SmallVectorImpl<Metadata *> &MDs);
-    bool ParseInstructionMetadata(Instruction *Inst, PerFunctionState *PFS);
+    bool ParseMetadataAttachment(unsigned &Kind, MDNode *&MD);
+    bool ParseInstructionMetadata(Instruction &Inst);
+    bool ParseOptionalFunctionMetadata(Function &F);
 
     template <class FieldTy>
     bool ParseMDField(LocTy Loc, StringRef Name, FieldTy &Result);

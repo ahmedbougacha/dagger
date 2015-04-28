@@ -53,6 +53,7 @@ namespace llvm {
   class TargetLibraryInfo;
   class TargetMachine;
   class raw_ostream;
+  class raw_pwrite_stream;
 
 //===----------------------------------------------------------------------===//
 /// C++ class which implements the opaque lto_code_gen_t type.
@@ -77,6 +78,9 @@ struct LTOCodeGenerator {
   void setCpu(const char *mCpu) { MCpu = mCpu; }
   void setAttr(const char *mAttr) { MAttr = mAttr; }
   void setOptLevel(unsigned optLevel) { OptLevel = optLevel; }
+
+  void setShouldInternalize(bool Value) { ShouldInternalize = Value; }
+  void setShouldEmbedUselists(bool Value) { ShouldEmbedUselists = Value; }
 
   void addMustPreserveSymbol(const char *sym) { MustPreserveSymbols[sym] = 1; }
 
@@ -137,7 +141,7 @@ struct LTOCodeGenerator {
 private:
   void initializeLTOPasses();
 
-  bool compileOptimized(raw_ostream &out, std::string &errMsg);
+  bool compileOptimized(raw_pwrite_stream &out, std::string &errMsg);
   bool compileOptimizedToFile(const char **name, std::string &errMsg);
   void applyScopeRestrictions();
   void applyRestriction(GlobalValue &GV, ArrayRef<StringRef> Libcalls,
@@ -152,15 +156,14 @@ private:
 
   typedef StringMap<uint8_t> StringSet;
 
-  void initialize();
   void destroyMergedModule();
   std::unique_ptr<LLVMContext> OwnedContext;
   LLVMContext &Context;
   Linker IRLinker;
-  TargetMachine *TargetMach;
-  bool EmitDwarfDebugInfo;
-  bool ScopeRestrictionsDone;
-  lto_codegen_model CodeModel;
+  TargetMachine *TargetMach = nullptr;
+  bool EmitDwarfDebugInfo = false;
+  bool ScopeRestrictionsDone = false;
+  lto_codegen_model CodeModel = LTO_CODEGEN_PIC_MODEL_DEFAULT;
   StringSet MustPreserveSymbols;
   StringSet AsmUndefinedRefs;
   std::unique_ptr<MemoryBuffer> NativeObjectFile;
@@ -169,10 +172,12 @@ private:
   std::string MAttr;
   std::string NativeObjectPath;
   TargetOptions Options;
-  unsigned OptLevel;
-  lto_diagnostic_handler_t DiagHandler;
-  void *DiagContext;
-  LTOModule *OwnedModule;
+  unsigned OptLevel = 2;
+  lto_diagnostic_handler_t DiagHandler = nullptr;
+  void *DiagContext = nullptr;
+  LTOModule *OwnedModule = nullptr;
+  bool ShouldInternalize = true;
+  bool ShouldEmbedUselists = false;
 };
 }
 #endif

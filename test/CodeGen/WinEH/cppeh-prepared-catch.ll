@@ -45,11 +45,13 @@ lpad1:                                            ; preds = %entry
   %lp4 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
           cleanup
           catch %eh.CatchHandlerType* @llvm.eh.handlertype.N.0
-  %recover = call i8* (...)* @llvm.eh.actions(i32 1, i8* bitcast (%eh.CatchHandlerType* @llvm.eh.handlertype.N.0 to i8*), i32 1, i8* (i8*, i8*)* @"\01?f@@YAXXZ.catch1")
+  %recover = call i8* (...) @llvm.eh.actions(i32 1, i8* bitcast (%eh.CatchHandlerType* @llvm.eh.handlertype.N.0 to i8*), i32 1, i8* (i8*, i8*)* @"\01?f@@YAXXZ.catch1")
   indirectbr i8* %recover, [label %invoke.cont2]
 }
 
 ; CHECK-LABEL: "?f@@YAXXZ.catch":
+; No code should be generated for the indirectbr.
+; CHECK-NOT: jmpq *
 ; CHECK:        .seh_handlerdata
 ; CHECK:        .long   ("$cppxdata$?f@@YAXXZ")@IMGREL
 
@@ -59,7 +61,7 @@ entry:
   %.i8 = call i8* @llvm.framerecover(i8* bitcast (void ()* @"\01?f@@YAXXZ" to i8*), i8* %1, i32 1)
   %2 = bitcast i8* %.i8 to double*
   %3 = bitcast double* %2 to i8*
-  invoke void (...)* @llvm.donothing()
+  invoke void (...) @llvm.donothing()
           to label %done unwind label %lpad
 
 done:
@@ -68,10 +70,13 @@ done:
 lpad:                                             ; preds = %entry
   %4 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
           cleanup
+  %recover = call i8* (...) @llvm.eh.actions()
   unreachable
 }
 
 ; CHECK-LABEL: "?f@@YAXXZ.catch1":
+; No code should be generated for the indirectbr.
+; CHECK-NOT: jmpq *
 ; CHECK: ".L?f@@YAXXZ.catch1$parent_frame_offset" = 16
 ; CHECK:         movq    %rdx, 16(%rsp)
 ; CHECK:        .seh_handlerdata
@@ -83,7 +88,7 @@ entry:
   %ehselector.slot = alloca i32
   %0 = alloca i32*, align 8
   %1 = alloca double, align 8
-  call void (...)* @llvm.frameescape(i32** %0, double* %1)
+  call void (...) @llvm.frameescape(i32** %0, double* %1)
   invoke void @"\01?may_throw@@YAXXZ"()
           to label %invoke.cont unwind label %lpad2
 
@@ -94,7 +99,7 @@ lpad2:                                            ; preds = %entry
   %2 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
           catch %eh.CatchHandlerType* @llvm.eh.handlertype.H.8
           catch %eh.CatchHandlerType* @llvm.eh.handlertype.N.0
-  %recover = call i8* (...)* @llvm.eh.actions(i32 1, i8* bitcast (%eh.CatchHandlerType* @llvm.eh.handlertype.H.8 to i8*), i32 0, i8* (i8*, i8*)* @"\01?f@@YAXXZ.catch", i32 1, i8* bitcast (%eh.CatchHandlerType* @llvm.eh.handlertype.N.0 to i8*), i32 1, i8* (i8*, i8*)* @"\01?f@@YAXXZ.catch1")
+  %recover = call i8* (...) @llvm.eh.actions(i32 1, i8* bitcast (%eh.CatchHandlerType* @llvm.eh.handlertype.H.8 to i8*), i32 0, i8* (i8*, i8*)* @"\01?f@@YAXXZ.catch", i32 1, i8* bitcast (%eh.CatchHandlerType* @llvm.eh.handlertype.N.0 to i8*), i32 1, i8* (i8*, i8*)* @"\01?f@@YAXXZ.catch1")
   indirectbr i8* %recover, [label %try.cont, label %try.cont8]
 
 try.cont:                                         ; preds = %lpad2, %invoke.cont
@@ -104,7 +109,7 @@ try.cont:                                         ; preds = %lpad2, %invoke.cont
 lpad1:
   %3 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__CxxFrameHandler3 to i8*)
           catch %eh.CatchHandlerType* @llvm.eh.handlertype.N.0
-  %recover2 = call i8* (...)* @llvm.eh.actions(i32 1, i8* bitcast (%eh.CatchHandlerType* @llvm.eh.handlertype.N.0 to i8*), i32 1, i8* (i8*, i8*)* @"\01?f@@YAXXZ.catch1")
+  %recover2 = call i8* (...) @llvm.eh.actions(i32 1, i8* bitcast (%eh.CatchHandlerType* @llvm.eh.handlertype.N.0 to i8*), i32 1, i8* (i8*, i8*)* @"\01?f@@YAXXZ.catch1")
   indirectbr i8* %recover2, [label %try.cont8]
 
 try.cont8:                                        ; preds = %lpad2, %try.cont
@@ -112,6 +117,8 @@ try.cont8:                                        ; preds = %lpad2, %try.cont
 }
 
 ; CHECK-LABEL: "?f@@YAXXZ":
+; No code should be generated for the indirectbr.
+; CHECK-NOT: jmpq *
 ; CHECK:             .seh_handlerdata
 ; CHECK-NEXT:        .long   ("$cppxdata$?f@@YAXXZ")@IMGREL
 ; CHECK-NEXT:"$cppxdata$?f@@YAXXZ":
