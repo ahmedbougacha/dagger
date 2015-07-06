@@ -19,4 +19,4 @@
 type = Library
 name = DC
 parent = Libraries
-required_libraries = MC Object Support
+required_libraries = MC MCAnalysis Object Support
