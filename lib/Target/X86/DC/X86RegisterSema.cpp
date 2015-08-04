@@ -275,13 +275,11 @@ Value *X86RegisterSema::computeEFLAGSForDef(Value *Def, Value *OldEFLAGS,
   }
 
   Type *I8Ty = Builder->getInt8Ty();
-  setSF(X86::PF,
-        Builder->CreateIsNull(
-            Builder->CreateTrunc(
-                Builder->CreateCall(Intrinsic::getDeclaration(
-                                        TheModule, Intrinsic::ctpop, I8Ty),
-                                    Builder->CreateTrunc(Def, I8Ty)),
-                Builder->getInt1Ty())));
+  setSF(X86::PF, Builder->CreateIsNull(Builder->CreateTrunc(
+                     Builder->CreateCall(Intrinsic::getDeclaration(
+                                             TheModule, Intrinsic::ctpop, I8Ty),
+                                         {Builder->CreateTrunc(Def, I8Ty)}),
+                     Builder->getInt1Ty())));
   return createEFLAGSFromSFs(OldEFLAGS);
 }
 
@@ -450,6 +448,6 @@ void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
       FunctionType::get(Type::getVoidTy(*Ctx), ArgTypes, false);
 
   Value *EWFn = getCallTargetForExtFn(EWFnType, &__extwrap);
-  WBuilder.CreateCall2(EWFn, WrapperBB->getParent()->getArgumentList().begin(),
-                       ExtFn);
+  WBuilder.CreateCall(
+      EWFn, {WrapperBB->getParent()->getArgumentList().begin(), ExtFn});
 }

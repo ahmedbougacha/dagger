@@ -38,7 +38,8 @@ class PPCTTIImpl : public BasicTTIImplBase<PPCTTIImpl> {
 
 public:
   explicit PPCTTIImpl(const PPCTargetMachine *TM, Function &F)
-      : BaseT(TM), ST(TM->getSubtargetImpl(F)), TLI(ST->getTargetLowering()) {}
+      : BaseT(TM, F.getParent()->getDataLayout()), ST(TM->getSubtargetImpl(F)),
+        TLI(ST->getTargetLowering()) {}
 
   // Provide value semantics. MSVC requires that we spell all of these out.
   PPCTTIImpl(const PPCTTIImpl &Arg)
@@ -46,18 +47,6 @@ public:
   PPCTTIImpl(PPCTTIImpl &&Arg)
       : BaseT(std::move(static_cast<BaseT &>(Arg))), ST(std::move(Arg.ST)),
         TLI(std::move(Arg.TLI)) {}
-  PPCTTIImpl &operator=(const PPCTTIImpl &RHS) {
-    BaseT::operator=(static_cast<const BaseT &>(RHS));
-    ST = RHS.ST;
-    TLI = RHS.TLI;
-    return *this;
-  }
-  PPCTTIImpl &operator=(PPCTTIImpl &&RHS) {
-    BaseT::operator=(std::move(static_cast<BaseT &>(RHS)));
-    ST = std::move(RHS.ST);
-    TLI = std::move(RHS.TLI);
-    return *this;
-  }
 
   /// \name Scalar TTI Implementations
   /// @{
@@ -81,7 +70,7 @@ public:
   bool enableAggressiveInterleaving(bool LoopHasReductions);
   unsigned getNumberOfRegisters(bool Vector);
   unsigned getRegisterBitWidth(bool Vector);
-  unsigned getMaxInterleaveFactor();
+  unsigned getMaxInterleaveFactor(unsigned VF);
   unsigned getArithmeticInstrCost(
       unsigned Opcode, Type *Ty,
       TTI::OperandValueKind Opd1Info = TTI::OK_AnyValue,

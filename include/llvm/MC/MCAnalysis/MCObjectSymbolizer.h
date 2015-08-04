@@ -105,10 +105,13 @@ protected:
     }
   };
 
+
+  // FIXME: Just keep the uint64_t ?
+  std::vector<std::pair<object::SymbolRef, uint64_t>> SymbolSizes;
   std::vector<SectionInfo> SortedSections;
   std::vector<FunctionSymbol> AddrToFunctionSymbol;
 
-  virtual void buildAddrToFunctionSymbolMap();
+  void buildAddrToFunctionSymbolMap();
   void buildSectionList();
   void buildRelocationByAddrMap(SectionInfo &SecInfo);
   MCSymbol *findContainingFunction(uint64_t Addr, uint64_t &Offset);
@@ -133,11 +136,6 @@ class MCMachObjectSymbolizer final : public MCObjectSymbolizer {
   // __DATA;__mod_exit_func support.
   llvm::StringRef ModExitContents;
 
-  // MachOObjectFile::getSymbolSize is *super* expensive, because it needs to
-  // search through the entire symtab for the next symbol, to determine size.
-  // Keep track of all symbols to be able to efficiently provide size.
-  std::vector<object::DataRefImpl> SortedSymbolRefs;
-
 public:
   /// \brief Construct a Mach-O specific object symbolizer.
   /// \param VMAddrSlide The virtual address slide applied by dyld.
@@ -155,7 +153,6 @@ public:
 
   void tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
                                        uint64_t Address) override;
-  void buildAddrToFunctionSymbolMap() override;
 
   uint64_t getEffectiveLoadAddr(uint64_t Addr) override;
   uint64_t getOriginalLoadAddr(uint64_t EffectiveAddr) override;

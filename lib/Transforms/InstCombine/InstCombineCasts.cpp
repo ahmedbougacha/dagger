@@ -418,8 +418,8 @@ static bool CanEvaluateTruncated(Value *V, Type *Ty, InstCombiner &IC,
     // get into trouble with cyclic PHIs here because we only consider
     // instructions with a single use.
     PHINode *PN = cast<PHINode>(I);
-    for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i)
-      if (!CanEvaluateTruncated(PN->getIncomingValue(i), Ty, IC, CxtI))
+    for (Value *IncValue : PN->incoming_values())
+      if (!CanEvaluateTruncated(IncValue, Ty, IC, CxtI))
         return false;
     return true;
   }
@@ -435,6 +435,15 @@ Instruction *InstCombiner::visitTrunc(TruncInst &CI) {
   if (Instruction *Result = commonCastTransforms(CI))
     return Result;
 
+  // Test if the trunc is the user of a select which is part of a
+  // minimum or maximum operation. If so, don't do any more simplification.
+  // Even simplifying demanded bits can break the canonical form of a 
+  // min/max.
+  Value *LHS, *RHS;
+  if (SelectInst *SI = dyn_cast<SelectInst>(CI.getOperand(0)))
+    if (matchSelectPattern(SI, LHS, RHS) != SPF_UNKNOWN)
+      return nullptr;
+  
   // See if we can simplify any instructions used by the input whose sole
   // purpose is to compute bits we don't care about.
   if (SimplifyDemandedInstructionBits(CI))
@@ -1029,8 +1038,8 @@ static bool CanEvaluateSExtd(Value *V, Type *Ty) {
     // get into trouble with cyclic PHIs here because we only consider
     // instructions with a single use.
     PHINode *PN = cast<PHINode>(I);
-    for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i)
-      if (!CanEvaluateSExtd(PN->getIncomingValue(i), Ty)) return false;
+    for (Value *IncValue : PN->incoming_values())
+      if (!CanEvaluateSExtd(IncValue, Ty)) return false;
     return true;
   }
   default:

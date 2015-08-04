@@ -229,7 +229,7 @@ bool SparcInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
 unsigned
 SparcInstrInfo::InsertBranch(MachineBasicBlock &MBB,MachineBasicBlock *TBB,
                              MachineBasicBlock *FBB,
-                             const SmallVectorImpl<MachineOperand> &Cond,
+                             ArrayRef<MachineOperand> Cond,
                              DebugLoc DL) const {
   assert(TBB && "InsertBranch must not be told to insert a fallthrough");
   assert((Cond.size() == 1 || Cond.size() == 0) &&
@@ -324,6 +324,15 @@ void SparcInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
       numSubRegs = 4;
       movOpc     = SP::FMOVS;
     }
+  } else if (SP::ASRRegsRegClass.contains(DestReg) &&
+             SP::IntRegsRegClass.contains(SrcReg)) {
+    BuildMI(MBB, I, DL, get(SP::WRASRrr), DestReg)
+        .addReg(SP::G0)
+        .addReg(SrcReg, getKillRegState(KillSrc));
+  } else if (SP::IntRegsRegClass.contains(DestReg) &&
+             SP::ASRRegsRegClass.contains(SrcReg)) {
+    BuildMI(MBB, I, DL, get(SP::RDASR), DestReg)
+        .addReg(SrcReg, getKillRegState(KillSrc));
   } else
     llvm_unreachable("Impossible reg-to-reg copy");
 

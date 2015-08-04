@@ -127,7 +127,7 @@ namespace {
     // As the code generation for module is finished (and DIBuilder is
     // finalized) we assume that subprogram descriptors won't be changed, and
     // they are stored in map for short duration anyway.
-    DenseMap<const Function *, MDSubprogram *> FunctionDIs;
+    DenseMap<const Function *, DISubprogram *> FunctionDIs;
 
   protected:
     // DAH uses this to specify a different ID.
@@ -303,7 +303,7 @@ bool DAE::DeleteDeadVarargs(Function &Fn) {
   // Patch the pointer to LLVM function in debug info descriptor.
   auto DI = FunctionDIs.find(&Fn);
   if (DI != FunctionDIs.end()) {
-    MDSubprogram *SP = DI->second;
+    DISubprogram *SP = DI->second;
     SP->replaceFunction(NF);
     // Ensure the map is updated so it can be reused on non-varargs argument
     // eliminations of the same function.
@@ -326,25 +326,23 @@ bool DAE::DeleteDeadVarargs(Function &Fn) {
 /// instead.
 bool DAE::RemoveDeadArgumentsFromCallers(Function &Fn)
 {
-  if (Fn.isDeclaration() || Fn.mayBeOverridden())
+  // We cannot change the arguments if this TU does not define the function or
+  // if the linker may choose a function body from another TU, even if the
+  // nominal linkage indicates that other copies of the function have the same
+  // semantics. In the below example, the dead load from %p may not have been
+  // eliminated from the linker-chosen copy of f, so replacing %p with undef
+  // in callers may introduce undefined behavior.
+  //
+  // define linkonce_odr void @f(i32* %p) {
+  //   %v = load i32 %p
+  //   ret void
+  // }
+  if (!Fn.isStrongDefinitionForLinker())
     return false;
 
   // Functions with local linkage should already have been handled, except the
   // fragile (variadic) ones which we can improve here.
   if (Fn.hasLocalLinkage() && !Fn.getFunctionType()->isVarArg())
-    return false;
-
-  // If a function seen at compile time is not necessarily the one linked to
-  // the binary being built, it is illegal to change the actual arguments
-  // passed to it. These functions can be captured by isWeakForLinker().
-  // *NOTE* that mayBeOverridden() is insufficient for this purpose as it
-  // doesn't include linkage types like AvailableExternallyLinkage and
-  // LinkOnceODRLinkage. Take link_odr* as an example, it indicates a set of
-  // *EQUIVALENT* globals that can be merged at link-time. However, the
-  // semantic of *EQUIVALENT*-functions includes parameters. Changing
-  // parameters breaks this assumption.
-  //
-  if (Fn.isWeakForLinker())
     return false;
 
   if (Fn.use_empty())
@@ -849,17 +847,12 @@ bool DAE::RemoveDeadStuffFromFunction(Function *F) {
   // here. Currently, this should not be possible, but special handling might be
   // required when new return value attributes are added.
   if (NRetTy->isVoidTy())
-    RAttrs =
-      AttributeSet::get(NRetTy->getContext(), AttributeSet::ReturnIndex,
-                        AttrBuilder(RAttrs, AttributeSet::ReturnIndex).
-         removeAttributes(AttributeFuncs::
-                          typeIncompatible(NRetTy, AttributeSet::ReturnIndex),
-                          AttributeSet::ReturnIndex));
+    RAttrs = RAttrs.removeAttributes(NRetTy->getContext(),
+                                     AttributeSet::ReturnIndex,
+                                     AttributeFuncs::typeIncompatible(NRetTy));
   else
     assert(!AttrBuilder(RAttrs, AttributeSet::ReturnIndex).
-             hasAttributes(AttributeFuncs::
-                           typeIncompatible(NRetTy, AttributeSet::ReturnIndex),
-                           AttributeSet::ReturnIndex) &&
+             overlaps(AttributeFuncs::typeIncompatible(NRetTy)) &&
            "Return attributes no longer compatible?");
 
   if (RAttrs.hasAttributes(AttributeSet::ReturnIndex))
@@ -903,13 +896,9 @@ bool DAE::RemoveDeadStuffFromFunction(Function *F) {
     AttributeSet RAttrs = CallPAL.getRetAttributes();
 
     // Adjust in case the function was changed to return void.
-    RAttrs =
-      AttributeSet::get(NF->getContext(), AttributeSet::ReturnIndex,
-                        AttrBuilder(RAttrs, AttributeSet::ReturnIndex).
-        removeAttributes(AttributeFuncs::
-                         typeIncompatible(NF->getReturnType(),
-                                          AttributeSet::ReturnIndex),
-                         AttributeSet::ReturnIndex));
+    RAttrs = RAttrs.removeAttributes(NRetTy->getContext(),
+                                     AttributeSet::ReturnIndex,
+                        AttributeFuncs::typeIncompatible(NF->getReturnType()));
     if (RAttrs.hasAttributes(AttributeSet::ReturnIndex))
       AttributesVec.push_back(AttributeSet::get(NF->getContext(), RAttrs));
 

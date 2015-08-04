@@ -189,7 +189,7 @@ sink3AddrInstruction(MachineInstr *MI, unsigned SavedReg,
 
   // Check if it's safe to move this instruction.
   bool SeenStore = true; // Be conservative.
-  if (!MI->isSafeToMove(TII, AA, SeenStore))
+  if (!MI->isSafeToMove(AA, SeenStore))
     return false;
 
   unsigned DefReg = 0;
@@ -861,7 +861,7 @@ rescheduleMIBelowKill(MachineBasicBlock::iterator &mi,
     return false;
 
   bool SeenStore = true;
-  if (!MI->isSafeToMove(TII, AA, SeenStore))
+  if (!MI->isSafeToMove(AA, SeenStore))
     return false;
 
   if (TII->getInstrLatency(InstrItins, MI) > 1)
@@ -1048,7 +1048,7 @@ rescheduleKillAboveMI(MachineBasicBlock::iterator &mi,
     return false;
 
   bool SeenStore = true;
-  if (!KillMI->isSafeToMove(TII, AA, SeenStore))
+  if (!KillMI->isSafeToMove(AA, SeenStore))
     return false;
 
   SmallSet<unsigned, 2> Uses;
@@ -1207,12 +1207,24 @@ tryInstructionTransform(MachineBasicBlock::iterator &mi,
     }
   }
 
+  // If the instruction is convertible to 3 Addr, instead
+  // of returning try 3 Addr transformation aggresively and
+  // use this variable to check later. Because it might be better.
+  // For example, we can just use `leal (%rsi,%rdi), %eax` and `ret`
+  // instead of the following code.
+  //   addl	%esi, %edi
+  //   movl	%edi, %eax
+  //   ret
+  bool Commuted = false;
+
   // If it's profitable to commute, try to do so.
   if (TryCommute && commuteInstruction(mi, regB, regC, Dist)) {
+    Commuted = true;
     ++NumCommuted;
     if (AggressiveCommute)
       ++NumAggrCommuted;
-    return false;
+    if (!MI.isConvertibleTo3Addr())
+      return false;
   }
 
   if (shouldOnlyCommute)
@@ -1220,7 +1232,7 @@ tryInstructionTransform(MachineBasicBlock::iterator &mi,
 
   // If there is one more use of regB later in the same MBB, consider
   // re-schedule this MI below it.
-  if (EnableRescheduling && rescheduleMIBelowKill(mi, nmi, regB)) {
+  if (!Commuted && EnableRescheduling && rescheduleMIBelowKill(mi, nmi, regB)) {
     ++NumReSchedDowns;
     return true;
   }
@@ -1236,6 +1248,10 @@ tryInstructionTransform(MachineBasicBlock::iterator &mi,
       }
     }
   }
+
+  // Return if it is commuted but 3 addr conversion is failed.
+  if (Commuted)
+    return false;
 
   // If there is one more use of regB later in the same MBB, consider
   // re-schedule it before this MI if it's legal.

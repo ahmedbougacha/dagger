@@ -410,7 +410,7 @@ public:
   /// \brief Load the coverage mapping from the given files.
   static ErrorOr<std::unique_ptr<CoverageMapping>>
   load(StringRef ObjectFilename, StringRef ProfileFilename,
-       Triple::ArchType Arch = Triple::ArchType::UnknownArch);
+       StringRef Arch = StringRef());
 
   /// \brief The number of functions that couldn't have their profiles mapped.
   ///
@@ -484,7 +484,26 @@ template<> struct DenseMapInfo<coverage::CounterExpression> {
   }
 };
 
+const std::error_category &coveragemap_category();
+
+enum class coveragemap_error {
+  success = 0,
+  eof,
+  no_data_found,
+  unsupported_version,
+  truncated,
+  malformed
+};
+
+inline std::error_code make_error_code(coveragemap_error E) {
+  return std::error_code(static_cast<int>(E), coveragemap_category());
+}
 
 } // end namespace llvm
+
+namespace std {
+template <>
+struct is_error_code_enum<llvm::coveragemap_error> : std::true_type {};
+}
 
 #endif // LLVM_PROFILEDATA_COVERAGEMAPPING_H_

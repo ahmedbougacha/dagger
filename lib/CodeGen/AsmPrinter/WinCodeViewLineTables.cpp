@@ -20,11 +20,11 @@ namespace llvm {
 
 StringRef WinCodeViewLineTables::getFullFilepath(const MDNode *S) {
   assert(S);
-  assert((isa<MDCompileUnit>(S) || isa<MDFile>(S) || isa<MDSubprogram>(S) ||
-          isa<MDLexicalBlockBase>(S)) &&
+  assert((isa<DICompileUnit>(S) || isa<DIFile>(S) || isa<DISubprogram>(S) ||
+          isa<DILexicalBlockBase>(S)) &&
          "Unexpected scope info");
 
-  auto *Scope = cast<MDScope>(S);
+  auto *Scope = cast<DIScope>(S);
   StringRef Dir = Scope->getDirectory(),
             Filename = Scope->getFilename();
   char *&Result = DirAndFilenameToFilepathMap[std::make_pair(Dir, Filename)];
@@ -94,10 +94,10 @@ void WinCodeViewLineTables::maybeRecordLocation(DebugLoc DL,
   }
   FileNameRegistry.add(Filename);
 
-  MCSymbol *MCL = Asm->MMI->getContext().CreateTempSymbol();
+  MCSymbol *MCL = Asm->MMI->getContext().createTempSymbol();
   Asm->OutStreamer->EmitLabel(MCL);
   CurFn->Instrs.push_back(MCL);
-  InstrInfo[MCL] = InstrInfoTy(Filename, DL.getLine());
+  InstrInfo[MCL] = InstrInfoTy(Filename, DL.getLine(), DL.getCol());
 }
 
 WinCodeViewLineTables::WinCodeViewLineTables(AsmPrinter *AP)
@@ -171,10 +171,10 @@ static void EmitLabelDiff(MCStreamer &Streamer,
                           unsigned int Size = 4) {
   MCSymbolRefExpr::VariantKind Variant = MCSymbolRefExpr::VK_None;
   MCContext &Context = Streamer.getContext();
-  const MCExpr *FromRef = MCSymbolRefExpr::Create(From, Variant, Context),
-               *ToRef   = MCSymbolRefExpr::Create(To, Variant, Context);
+  const MCExpr *FromRef = MCSymbolRefExpr::create(From, Variant, Context),
+               *ToRef   = MCSymbolRefExpr::create(To, Variant, Context);
   const MCExpr *AddrDelta =
-      MCBinaryExpr::Create(MCBinaryExpr::Sub, ToRef, FromRef, Context);
+      MCBinaryExpr::create(MCBinaryExpr::Sub, ToRef, FromRef, Context);
   Streamer.EmitValue(AddrDelta, Size);
 }
 
@@ -201,15 +201,15 @@ void WinCodeViewLineTables::emitDebugInfoForFunction(const Function *GV) {
   if (GVName.startswith("\01?"))
     FuncName = GVName.substr(1);
   // Emit a symbol subsection, required by VS2012+ to find function boundaries.
-  MCSymbol *SymbolsBegin = Asm->MMI->getContext().CreateTempSymbol(),
-           *SymbolsEnd = Asm->MMI->getContext().CreateTempSymbol();
+  MCSymbol *SymbolsBegin = Asm->MMI->getContext().createTempSymbol(),
+           *SymbolsEnd = Asm->MMI->getContext().createTempSymbol();
   Asm->OutStreamer->AddComment("Symbol subsection for " + Twine(FuncName));
   Asm->EmitInt32(COFF::DEBUG_SYMBOL_SUBSECTION);
   EmitLabelDiff(*Asm->OutStreamer, SymbolsBegin, SymbolsEnd);
   Asm->OutStreamer->EmitLabel(SymbolsBegin);
   {
-    MCSymbol *ProcSegmentBegin = Asm->MMI->getContext().CreateTempSymbol(),
-             *ProcSegmentEnd = Asm->MMI->getContext().CreateTempSymbol();
+    MCSymbol *ProcSegmentBegin = Asm->MMI->getContext().createTempSymbol(),
+             *ProcSegmentEnd = Asm->MMI->getContext().createTempSymbol();
     EmitLabelDiff(*Asm->OutStreamer, ProcSegmentBegin, ProcSegmentEnd, 2);
     Asm->OutStreamer->EmitLabel(ProcSegmentBegin);
 
@@ -256,30 +256,46 @@ void WinCodeViewLineTables::emitDebugInfoForFunction(const Function *GV) {
   // Emit a line table subsection, requred to do PC-to-file:line lookup.
   Asm->OutStreamer->AddComment("Line table subsection for " + Twine(FuncName));
   Asm->EmitInt32(COFF::DEBUG_LINE_TABLE_SUBSECTION);
-  MCSymbol *LineTableBegin = Asm->MMI->getContext().CreateTempSymbol(),
-           *LineTableEnd = Asm->MMI->getContext().CreateTempSymbol();
+  MCSymbol *LineTableBegin = Asm->MMI->getContext().createTempSymbol(),
+           *LineTableEnd = Asm->MMI->getContext().createTempSymbol();
   EmitLabelDiff(*Asm->OutStreamer, LineTableBegin, LineTableEnd);
   Asm->OutStreamer->EmitLabel(LineTableBegin);
 
   // Identify the function this subsection is for.
   Asm->OutStreamer->EmitCOFFSecRel32(Fn);
   Asm->OutStreamer->EmitCOFFSectionIndex(Fn);
-  // Insert padding after a 16-bit section index.
-  Asm->EmitInt16(0);
+  // Insert flags after a 16-bit section index.
+  Asm->EmitInt16(COFF::DEBUG_LINE_TABLES_HAVE_COLUMN_RECORDS);
 
   // Length of the function's code, in bytes.
   EmitLabelDiff(*Asm->OutStreamer, Fn, FI.End);
 
   // PC-to-linenumber lookup table:
   MCSymbol *FileSegmentEnd = nullptr;
+
+  // The start of the last segment:
+  size_t LastSegmentStart = 0;
+
+  auto FinishPreviousChunk = [&] {
+    if (!FileSegmentEnd)
+      return;
+    for (size_t ColSegI = LastSegmentStart,
+                ColSegEnd = ColSegI + FilenameSegmentLengths[LastSegmentStart];
+         ColSegI != ColSegEnd; ++ColSegI) {
+      unsigned ColumnNumber = InstrInfo[FI.Instrs[ColSegI]].ColumnNumber;
+      Asm->EmitInt16(ColumnNumber); // Start column
+      Asm->EmitInt16(ColumnNumber); // End column
+    }
+    Asm->OutStreamer->EmitLabel(FileSegmentEnd);
+  };
+
   for (size_t J = 0, F = FI.Instrs.size(); J != F; ++J) {
     MCSymbol *Instr = FI.Instrs[J];
     assert(InstrInfo.count(Instr));
 
     if (FilenameSegmentLengths.count(J)) {
       // We came to a beginning of a new filename segment.
-      if (FileSegmentEnd)
-        Asm->OutStreamer->EmitLabel(FileSegmentEnd);
+      FinishPreviousChunk();
       StringRef CurFilename = InstrInfo[FI.Instrs[J]].Filename;
       assert(FileNameRegistry.Infos.count(CurFilename));
       size_t IndexInStringTable =
@@ -288,7 +304,7 @@ void WinCodeViewLineTables::emitDebugInfoForFunction(const Function *GV) {
       // in the string table.
       Asm->OutStreamer->AddComment(
           "Segment for file '" + Twine(CurFilename) + "' begins");
-      MCSymbol *FileSegmentBegin = Asm->MMI->getContext().CreateTempSymbol();
+      MCSymbol *FileSegmentBegin = Asm->MMI->getContext().createTempSymbol();
       Asm->OutStreamer->EmitLabel(FileSegmentBegin);
       Asm->EmitInt32(8 * IndexInStringTable);
 
@@ -298,8 +314,9 @@ void WinCodeViewLineTables::emitDebugInfoForFunction(const Function *GV) {
 
       // Full size of the segment for this filename, including the prev two
       // records.
-      FileSegmentEnd = Asm->MMI->getContext().CreateTempSymbol();
+      FileSegmentEnd = Asm->MMI->getContext().createTempSymbol();
       EmitLabelDiff(*Asm->OutStreamer, FileSegmentBegin, FileSegmentEnd);
+      LastSegmentStart = J;
     }
 
     // The first PC with the given linenumber and the linenumber itself.
@@ -307,8 +324,7 @@ void WinCodeViewLineTables::emitDebugInfoForFunction(const Function *GV) {
     Asm->EmitInt32(InstrInfo[Instr].LineNumber);
   }
 
-  if (FileSegmentEnd)
-    Asm->OutStreamer->EmitLabel(FileSegmentEnd);
+  FinishPreviousChunk();
   Asm->OutStreamer->EmitLabel(LineTableEnd);
 }
 

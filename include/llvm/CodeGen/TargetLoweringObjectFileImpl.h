@@ -41,25 +41,24 @@ public:
 
   ~TargetLoweringObjectFileELF() override {}
 
-  void emitPersonalityValue(MCStreamer &Streamer, const TargetMachine &TM,
+  void emitPersonalityValue(MCStreamer &Streamer, const DataLayout &TM,
                             const MCSymbol *Sym) const override;
 
   /// Given a constant with the SectionKind, return a section that it should be
   /// placed in.
-  const MCSection *getSectionForConstant(SectionKind Kind,
-                                         const Constant *C) const override;
+  MCSection *getSectionForConstant(const DataLayout &DL, SectionKind Kind,
+                                   const Constant *C) const override;
 
-  const MCSection *getExplicitSectionGlobal(const GlobalValue *GV,
-                                        SectionKind Kind, Mangler &Mang,
-                                        const TargetMachine &TM) const override;
+  MCSection *getExplicitSectionGlobal(const GlobalValue *GV, SectionKind Kind,
+                                      Mangler &Mang,
+                                      const TargetMachine &TM) const override;
 
-  const MCSection *SelectSectionForGlobal(const GlobalValue *GV,
-                                        SectionKind Kind, Mangler &Mang,
-                                        const TargetMachine &TM) const override;
+  MCSection *SelectSectionForGlobal(const GlobalValue *GV, SectionKind Kind,
+                                    Mangler &Mang,
+                                    const TargetMachine &TM) const override;
 
-  const MCSection *
-  getSectionForJumpTable(const Function &F, Mangler &Mang,
-                         const TargetMachine &TM) const override;
+  MCSection *getSectionForJumpTable(const Function &F, Mangler &Mang,
+                                    const TargetMachine &TM) const override;
 
   bool shouldPutJumpTableInFunctionSection(bool UsesLabelDifference,
                                            const Function &F) const override;
@@ -78,10 +77,10 @@ public:
                                     MachineModuleInfo *MMI) const override;
 
   void InitializeELF(bool UseInitArray_);
-  const MCSection *getStaticCtorSection(unsigned Priority,
-                                        const MCSymbol *KeySym) const override;
-  const MCSection *getStaticDtorSection(unsigned Priority,
-                                        const MCSymbol *KeySym) const override;
+  MCSection *getStaticCtorSection(unsigned Priority,
+                                  const MCSymbol *KeySym) const override;
+  MCSection *getStaticDtorSection(unsigned Priority,
+                                  const MCSymbol *KeySym) const override;
 };
 
 
@@ -91,27 +90,21 @@ public:
   ~TargetLoweringObjectFileMachO() override {}
   TargetLoweringObjectFileMachO();
 
-  /// Extract the dependent library name from a linker option string. Returns
-  /// StringRef() if the option does not specify a library.
-  StringRef getDepLibFromLinkerOpt(StringRef LinkerOption) const override;
-
   /// Emit the module flags that specify the garbage collection information.
   void emitModuleFlags(MCStreamer &Streamer,
                        ArrayRef<Module::ModuleFlagEntry> ModuleFlags,
                        Mangler &Mang, const TargetMachine &TM) const override;
 
-  const MCSection *
-    SelectSectionForGlobal(const GlobalValue *GV,
-                           SectionKind Kind, Mangler &Mang,
-                           const TargetMachine &TM) const override;
+  MCSection *SelectSectionForGlobal(const GlobalValue *GV, SectionKind Kind,
+                                    Mangler &Mang,
+                                    const TargetMachine &TM) const override;
 
-  const MCSection *
-    getExplicitSectionGlobal(const GlobalValue *GV,
-                             SectionKind Kind, Mangler &Mang,
-                             const TargetMachine &TM) const override;
+  MCSection *getExplicitSectionGlobal(const GlobalValue *GV, SectionKind Kind,
+                                      Mangler &Mang,
+                                      const TargetMachine &TM) const override;
 
-  const MCSection *getSectionForConstant(SectionKind Kind,
-                                         const Constant *C) const override;
+  MCSection *getSectionForConstant(const DataLayout &DL, SectionKind Kind,
+                                   const Constant *C) const override;
 
   /// The mach-o version of this method defaults to returning a stub reference.
   const MCExpr *
@@ -138,27 +131,20 @@ class TargetLoweringObjectFileCOFF : public TargetLoweringObjectFile {
 public:
   ~TargetLoweringObjectFileCOFF() override {}
 
-  const MCSection *
-    getExplicitSectionGlobal(const GlobalValue *GV,
-                             SectionKind Kind, Mangler &Mang,
-                             const TargetMachine &TM) const override;
+  MCSection *getExplicitSectionGlobal(const GlobalValue *GV, SectionKind Kind,
+                                      Mangler &Mang,
+                                      const TargetMachine &TM) const override;
 
-  const MCSection *
-    SelectSectionForGlobal(const GlobalValue *GV,
-                           SectionKind Kind, Mangler &Mang,
-                           const TargetMachine &TM) const override;
+  MCSection *SelectSectionForGlobal(const GlobalValue *GV, SectionKind Kind,
+                                    Mangler &Mang,
+                                    const TargetMachine &TM) const override;
 
   void getNameWithPrefix(SmallVectorImpl<char> &OutName, const GlobalValue *GV,
                          bool CannotUsePrivateLabel, Mangler &Mang,
                          const TargetMachine &TM) const override;
 
-  const MCSection *
-  getSectionForJumpTable(const Function &F, Mangler &Mang,
-                         const TargetMachine &TM) const override;
-
-  /// Extract the dependent library name from a linker option string. Returns
-  /// StringRef() if the option does not specify a library.
-  StringRef getDepLibFromLinkerOpt(StringRef LinkerOption) const override;
+  MCSection *getSectionForJumpTable(const Function &F, Mangler &Mang,
+                                    const TargetMachine &TM) const override;
 
   /// Emit Obj-C garbage collection and linker options. Only linker option
   /// emission is implemented for COFF.
@@ -166,10 +152,13 @@ public:
                        ArrayRef<Module::ModuleFlagEntry> ModuleFlags,
                        Mangler &Mang, const TargetMachine &TM) const override;
 
-  const MCSection *getStaticCtorSection(unsigned Priority,
-                                        const MCSymbol *KeySym) const override;
-  const MCSection *getStaticDtorSection(unsigned Priority,
-                                        const MCSymbol *KeySym) const override;
+  MCSection *getStaticCtorSection(unsigned Priority,
+                                  const MCSymbol *KeySym) const override;
+  MCSection *getStaticDtorSection(unsigned Priority,
+                                  const MCSymbol *KeySym) const override;
+
+  void emitLinkerFlagsForGlobal(raw_ostream &OS, const GlobalValue *GV,
+                                const Mangler &Mang) const override;
 };
 
 } // end namespace llvm

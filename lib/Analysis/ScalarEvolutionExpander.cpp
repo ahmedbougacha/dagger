@@ -24,10 +24,12 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
+using namespace PatternMatch;
 
 /// ReuseOrCreateCast - Arrange for there to be a cast of V to Ty at IP,
 /// reusing an existing cast if a suitable one exists, moving an existing
@@ -751,25 +753,30 @@ Value *SCEVExpander::visitMulExpr(const SCEVMulExpr *S) {
   // out of loops.
   Value *Prod = nullptr;
   for (SmallVectorImpl<std::pair<const Loop *, const SCEV *> >::iterator
-       I = OpsAndLoops.begin(), E = OpsAndLoops.end(); I != E; ) {
+       I = OpsAndLoops.begin(), E = OpsAndLoops.end(); I != E; ++I) {
     const SCEV *Op = I->second;
     if (!Prod) {
       // This is the first operand. Just expand it.
       Prod = expand(Op);
-      ++I;
     } else if (Op->isAllOnesValue()) {
       // Instead of doing a multiply by negative one, just do a negate.
       Prod = InsertNoopCastOfTo(Prod, Ty);
       Prod = InsertBinop(Instruction::Sub, Constant::getNullValue(Ty), Prod);
-      ++I;
     } else {
       // A simple mul.
       Value *W = expandCodeFor(Op, Ty);
       Prod = InsertNoopCastOfTo(Prod, Ty);
       // Canonicalize a constant to the RHS.
       if (isa<Constant>(Prod)) std::swap(Prod, W);
-      Prod = InsertBinop(Instruction::Mul, Prod, W);
-      ++I;
+      const APInt *RHS;
+      if (match(W, m_Power2(RHS))) {
+        // Canonicalize Prod*(1<<C) to Prod<<C.
+        assert(!Ty->isVectorTy() && "vector types are not SCEVable");
+        Prod = InsertBinop(Instruction::Shl, Prod,
+                           ConstantInt::get(Ty, RHS->logBase2()));
+      } else {
+        Prod = InsertBinop(Instruction::Mul, Prod, W);
+      }
     }
   }
 
@@ -1702,7 +1709,7 @@ unsigned SCEVExpander::replaceCongruentIVs(Loop *L, const DominatorTree *DT,
 
   unsigned NumElim = 0;
   DenseMap<const SCEV *, PHINode *> ExprToIVMap;
-  // Process phis from wide to narrow. Mapping wide phis to the their truncation
+  // Process phis from wide to narrow. Map wide phis to their truncation
   // so narrow phis can reuse them.
   for (SmallVectorImpl<PHINode*>::const_iterator PIter = Phis.begin(),
          PEnd = Phis.end(); PIter != PEnd; ++PIter) {
@@ -1712,7 +1719,7 @@ unsigned SCEVExpander::replaceCongruentIVs(Loop *L, const DominatorTree *DT,
     // would confuse the logic below that expects proper IVs.
     if (Value *V = SimplifyInstruction(Phi, DL, SE.TLI, SE.DT, SE.AC)) {
       Phi->replaceAllUsesWith(V);
-      DeadInsts.push_back(Phi);
+      DeadInsts.emplace_back(Phi);
       ++NumElim;
       DEBUG_WITH_TYPE(DebugType, dbgs()
                       << "INDVARS: Eliminated constant iv: " << *Phi << '\n');
@@ -1787,7 +1794,7 @@ unsigned SCEVExpander::replaceCongruentIVs(Loop *L, const DominatorTree *DT,
             CreateTruncOrBitCast(OrigInc, IsomorphicInc->getType(), IVName);
         }
         IsomorphicInc->replaceAllUsesWith(NewInc);
-        DeadInsts.push_back(IsomorphicInc);
+        DeadInsts.emplace_back(IsomorphicInc);
       }
     }
     DEBUG_WITH_TYPE(DebugType, dbgs()
@@ -1800,13 +1807,30 @@ unsigned SCEVExpander::replaceCongruentIVs(Loop *L, const DominatorTree *DT,
       NewIV = Builder.CreateTruncOrBitCast(OrigPhiRef, Phi->getType(), IVName);
     }
     Phi->replaceAllUsesWith(NewIV);
-    DeadInsts.push_back(Phi);
+    DeadInsts.emplace_back(Phi);
   }
   return NumElim;
 }
 
 bool SCEVExpander::isHighCostExpansionHelper(
     const SCEV *S, Loop *L, SmallPtrSetImpl<const SCEV *> &Processed) {
+
+  // Zero/One operand expressions
+  switch (S->getSCEVType()) {
+  case scUnknown:
+  case scConstant:
+    return false;
+  case scTruncate:
+    return isHighCostExpansionHelper(cast<SCEVTruncateExpr>(S)->getOperand(), L,
+                                     Processed);
+  case scZeroExtend:
+    return isHighCostExpansionHelper(cast<SCEVZeroExtendExpr>(S)->getOperand(),
+                                     L, Processed);
+  case scSignExtend:
+    return isHighCostExpansionHelper(cast<SCEVSignExtendExpr>(S)->getOperand(),
+                                     L, Processed);
+  }
+
   if (!Processed.insert(S).second)
     return false;
 
@@ -1849,22 +1873,21 @@ bool SCEVExpander::isHighCostExpansionHelper(
     }
   }
 
-  // Recurse past add expressions, which commonly occur in the
-  // BackedgeTakenCount. They may already exist in program code, and if not,
-  // they are not too expensive rematerialize.
-  if (const SCEVAddExpr *Add = dyn_cast<SCEVAddExpr>(S)) {
-    for (SCEVAddExpr::op_iterator I = Add->op_begin(), E = Add->op_end();
-         I != E; ++I) {
-      if (isHighCostExpansionHelper(*I, L, Processed))
-        return true;
-    }
-    return false;
-  }
-
   // HowManyLessThans uses a Max expression whenever the loop is not guarded by
   // the exit condition.
   if (isa<SCEVSMaxExpr>(S) || isa<SCEVUMaxExpr>(S))
     return true;
+
+  // Recurse past nary expressions, which commonly occur in the
+  // BackedgeTakenCount. They may already exist in program code, and if not,
+  // they are not too expensive rematerialize.
+  if (const SCEVNAryExpr *NAry = dyn_cast<SCEVNAryExpr>(S)) {
+    for (SCEVNAryExpr::op_iterator I = NAry->op_begin(), E = NAry->op_end();
+         I != E; ++I) {
+      if (isHighCostExpansionHelper(*I, L, Processed))
+        return true;
+    }
+  }
 
   // If we haven't recognized an expensive SCEV pattern, assume it's an
   // expression produced by program code.

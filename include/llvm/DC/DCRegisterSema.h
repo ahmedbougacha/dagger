@@ -123,7 +123,7 @@ public:
   StructType *getRegSetType() const { return RegSetType; }
   // Compute the register's offset in bytes from the start of the regset.
   // Also return it's size in bytes.
-  std::pair<size_t, size_t> getRegSizeOffsetInRegSet(const DataLayout *DL,
+  std::pair<size_t, size_t> getRegSizeOffsetInRegSet(const DataLayout &DL,
                                                      unsigned RegNo) const;
 
   // Returns the regset diff function, that prints to stderr:

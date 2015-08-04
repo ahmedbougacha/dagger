@@ -59,8 +59,9 @@ bool MipsDAGToDAGISel::runOnMachineFunction(MachineFunction &MF) {
 /// GOT address into a register.
 SDNode *MipsDAGToDAGISel::getGlobalBaseReg() {
   unsigned GlobalBaseReg = MF->getInfo<MipsFunctionInfo>()->getGlobalBaseReg();
-  return CurDAG->getRegister(GlobalBaseReg,
-                             getTargetLowering()->getPointerTy()).getNode();
+  return CurDAG->getRegister(GlobalBaseReg, getTargetLowering()->getPointerTy(
+                                                CurDAG->getDataLayout()))
+      .getNode();
 }
 
 /// ComplexPattern used on MipsInstrInfo
@@ -113,7 +114,8 @@ bool MipsDAGToDAGISel::selectAddr16(SDNode *Parent, SDValue N, SDValue &Base,
   return false;
 }
 
-bool MipsDAGToDAGISel::selectVSplat(SDNode *N, APInt &Imm) const {
+bool MipsDAGToDAGISel::selectVSplat(SDNode *N, APInt &Imm,
+                                    unsigned MinSizeInBits) const {
   llvm_unreachable("Unimplemented function.");
   return false;
 }

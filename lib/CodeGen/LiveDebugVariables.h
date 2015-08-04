@@ -31,9 +31,9 @@ class LiveInterval;
 class LiveIntervals;
 class VirtRegMap;
 
-class LiveDebugVariables : public MachineFunctionPass {
+class LLVM_LIBRARY_VISIBILITY LiveDebugVariables : public MachineFunctionPass {
   void *pImpl;
-  DenseMap<const Function *, MDSubprogram *> FunctionDIs;
+  DenseMap<const Function *, DISubprogram *> FunctionDIs;
 
 public:
   static char ID; // Pass identification, replacement for typeid

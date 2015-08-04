@@ -1,20 +1,30 @@
 ; RUN: llc %s -o - -filetype=asm -O0 -mtriple=x86_64-unknown-linux-gnu \
-; RUN:   | FileCheck --check-prefix=SINGLE --check-prefix=SINGLE-64 --check-prefix=GNUOP %s
+; RUN:   | FileCheck --check-prefix=NOEMU --check-prefix=SINGLE --check-prefix=SINGLE-64 --check-prefix=GNUOP %s
 
 ; RUN: llc %s -o - -filetype=asm -O0 -mtriple=i386-linux-gnu \
-; RUN:   | FileCheck --check-prefix=SINGLE --check-prefix=SINGLE-32 --check-prefix=GNUOP %s
+; RUN:   | FileCheck --check-prefix=NOEMU --check-prefix=SINGLE --check-prefix=SINGLE-32 --check-prefix=GNUOP %s
 
 ; RUN: llc %s -o - -filetype=asm -O0 -mtriple=x86_64-unknown-linux-gnu -split-dwarf=Enable \
-; RUN:   | FileCheck --check-prefix=FISSION --check-prefix=GNUOP %s
+; RUN:   | FileCheck --check-prefix=NOEMU --check-prefix=FISSION --check-prefix=GNUOP %s
 
 ; RUN: llc %s -o - -filetype=asm -O0 -mtriple=x86_64-scei-ps4 \
-; RUN:   | FileCheck --check-prefix=SINGLE --check-prefix=SINGLE-64 --check-prefix=STDOP %s
+; RUN:   | FileCheck --check-prefix=NOEMU --check-prefix=SINGLE --check-prefix=SINGLE-64 --check-prefix=STDOP %s
 
 ; RUN: llc %s -o - -filetype=asm -O0 -mtriple=x86_64-apple-darwin \
-; RUN:   | FileCheck --check-prefix=DARWIN --check-prefix=STDOP %s
+; RUN:   | FileCheck --check-prefix=NOEMU --check-prefix=DARWIN --check-prefix=STDOP %s
 
 ; RUN: llc %s -o - -filetype=asm -O0 -mtriple=x86_64-unknown-freebsd \
-; RUN:   | FileCheck --check-prefix=SINGLE --check-prefix=SINGLE-64 --check-prefix=GNUOP %s
+; RUN:   | FileCheck --check-prefix=NOEMU --check-prefix=SINGLE --check-prefix=SINGLE-64 --check-prefix=STDOP %s
+
+; RUN: llc %s -o - -filetype=asm -O0 -mtriple=x86_64-unknown-linux-gnu -emulated-tls \
+; RUN:   | FileCheck --check-prefix=SINGLE --check-prefix=EMUSINGLE-64 \
+; RUN:     --check-prefix=EMUGNUOP --check-prefix=EMU %s
+
+; RUN: llc %s -o - -filetype=asm -O0 -mtriple=i386-linux-gnu -emulated-tls \
+; RUN:   | FileCheck --check-prefix=SINGLE --check-prefix=EMUSINGLE-32 \
+; RUN:     --check-prefix=EMUGNUOP --check-prefix=EMU %s
+
+; TODO: Add expected output for -emulated-tls tests.
 
 ; FIXME: add relocation and DWARF expression support to llvm-dwarfdump & use
 ; that here instead of raw assembly printing
@@ -101,22 +111,22 @@ attributes #0 = { nounwind uwtable "less-precise-fpmad"="false" "no-frame-pointe
 !llvm.module.flags = !{!15, !16}
 !llvm.ident = !{!17}
 
-!0 = !MDCompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5 ", isOptimized: false, splitDebugFilename: "-.dwo", emissionKind: 0, file: !1, enums: !2, retainedTypes: !2, subprograms: !3, globals: !12, imports: !2)
-!1 = !MDFile(filename: "tls.cpp", directory: "/tmp/dbginfo")
+!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5 ", isOptimized: false, splitDebugFilename: "-.dwo", emissionKind: 0, file: !1, enums: !2, retainedTypes: !2, subprograms: !3, globals: !12, imports: !2)
+!1 = !DIFile(filename: "tls.cpp", directory: "/tmp/dbginfo")
 !2 = !{}
 !3 = !{!4}
-!4 = !MDSubprogram(name: "func<&glbl>", linkageName: "_Z4funcIXadL_Z4glblEEEiv", line: 5, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 5, file: !1, scope: !5, type: !6, function: i32 ()* @_Z4funcIXadL_Z4glblEEEiv, templateParams: !9, variables: !2)
-!5 = !MDFile(filename: "tls.cpp", directory: "/tmp/dbginfo")
-!6 = !MDSubroutineType(types: !7)
+!4 = !DISubprogram(name: "func<&glbl>", linkageName: "_Z4funcIXadL_Z4glblEEEiv", line: 5, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 5, file: !1, scope: !5, type: !6, function: i32 ()* @_Z4funcIXadL_Z4glblEEEiv, templateParams: !9, variables: !2)
+!5 = !DIFile(filename: "tls.cpp", directory: "/tmp/dbginfo")
+!6 = !DISubroutineType(types: !7)
 !7 = !{!8}
-!8 = !MDBasicType(tag: DW_TAG_base_type, name: "int", size: 32, align: 32, encoding: DW_ATE_signed)
+!8 = !DIBasicType(tag: DW_TAG_base_type, name: "int", size: 32, align: 32, encoding: DW_ATE_signed)
 !9 = !{!10}
-!10 = !MDTemplateValueParameter(tag: DW_TAG_template_value_parameter, name: "I", type: !11, value: i32* @glbl)
-!11 = !MDDerivedType(tag: DW_TAG_pointer_type, size: 64, align: 64, baseType: !8)
+!10 = !DITemplateValueParameter(tag: DW_TAG_template_value_parameter, name: "I", type: !11, value: i32* @glbl)
+!11 = !DIDerivedType(tag: DW_TAG_pointer_type, size: 64, align: 64, baseType: !8)
 !12 = !{!13, !14}
-!13 = !MDGlobalVariable(name: "tls", line: 1, isLocal: false, isDefinition: true, scope: null, file: !5, type: !8, variable: i32* @tls)
-!14 = !MDGlobalVariable(name: "glbl", line: 2, isLocal: false, isDefinition: true, scope: null, file: !5, type: !8, variable: i32* @glbl)
+!13 = !DIGlobalVariable(name: "tls", line: 1, isLocal: false, isDefinition: true, scope: null, file: !5, type: !8, variable: i32* @tls)
+!14 = !DIGlobalVariable(name: "glbl", line: 2, isLocal: false, isDefinition: true, scope: null, file: !5, type: !8, variable: i32* @glbl)
 !15 = !{i32 2, !"Dwarf Version", i32 4}
 !16 = !{i32 1, !"Debug Info Version", i32 3}
 !17 = !{!"clang version 3.5 "}
-!18 = !MDLocation(line: 6, scope: !4)
+!18 = !DILocation(line: 6, scope: !4)

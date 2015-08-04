@@ -24,7 +24,7 @@ bool MCInstrAnalysis::evaluateBranch(const MCInst &Inst, uint64_t Addr,
   }
   const MCExpr *Expr = Op.getExpr();
   int64_t Absolute;
-  if (!Expr->EvaluateAsAbsolute(Absolute))
+  if (!Expr->evaluateAsAbsolute(Absolute))
     return false;
   Addr = Absolute;
   return true;

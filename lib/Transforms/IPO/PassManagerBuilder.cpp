@@ -85,12 +85,20 @@ static cl::opt<bool> EnableLoopInterchange(
     "enable-loopinterchange", cl::init(false), cl::Hidden,
     cl::desc("Enable the new, experimental LoopInterchange Pass"));
 
+static cl::opt<bool> EnableLoopDistribute(
+    "enable-loop-distribute", cl::init(false), cl::Hidden,
+    cl::desc("Enable the new, experimental LoopDistribution Pass"));
+
+static cl::opt<bool> EnableNonLTOGlobalsModRef(
+    "enable-non-lto-gmr", cl::init(false), cl::Hidden,
+    cl::desc(
+        "Enable the GlobalsModRef AliasAnalysis outside of the LTO pipeline."));
+
 PassManagerBuilder::PassManagerBuilder() {
     OptLevel = 2;
     SizeLevel = 0;
     LibraryInfo = nullptr;
     Inliner = nullptr;
-    DisableTailCalls = false;
     DisableUnitAtATime = false;
     DisableUnrollLoops = false;
     BBVectorize = RunBBVectorization;
@@ -102,6 +110,7 @@ PassManagerBuilder::PassManagerBuilder() {
     VerifyInput = false;
     VerifyOutput = false;
     MergeFunctions = false;
+    PrepareForLTO = false;
 }
 
 PassManagerBuilder::~PassManagerBuilder() {
@@ -209,6 +218,12 @@ void PassManagerBuilder::populateModulePassManager(
     MPM.add(createCFGSimplificationPass());   // Clean up after IPCP & DAE
   }
 
+  if (EnableNonLTOGlobalsModRef)
+    // We add a module alias analysis pass here. In part due to bugs in the
+    // analysis infrastructure this "works" in that the analysis stays alive
+    // for the entire SCC pass run below.
+    MPM.add(createGlobalsModRefPass());
+
   // Start of CallGraph SCC passes.
   if (!DisableUnitAtATime)
     MPM.add(createPruneEHPass());             // Remove dead EH info
@@ -234,8 +249,7 @@ void PassManagerBuilder::populateModulePassManager(
   MPM.add(createInstructionCombiningPass());  // Combine silly seq's
   addExtensionsToPM(EP_Peephole, MPM);
 
-  if (!DisableTailCalls)
-    MPM.add(createTailCallEliminationPass()); // Eliminate tail calls
+  MPM.add(createTailCallEliminationPass()); // Eliminate tail calls
   MPM.add(createCFGSimplificationPass());     // Merge & remove BBs
   MPM.add(createReassociatePass());           // Reassociate expressions
   // Rotate Loop - disable header duplication at -Oz
@@ -312,13 +326,38 @@ void PassManagerBuilder::populateModulePassManager(
   // we must insert a no-op module pass to reset the pass manager.
   MPM.add(createBarrierNoopPass());
 
+  if (EnableNonLTOGlobalsModRef)
+    // We add a fresh GlobalsModRef run at this point. This is particularly
+    // useful as the above will have inlined, DCE'ed, and function-attr
+    // propagated everything. We should at this point have a reasonably minimal
+    // and richly annotated call graph. By computing aliasing and mod/ref
+    // information for all local globals here, the late loop passes and notably
+    // the vectorizer will be able to use them to help recognize vectorizable
+    // memory operations.
+    //
+    // Note that this relies on a bug in the pass manager which preserves
+    // a module analysis into a function pass pipeline (and throughout it) so
+    // long as the first function pass doesn't invalidate the module analysis.
+    // Thus both Float2Int and LoopRotate have to preserve AliasAnalysis for
+    // this to work. Fortunately, it is trivial to preserve AliasAnalysis
+    // (doing nothing preserves it as it is required to be conservatively
+    // correct in the face of IR changes).
+    MPM.add(createGlobalsModRefPass());
+
   if (RunFloat2Int)
     MPM.add(createFloat2IntPass());
 
+  addExtensionsToPM(EP_VectorizerStart, MPM);
+
   // Re-rotate loops in all our loop nests. These may have fallout out of
   // rotated form due to GVN or other transformations, and the vectorizer relies
-  // on the rotated form.
-  MPM.add(createLoopRotatePass());
+  // on the rotated form. Disable header duplication at -Oz.
+  MPM.add(createLoopRotatePass(SizeLevel == 2 ? 0 : -1));
+
+  // Distribute loops to allow partial vectorization.  I.e. isolate dependences
+  // into separate loop that would otherwise inhibit vectorization.
+  if (EnableLoopDistribute)
+    MPM.add(createLoopDistributePass());
 
   MPM.add(createLoopVectorizePass(DisableUnrollLoops, LoopVectorize));
   // FIXME: Because of #pragma vectorize enable, the passes below are always
@@ -373,9 +412,8 @@ void PassManagerBuilder::populateModulePassManager(
   if (!DisableUnrollLoops) {
     MPM.add(createLoopUnrollPass());    // Unroll small loops
 
-    // This is a barrier pass to avoid combine LICM pass and loop unroll pass
-    // within same loop pass manager.
-    MPM.add(createInstructionSimplifierPass());
+    // LoopUnroll may generate some redundency to cleanup.
+    MPM.add(createInstructionCombiningPass());
 
     // Runtime unrolling will introduce runtime check in loop prologue. If the
     // unrolled loop is a inner loop, then the prologue will be inside the
@@ -395,6 +433,17 @@ void PassManagerBuilder::populateModulePassManager(
     // GlobalOpt already deletes dead functions and globals, at -O2 try a
     // late pass of GlobalDCE.  It is capable of deleting dead cycles.
     if (OptLevel > 1) {
+      if (!PrepareForLTO) {
+        // Remove avail extern fns and globals definitions if we aren't
+        // compiling an object file for later LTO. For LTO we want to preserve
+        // these so they are eligible for inlining at link-time. Note if they
+        // are unreferenced they will be removed by GlobalDCE below, so
+        // this only impacts referenced available externally globals.
+        // Eventually they will be suppressed during codegen, but eliminating
+        // here enables more opportunity for GlobalDCE as it may make
+        // globals referenced by available external functions dead.
+        MPM.add(createEliminateAvailableExternallyPass());
+      }
       MPM.add(createGlobalDCEPass());         // Remove dead fns and globals.
       MPM.add(createConstantMergePass());     // Merge dup global constants
     }

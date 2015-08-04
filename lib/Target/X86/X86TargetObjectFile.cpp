@@ -32,9 +32,9 @@ const MCExpr *X86_64MachoTargetObjectFile::getTTypeGlobalReference(
   if ((Encoding & DW_EH_PE_indirect) && (Encoding & DW_EH_PE_pcrel)) {
     const MCSymbol *Sym = TM.getSymbol(GV, Mang);
     const MCExpr *Res =
-      MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_GOTPCREL, getContext());
-    const MCExpr *Four = MCConstantExpr::Create(4, getContext());
-    return MCBinaryExpr::CreateAdd(Res, Four, getContext());
+      MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_GOTPCREL, getContext());
+    const MCExpr *Four = MCConstantExpr::create(4, getContext());
+    return MCBinaryExpr::createAdd(Res, Four, getContext());
   }
 
   return TargetLoweringObjectFileMachO::getTTypeGlobalReference(
@@ -55,14 +55,14 @@ const MCExpr *X86_64MachoTargetObjectFile::getIndirectSymViaGOTPCRel(
   // foo@GOTPCREL+4+<offset>.
   unsigned FinalOff = Offset+MV.getConstant()+4;
   const MCExpr *Res =
-    MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_GOTPCREL, getContext());
-  const MCExpr *Off = MCConstantExpr::Create(FinalOff, getContext());
-  return MCBinaryExpr::CreateAdd(Res, Off, getContext());
+    MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_GOTPCREL, getContext());
+  const MCExpr *Off = MCConstantExpr::create(FinalOff, getContext());
+  return MCBinaryExpr::createAdd(Res, Off, getContext());
 }
 
 const MCExpr *X86ELFTargetObjectFile::getDebugThreadLocalSymbol(
     const MCSymbol *Sym) const {
-  return MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_DTPOFF, getContext());
+  return MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_DTPOFF, getContext());
 }
 
 void
@@ -116,7 +116,7 @@ const MCExpr *X86WindowsTargetObjectFile::getExecutableRelativeSymbol(
   if (GOLHS->isThreadLocal())
     return nullptr;
 
-  return MCSymbolRefExpr::Create(TM.getSymbol(GOLHS, Mang),
+  return MCSymbolRefExpr::create(TM.getSymbol(GOLHS, Mang),
                                  MCSymbolRefExpr::VK_COFF_IMGREL32,
                                  getContext());
 }
@@ -131,53 +131,44 @@ static std::string APIntToHexString(const APInt &AI) {
   return HexString;
 }
 
-
 static std::string scalarConstantToHexString(const Constant *C) {
   Type *Ty = C->getType();
-  APInt AI;
   if (isa<UndefValue>(C)) {
-    AI = APInt(Ty->getPrimitiveSizeInBits(), /*val=*/0);
-  } else if (Ty->isFloatTy() || Ty->isDoubleTy()) {
-    const auto *CFP = cast<ConstantFP>(C);
-    AI = CFP->getValueAPF().bitcastToAPInt();
-  } else if (Ty->isIntegerTy()) {
-    const auto *CI = cast<ConstantInt>(C);
-    AI = CI->getValue();
+    return APIntToHexString(APInt::getNullValue(Ty->getPrimitiveSizeInBits()));
+  } else if (const auto *CFP = dyn_cast<ConstantFP>(C)) {
+    return APIntToHexString(CFP->getValueAPF().bitcastToAPInt());
+  } else if (const auto *CI = dyn_cast<ConstantInt>(C)) {
+    return APIntToHexString(CI->getValue());
   } else {
-    llvm_unreachable("unexpected constant pool element type!");
+    unsigned NumElements;
+    if (isa<VectorType>(Ty))
+      NumElements = Ty->getVectorNumElements();
+    else
+      NumElements = Ty->getArrayNumElements();
+    std::string HexString;
+    for (int I = NumElements - 1, E = -1; I != E; --I)
+      HexString += scalarConstantToHexString(C->getAggregateElement(I));
+    return HexString;
   }
-  return APIntToHexString(AI);
 }
 
-const MCSection *
-X86WindowsTargetObjectFile::getSectionForConstant(SectionKind Kind,
-                                                  const Constant *C) const {
-  if (Kind.isReadOnly()) {
-    if (C) {
-      Type *Ty = C->getType();
-      SmallString<32> COMDATSymName;
-      if (Ty->isFloatTy() || Ty->isDoubleTy()) {
-        COMDATSymName = "__real@";
-        COMDATSymName += scalarConstantToHexString(C);
-      } else if (const auto *VTy = dyn_cast<VectorType>(Ty)) {
-        uint64_t NumBits = VTy->getBitWidth();
-        if (NumBits == 128 || NumBits == 256) {
-          COMDATSymName = NumBits == 128 ? "__xmm@" : "__ymm@";
-          for (int I = VTy->getNumElements() - 1, E = -1; I != E; --I)
-            COMDATSymName +=
-                scalarConstantToHexString(C->getAggregateElement(I));
-        }
-      }
-      if (!COMDATSymName.empty()) {
-        unsigned Characteristics = COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
-                                   COFF::IMAGE_SCN_MEM_READ |
-                                   COFF::IMAGE_SCN_LNK_COMDAT;
-        return getContext().getCOFFSection(".rdata", Characteristics, Kind,
-                                           COMDATSymName,
-                                           COFF::IMAGE_COMDAT_SELECT_ANY);
-      }
-    }
+MCSection *X86WindowsTargetObjectFile::getSectionForConstant(
+    const DataLayout &DL, SectionKind Kind, const Constant *C) const {
+  if (Kind.isMergeableConst() && C) {
+    const unsigned Characteristics = COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
+                                     COFF::IMAGE_SCN_MEM_READ |
+                                     COFF::IMAGE_SCN_LNK_COMDAT;
+    std::string COMDATSymName;
+    if (Kind.isMergeableConst4() || Kind.isMergeableConst8())
+      COMDATSymName = "__real@" + scalarConstantToHexString(C);
+    else if (Kind.isMergeableConst16())
+      COMDATSymName = "__xmm@" + scalarConstantToHexString(C);
+
+    if (!COMDATSymName.empty())
+      return getContext().getCOFFSection(".rdata", Characteristics, Kind,
+                                         COMDATSymName,
+                                         COFF::IMAGE_COMDAT_SELECT_ANY);
   }
 
-  return TargetLoweringObjectFile::getSectionForConstant(Kind, C);
+  return TargetLoweringObjectFile::getSectionForConstant(DL, Kind, C);
 }

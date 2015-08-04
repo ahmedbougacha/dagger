@@ -27,13 +27,13 @@ using namespace llvm;
 
 #define DEBUG_TYPE "branch-prob"
 
-INITIALIZE_PASS_BEGIN(BranchProbabilityInfo, "branch-prob",
+INITIALIZE_PASS_BEGIN(BranchProbabilityInfoWrapperPass, "branch-prob",
                       "Branch Probability Analysis", false, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
-INITIALIZE_PASS_END(BranchProbabilityInfo, "branch-prob",
+INITIALIZE_PASS_END(BranchProbabilityInfoWrapperPass, "branch-prob",
                     "Branch Probability Analysis", false, true)
 
-char BranchProbabilityInfo::ID = 0;
+char BranchProbabilityInfoWrapperPass::ID = 0;
 
 // Weights are for internal use only. They are used by heuristics to help to
 // estimate edges' probability. Example:
@@ -115,11 +115,6 @@ static const uint32_t NORMAL_WEIGHT = 16;
 // Minimum weight of an edge. Please note, that weight is NEVER 0.
 static const uint32_t MIN_WEIGHT = 1;
 
-static uint32_t getMaxWeightFor(BasicBlock *BB) {
-  return UINT32_MAX / BB->getTerminator()->getNumSuccessors();
-}
-
-
 /// \brief Calculate edge weights for successors lead to unreachable.
 ///
 /// Predict that a successor which leads necessarily to an
@@ -185,15 +180,18 @@ bool BranchProbabilityInfo::calcMetadataWeights(BasicBlock *BB) {
   if (!WeightsNode)
     return false;
 
+  // Check that the number of successors is manageable.
+  assert(TI->getNumSuccessors() < UINT32_MAX && "Too many successors");
+
   // Ensure there are weights for all of the successors. Note that the first
   // operand to the metadata node is a name, not a weight.
   if (WeightsNode->getNumOperands() != TI->getNumSuccessors() + 1)
     return false;
 
-  // Build up the final weights that will be used in a temporary buffer, but
-  // don't add them until all weights are present. Each weight value is clamped
-  // to [1, getMaxWeightFor(BB)].
-  uint32_t WeightLimit = getMaxWeightFor(BB);
+  // Build up the final weights that will be used in a temporary buffer.
+  // Compute the sum of all weights to later decide whether they need to
+  // be scaled to fit in 32 bits.
+  uint64_t WeightSum = 0;
   SmallVector<uint32_t, 2> Weights;
   Weights.reserve(TI->getNumSuccessors());
   for (unsigned i = 1, e = WeightsNode->getNumOperands(); i != e; ++i) {
@@ -201,12 +199,26 @@ bool BranchProbabilityInfo::calcMetadataWeights(BasicBlock *BB) {
         mdconst::dyn_extract<ConstantInt>(WeightsNode->getOperand(i));
     if (!Weight)
       return false;
-    Weights.push_back(
-      std::max<uint32_t>(1, Weight->getLimitedValue(WeightLimit)));
+    assert(Weight->getValue().getActiveBits() <= 32 &&
+           "Too many bits for uint32_t");
+    Weights.push_back(Weight->getZExtValue());
+    WeightSum += Weights.back();
   }
   assert(Weights.size() == TI->getNumSuccessors() && "Checked above");
-  for (unsigned i = 0, e = TI->getNumSuccessors(); i != e; ++i)
-    setEdgeWeight(BB, i, Weights[i]);
+
+  // If the sum of weights does not fit in 32 bits, scale every weight down
+  // accordingly.
+  uint64_t ScalingFactor =
+      (WeightSum > UINT32_MAX) ? WeightSum / UINT32_MAX + 1 : 1;
+
+  WeightSum = 0;
+  for (unsigned i = 0, e = TI->getNumSuccessors(); i != e; ++i) {
+    uint32_t W = Weights[i] / ScalingFactor;
+    WeightSum += W;
+    setEdgeWeight(BB, i, W);
+  }
+  assert(WeightSum <= UINT32_MAX &&
+         "Expected weights to scale down to 32 bits");
 
   return true;
 }
@@ -307,8 +319,9 @@ bool BranchProbabilityInfo::calcPointerHeuristics(BasicBlock *BB) {
 
 // Calculate Edge Weights using "Loop Branch Heuristics". Predict backedges
 // as taken, exiting edges as not-taken.
-bool BranchProbabilityInfo::calcLoopBranchHeuristics(BasicBlock *BB) {
-  Loop *L = LI->getLoopFor(BB);
+bool BranchProbabilityInfo::calcLoopBranchHeuristics(BasicBlock *BB,
+                                                     const LoopInfo &LI) {
+  Loop *L = LI.getLoopFor(BB);
   if (!L)
     return false;
 
@@ -492,46 +505,11 @@ bool BranchProbabilityInfo::calcInvokeHeuristics(BasicBlock *BB) {
   return true;
 }
 
-void BranchProbabilityInfo::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<LoopInfoWrapperPass>();
-  AU.setPreservesAll();
+void BranchProbabilityInfo::releaseMemory() {
+  Weights.clear();
 }
 
-bool BranchProbabilityInfo::runOnFunction(Function &F) {
-  DEBUG(dbgs() << "---- Branch Probability Info : " << F.getName()
-               << " ----\n\n");
-  LastF = &F; // Store the last function we ran on for printing.
-  LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  assert(PostDominatedByUnreachable.empty());
-  assert(PostDominatedByColdCall.empty());
-
-  // Walk the basic blocks in post-order so that we can build up state about
-  // the successors of a block iteratively.
-  for (auto BB : post_order(&F.getEntryBlock())) {
-    DEBUG(dbgs() << "Computing probabilities for " << BB->getName() << "\n");
-    if (calcUnreachableHeuristics(BB))
-      continue;
-    if (calcMetadataWeights(BB))
-      continue;
-    if (calcColdCallHeuristics(BB))
-      continue;
-    if (calcLoopBranchHeuristics(BB))
-      continue;
-    if (calcPointerHeuristics(BB))
-      continue;
-    if (calcZeroHeuristics(BB))
-      continue;
-    if (calcFloatingPointHeuristics(BB))
-      continue;
-    calcInvokeHeuristics(BB);
-  }
-
-  PostDominatedByUnreachable.clear();
-  PostDominatedByColdCall.clear();
-  return false;
-}
-
-void BranchProbabilityInfo::print(raw_ostream &OS, const Module *) const {
+void BranchProbabilityInfo::print(raw_ostream &OS) const {
   OS << "---- Branch Probabilities ----\n";
   // We print the probabilities from the last function the analysis ran over,
   // or the function it is currently running over.
@@ -553,7 +531,7 @@ uint32_t BranchProbabilityInfo::getSumForBlock(const BasicBlock *BB) const {
     uint32_t PrevSum = Sum;
 
     Sum += Weight;
-    assert(Sum > PrevSum); (void) PrevSum;
+    assert(Sum >= PrevSum); (void) PrevSum;
   }
 
   return Sum;
@@ -616,14 +594,17 @@ uint32_t BranchProbabilityInfo::getEdgeWeight(const BasicBlock *Src,
 uint32_t BranchProbabilityInfo::
 getEdgeWeight(const BasicBlock *Src, const BasicBlock *Dst) const {
   uint32_t Weight = 0;
+  bool FoundWeight = false;
   DenseMap<Edge, uint32_t>::const_iterator MapI;
   for (succ_const_iterator I = succ_begin(Src), E = succ_end(Src); I != E; ++I)
     if (*I == Dst) {
       MapI = Weights.find(std::make_pair(Src, I.getSuccessorIndex()));
-      if (MapI != Weights.end())
+      if (MapI != Weights.end()) {
+        FoundWeight = true;
         Weight += MapI->second;
+      }
     }
-  return (Weight == 0) ? DEFAULT_WEIGHT : Weight;
+  return (!FoundWeight) ? DEFAULT_WEIGHT : Weight;
 }
 
 /// Set the edge weight for a given edge specified by PredBlock and an index
@@ -668,4 +649,55 @@ BranchProbabilityInfo::printEdgeProbability(raw_ostream &OS,
      << (isEdgeHot(Src, Dst) ? " [HOT edge]\n" : "\n");
 
   return OS;
+}
+
+void BranchProbabilityInfo::calculate(Function &F, const LoopInfo& LI) {
+  DEBUG(dbgs() << "---- Branch Probability Info : " << F.getName()
+               << " ----\n\n");
+  LastF = &F; // Store the last function we ran on for printing.
+  assert(PostDominatedByUnreachable.empty());
+  assert(PostDominatedByColdCall.empty());
+
+  // Walk the basic blocks in post-order so that we can build up state about
+  // the successors of a block iteratively.
+  for (auto BB : post_order(&F.getEntryBlock())) {
+    DEBUG(dbgs() << "Computing probabilities for " << BB->getName() << "\n");
+    if (calcUnreachableHeuristics(BB))
+      continue;
+    if (calcMetadataWeights(BB))
+      continue;
+    if (calcColdCallHeuristics(BB))
+      continue;
+    if (calcLoopBranchHeuristics(BB, LI))
+      continue;
+    if (calcPointerHeuristics(BB))
+      continue;
+    if (calcZeroHeuristics(BB))
+      continue;
+    if (calcFloatingPointHeuristics(BB))
+      continue;
+    calcInvokeHeuristics(BB);
+  }
+
+  PostDominatedByUnreachable.clear();
+  PostDominatedByColdCall.clear();
+}
+
+void BranchProbabilityInfoWrapperPass::getAnalysisUsage(
+    AnalysisUsage &AU) const {
+  AU.addRequired<LoopInfoWrapperPass>();
+  AU.setPreservesAll();
+}
+
+bool BranchProbabilityInfoWrapperPass::runOnFunction(Function &F) {
+  const LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  BPI.calculate(F, LI);
+  return false;
+}
+
+void BranchProbabilityInfoWrapperPass::releaseMemory() { BPI.releaseMemory(); }
+
+void BranchProbabilityInfoWrapperPass::print(raw_ostream &OS,
+                                             const Module *) const {
+  BPI.print(OS);
 }

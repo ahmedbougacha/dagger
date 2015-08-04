@@ -95,7 +95,7 @@ static unsigned getXCoreSectionFlags(SectionKind K, bool IsCPRel) {
   return Flags;
 }
 
-const MCSection *
+MCSection *
 XCoreTargetObjectFile::getExplicitSectionGlobal(const GlobalValue *GV,
                                                 SectionKind Kind, Mangler &Mang,
                                                 const TargetMachine &TM) const {
@@ -108,9 +108,10 @@ XCoreTargetObjectFile::getExplicitSectionGlobal(const GlobalValue *GV,
                                     getXCoreSectionFlags(Kind, IsCPRel));
 }
 
-const MCSection *XCoreTargetObjectFile::
-SelectSectionForGlobal(const GlobalValue *GV, SectionKind Kind, Mangler &Mang,
-                       const TargetMachine &TM) const{
+MCSection *
+XCoreTargetObjectFile::SelectSectionForGlobal(const GlobalValue *GV,
+                                              SectionKind Kind, Mangler &Mang,
+                                              const TargetMachine &TM) const {
 
   bool UseCPRel = GV->isLocalLinkage(GV->getLinkage());
 
@@ -122,8 +123,9 @@ SelectSectionForGlobal(const GlobalValue *GV, SectionKind Kind, Mangler &Mang,
     if (Kind.isMergeableConst16())      return MergeableConst16Section;
   }
   Type *ObjType = GV->getType()->getPointerElementType();
+  auto &DL = GV->getParent()->getDataLayout();
   if (TM.getCodeModel() == CodeModel::Small || !ObjType->isSized() ||
-      TM.getDataLayout()->getTypeAllocSize(ObjType) < CodeModelLargeSize) {
+      DL.getTypeAllocSize(ObjType) < CodeModelLargeSize) {
     if (Kind.isReadOnly())              return UseCPRel? ReadOnlySection
                                                        : DataRelROSection;
     if (Kind.isBSS() || Kind.isCommon())return BSSSection;
@@ -141,9 +143,8 @@ SelectSectionForGlobal(const GlobalValue *GV, SectionKind Kind, Mangler &Mang,
   report_fatal_error("Target does not support TLS or Common sections");
 }
 
-const MCSection *
-XCoreTargetObjectFile::getSectionForConstant(SectionKind Kind,
-                                             const Constant *C) const {
+MCSection *XCoreTargetObjectFile::getSectionForConstant(
+    const DataLayout &DL, SectionKind Kind, const Constant *C) const {
   if (Kind.isMergeableConst4())           return MergeableConst4Section;
   if (Kind.isMergeableConst8())           return MergeableConst8Section;
   if (Kind.isMergeableConst16())          return MergeableConst16Section;

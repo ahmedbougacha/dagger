@@ -71,9 +71,9 @@ private:
   // stack frame indexes.
   unsigned MinCSFrameIndex, MaxCSFrameIndex;
 
-  // Entry and return blocks of the current function.
-  MachineBasicBlock *EntryBlock;
-  SmallVector<MachineBasicBlock *, 4> ReturnBlocks;
+  // Save and Restore blocks of the current function.
+  MachineBasicBlock *SaveBlock;
+  SmallVector<MachineBasicBlock *, 4> RestoreBlocks;
 
   // Flag to control whether to use the register scavenger to resolve
   // frame index materialization registers. Set according to
@@ -82,7 +82,8 @@ private:
 
   void calculateSets(MachineFunction &Fn);
   void calculateCallsInformation(MachineFunction &Fn);
-  void calculateCalleeSavedRegisters(MachineFunction &Fn);
+  void assignCalleeSavedSpillSlots(MachineFunction &Fn,
+                                   const BitVector &SavedRegs);
   void insertCSRSpillsAndRestores(MachineFunction &Fn);
   void calculateFrameObjectOffsets(MachineFunction &Fn);
   void replaceFrameIndices(MachineFunction &Fn);
@@ -92,7 +93,7 @@ private:
   void insertPrologEpilogCode(MachineFunction &Fn);
 
   // Convenience for recognizing return blocks.
-  bool isReturnBlock(MachineBasicBlock *MBB);
+  bool isReturnBlock(const MachineBasicBlock *MBB) const;
 };
 } // namespace
 
@@ -127,26 +128,37 @@ void PEI::getAnalysisUsage(AnalysisUsage &AU) const {
   MachineFunctionPass::getAnalysisUsage(AU);
 }
 
-bool PEI::isReturnBlock(MachineBasicBlock* MBB) {
+bool PEI::isReturnBlock(const MachineBasicBlock* MBB) const {
   return (MBB && !MBB->empty() && MBB->back().isReturn());
 }
 
 /// Compute the set of return blocks
 void PEI::calculateSets(MachineFunction &Fn) {
-  // Sets used to compute spill, restore placement sets.
-  const std::vector<CalleeSavedInfo> &CSI =
-    Fn.getFrameInfo()->getCalleeSavedInfo();
+  const MachineFrameInfo *MFI = Fn.getFrameInfo();
 
-  // If no CSRs used, we are done.
-  if (CSI.empty())
+  // Even when we do not change any CSR, we still want to insert the
+  // prologue and epilogue of the function.
+  // So set the save points for those.
+
+  // Use the points found by shrink-wrapping, if any.
+  if (MFI->getSavePoint()) {
+    SaveBlock = MFI->getSavePoint();
+    assert(MFI->getRestorePoint() && "Both restore and save must be set");
+    MachineBasicBlock *RestoreBlock = MFI->getRestorePoint();
+    // If RestoreBlock does not have any successor and is not a return block
+    // then the end point is unreachable and we do not need to insert any
+    // epilogue.
+    if (!RestoreBlock->succ_empty() || isReturnBlock(RestoreBlock))
+      RestoreBlocks.push_back(RestoreBlock);
     return;
+  }
 
   // Save refs to entry and return blocks.
-  EntryBlock = Fn.begin();
+  SaveBlock = Fn.begin();
   for (MachineFunction::iterator MBB = Fn.begin(), E = Fn.end();
        MBB != E; ++MBB)
     if (isReturnBlock(MBB))
-      ReturnBlocks.push_back(MBB);
+      RestoreBlocks.push_back(MBB);
 
   return;
 }
@@ -172,13 +184,12 @@ bool PEI::runOnMachineFunction(MachineFunction &Fn) {
   // instructions.
   calculateCallsInformation(Fn);
 
-  // Allow the target machine to make some adjustments to the function
-  // e.g. UsedPhysRegs before calculateCalleeSavedRegisters.
-  TFI->processFunctionBeforeCalleeSavedScan(Fn, RS);
+  // Determine which of the registers in the callee save list should be saved.
+  BitVector SavedRegs;
+  TFI->determineCalleeSaves(Fn, SavedRegs, RS);
 
-  // Scan the function for modified callee saved registers and insert spill code
-  // for any callee saved registers that are modified.
-  calculateCalleeSavedRegisters(Fn);
+  // Insert spill code for any callee saved registers that are modified.
+  assignCalleeSavedSpillSlots(Fn, SavedRegs);
 
   // Determine placement of CSR spill/restore code:
   // place all spills in the entry block, all restores in return blocks.
@@ -226,7 +237,7 @@ bool PEI::runOnMachineFunction(MachineFunction &Fn) {
   }
 
   delete RS;
-  ReturnBlocks.clear();
+  RestoreBlocks.clear();
   return true;
 }
 
@@ -242,12 +253,12 @@ void PEI::calculateCallsInformation(MachineFunction &Fn) {
   bool AdjustsStack = MFI->adjustsStack();
 
   // Get the function call frame set-up and tear-down instruction opcode
-  int FrameSetupOpcode   = TII.getCallFrameSetupOpcode();
-  int FrameDestroyOpcode = TII.getCallFrameDestroyOpcode();
+  unsigned FrameSetupOpcode = TII.getCallFrameSetupOpcode();
+  unsigned FrameDestroyOpcode = TII.getCallFrameDestroyOpcode();
 
   // Early exit for targets which have no call frame setup/destroy pseudo
   // instructions.
-  if (FrameSetupOpcode == -1 && FrameDestroyOpcode == -1)
+  if (FrameSetupOpcode == ~0u && FrameDestroyOpcode == ~0u)
     return;
 
   std::vector<MachineBasicBlock::iterator> FrameSDOps;
@@ -284,39 +295,27 @@ void PEI::calculateCallsInformation(MachineFunction &Fn) {
   }
 }
 
-
-/// calculateCalleeSavedRegisters - Scan the function for modified callee saved
-/// registers.
-void PEI::calculateCalleeSavedRegisters(MachineFunction &F) {
-  const TargetRegisterInfo *RegInfo = F.getSubtarget().getRegisterInfo();
-  const TargetFrameLowering *TFI = F.getSubtarget().getFrameLowering();
-  MachineFrameInfo *MFI = F.getFrameInfo();
-
-  // Get the callee saved register list...
-  const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(&F);
-
+void PEI::assignCalleeSavedSpillSlots(MachineFunction &F,
+                                      const BitVector &SavedRegs) {
   // These are used to keep track the callee-save area. Initialize them.
   MinCSFrameIndex = INT_MAX;
   MaxCSFrameIndex = 0;
 
-  // Early exit for targets which have no callee saved registers.
-  if (!CSRegs || CSRegs[0] == 0)
+  if (SavedRegs.empty())
     return;
 
-  // In Naked functions we aren't going to save any registers.
-  if (F.getFunction()->hasFnAttribute(Attribute::Naked))
-    return;
+  const TargetRegisterInfo *RegInfo = F.getSubtarget().getRegisterInfo();
+  const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(&F);
 
   std::vector<CalleeSavedInfo> CSI;
   for (unsigned i = 0; CSRegs[i]; ++i) {
     unsigned Reg = CSRegs[i];
-    // Functions which call __builtin_unwind_init get all their registers saved.
-    if (F.getRegInfo().isPhysRegUsed(Reg) || F.getMMI().callsUnwindInit()) {
-      // If the reg is modified, save it!
+    if (SavedRegs.test(Reg))
       CSI.push_back(CalleeSavedInfo(Reg));
-    }
   }
 
+  const TargetFrameLowering *TFI = F.getSubtarget().getFrameLowering();
+  MachineFrameInfo *MFI = F.getFrameInfo();
   if (!TFI->assignCalleeSavedSpillSlots(F, RegInfo, CSI)) {
     // If target doesn't implement this, use generic code.
 
@@ -372,6 +371,61 @@ void PEI::calculateCalleeSavedRegisters(MachineFunction &F) {
   MFI->setCalleeSavedInfo(CSI);
 }
 
+/// Helper function to update the liveness information for the callee-saved
+/// registers.
+static void updateLiveness(MachineFunction &MF) {
+  MachineFrameInfo *MFI = MF.getFrameInfo();
+  // Visited will contain all the basic blocks that are in the region
+  // where the callee saved registers are alive:
+  // - Anything that is not Save or Restore -> LiveThrough.
+  // - Save -> LiveIn.
+  // - Restore -> LiveOut.
+  // The live-out is not attached to the block, so no need to keep
+  // Restore in this set.
+  SmallPtrSet<MachineBasicBlock *, 8> Visited;
+  SmallVector<MachineBasicBlock *, 8> WorkList;
+  MachineBasicBlock *Entry = &MF.front();
+  MachineBasicBlock *Save = MFI->getSavePoint();
+
+  if (!Save)
+    Save = Entry;
+
+  if (Entry != Save) {
+    WorkList.push_back(Entry);
+    Visited.insert(Entry);
+  }
+  Visited.insert(Save);
+
+  MachineBasicBlock *Restore = MFI->getRestorePoint();
+  if (Restore)
+    // By construction Restore cannot be visited, otherwise it
+    // means there exists a path to Restore that does not go
+    // through Save.
+    WorkList.push_back(Restore);
+
+  while (!WorkList.empty()) {
+    const MachineBasicBlock *CurBB = WorkList.pop_back_val();
+    // By construction, the region that is after the save point is
+    // dominated by the Save and post-dominated by the Restore.
+    if (CurBB == Save)
+      continue;
+    // Enqueue all the successors not already visited.
+    // Those are by construction either before Save or after Restore.
+    for (MachineBasicBlock *SuccBB : CurBB->successors())
+      if (Visited.insert(SuccBB).second)
+        WorkList.push_back(SuccBB);
+  }
+
+  const std::vector<CalleeSavedInfo> &CSI = MFI->getCalleeSavedInfo();
+
+  for (unsigned i = 0, e = CSI.size(); i != e; ++i) {
+    for (MachineBasicBlock *MBB : Visited)
+      // Add the callee-saved register as live-in.
+      // It's killed at the spill.
+      MBB->addLiveIn(CSI[i].getReg());
+  }
+}
+
 /// insertCSRSpillsAndRestores - Insert spill and restore code for
 /// callee saved registers used in the function.
 ///
@@ -392,26 +446,22 @@ void PEI::insertCSRSpillsAndRestores(MachineFunction &Fn) {
   MachineBasicBlock::iterator I;
 
   // Spill using target interface.
-  I = EntryBlock->begin();
-  if (!TFI->spillCalleeSavedRegisters(*EntryBlock, I, CSI, TRI)) {
+  I = SaveBlock->begin();
+  if (!TFI->spillCalleeSavedRegisters(*SaveBlock, I, CSI, TRI)) {
     for (unsigned i = 0, e = CSI.size(); i != e; ++i) {
-      // Add the callee-saved register as live-in.
-      // It's killed at the spill.
-      EntryBlock->addLiveIn(CSI[i].getReg());
-
       // Insert the spill to the stack frame.
       unsigned Reg = CSI[i].getReg();
       const TargetRegisterClass *RC = TRI->getMinimalPhysRegClass(Reg);
-      TII.storeRegToStackSlot(*EntryBlock, I, Reg, true, CSI[i].getFrameIdx(),
+      TII.storeRegToStackSlot(*SaveBlock, I, Reg, true, CSI[i].getFrameIdx(),
                               RC, TRI);
     }
   }
+  // Update the live-in information of all the blocks up to the save point.
+  updateLiveness(Fn);
 
   // Restore using target interface.
-  for (unsigned ri = 0, re = ReturnBlocks.size(); ri != re; ++ri) {
-    MachineBasicBlock *MBB = ReturnBlocks[ri];
+  for (MachineBasicBlock *MBB : RestoreBlocks) {
     I = MBB->end();
-    --I;
 
     // Skip over all terminator instructions, which are part of the return
     // sequence.
@@ -721,21 +771,18 @@ void PEI::insertPrologEpilogCode(MachineFunction &Fn) {
   const TargetFrameLowering &TFI = *Fn.getSubtarget().getFrameLowering();
 
   // Add prologue to the function...
-  TFI.emitPrologue(Fn);
+  TFI.emitPrologue(Fn, *SaveBlock);
 
-  // Add epilogue to restore the callee-save registers in each exiting block
-  for (MachineFunction::iterator I = Fn.begin(), E = Fn.end(); I != E; ++I) {
-    // If last instruction is a return instruction, add an epilogue
-    if (!I->empty() && I->back().isReturn())
-      TFI.emitEpilogue(Fn, *I);
-  }
+  // Add epilogue to restore the callee-save registers in each exiting block.
+  for (MachineBasicBlock *RestoreBlock : RestoreBlocks)
+    TFI.emitEpilogue(Fn, *RestoreBlock);
 
   // Emit additional code that is required to support segmented stacks, if
   // we've been asked for it.  This, when linked with a runtime with support
   // for segmented stacks (libgcc is one), will result in allocating stack
   // space in small chunks instead of one large contiguous block.
   if (Fn.shouldSplitStack())
-    TFI.adjustForSegmentedStacks(Fn);
+    TFI.adjustForSegmentedStacks(Fn, *SaveBlock);
 
   // Emit additional code that is required to explicitly handle the stack in
   // HiPE native code (if needed) when loaded in the Erlang/OTP runtime. The
@@ -743,7 +790,7 @@ void PEI::insertPrologEpilogCode(MachineFunction &Fn) {
   // different conditional check and another BIF for allocating more stack
   // space.
   if (Fn.getFunction()->getCallingConv() == CallingConv::HiPE)
-    TFI.adjustForHiPEPrologue(Fn);
+    TFI.adjustForHiPEPrologue(Fn, *SaveBlock);
 }
 
 /// replaceFrameIndices - Replace all MO_FrameIndex operands with physical
@@ -810,8 +857,8 @@ void PEI::replaceFrameIndices(MachineBasicBlock *BB, MachineFunction &Fn,
   const TargetInstrInfo &TII = *Fn.getSubtarget().getInstrInfo();
   const TargetRegisterInfo &TRI = *Fn.getSubtarget().getRegisterInfo();
   const TargetFrameLowering *TFI = Fn.getSubtarget().getFrameLowering();
-  int FrameSetupOpcode   = TII.getCallFrameSetupOpcode();
-  int FrameDestroyOpcode = TII.getCallFrameDestroyOpcode();
+  unsigned FrameSetupOpcode = TII.getCallFrameSetupOpcode();
+  unsigned FrameDestroyOpcode = TII.getCallFrameDestroyOpcode();
 
   if (RS && !FrameIndexVirtualScavenging) RS->enterBasicBlock(BB);
 
@@ -979,12 +1026,8 @@ PEI::scavengeFrameVirtualRegs(MachineFunction &Fn) {
           // Replace this reference to the virtual register with the
           // scratch register.
           assert (ScratchReg && "Missing scratch register!");
-          MachineRegisterInfo &MRI = Fn.getRegInfo();
           Fn.getRegInfo().replaceRegWith(Reg, ScratchReg);
           
-          // Make sure MRI now accounts this register as used.
-          MRI.setPhysRegUsed(ScratchReg);
-
           // Because this instruction was processed by the RS before this
           // register was allocated, make sure that the RS now records the
           // register as being used.

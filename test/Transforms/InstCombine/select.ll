@@ -1265,7 +1265,7 @@ define i32 @test77(i1 %flag, i32* %x) {
 ; load does.
 ; CHECK-LABEL: @test77(
 ; CHECK: %[[A:.*]] = alloca i32, align 1
-; CHECK: call void @scribble_on_i32(i32* %[[A]])
+; CHECK: call void @scribble_on_i32(i32* nonnull %[[A]])
 ; CHECK: store i32 0, i32* %x
 ; CHECK: %[[P:.*]] = select i1 %flag, i32* %[[A]], i32* %x
 ; CHECK: load i32, i32* %[[P]]
@@ -1293,6 +1293,23 @@ entry:
   store i32 42, i32* %z
   %p = select i1 %flag, i32* %x, i32* %y
   %v = load i32, i32* %p
+  ret i32 %v
+}
+
+define i32 @test78_neg(i1 %flag, i32* %x, i32* %y, i32* %z) {
+; The same as @test78 but we can't speculate the load because it can trap
+; if under-aligned.
+; CHECK-LABEL: @test78_neg(
+; CHECK: %p = select i1 %flag, i32* %x, i32* %y
+; CHECK-NEXT: %v = load i32, i32* %p, align 16
+; CHECK-NEXT: ret i32 %v
+entry:
+  store i32 0, i32* %x
+  store i32 0, i32* %y
+  ; Block forwarding by storing to %z which could alias either %x or %y.
+  store i32 42, i32* %z
+  %p = select i1 %flag, i32* %x, i32* %y
+  %v = load i32, i32* %p, align 16
   ret i32 %v
 }
 
@@ -1519,4 +1536,29 @@ define i32 @test_select_select1(i32 %a, i32 %r0, i32 %r1, i32 %v1, i32 %v2) {
   %c1 = icmp slt i32 %a, %v2
   %s1 = select i1 %c1, i32 %r0, i32 %s0
   ret i32 %s1
+}
+
+define i32 @test_max_of_min(i32 %a) {
+; MAX(MIN(%a, -1), -1) == -1
+; CHECK-LABEL: @test_max_of_min(
+; CHECK: ret i32 -1
+  %not_a = xor i32 %a, -1
+  %c0 = icmp sgt i32 %a, 0
+  %s0 = select i1 %c0, i32 %not_a, i32 -1
+  %c1 = icmp sgt i32 %s0, -1
+  %s1 = select i1 %c1, i32 %s0, i32 -1
+  ret i32 %s1
+}
+
+
+define i32 @PR23757(i32 %x) {
+; CHECK-LABEL: @PR23757
+; CHECK:      %[[cmp:.*]] = icmp eq i32 %x, 2147483647
+; CHECK-NEXT: %[[add:.*]] = add nsw i32 %x, 1
+; CHECK-NEXT: %[[sel:.*]] = select i1 %[[cmp]], i32 -2147483648, i32 %[[add]]
+; CHECK-NEXT: ret i32 %[[sel]]
+  %cmp = icmp eq i32 %x, 2147483647
+  %add = add nsw i32 %x, 1
+  %sel = select i1 %cmp, i32 -2147483648, i32 %add
+  ret i32 %sel
 }

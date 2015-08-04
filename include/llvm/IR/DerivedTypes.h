@@ -140,7 +140,8 @@ public:
     return T->getTypeID() == FunctionTyID;
   }
 };
-
+static_assert(AlignOf<FunctionType>::Alignment >= AlignOf<Type *>::Alignment,
+              "Alignment sufficient for objects appended to FunctionType");
 
 /// CompositeType - Common super class of ArrayType, StructType, PointerType
 /// and VectorType.
@@ -152,8 +153,8 @@ public:
   /// getTypeAtIndex - Given an index value into the type, return the type of
   /// the element.
   ///
-  Type *getTypeAtIndex(const Value *V);
-  Type *getTypeAtIndex(unsigned Idx);
+  Type *getTypeAtIndex(const Value *V) const;
+  Type *getTypeAtIndex(unsigned Idx) const;
   bool indexValid(const Value *V) const;
   bool indexValid(unsigned Idx) const;
 
@@ -249,7 +250,7 @@ public:
   bool isOpaque() const { return (getSubclassData() & SCDB_HasBody) == 0; }
 
   /// isSized - Return true if this is a sized type.
-  bool isSized(SmallPtrSetImpl<const Type*> *Visited = nullptr) const;
+  bool isSized(SmallPtrSetImpl<Type*> *Visited = nullptr) const;
   
   /// hasName - Return true if this is a named struct that has a non-empty name.
   bool hasName() const { return SymbolTableEntry != nullptr; }
@@ -463,6 +464,9 @@ public:
   /// isValidElementType - Return true if the specified type is valid as a
   /// element type.
   static bool isValidElementType(Type *ElemTy);
+
+  /// Return true if we can load or store from a pointer to this type.
+  static bool isLoadableOrStorableType(Type *ElemTy);
 
   /// @brief Return the address space of the Pointer type.
   inline unsigned getAddressSpace() const { return getSubclassData(); }

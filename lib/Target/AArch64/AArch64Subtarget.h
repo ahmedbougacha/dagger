@@ -29,6 +29,7 @@
 namespace llvm {
 class GlobalValue;
 class StringRef;
+class Triple;
 
 class AArch64Subtarget : public AArch64GenSubtargetInfo {
 protected:
@@ -49,6 +50,12 @@ protected:
 
   // HasZeroCycleZeroing - Has zero-cycle zeroing instructions.
   bool HasZeroCycleZeroing;
+
+  // StrictAlign - Disallow unaligned memory accesses.
+  bool StrictAlign;
+
+  // ReserveX18 - X18 is not available as a general purpose register.
+  bool ReserveX18;
 
   bool IsLittle;
 
@@ -71,7 +78,7 @@ private:
 public:
   /// This constructor initializes the data members to match that
   /// of the specified triple.
-  AArch64Subtarget(const std::string &TT, const std::string &CPU,
+  AArch64Subtarget(const Triple &TT, const std::string &CPU,
                    const std::string &FS, const TargetMachine &TM,
                    bool LittleEndian);
 
@@ -90,7 +97,7 @@ public:
   }
   const Triple &getTargetTriple() const { return TargetTriple; }
   bool enableMachineScheduler() const override { return true; }
-  bool enablePostMachineScheduler() const override {
+  bool enablePostRAScheduler() const override {
     return isCortexA53() || isCortexA57();
   }
 
@@ -100,6 +107,9 @@ public:
 
   bool hasZeroCycleZeroing() const { return HasZeroCycleZeroing; }
 
+  bool requiresStrictAlign() const { return StrictAlign; }
+
+  bool isX18Reserved() const { return ReserveX18; }
   bool hasFPARMv8() const { return HasFPARMv8; }
   bool hasNEON() const { return HasNEON; }
   bool hasCrypto() const { return HasCrypto; }

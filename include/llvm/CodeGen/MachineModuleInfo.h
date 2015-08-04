@@ -157,11 +157,6 @@ class MachineModuleInfo : public ImmutablePass {
   /// emit common EH frames.
   std::vector<const Function *> Personalities;
 
-  /// UsedFunctions - The functions in the @llvm.used list in a more easily
-  /// searchable format.  This does not include the functions in
-  /// llvm.compiler.used.
-  SmallPtrSet<const Function *, 32> UsedFunctions;
-
   /// AddrLabelSymbols - This map keeps track of which symbol is being used for
   /// the specified basic block's address of label.
   MMIAddrLabelMap *AddrLabelSymbols;
@@ -193,13 +188,13 @@ public:
   static char ID; // Pass identification, replacement for typeid
 
   struct VariableDbgInfo {
-    const MDLocalVariable *Var;
-    const MDExpression *Expr;
+    const DILocalVariable *Var;
+    const DIExpression *Expr;
     unsigned Slot;
-    const MDLocation *Loc;
+    const DILocation *Loc;
 
-    VariableDbgInfo(const MDLocalVariable *Var, const MDExpression *Expr,
-                    unsigned Slot, const MDLocation *Loc)
+    VariableDbgInfo(const DILocalVariable *Var, const DIExpression *Expr,
+                    unsigned Slot, const DILocation *Loc)
         : Var(Var), Expr(Expr), Slot(Slot), Loc(Loc) {}
   };
   typedef SmallVector<VariableDbgInfo, 4> VariableDbgInfoMapTy;
@@ -246,10 +241,6 @@ public:
     return const_cast<MachineModuleInfo*>(this)->getObjFileInfo<Ty>();
   }
 
-  /// AnalyzeModule - Scan the module for global debug information.
-  ///
-  void AnalyzeModule(const Module &M);
-
   /// hasDebugInfo - Returns true if valid debug info is present.
   ///
   bool hasDebugInfo() const { return DbgInfoAvailable; }
@@ -293,12 +284,14 @@ public:
   /// getAddrLabelSymbol - Return the symbol to be used for the specified basic
   /// block when its address is taken.  This cannot be its normal LBB label
   /// because the block may be accessed outside its containing function.
-  MCSymbol *getAddrLabelSymbol(const BasicBlock *BB);
+  MCSymbol *getAddrLabelSymbol(const BasicBlock *BB) {
+    return getAddrLabelSymbolToEmit(BB).front();
+  }
 
   /// getAddrLabelSymbolToEmit - Return the symbol to be used for the specified
   /// basic block when its address is taken.  If other blocks were RAUW'd to
   /// this one, we may have to emit them as well, return the whole set.
-  std::vector<MCSymbol*> getAddrLabelSymbolToEmit(const BasicBlock *BB);
+  ArrayRef<MCSymbol *> getAddrLabelSymbolToEmit(const BasicBlock *BB);
 
   /// takeDeletedSymbolsForFunction - If the specified function has had any
   /// references to address-taken blocks generated, but the block got deleted,
@@ -327,6 +320,7 @@ public:
   /// information.
   void addPersonality(MachineBasicBlock *LandingPad,
                       const Function *Personality);
+  void addPersonality(const Function *Personality);
 
   void addWinEHState(MachineBasicBlock *LandingPad, int State);
 
@@ -337,13 +331,6 @@ public:
   /// getPersonalities - Return array of personality functions ever seen.
   const std::vector<const Function *>& getPersonalities() const {
     return Personalities;
-  }
-
-  /// isUsedFunction - Return true if the functions in the llvm.used list.  This
-  /// does not return true for things in llvm.compiler.used unless they are also
-  /// in llvm.used.
-  bool isUsedFunction(const Function *F) const {
-    return UsedFunctions.count(F);
   }
 
   /// addCatchTypeInfo - Provide the catch typeinfo for a landing pad.
@@ -448,8 +435,8 @@ public:
 
   /// setVariableDbgInfo - Collect information used to emit debugging
   /// information of a variable.
-  void setVariableDbgInfo(const MDLocalVariable *Var, const MDExpression *Expr,
-                          unsigned Slot, const MDLocation *Loc) {
+  void setVariableDbgInfo(const DILocalVariable *Var, const DIExpression *Expr,
+                          unsigned Slot, const DILocation *Loc) {
     VariableDbgInfos.emplace_back(Var, Expr, Slot, Loc);
   }
 

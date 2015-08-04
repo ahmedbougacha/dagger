@@ -1289,7 +1289,7 @@ entry:
 ; CHECK: %tmp1 = tail call i8* @objc_retain(i8* %tmp) [[NUW]]
 ; CHECK-NEXT: invoke
 ; CHECK: }
-define void @test20(double* %self) {
+define void @test20(double* %self) personality i32 (...)* @__gxx_personality_v0 {
 if.then12:
   %tmp = bitcast double* %self to i8*
   %tmp1 = call i8* @objc_retain(i8* %tmp) nounwind
@@ -1302,7 +1302,7 @@ invoke.cont23:                                    ; preds = %if.then12
 
 lpad20:                                           ; preds = %invoke.cont23, %if.then12
   %tmp502 = phi double* [ undef, %invoke.cont23 ], [ %self, %if.then12 ]
-  %exn = landingpad {i8*, i32} personality i32 (...)* @__gxx_personality_v0
+  %exn = landingpad {i8*, i32}
            cleanup
   unreachable
 
@@ -2684,8 +2684,8 @@ define {<2 x float>, <2 x float>} @"\01-[A z]"({}* %self, i8* nocapture %_cmd) n
 invoke.cont:
   %0 = bitcast {}* %self to i8*
   %1 = tail call i8* @objc_retain(i8* %0) nounwind
-  tail call void @llvm.dbg.value(metadata {}* %self, i64 0, metadata !MDLocalVariable(tag: DW_TAG_auto_variable, scope: !2), metadata !MDExpression()), !dbg !MDLocation(scope: !2)
-  tail call void @llvm.dbg.value(metadata {}* %self, i64 0, metadata !MDLocalVariable(tag: DW_TAG_auto_variable, scope: !2), metadata !MDExpression()), !dbg !MDLocation(scope: !2)
+  tail call void @llvm.dbg.value(metadata {}* %self, i64 0, metadata !DILocalVariable(scope: !2), metadata !DIExpression()), !dbg !DILocation(scope: !2)
+  tail call void @llvm.dbg.value(metadata {}* %self, i64 0, metadata !DILocalVariable(scope: !2), metadata !DIExpression()), !dbg !DILocation(scope: !2)
   %ivar = load i64, i64* @"OBJC_IVAR_$_A.myZ", align 8
   %add.ptr = getelementptr i8, i8* %0, i64 %ivar
   %tmp1 = bitcast i8* %add.ptr to float*
@@ -3018,7 +3018,7 @@ define void @test67(i8* %x) {
 
 !0 = !{}
 !1 = !{i32 1, !"Debug Info Version", i32 3}
-!2 = !MDSubprogram()
+!2 = !DISubprogram()
 
 ; CHECK: attributes #0 = { nounwind readnone }
 ; CHECK: attributes [[NUW]] = { nounwind }

@@ -324,6 +324,11 @@ Below are some guidelines about the format of the message itself:
 * Text formatting and spelling should follow the same rules as documentation
   and in-code comments, ex. capitalization, full stop, etc.
 
+* If the commit is a bug fix on top of another recently committed patch, or a
+  revert or reapply of a patch, include the svn revision number of the prior
+  related commit. This could be as simple as "Revert rNNNN because it caused
+  PR#".
+
 For minor violations of these recommendations, the community normally favors
 reminding the contributor of this policy over reverting. Minor corrections and
 omissions can be handled by sending a reply to the commits mailing list.
@@ -500,8 +505,13 @@ for llvm users and not imposing a big burden on llvm developers:
 * The textual format is not backwards compatible. We don't change it too often,
   but there are no specific promises.
 
-* The bitcode format produced by a X.Y release will be readable by all following
-  X.Z releases and the (X+1).0 release.
+* Additions and changes to the IR should be reflected in
+  ``test/Bitcode/compatibility.ll``.
+
+* The bitcode format produced by a X.Y release will be readable by all
+  following X.Z releases and the (X+1).0 release. To help ensure this, an X.Y
+  version of ``test/Bitcode/compatibility.ll`` should be assembled and
+  committed after each release.
 
 * Newer releases can ignore features from older releases, but they cannot
   miscompile them. For example, if nsw is ever replaced with something else,
@@ -619,5 +629,5 @@ patent-related trouble with their changes (including from third parties).  If
 you or your employer own the rights to a patent and would like to contribute
 code to LLVM that relies on it, we require that the copyright owner sign an
 agreement that allows any other user of LLVM to freely use your patent.  Please
-contact the `oversight group <mailto:llvm-oversight@cs.uiuc.edu>`_ for more
+contact the `LLVM Foundation Board of Directors <mailto:board@llvm.org>`_ for more
 details.

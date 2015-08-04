@@ -168,11 +168,11 @@ bool X86InstrSema::translateTargetInst() {
       // FIXME: Add support for reverse copying, depending on Direction Flag.
       // We don't support CLD/STD yet anyway, so this isn't a big deal for now.
       Type *MemcpyArgTys[] = { Dst->getType(), Src->getType(), Len->getType() };
-      Builder->CreateCall5(
+      Builder->CreateCall(
           Intrinsic::getDeclaration(TheModule, Intrinsic::memcpy, MemcpyArgTys),
-          Dst, Src, Len,
-          /*Align=*/Builder->getInt32(1),
-          /*isVolatile=*/Builder->getInt1(false));
+          {Dst, Src, Len,
+           /*Align=*/Builder->getInt32(1),
+           /*isVolatile=*/Builder->getInt1(false)});
 
       return true;
     }
@@ -338,9 +338,9 @@ void X86InstrSema::translateTargetOpcode() {
     Value *IsSrcZero = Builder->CreateIsNull(Src);
     Value *PrevDstVal = getReg(CurrentInst->Inst.getOperand(0).getReg());
     Type *ArgTys[] = { PrevDstVal->getType(), Builder->getInt1Ty() };
-    Value *Cttz = Builder->CreateCall2(
-      Intrinsic::getDeclaration(TheModule, Intrinsic::cttz, ArgTys),
-      Src, /*is_zero_undef:*/ Builder->getInt1(true));
+    Value *Cttz = Builder->CreateCall(
+        Intrinsic::getDeclaration(TheModule, Intrinsic::cttz, ArgTys),
+        {Src, /*is_zero_undef:*/ Builder->getInt1(true)});
     registerResult(Builder->CreateSelect(IsSrcZero, PrevDstVal, Cttz));
 
     // We also need to update ZF in EFLAGS.
@@ -359,9 +359,9 @@ void X86InstrSema::translateTargetOpcode() {
     Value *IsSrcZero = Builder->CreateIsNull(Src);
     Value *PrevDstVal = getReg(CurrentInst->Inst.getOperand(0).getReg());
     Type *ArgTys[] = { PrevDstVal->getType(), Builder->getInt1Ty() };
-    Value *Ctlz = Builder->CreateCall2(
-      Intrinsic::getDeclaration(TheModule, Intrinsic::ctlz, ArgTys),
-      Src, /*is_zero_undef:*/ Builder->getInt1(true));
+    Value *Ctlz = Builder->CreateCall(
+        Intrinsic::getDeclaration(TheModule, Intrinsic::ctlz, ArgTys),
+        {Src, /*is_zero_undef:*/ Builder->getInt1(true)});
     registerResult(Builder->CreateSelect(IsSrcZero, PrevDstVal, Ctlz));
 
     // We also need to update ZF in EFLAGS.

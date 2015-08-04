@@ -582,8 +582,7 @@ static GlobalAlias *copyGlobalAliasProto(TypeMapTy &TypeMap, Module &DstM,
   // If there is no linkage to be performed or we're linking from the source,
   // bring over SGA.
   auto *PTy = cast<PointerType>(TypeMap.get(SGA->getType()));
-  return GlobalAlias::create(PTy->getElementType(), PTy->getAddressSpace(),
-                             SGA->getLinkage(), SGA->getName(), &DstM);
+  return GlobalAlias::create(PTy, SGA->getLinkage(), SGA->getName(), &DstM);
 }
 
 static GlobalValue *copyGlobalValueProto(TypeMapTy &TypeMap, Module &DstM,
@@ -1157,7 +1156,7 @@ void ModuleLinker::linkAppendingVarInit(const AppendingVarInfo &AVI) {
         continue;
     }
     DstElements.push_back(
-        MapValue(V, ValueMap, RF_None, &TypeMap, &ValMaterializer));
+        MapValue(V, ValueMap, RF_MoveDistinctMDs, &TypeMap, &ValMaterializer));
   }
   if (IsNewStructor) {
     NewType = ArrayType::get(NewType->getElementType(), DstElements.size());
@@ -1171,8 +1170,8 @@ void ModuleLinker::linkAppendingVarInit(const AppendingVarInfo &AVI) {
 /// referenced are in Dest.
 void ModuleLinker::linkGlobalInit(GlobalVariable &Dst, GlobalVariable &Src) {
   // Figure out what the initializer looks like in the dest module.
-  Dst.setInitializer(MapValue(Src.getInitializer(), ValueMap, RF_None, &TypeMap,
-                              &ValMaterializer));
+  Dst.setInitializer(MapValue(Src.getInitializer(), ValueMap,
+                              RF_MoveDistinctMDs, &TypeMap, &ValMaterializer));
 }
 
 /// Copy the source function over into the dest function and fix up references
@@ -1187,13 +1186,20 @@ bool ModuleLinker::linkFunctionBody(Function &Dst, Function &Src) {
 
   // Link in the prefix data.
   if (Src.hasPrefixData())
-    Dst.setPrefixData(MapValue(Src.getPrefixData(), ValueMap, RF_None, &TypeMap,
-                               &ValMaterializer));
+    Dst.setPrefixData(MapValue(Src.getPrefixData(), ValueMap,
+                               RF_MoveDistinctMDs, &TypeMap, &ValMaterializer));
 
   // Link in the prologue data.
   if (Src.hasPrologueData())
-    Dst.setPrologueData(MapValue(Src.getPrologueData(), ValueMap, RF_None,
-                                 &TypeMap, &ValMaterializer));
+    Dst.setPrologueData(MapValue(Src.getPrologueData(), ValueMap,
+                                 RF_MoveDistinctMDs, &TypeMap,
+                                 &ValMaterializer));
+
+  // Link in the personality function.
+  if (Src.hasPersonalityFn())
+    Dst.setPersonalityFn(MapValue(Src.getPersonalityFn(), ValueMap,
+                                  RF_MoveDistinctMDs, &TypeMap,
+                                  &ValMaterializer));
 
   // Go through and convert function arguments over, remembering the mapping.
   Function::arg_iterator DI = Dst.arg_begin();
@@ -1209,8 +1215,8 @@ bool ModuleLinker::linkFunctionBody(Function &Dst, Function &Src) {
   SmallVector<std::pair<unsigned, MDNode *>, 8> MDs;
   Src.getAllMetadata(MDs);
   for (const auto &I : MDs)
-    Dst.setMetadata(I.first, MapMetadata(I.second, ValueMap, RF_None, &TypeMap,
-                                         &ValMaterializer));
+    Dst.setMetadata(I.first, MapMetadata(I.second, ValueMap, RF_MoveDistinctMDs,
+                                         &TypeMap, &ValMaterializer));
 
   // Splice the body of the source function into the dest function.
   Dst.getBasicBlockList().splice(Dst.end(), Src.getBasicBlockList());
@@ -1221,21 +1227,22 @@ bool ModuleLinker::linkFunctionBody(Function &Dst, Function &Src) {
   // functions and patch them up to point to the local versions.
   for (BasicBlock &BB : Dst)
     for (Instruction &I : BB)
-      RemapInstruction(&I, ValueMap, RF_IgnoreMissingEntries, &TypeMap,
+      RemapInstruction(&I, ValueMap,
+                       RF_IgnoreMissingEntries | RF_MoveDistinctMDs, &TypeMap,
                        &ValMaterializer);
 
   // There is no need to map the arguments anymore.
   for (Argument &Arg : Src.args())
     ValueMap.erase(&Arg);
 
-  Src.Dematerialize();
+  Src.dematerialize();
   return false;
 }
 
 void ModuleLinker::linkAliasBody(GlobalAlias &Dst, GlobalAlias &Src) {
   Constant *Aliasee = Src.getAliasee();
-  Constant *Val =
-      MapValue(Aliasee, ValueMap, RF_None, &TypeMap, &ValMaterializer);
+  Constant *Val = MapValue(Aliasee, ValueMap, RF_MoveDistinctMDs, &TypeMap,
+                           &ValMaterializer);
   Dst.setAliasee(Val);
 }
 
@@ -1255,14 +1262,14 @@ bool ModuleLinker::linkGlobalValueBody(GlobalValue &Src) {
 /// Insert all of the named MDNodes in Src into the Dest module.
 void ModuleLinker::linkNamedMDNodes() {
   const NamedMDNode *SrcModFlags = SrcM->getModuleFlagsMetadata();
-  for (Module::const_named_metadata_iterator I = SrcM->named_metadata_begin(),
-       E = SrcM->named_metadata_end(); I != E; ++I) {
+  for (const NamedMDNode &NMD : SrcM->named_metadata()) {
     // Don't link module flags here. Do them separately.
-    if (&*I == SrcModFlags) continue;
-    NamedMDNode *DestNMD = DstM->getOrInsertNamedMetadata(I->getName());
+    if (&NMD == SrcModFlags)
+      continue;
+    NamedMDNode *DestNMD = DstM->getOrInsertNamedMetadata(NMD.getName());
     // Add Src elements into Dest node.
-    for (unsigned i = 0, e = I->getNumOperands(); i != e; ++i)
-      DestNMD->addOperand(MapMetadata(I->getOperand(i), ValueMap, RF_None,
+    for (const MDNode *op : NMD.operands())
+      DestNMD->addOperand(MapMetadata(op, ValueMap, RF_MoveDistinctMDs,
                                       &TypeMap, &ValMaterializer));
   }
 }
@@ -1288,10 +1295,10 @@ void ModuleLinker::stripReplacedSubprograms() {
   if (!CompileUnits)
     return;
   for (unsigned I = 0, E = CompileUnits->getNumOperands(); I != E; ++I) {
-    auto *CU = cast<MDCompileUnit>(CompileUnits->getOperand(I));
+    auto *CU = cast<DICompileUnit>(CompileUnits->getOperand(I));
     assert(CU && "Expected valid compile unit");
 
-    for (MDSubprogram *SP : CU->getSubprograms()) {
+    for (DISubprogram *SP : CU->getSubprograms()) {
       if (!SP || !SP->getFunction() || !Functions.count(SP->getFunction()))
         continue;
 
@@ -1543,9 +1550,8 @@ bool ModuleLinker::run() {
 
   // Insert all of the globals in src into the DstM module... without linking
   // initializers (which could refer to functions not yet mapped over).
-  for (Module::global_iterator I = SrcM->global_begin(),
-       E = SrcM->global_end(); I != E; ++I)
-    if (linkGlobalValueProto(I))
+  for (GlobalVariable &GV : SrcM->globals())
+    if (linkGlobalValueProto(&GV))
       return true;
 
   // Link the functions together between the two modules, without doing function
@@ -1553,26 +1559,25 @@ bool ModuleLinker::run() {
   // function...  We do this so that when we begin processing function bodies,
   // all of the global values that may be referenced are available in our
   // ValueMap.
-  for (Module::iterator I = SrcM->begin(), E = SrcM->end(); I != E; ++I)
-    if (linkGlobalValueProto(I))
+  for (Function &F :*SrcM)
+    if (linkGlobalValueProto(&F))
       return true;
 
   // If there were any aliases, link them now.
-  for (Module::alias_iterator I = SrcM->alias_begin(),
-       E = SrcM->alias_end(); I != E; ++I)
-    if (linkGlobalValueProto(I))
+  for (GlobalAlias &GA : SrcM->aliases())
+    if (linkGlobalValueProto(&GA))
       return true;
 
-  for (unsigned i = 0, e = AppendingVars.size(); i != e; ++i)
-    linkAppendingVarInit(AppendingVars[i]);
+  for (const AppendingVarInfo &AppendingVar : AppendingVars)
+    linkAppendingVarInit(AppendingVar);
 
   for (const auto &Entry : DstM->getComdatSymbolTable()) {
     const Comdat &C = Entry.getValue();
     if (C.getSelectionKind() == Comdat::Any)
       continue;
     const GlobalValue *GV = SrcM->getNamedValue(C.getName());
-    assert(GV);
-    MapValue(GV, ValueMap, RF_None, &TypeMap, &ValMaterializer);
+    if (GV)
+      MapValue(GV, ValueMap, RF_MoveDistinctMDs, &TypeMap, &ValMaterializer);
   }
 
   // Strip replaced subprograms before mapping any metadata -- so that we're
@@ -1803,7 +1808,9 @@ LLVMBool LLVMLinkModules(LLVMModuleRef Dest, LLVMModuleRef Src,
   LLVMBool Result = Linker::LinkModules(
       D, unwrap(Src), [&](const DiagnosticInfo &DI) { DI.print(DP); });
 
-  if (OutMessages && Result)
+  if (OutMessages && Result) {
+    Stream.flush();
     *OutMessages = strdup(Message.c_str());
+  }
   return Result;
 }

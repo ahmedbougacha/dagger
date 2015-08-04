@@ -20,6 +20,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/config.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
@@ -92,7 +93,7 @@ ErrorOr<std::string> sys::findProgramByName(StringRef Name,
     if (sys::fs::can_execute(FilePath.c_str()))
       return std::string(FilePath.str()); // Found the executable!
   }
-  return std::errc::no_such_file_or_directory;
+  return errc::no_such_file_or_directory;
 }
 
 static bool RedirectIO(const StringRef *Path, int FD, std::string* ErrMsg) {
@@ -322,7 +323,6 @@ namespace llvm {
 
 ProcessInfo sys::Wait(const ProcessInfo &PI, unsigned SecondsToWait,
                       bool WaitUntilTerminates, std::string *ErrMsg) {
-#ifdef HAVE_SYS_WAIT_H
   struct sigaction Act, Old;
   assert(PI.Pid && "invalid pid to wait on, process not started?");
 
@@ -416,12 +416,6 @@ ProcessInfo sys::Wait(const ProcessInfo &PI, unsigned SecondsToWait,
     // signal during execution as opposed to failing to execute.
     WaitResult.ReturnCode = -2;
   }
-#else
-  if (ErrMsg)
-    *ErrMsg = "Program::Wait is not implemented on this platform yet!";
-  ProcessInfo WaitResult;
-  WaitResult.ReturnCode = -2;
-#endif
   return WaitResult;
 }
 
@@ -447,7 +441,7 @@ llvm::sys::writeFileWithEncoding(StringRef FileName, StringRef Contents,
   OS << Contents;
 
   if (OS.has_error())
-    return std::make_error_code(std::errc::io_error);
+    return make_error_code(errc::io_error);
 
   return EC;
 }

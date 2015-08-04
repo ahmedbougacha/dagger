@@ -28,6 +28,7 @@
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
+#include "llvm/CodeGen/TargetSchedule.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
@@ -366,14 +367,10 @@ ARMBaseInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,MachineBasicBlock *&TBB,
 
 
 unsigned ARMBaseInstrInfo::RemoveBranch(MachineBasicBlock &MBB) const {
-  MachineBasicBlock::iterator I = MBB.end();
-  if (I == MBB.begin()) return 0;
-  --I;
-  while (I->isDebugValue()) {
-    if (I == MBB.begin())
-      return 0;
-    --I;
-  }
+  MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
+  if (I == MBB.end())
+    return 0;
+
   if (!isUncondBranchOpcode(I->getOpcode()) &&
       !isCondBranchOpcode(I->getOpcode()))
     return 0;
@@ -396,7 +393,7 @@ unsigned ARMBaseInstrInfo::RemoveBranch(MachineBasicBlock &MBB) const {
 unsigned
 ARMBaseInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
                                MachineBasicBlock *FBB,
-                               const SmallVectorImpl<MachineOperand> &Cond,
+                               ArrayRef<MachineOperand> Cond,
                                DebugLoc DL) const {
   ARMFunctionInfo *AFI = MBB.getParent()->getInfo<ARMFunctionInfo>();
   int BOpc   = !AFI->isThumbFunction()
@@ -458,8 +455,7 @@ bool ARMBaseInstrInfo::isPredicated(const MachineInstr *MI) const {
 }
 
 bool ARMBaseInstrInfo::
-PredicateInstruction(MachineInstr *MI,
-                     const SmallVectorImpl<MachineOperand> &Pred) const {
+PredicateInstruction(MachineInstr *MI, ArrayRef<MachineOperand> Pred) const {
   unsigned Opc = MI->getOpcode();
   if (isUncondBranchOpcode(Opc)) {
     MI->setDesc(get(getMatchingCondBranchOpcode(Opc)));
@@ -479,9 +475,8 @@ PredicateInstruction(MachineInstr *MI,
   return false;
 }
 
-bool ARMBaseInstrInfo::
-SubsumesPredicate(const SmallVectorImpl<MachineOperand> &Pred1,
-                  const SmallVectorImpl<MachineOperand> &Pred2) const {
+bool ARMBaseInstrInfo::SubsumesPredicate(ArrayRef<MachineOperand> Pred1,
+                                         ArrayRef<MachineOperand> Pred2) const {
   if (Pred1.size() > 2 || Pred2.size() > 2)
     return false;
 
@@ -523,7 +518,7 @@ bool ARMBaseInstrInfo::DefinesPredicate(MachineInstr *MI,
 
 static bool isCPSRDefined(const MachineInstr *MI) {
   for (const auto &MO : MI->operands())
-    if (MO.isReg() && MO.getReg() == ARM::CPSR && MO.isDef())
+    if (MO.isReg() && MO.getReg() == ARM::CPSR && MO.isDef() && !MO.isDead())
       return true;
   return false;
 }
@@ -627,6 +622,10 @@ unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
   case ARM::t2MOVi32imm:
     return 8;
   case ARM::CONSTPOOL_ENTRY:
+  case ARM::JUMPTABLE_INSTS:
+  case ARM::JUMPTABLE_ADDRS:
+  case ARM::JUMPTABLE_TBB:
+  case ARM::JUMPTABLE_TBH:
     // If this machine instr is a constant pool entry, its size is recorded as
     // operand #2.
     return MI->getOperand(2).getImm();
@@ -641,42 +640,6 @@ unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
   case ARM::t2Int_eh_sjlj_setjmp:
   case ARM::t2Int_eh_sjlj_setjmp_nofp:
     return 12;
-  case ARM::BR_JTr:
-  case ARM::BR_JTm:
-  case ARM::BR_JTadd:
-  case ARM::tBR_JTr:
-  case ARM::t2BR_JT:
-  case ARM::t2TBB_JT:
-  case ARM::t2TBH_JT: {
-    // These are jumptable branches, i.e. a branch followed by an inlined
-    // jumptable. The size is 4 + 4 * number of entries. For TBB, each
-    // entry is one byte; TBH two byte each.
-    unsigned EntrySize = (Opc == ARM::t2TBB_JT)
-      ? 1 : ((Opc == ARM::t2TBH_JT) ? 2 : 4);
-    unsigned NumOps = MCID.getNumOperands();
-    MachineOperand JTOP =
-      MI->getOperand(NumOps - (MI->isPredicable() ? 3 : 2));
-    unsigned JTI = JTOP.getIndex();
-    const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
-    assert(MJTI != nullptr);
-    const std::vector<MachineJumpTableEntry> &JT = MJTI->getJumpTables();
-    assert(JTI < JT.size());
-    // Thumb instructions are 2 byte aligned, but JT entries are 4 byte
-    // 4 aligned. The assembler / linker may add 2 byte padding just before
-    // the JT entries.  The size does not include this padding; the
-    // constant islands pass does separate bookkeeping for it.
-    // FIXME: If we know the size of the function is less than (1 << 16) *2
-    // bytes, we can use 16-bit entries instead. Then there won't be an
-    // alignment issue.
-    unsigned InstSize = (Opc == ARM::tBR_JTr || Opc == ARM::t2BR_JT) ? 2 : 4;
-    unsigned NumEntries = JT[JTI].MBBs.size();
-    if (Opc == ARM::t2TBB_JT && (NumEntries & 1))
-      // Make sure the instruction that follows TBB is 2-byte aligned.
-      // FIXME: Constant island pass should insert an "ALIGN" instruction
-      // instead.
-      ++NumEntries;
-    return NumEntries * EntrySize + InstSize;
-  }
   case ARM::SPACE:
     return MI->getOperand(1).getImm();
   }
@@ -1267,8 +1230,7 @@ ARMBaseInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
   Reloc::Model RM = MF.getTarget().getRelocationModel();
 
   if (MI->getOpcode() == TargetOpcode::LOAD_STACK_GUARD) {
-    assert(getSubtarget().getTargetTriple().getObjectFormat() ==
-           Triple::MachO &&
+    assert(getSubtarget().getTargetTriple().isOSBinFormatMachO() &&
            "LOAD_STACK_GUARD currently supported only for MachO.");
     expandLoadStackGuard(MI, RM);
     MI->getParent()->erase(MI);
@@ -1434,7 +1396,7 @@ ARMBaseInstrInfo::duplicate(MachineInstr *Orig, MachineFunction &MF) const {
 bool ARMBaseInstrInfo::produceSameValue(const MachineInstr *MI0,
                                         const MachineInstr *MI1,
                                         const MachineRegisterInfo *MRI) const {
-  int Opcode = MI0->getOpcode();
+  unsigned Opcode = MI0->getOpcode();
   if (Opcode == ARM::t2LDRpci ||
       Opcode == ARM::t2LDRpci_pic ||
       Opcode == ARM::tLDRpci ||
@@ -1690,9 +1652,7 @@ isProfitableToIfCvt(MachineBasicBlock &MBB,
   // If we are optimizing for size, see if the branch in the predecessor can be
   // lowered to cbn?z by the constant island lowering pass, and return false if
   // so. This results in a shorter instruction sequence.
-  const Function *F = MBB.getParent()->getFunction();
-  if (F->hasFnAttribute(Attribute::OptimizeForSize) ||
-      F->hasFnAttribute(Attribute::MinSize)) {
+  if (MBB.getParent()->getFunction()->optForSize()) {
     MachineBasicBlock *Pred = *MBB.pred_begin();
     if (!Pred->empty()) {
       MachineInstr *LastMI = &*Pred->rbegin();
@@ -1771,7 +1731,7 @@ llvm::getInstrPredicate(const MachineInstr *MI, unsigned &PredReg) {
 }
 
 
-int llvm::getMatchingCondBranchOpcode(int Opc) {
+unsigned llvm::getMatchingCondBranchOpcode(unsigned Opc) {
   if (Opc == ARM::B)
     return ARM::Bcc;
   if (Opc == ARM::tB)
@@ -1839,8 +1799,7 @@ static MachineInstr *canFoldIntoMOVCC(unsigned Reg,
       return nullptr;
   }
   bool DontMoveAcrossStores = true;
-  if (!MI->isSafeToMove(TII, /* AliasAnalysis = */ nullptr,
-                        DontMoveAcrossStores))
+  if (!MI->isSafeToMove(/* AliasAnalysis = */ nullptr, DontMoveAcrossStores))
     return nullptr;
   return MI;
 }
@@ -1920,6 +1879,13 @@ ARMBaseInstrInfo::optimizeSelect(MachineInstr *MI,
   // Update SeenMIs set: register newly created MI and erase removed DefMI.
   SeenMIs.insert(NewMI);
   SeenMIs.erase(DefMI);
+
+  // If MI is inside a loop, and DefMI is outside the loop, then kill flags on
+  // DefMI would be invalid when tranferred inside the loop.  Checking for a
+  // loop is expensive, but at least remove kill flags if they are in different
+  // BBs.
+  if (DefMI->getParent() != MI->getParent())
+    NewMI->clearKillInfo();
 
   // The caller will erase MI, but not DefMI.
   DefMI->eraseFromParent();
@@ -2021,7 +1987,7 @@ bool llvm::tryFoldSPUpdateIntoPushPop(const ARMSubtarget &Subtarget,
                                       unsigned NumBytes) {
   // This optimisation potentially adds lots of load and store
   // micro-operations, it's only really a great benefit to code-size.
-  if (!MF.getFunction()->hasFnAttribute(Attribute::MinSize))
+  if (!MF.getFunction()->optForMinSize())
     return false;
 
   // If only one register is pushed/popped, LLVM can use an LDR/STR
@@ -2315,16 +2281,6 @@ static bool isSuitableForMask(MachineInstr *&MI, unsigned SrcReg,
       if (SrcReg == MI->getOperand(CommonUse ? 1 : 0).getReg())
         return true;
       break;
-    case ARM::COPY: {
-      // Walk down one instruction which is potentially an 'and'.
-      const MachineInstr &Copy = *MI;
-      MachineBasicBlock::iterator AND(
-        std::next(MachineBasicBlock::iterator(MI)));
-      if (AND == MI->getParent()->end()) return false;
-      MI = AND;
-      return isSuitableForMask(MI, Copy.getOperand(0).getReg(),
-                               CmpMask, true);
-    }
   }
 
   return false;
@@ -3694,6 +3650,7 @@ ARMBaseInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
     // instructions).
     if (Latency > 0 && Subtarget.isThumb2()) {
       const MachineFunction *MF = DefMI->getParent()->getParent();
+      // FIXME: Use Function::optForSize().
       if (MF->getFunction()->hasFnAttribute(Attribute::OptimizeForSize))
         --Latency;
     }
@@ -4031,7 +3988,7 @@ int ARMBaseInstrInfo::getInstrLatency(const InstrItineraryData *ItinData,
 }
 
 bool ARMBaseInstrInfo::
-hasHighOperandLatency(const InstrItineraryData *ItinData,
+hasHighOperandLatency(const TargetSchedModel &SchedModel,
                       const MachineRegisterInfo *MRI,
                       const MachineInstr *DefMI, unsigned DefIdx,
                       const MachineInstr *UseMI, unsigned UseIdx) const {
@@ -4043,9 +4000,8 @@ hasHighOperandLatency(const InstrItineraryData *ItinData,
     return true;
 
   // Hoist VFP / NEON instructions with 4 or higher latency.
-  int Latency = computeOperandLatency(ItinData, DefMI, DefIdx, UseMI, UseIdx);
-  if (Latency < 0)
-    Latency = getInstrLatency(ItinData, DefMI);
+  unsigned Latency
+    = SchedModel.computeOperandLatency(DefMI, DefIdx, UseMI, UseIdx);
   if (Latency <= 3)
     return false;
   return DDomain == ARMII::DomainVFP || DDomain == ARMII::DomainNEON ||
@@ -4053,8 +4009,9 @@ hasHighOperandLatency(const InstrItineraryData *ItinData,
 }
 
 bool ARMBaseInstrInfo::
-hasLowDefLatency(const InstrItineraryData *ItinData,
+hasLowDefLatency(const TargetSchedModel &SchedModel,
                  const MachineInstr *DefMI, unsigned DefIdx) const {
+  const InstrItineraryData *ItinData = SchedModel.getInstrItineraries();
   if (!ItinData || ItinData->isEmpty())
     return false;
 
@@ -4542,7 +4499,7 @@ breakPartialRegDependency(MachineBasicBlock::iterator MI,
 }
 
 bool ARMBaseInstrInfo::hasNOP() const {
-  return (Subtarget.getFeatureBits() & ARM::HasV6KOps) != 0;
+  return Subtarget.getFeatureBits()[ARM::HasV6KOps];
 }
 
 bool ARMBaseInstrInfo::isSwiftFastImmShift(const MachineInstr *MI) const {

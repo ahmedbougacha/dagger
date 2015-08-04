@@ -21,7 +21,7 @@ declare i32 @__C_specific_handler(...)
 declare i8* @llvm.frameaddress(i32)
 
 ; Function Attrs: uwtable
-define void @seh_catch_all() {
+define void @seh_catch_all() personality i8* bitcast (i32 (...)* @__C_specific_handler to i8*) {
 entry:
   %exn.slot = alloca i8*
   %ehselector.slot = alloca i32
@@ -32,7 +32,7 @@ invoke.cont:                                      ; preds = %entry
   br label %__try.cont
 
 lpad:                                             ; preds = %entry
-  %0 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__C_specific_handler to i8*)
+  %0 = landingpad { i8*, i32 }
           catch i8* null
   %1 = extractvalue { i8*, i32 } %0, 0
   store i8* %1, i8** %exn.slot
@@ -51,9 +51,9 @@ __try.cont:                                       ; preds = %__except, %invoke.c
 ; CHECK-LABEL: define void @seh_catch_all()
 ; CHECK: landingpad
 ; CHECK-NEXT: catch i8* null
-; CHECK-NEXT: call i8* (...) @llvm.eh.actions(i32 1, i8* null, i32 -1, i8* blockaddress(@seh_catch_all, %catch.all))
+; CHECK-NEXT: call i8* (...) @llvm.eh.actions(i32 1, i8* null, i32 -1, i8* blockaddress(@seh_catch_all, %lpad.split))
 ; CHECK-NEXT: indirectbr
 ;
-; CHECK: catch.all:
+; CHECK: lpad.split:
 ; CHECK-NOT: extractvalue
 ; CHECK: call i32 @puts

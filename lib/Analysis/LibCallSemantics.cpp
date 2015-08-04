@@ -73,16 +73,15 @@ EHPersonality llvm::classifyEHPersonality(const Value *Pers) {
     .Case("__gxx_personality_v0",  EHPersonality::GNU_CXX)
     .Case("__gcc_personality_v0",  EHPersonality::GNU_C)
     .Case("__objc_personality_v0", EHPersonality::GNU_ObjC)
-    .Case("__except_handler3",     EHPersonality::MSVC_X86SEH)
-    .Case("__except_handler4",     EHPersonality::MSVC_X86SEH)
+    .Case("_except_handler3",      EHPersonality::MSVC_X86SEH)
+    .Case("_except_handler4",      EHPersonality::MSVC_X86SEH)
     .Case("__C_specific_handler",  EHPersonality::MSVC_Win64SEH)
     .Case("__CxxFrameHandler3",    EHPersonality::MSVC_CXX)
     .Default(EHPersonality::Unknown);
 }
 
-bool llvm::canSimplifyInvokeNoUnwind(const InvokeInst *II) {
-  const LandingPadInst *LP = II->getLandingPadInst();
-  EHPersonality Personality = classifyEHPersonality(LP->getPersonalityFn());
+bool llvm::canSimplifyInvokeNoUnwind(const Function *F) {
+  EHPersonality Personality = classifyEHPersonality(F->getPersonalityFn());
   // We can't simplify any invokes to nounwind functions if the personality
   // function wants to catch asynch exceptions.  The nounwind attribute only
   // implies that the function does not throw synchronous exceptions.

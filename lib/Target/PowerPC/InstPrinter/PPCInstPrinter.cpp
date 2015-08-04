@@ -17,6 +17,8 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
@@ -119,7 +121,7 @@ void PPCInstPrinter::printInst(const MCInst *MI, raw_ostream &O,
       O << "t";
     O << " ";
 
-    bool IsBookE = (STI.getFeatureBits() & PPC::FeatureBookE) != 0;
+    bool IsBookE = STI.getFeatureBits()[PPC::FeatureBookE];
     if (IsBookE && TH != 0 && TH != 16)
       O << (unsigned int) TH << ", ";
 
@@ -297,6 +299,13 @@ void PPCInstPrinter::printU6ImmOperand(const MCInst *MI, unsigned OpNo,
   O << (unsigned int)Value;
 }
 
+void PPCInstPrinter::printU10ImmOperand(const MCInst *MI, unsigned OpNo,
+                                        raw_ostream &O) {
+  unsigned short Value = MI->getOperand(OpNo).getImm();
+  assert(Value <= 1023 && "Invalid u10imm argument!");
+  O << (unsigned short)Value;
+}
+
 void PPCInstPrinter::printU12ImmOperand(const MCInst *MI, unsigned OpNo,
                                         raw_ostream &O) {
   unsigned short Value = MI->getOperand(OpNo).getImm();
@@ -436,6 +445,6 @@ void PPCInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   }
   
   assert(Op.isExpr() && "unknown operand kind in printOperand");
-  O << *Op.getExpr();
+  Op.getExpr()->print(O, &MAI);
 }
 

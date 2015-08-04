@@ -16,6 +16,7 @@
 #define LLVM_ANALYSIS_VALUETRACKING_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/Support/DataTypes.h"
 
 namespace llvm {
@@ -29,6 +30,7 @@ namespace llvm {
   class DominatorTree;
   class TargetLibraryInfo;
   class LoopInfo;
+  class Loop;
 
   /// Determine which bits of V are known to be either zero or one and return
   /// them in the KnownZero/KnownOne bit sets.
@@ -47,6 +49,11 @@ namespace llvm {
   /// \p KnownZero the set of bits that are known to be zero
   void computeKnownBitsFromRangeMetadata(const MDNode &Ranges,
                                          APInt &KnownZero);
+  /// Return true if LHS and RHS have no common bits set.
+  bool haveNoCommonBitsSet(Value *LHS, Value *RHS, const DataLayout &DL,
+                           AssumptionCache *AC = nullptr,
+                           const Instruction *CxtI = nullptr,
+                           const DominatorTree *DT = nullptr);
 
   /// ComputeSignBit - Determine whether the sign bit is known to be zero or
   /// one.  Convenience wrapper around computeKnownBits.
@@ -60,7 +67,7 @@ namespace llvm {
   /// exactly one bit set when defined. For vectors return true if every
   /// element is known to be a power of two when defined.  Supports values with
   /// integer or pointer type and vectors of integers.  If 'OrZero' is set then
-  /// returns true if the given value is either a power of two or zero.
+  /// return true if the given value is either a power of two or zero.
   bool isKnownToBeAPowerOfTwo(Value *V, const DataLayout &DL,
                               bool OrZero = false, unsigned Depth = 0,
                               AssumptionCache *AC = nullptr,
@@ -213,12 +220,14 @@ namespace llvm {
   /// are lifetime markers.
   bool onlyUsedByLifetimeMarkers(const Value *V);
 
-  /// isDereferenceablePointer - Return true if this is always a dereferenceable 
-  /// pointer.
-  ///
-  /// Test if this value is always a pointer to allocated and suitably aligned
-  /// memory for a simple load or store.
-  bool isDereferenceablePointer(const Value *V, const DataLayout &DL);
+  /// isDereferenceablePointer - Return true if this is always a dereferenceable
+  /// pointer. If the context instruction is specified perform context-sensitive
+  /// analysis and return true if the pointer is dereferenceable at the
+  /// specified instruction.
+  bool isDereferenceablePointer(const Value *V, const DataLayout &DL,
+                                const Instruction *CtxI = nullptr,
+                                const DominatorTree *DT = nullptr,
+                                const TargetLibraryInfo *TLI = nullptr);
   
   /// isSafeToSpeculativelyExecute - Return true if the instruction does not
   /// have any effects besides calculating the result and does not have
@@ -233,17 +242,35 @@ namespace llvm {
   /// memory leak. It also returns false for instructions related to control
   /// flow, specifically terminators and PHI nodes.
   ///
-  /// This method only looks at the instruction itself and its operands, so if
-  /// this method returns true, it is safe to move the instruction as long as
-  /// the correct dominance relationships for the operands and users hold.
-  /// However, this method can return true for instructions that read memory;
+  /// If the CtxI is specified this method performs context-sensitive analysis
+  /// and returns true if it is safe to execute the instruction immediately
+  /// before the CtxI.
+  ///
+  /// If the CtxI is NOT specified this method only looks at the instruction
+  /// itself and its operands, so if this method returns true, it is safe to
+  /// move the instruction as long as the correct dominance relationships for
+  /// the operands and users hold.
+  ///
+  /// This method can return true for instructions that read memory;
   /// for such instructions, moving them may change the resulting value.
-  bool isSafeToSpeculativelyExecute(const Value *V);
+  bool isSafeToSpeculativelyExecute(const Value *V,
+                                    const Instruction *CtxI = nullptr,
+                                    const DominatorTree *DT = nullptr,
+                                    const TargetLibraryInfo *TLI = nullptr);
 
   /// isKnownNonNull - Return true if this pointer couldn't possibly be null by
   /// its definition.  This returns true for allocas, non-extern-weak globals
   /// and byval arguments.
   bool isKnownNonNull(const Value *V, const TargetLibraryInfo *TLI = nullptr);
+
+  /// isKnownNonNullAt - Return true if this pointer couldn't possibly be null.
+  /// If the context instruction is specified perform context-sensitive analysis
+  /// and return true if the pointer couldn't possibly be null at the specified
+  /// instruction.
+  bool isKnownNonNullAt(const Value *V,
+                        const Instruction *CtxI = nullptr,
+                        const DominatorTree *DT  = nullptr,
+                        const TargetLibraryInfo *TLI = nullptr);
 
   /// Return true if it is valid to use the assumptions provided by an
   /// assume intrinsic, I, at the point in the control-flow identified by the
@@ -262,6 +289,81 @@ namespace llvm {
                                                AssumptionCache *AC,
                                                const Instruction *CxtI,
                                                const DominatorTree *DT);
+
+  /// Return true if this function can prove that the instruction I will
+  /// always transfer execution to one of its successors (including the next
+  /// instruction that follows within a basic block). E.g. this is not
+  /// guaranteed for function calls that could loop infinitely.
+  ///
+  /// In other words, this function returns false for instructions that may
+  /// transfer execution or fail to transfer execution in a way that is not
+  /// captured in the CFG nor in the sequence of instructions within a basic
+  /// block.
+  ///
+  /// Undefined behavior is assumed not to happen, so e.g. division is
+  /// guaranteed to transfer execution to the following instruction even
+  /// though division by zero might cause undefined behavior.
+  bool isGuaranteedToTransferExecutionToSuccessor(const Instruction *I);
+
+  /// Return true if this function can prove that the instruction I
+  /// is executed for every iteration of the loop L.
+  ///
+  /// Note that this currently only considers the loop header.
+  bool isGuaranteedToExecuteForEveryIteration(const Instruction *I,
+                                              const Loop *L);
+
+  /// Return true if this function can prove that I is guaranteed to yield
+  /// full-poison (all bits poison) if at least one of its operands are
+  /// full-poison (all bits poison).
+  ///
+  /// The exact rules for how poison propagates through instructions have
+  /// not been settled as of 2015-07-10, so this function is conservative
+  /// and only considers poison to be propagated in uncontroversial
+  /// cases. There is no attempt to track values that may be only partially
+  /// poison.
+  bool propagatesFullPoison(const Instruction *I);
+
+  /// Return either nullptr or an operand of I such that I will trigger
+  /// undefined behavior if I is executed and that operand has a full-poison
+  /// value (all bits poison).
+  const Value *getGuaranteedNonFullPoisonOp(const Instruction *I);
+
+  /// Return true if this function can prove that if PoisonI is executed
+  /// and yields a full-poison value (all bits poison), then that will
+  /// trigger undefined behavior.
+  ///
+  /// Note that this currently only considers the basic block that is
+  /// the parent of I.
+  bool isKnownNotFullPoison(const Instruction *PoisonI);
+
+  /// \brief Specific patterns of select instructions we can match.
+  enum SelectPatternFlavor {
+    SPF_UNKNOWN = 0,
+    SPF_SMIN,                   // Signed minimum
+    SPF_UMIN,                   // Unsigned minimum
+    SPF_SMAX,                   // Signed maximum
+    SPF_UMAX,                   // Unsigned maximum
+    SPF_ABS,                    // Absolute value
+    SPF_NABS                    // Negated absolute value
+  };
+  /// Pattern match integer [SU]MIN, [SU]MAX and ABS idioms, returning the kind
+  /// and providing the out parameter results if we successfully match.
+  ///
+  /// If CastOp is not nullptr, also match MIN/MAX idioms where the type does
+  /// not match that of the original select. If this is the case, the cast
+  /// operation (one of Trunc,SExt,Zext) that must be done to transform the
+  /// type of LHS and RHS into the type of V is returned in CastOp.
+  ///
+  /// For example:
+  ///   %1 = icmp slt i32 %a, i32 4
+  ///   %2 = sext i32 %a to i64
+  ///   %3 = select i1 %1, i64 %2, i64 4
+  ///
+  /// -> LHS = %a, RHS = i32 4, *CastOp = Instruction::SExt
+  ///
+  SelectPatternFlavor matchSelectPattern(Value *V, Value *&LHS, Value *&RHS,
+                                         Instruction::CastOps *CastOp = nullptr);
+
 } // end namespace llvm
 
 #endif

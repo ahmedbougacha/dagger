@@ -15,6 +15,7 @@
 #include "llvm/MC/MCRelocationInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Object/MachO.h"
+#include "llvm/Object/SymbolSize.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -26,45 +27,17 @@ using namespace object;
 
 //===- Helpers ------------------------------------------------------------===//
 
-static bool RelocRelocAddrComparator(const object::RelocationRef &LHS,
-                                     const object::RelocationRef &RHS) {
-  uint64_t LHSAddr, RHSAddr;
-  // First sanity check that we can get the addresses; this is ensured by
-  // buildRelocationByAddrMap.
-  assert((!LHS.getAddress(LHSAddr) && !RHS.getAddress(RHSAddr)) &&
-         "No longer able to get relocation address");
-  LHS.getAddress(LHSAddr);
-  RHS.getAddress(RHSAddr);
-  return LHSAddr < RHSAddr;
+static bool RelocRelocOffsetComparator(const object::RelocationRef &LHS,
+                                       const object::RelocationRef &RHS) {
+  return LHS.getOffset() < RHS.getOffset();
 }
 
-static bool RelocU64AddrComparator(const object::RelocationRef &LHS,
-                                   uint64_t RHSAddr) {
-  uint64_t LHSAddr;
-  // First sanity check that we can get the address; this is ensured by
-  // buildRelocationByAddrMap.
-  assert(!LHS.getAddress(LHSAddr) &&
-         "No longer able to get relocation address");
-  LHS.getAddress(LHSAddr);
-  return LHSAddr < RHSAddr;
+static bool RelocU64OffsetComparator(const object::RelocationRef &LHS,
+                                     uint64_t RHSOffset) {
+  return LHS.getOffset() < RHSOffset;
 }
 
 //===- MCMachObjectSymbolizer ---------------------------------------------===//
-
-namespace {
-struct SymbolRefAddressComparator {
-  const MachOObjectFile &MOOF;
-
-  SymbolRefAddressComparator(const MachOObjectFile &MOOF) : MOOF(MOOF) {}
-
-  bool operator()(const DataRefImpl &LHS, const DataRefImpl &RHS) {
-    uint64_t LHSSize, RHSSize;
-    MOOF.getSymbolAddress(LHS, LHSSize);
-    MOOF.getSymbolAddress(RHS, RHSSize);
-    return LHSSize < RHSSize;
-  }
-};
-} // End unnamed namespace
 
 MCMachObjectSymbolizer::MCMachObjectSymbolizer(
     MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
@@ -94,12 +67,6 @@ MCMachObjectSymbolizer::MCMachObjectSymbolizer(
       StubsCount /= StubSize;
     }
   }
-
-  for (const SymbolRef &Symbol : MOOF.symbols())
-    SortedSymbolRefs.push_back(Symbol.getRawDataRefImpl());
-
-  std::sort(SortedSymbolRefs.begin(), SortedSymbolRefs.end(),
-            SymbolRefAddressComparator(MOOF));
 
   // Also look for the init/exit func sections.
   for (const SectionRef &Section : MOOF.sections()) {
@@ -167,8 +134,11 @@ StringRef MCMachObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
   if ((SymNList.n_type & MachO::N_TYPE) != MachO::N_UNDF)
     return StringRef();
 
-  StringRef SymName;
-  SI->getName(SymName);
+  ErrorOr<StringRef> SymNameOrErr = SI->getName();
+  if (auto ec = SymNameOrErr.getError())
+    report_fatal_error(ec.message());
+  StringRef SymName = *SymNameOrErr;
+
   assert(SymName.front() == '_' && "Mach-O symbol doesn't start with '_'!");
 
   return SymName.substr(1);
@@ -178,20 +148,10 @@ uint64_t MCMachObjectSymbolizer::getEntrypoint() {
   uint64_t EntryFileOffset = 0;
 
   // Look for LC_MAIN.
-  {
-    uint32_t LoadCommandCount = MOOF.getHeader().ncmds;
-    MachOObjectFile::LoadCommandInfo Load = MOOF.getFirstLoadCommandInfo();
-    for (unsigned I = 0;; ++I) {
-      if (Load.C.cmd == MachO::LC_MAIN) {
-        EntryFileOffset =
-            ((const MachO::entry_point_command *)Load.Ptr)->entryoff;
-        break;
-      }
-
-      if (I == LoadCommandCount - 1)
-        break;
-      else
-        Load = MOOF.getNextLoadCommandInfo(Load);
+  for (auto LC : MOOF.load_commands()) {
+    if (LC.C.cmd == MachO::LC_MAIN) {
+      EntryFileOffset = MOOF.getEntryPointCommand(LC).entryoff;
+      break;
     }
   }
 
@@ -208,16 +168,22 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
                                 uint64_t Address) {
   if (const RelocationRef *R = findRelocationAt(Address)) {
     const MCExpr *RelExpr = RelInfo->createExprForRelocation(*R);
-    if (!RelExpr || RelExpr->EvaluateAsAbsolute(Value) == false)
+    if (!RelExpr || RelExpr->evaluateAsAbsolute(Value) == false)
       return;
   }
   uint64_t Addr = Value;
   if (const SectionRef *S = findSectionContaining(Addr)) {
-    StringRef Name; S->getName(Name);
     uint64_t SAddr = S->getAddress();
+
+    StringRef Name;
+    if (auto ec = S->getName(Name))
+      report_fatal_error(ec.message());
+
     if (Name == "__cstring") {
       StringRef Contents;
-      S->getContents(Contents);
+      if (auto ec = S->getContents(Contents))
+        report_fatal_error(ec.message());
+
       Contents = Contents.substr(Addr - SAddr);
       cStream << " ## literal pool for: \"";
       cStream.write_escaped(Contents.substr(0, Contents.find_first_of(0)));
@@ -226,56 +192,28 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
   }
 }
 
-void MCMachObjectSymbolizer::buildAddrToFunctionSymbolMap() {
-  for (size_t SymI = 0; SymI != SortedSymbolRefs.size(); ++SymI) {
-    const DataRefImpl &SymbolDRI = SortedSymbolRefs[SymI];
-    const SymbolRef Symbol(SymbolDRI, &MOOF);
-    uint64_t SymAddr;
-    Symbol.getAddress(SymAddr);
-    uint64_t SymSize;
-
-    if (SymI+1 != SortedSymbolRefs.size()) {
-      const DataRefImpl &NextSymbolDRI = SortedSymbolRefs[SymI+1];
-      uint64_t SymSize, NextSymSize;
-      MOOF.getSymbolAddress(SymbolDRI, SymSize);
-      MOOF.getSymbolAddress(NextSymbolDRI, NextSymSize);
-      SymSize = NextSymSize - SymSize;
-    } else {
-      Symbol.getSize(SymSize);
-    }
-
-    StringRef SymName;
-    Symbol.getName(SymName);
-    SymbolRef::Type SymType;
-    Symbol.getType(SymType);
-    if (SymAddr == UnknownAddressOrSize || SymSize == UnknownAddressOrSize ||
-        SymName.empty() || SymType != SymbolRef::ST_Function)
-      continue;
-
-    MCSymbol *Sym = Ctx.GetOrCreateSymbol(SymName);
-    AddrToFunctionSymbol.push_back(FunctionSymbol(SymAddr, SymSize, Sym));
-  }
-  std::stable_sort(AddrToFunctionSymbol.begin(), AddrToFunctionSymbol.end());
-}
-
-
 //===- MCObjectSymbolizer -------------------------------------------------===//
 
 MCObjectSymbolizer::MCObjectSymbolizer(
     MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
     const ObjectFile &Obj)
-    : MCSymbolizer(Ctx, std::move(RelInfo)), Obj(Obj) {
+    : MCSymbolizer(Ctx, std::move(RelInfo)), Obj(Obj),
+      SymbolSizes(computeSymbolSizes(Obj)) {
   buildSectionList();
 }
 
 uint64_t MCObjectSymbolizer::getEntrypoint() {
   for (const SymbolRef &Symbol : Obj.symbols()) {
-    StringRef Name;
-    Symbol.getName(Name);
+    ErrorOr<StringRef> NameOrErr = Symbol.getName();
+    if (auto ec = NameOrErr.getError())
+      report_fatal_error(ec.message());
+    StringRef Name = *NameOrErr;
+
     if (Name == "main" || Name == "_main") {
-      uint64_t Entrypoint;
-      Symbol.getAddress(Entrypoint);
-      return Entrypoint;
+      ErrorOr<uint64_t> EntrypointOrErr = Symbol.getAddress();
+      if (auto ec = EntrypointOrErr.getError())
+        report_fatal_error(ec.message());
+      return *EntrypointOrErr;
     }
   }
   return 0;
@@ -294,16 +232,16 @@ tryAddingSymbolicOperand(MCInst &MI, raw_ostream &cStream,
   if (IsBranch) {
     StringRef ExtFnName = findExternalFunctionAt((uint64_t)Value);
     if (!ExtFnName.empty()) {
-      MCSymbol *Sym = Ctx.GetOrCreateSymbol(ExtFnName);
-      const MCExpr *Expr = MCSymbolRefExpr::Create(Sym, Ctx);
-      MI.addOperand(MCOperand::CreateExpr(Expr));
+      MCSymbol *Sym = Ctx.getOrCreateSymbol(ExtFnName);
+      const MCExpr *Expr = MCSymbolRefExpr::create(Sym, Ctx);
+      MI.addOperand(MCOperand::createExpr(Expr));
       return true;
     }
   }
 
   if (const RelocationRef *R = findRelocationAt(Address + Offset)) {
     if (const MCExpr *RelExpr = RelInfo->createExprForRelocation(*R)) {
-      MI.addOperand(MCOperand::CreateExpr(RelExpr));
+      MI.addOperand(MCOperand::createExpr(RelExpr));
       return true;
     }
     // Only try to create a symbol+offset expression if there is no relocation.
@@ -319,12 +257,12 @@ tryAddingSymbolicOperand(MCInst &MI, raw_ostream &cStream,
 
   if (!Sym)
     return false;
-  const MCExpr *Expr = MCSymbolRefExpr::Create(Sym, Ctx);
+  const MCExpr *Expr = MCSymbolRefExpr::create(Sym, Ctx);
   if (SymbolOffset) {
-    const MCExpr *Off = MCConstantExpr::Create(SymbolOffset, Ctx);
-    Expr = MCBinaryExpr::CreateAdd(Expr, Off, Ctx);
+    const MCExpr *Off = MCConstantExpr::create(SymbolOffset, Ctx);
+    Expr = MCBinaryExpr::createAdd(Expr, Off, Ctx);
   }
-  MI.addOperand(MCOperand::CreateExpr(Expr));
+  MI.addOperand(MCOperand::createExpr(Expr));
   return true;
 }
 
@@ -358,21 +296,30 @@ findContainingFunction(uint64_t Addr, uint64_t &Offset)
 }
 
 void MCObjectSymbolizer::buildAddrToFunctionSymbolMap() {
+  size_t SymI = 0;
   for (const SymbolRef &Symbol : Obj.symbols()) {
-    uint64_t SymAddr;
-    Symbol.getAddress(SymAddr);
-    uint64_t SymSize;
-    Symbol.getSize(SymSize);
-    StringRef SymName;
-    Symbol.getName(SymName);
-    SymbolRef::Type SymType;
-    Symbol.getType(SymType);
-    if (SymAddr == UnknownAddressOrSize || SymSize == UnknownAddressOrSize ||
-        SymName.empty() || SymType != SymbolRef::ST_Function)
+    ErrorOr<uint64_t> SymAddrOrErr = Symbol.getAddress();
+    if (auto ec = SymAddrOrErr.getError())
+      report_fatal_error(ec.message());
+
+    uint64_t SymAddr = *SymAddrOrErr;
+
+    uint64_t SymSize = SymbolSizes[SymI].second;
+    assert(SymbolSizes[SymI].first == Symbol);
+
+    ErrorOr<StringRef> SymNameOrErr = Symbol.getName();
+    if (auto ec = SymNameOrErr.getError())
+      report_fatal_error(ec.message());
+
+    StringRef SymName = *SymNameOrErr;
+    SymbolRef::Type SymType = Symbol.getType();
+    if (SymName.empty() || SymType != SymbolRef::ST_Function)
       continue;
 
-    MCSymbol *Sym = Ctx.GetOrCreateSymbol(SymName);
+    MCSymbol *Sym = Ctx.getOrCreateSymbol(SymName);
     AddrToFunctionSymbol.push_back(FunctionSymbol(SymAddr, SymSize, Sym));
+
+    ++SymI;
   }
   std::stable_sort(AddrToFunctionSymbol.begin(), AddrToFunctionSymbol.end());
 }
@@ -418,8 +365,9 @@ const RelocationRef *MCObjectSymbolizer::findRelocationAt(uint64_t Addr) const {
   const SectionInfo *SecInfo = findSectionInfoContaining(Addr);
   if (!SecInfo)
     return nullptr;
+  // FIXME: Offset vs Addr ?
   auto RI = std::lower_bound(SecInfo->Relocs.begin(), SecInfo->Relocs.end(),
-                             Addr, RelocU64AddrComparator);
+                             Addr, RelocU64OffsetComparator);
   if (RI == SecInfo->Relocs.end())
     return nullptr;
   return &*RI;
@@ -446,13 +394,8 @@ void MCObjectSymbolizer::buildSectionList() {
 
 void MCObjectSymbolizer::buildRelocationByAddrMap(
   MCObjectSymbolizer::SectionInfo &SecInfo) {
-  for (const RelocationRef &Reloc : SecInfo.Section.relocations()) {
-    uint64_t Address;
-    // Don't insert relocations without an address.
-    if (Reloc.getAddress(Address))
-      continue;
+  for (const RelocationRef &Reloc : SecInfo.Section.relocations())
     SecInfo.Relocs.push_back(Reloc);
-  }
   std::stable_sort(SecInfo.Relocs.begin(), SecInfo.Relocs.end(),
-                   RelocRelocAddrComparator);
+                   RelocRelocOffsetComparator);
 }

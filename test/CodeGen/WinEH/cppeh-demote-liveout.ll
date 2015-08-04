@@ -1,4 +1,4 @@
-; RUN: opt -winehprepare -S < %s | FileCheck %s
+; RUN: opt -mtriple=x86_64-pc-windows-msvc -winehprepare -S < %s | FileCheck %s
 
 ; Notionally based on this C++ source:
 ; int liveout_catch(int p) {
@@ -19,14 +19,14 @@ declare i32 @llvm.eh.typeid.for(i8*)
 
 @typeinfo.int = external global i32
 
-define i32 @liveout_catch(i32 %p) {
+define i32 @liveout_catch(i32 %p) personality i32 (...)* @__CxxFrameHandler3 {
 entry:
   %val.entry = add i32 %p, 1
   invoke void @might_throw()
       to label %ret unwind label %lpad
 
 lpad:
-  %ehvals = landingpad { i8*, i32 } personality i32 (...)* @__CxxFrameHandler3
+  %ehvals = landingpad { i8*, i32 }
       cleanup
       catch i32* @typeinfo.int
   %ehptr = extractvalue { i8*, i32 } %ehvals, 0
@@ -55,18 +55,18 @@ resume:
 ; CHECK: invoke void @might_throw()
 ;
 ; CHECK: landingpad
-; CHECK: indirectbr i8* {{.*}}, [label %ehreturn]
+; CHECK: indirectbr i8* {{.*}}, [label %catchit.split]
 ;
-; CHECK: ehreturn:
+; CHECK: catchit.split:
 ; CHECK: load i32, i32* %val.lpad.reg2mem
 ; CHECK: br label %ret
 ;
 ; CHECK: ret:
-; CHECK: %rv = phi i32 [ {{.*}}, %entry ], [ {{.*}}, %ehreturn ]
+; CHECK: %rv = phi i32 [ {{.*}}, %entry ], [ {{.*}}, %catchit.split ]
 ; CHECK: ret i32
 
 ; CHECK-LABEL: define internal i8* @liveout_catch.catch(i8*, i8*)
 ; CHECK: %[[val:[^ ]*]] = load i32, i32*
 ; CHECK-NEXT: %[[val_lpad:[^ ]*]] = add i32 %[[val]], 1
 ; CHECK-NEXT: store i32 %[[val_lpad]], i32*
-; CHECK: ret i8* blockaddress(@liveout_catch, %ehreturn)
+; CHECK: ret i8* blockaddress(@liveout_catch, %catchit.split)

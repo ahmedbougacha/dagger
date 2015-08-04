@@ -17,11 +17,11 @@
 
 #include "llvm/Pass.h"
 #include "llvm/Target/TargetMachine.h"
+#include <functional>
 #include <string>
 
 namespace llvm {
 
-class FunctionPass;
 class MachineFunctionPass;
 class PassConfigImpl;
 class PassInfo;
@@ -101,7 +101,7 @@ public:
 
 private:
   PassManagerBase *PM;
-  AnalysisID StartAfter;
+  AnalysisID StartBefore, StartAfter;
   AnalysisID StopAfter;
   bool Started;
   bool Stopped;
@@ -119,6 +119,9 @@ protected:
 
   /// Default setting for -enable-tail-merge on this target.
   bool EnableTailMerge;
+
+  /// Default setting for -enable-shrink-wrap on this target.
+  bool EnableShrinkWrap;
 
 public:
   TargetPassConfig(TargetMachine *tm, PassManagerBase &pm);
@@ -139,16 +142,24 @@ public:
 
   CodeGenOpt::Level getOptLevel() const { return TM->getOptLevel(); }
 
-  /// setStartStopPasses - Set the StartAfter and StopAfter passes to allow
-  /// running only a portion of the normal code-gen pass sequence.  If the
-  /// Start pass ID is zero, then compilation will begin at the normal point;
-  /// otherwise, clear the Started flag to indicate that passes should not be
-  /// added until the starting pass is seen.  If the Stop pass ID is zero,
-  /// then compilation will continue to the end.
-  void setStartStopPasses(AnalysisID Start, AnalysisID Stop) {
-    StartAfter = Start;
-    StopAfter = Stop;
-    Started = (StartAfter == nullptr);
+  /// Set the StartAfter, StartBefore and StopAfter passes to allow running only
+  /// a portion of the normal code-gen pass sequence.
+  ///
+  /// If the StartAfter and StartBefore pass ID is zero, then compilation will
+  /// begin at the normal point; otherwise, clear the Started flag to indicate
+  /// that passes should not be added until the starting pass is seen.  If the
+  /// Stop pass ID is zero, then compilation will continue to the end.
+  ///
+  /// This function expects that at least one of the StartAfter or the
+  /// StartBefore pass IDs is null.
+  void setStartStopPasses(AnalysisID StartBefore, AnalysisID StartAfter,
+                          AnalysisID StopAfter) {
+    if (StartAfter)
+      assert(!StartBefore && "Start after and start before passes are given");
+    this->StartBefore = StartBefore;
+    this->StartAfter = StartAfter;
+    this->StopAfter = StopAfter;
+    Started = (StartAfter == nullptr) && (StartBefore == nullptr);
   }
 
   void setDisableVerify(bool Disable) { setOpt(DisableVerify, Disable); }
@@ -178,6 +189,9 @@ public:
 
   /// Return true if the optimized regalloc pipeline is enabled.
   bool getOptimizeRegAlloc() const;
+
+  /// Return true if shrink wrapping is enabled.
+  bool getEnableShrinkWrap() const;
 
   /// Return true if the default global register allocator is in use and
   /// has not be overriden on the command line with '-regalloc=...'
@@ -368,6 +382,10 @@ namespace llvm {
   createMachineFunctionPrinterPass(raw_ostream &OS,
                                    const std::string &Banner ="");
 
+  /// MIRPrinting pass - this pass prints out the LLVM IR into the given stream
+  /// using the MIR serialization format.
+  MachineFunctionPass *createPrintMIRPass(raw_ostream &OS);
+
   /// createCodeGenPreparePass - Transform the code to expose more pattern
   /// matching during instruction selection.
   FunctionPass *createCodeGenPreparePass(const TargetMachine *TM = nullptr);
@@ -426,6 +444,10 @@ namespace llvm {
   /// basic blocks.
   extern char &SpillPlacementID;
 
+  /// ShrinkWrap pass. Look for the best place to insert save and restore
+  // instruction and update the MachineFunctionInfo with that information.
+  extern char &ShrinkWrapID;
+
   /// VirtRegRewriter pass. Rewrite virtual registers to physical registers as
   /// assigned in VirtRegMap.
   extern char &VirtRegRewriterID;
@@ -478,6 +500,10 @@ namespace llvm {
   /// MachineFunctionPrinterPass - This pass prints out MachineInstr's.
   extern char &MachineFunctionPrinterPassID;
 
+  /// MIRPrintingPass - this pass prints out the LLVM IR using the MIR
+  /// serialization format.
+  extern char &MIRPrintingPassID;
+
   /// TailDuplicate - Duplicate blocks with unconditional branches
   /// into tails of their predecessors.
   extern char &TailDuplicateID;
@@ -500,6 +526,8 @@ namespace llvm {
 
   /// IfConverter - This pass performs machine code if conversion.
   extern char &IfConverterID;
+
+  FunctionPass *createIfConverter(std::function<bool(const Function &)> Ftor);
 
   /// MachineBlockPlacement - This pass places basic blocks based on branch
   /// probabilities.
@@ -531,6 +559,10 @@ namespace llvm {
 
   /// MachineCSE - This pass performs global CSE on machine instructions.
   extern char &MachineCSEID;
+
+  /// ImplicitNullChecks - This pass folds null pointer checks into nearby
+  /// memory operations.
+  extern char &ImplicitNullChecksID;
 
   /// MachineLICM - This pass performs LICM on machine instructions.
   extern char &MachineLICMID;
@@ -573,7 +605,7 @@ namespace llvm {
   /// createSjLjEHPreparePass - This pass adapts exception handling code to use
   /// the GCC-style builtin setjmp/longjmp (sjlj) to handling EH control flow.
   ///
-  FunctionPass *createSjLjEHPreparePass(const TargetMachine *TM);
+  FunctionPass *createSjLjEHPreparePass();
 
   /// LocalStackSlotAllocation - This pass assigns local frame indices to stack
   /// slots relative to one another and allocates base registers to access them
@@ -595,6 +627,9 @@ namespace llvm {
   /// UnpackMachineBundles - This pass unpack machine instruction bundles.
   extern char &UnpackMachineBundlesID;
 
+  FunctionPass *
+  createUnpackMachineBundles(std::function<bool(const Function &)> Ftor);
+
   /// FinalizeMachineBundles - This pass finalize machine instruction
   /// bundles (created earlier, e.g. during pre-RA scheduling).
   extern char &FinalizeMachineBundlesID;
@@ -610,6 +645,11 @@ namespace llvm {
   /// createForwardControlFlowIntegrityPass - This pass adds control-flow
   /// integrity.
   ModulePass *createForwardControlFlowIntegrityPass();
+
+  /// InterleavedAccess Pass - This pass identifies and matches interleaved
+  /// memory accesses to target specific intrinsics.
+  ///
+  FunctionPass *createInterleavedAccessPass(const TargetMachine *TM);
 } // End llvm namespace
 
 /// Target machine pass initializer for passes with dependencies. Use with

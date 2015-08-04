@@ -9,6 +9,7 @@ add_llvm_library(LLVMCodeGen
   CallingConvLower.cpp
   CodeGen.cpp
   CodeGenPrepare.cpp
+  CoreCLRGC.cpp
   CriticalAntiDepBreaker.cpp
   DFAPacketizer.cpp
   DeadMachineInstructionElim.cpp
@@ -19,14 +20,17 @@ add_llvm_library(LLVMCodeGen
   ExecutionDepsFix.cpp
   ExpandISelPseudos.cpp
   ExpandPostRAPseudos.cpp
+  FaultMaps.cpp
   GCMetadata.cpp
   GCMetadataPrinter.cpp
   GCRootLowering.cpp
   GCStrategy.cpp
   GlobalMerge.cpp
   IfConversion.cpp
+  ImplicitNullChecks.cpp
   InlineSpiller.cpp
   InterferenceCache.cpp
+  InterleavedAccessPass.cpp
   IntrinsicLowering.cpp
   LLVMTargetMachine.cpp
   LatencyPriorityQueue.cpp
@@ -70,6 +74,8 @@ add_llvm_library(LLVMCodeGen
   MachineSink.cpp
   MachineTraceMetrics.cpp
   MachineVerifier.cpp
+  MIRPrinter.cpp
+  MIRPrintingPass.cpp
   OcamlGC.cpp
   OptimizePHIs.cpp
   PHIElimination.cpp
@@ -93,6 +99,7 @@ add_llvm_library(LLVMCodeGen
   ScheduleDAGInstrs.cpp
   ScheduleDAGPrinter.cpp
   ScoreboardHazardRecognizer.cpp
+  ShrinkWrap.cpp
   ShadowStackGC.cpp
   ShadowStackGCLowering.cpp
   SjLjEHPrepare.cpp
@@ -127,3 +134,4 @@ add_dependencies(LLVMCodeGen intrinsics_gen)
 
 add_subdirectory(SelectionDAG)
 add_subdirectory(AsmPrinter)
+add_subdirectory(MIRParser)

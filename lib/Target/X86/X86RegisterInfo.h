@@ -20,6 +20,8 @@
 #include "X86GenRegisterInfo.inc"
 
 namespace llvm {
+  class Triple;
+
 class X86RegisterInfo final : public X86GenRegisterInfo {
 private:
   /// Is64Bit - Is the target 64-bits.
@@ -102,11 +104,11 @@ public:
   /// register scavenger to determine what registers are free.
   BitVector getReservedRegs(const MachineFunction &MF) const override;
 
+  void adjustStackMapLiveOutMask(uint32_t *Mask) const override;
+
   bool hasBasePointer(const MachineFunction &MF) const;
 
-  bool canRealignStack(const MachineFunction &MF) const;
-
-  bool needsStackRealignment(const MachineFunction &MF) const override;
+  bool canRealignStack(const MachineFunction &MF) const override;
 
   bool hasReservedSpillSlot(const MachineFunction &MF, unsigned Reg,
                             int &FrameIdx) const override;
@@ -124,10 +126,15 @@ public:
   unsigned getSlotSize() const { return SlotSize; }
 };
 
-// getX86SubSuperRegister - X86 utility function. It returns the sub or super
-// register of a specific X86 register.
-// e.g. getX86SubSuperRegister(X86::EAX, MVT::i16) return X86:AX
+/// Returns the sub or super register of a specific X86 register.
+/// e.g. getX86SubSuperRegister(X86::EAX, MVT::i16) returns X86::AX.
+/// Aborts on error.
 unsigned getX86SubSuperRegister(unsigned, MVT::SimpleValueType, bool High=false);
+
+/// Returns the sub or super register of a specific X86 register.
+/// Like getX86SubSuperRegister() but returns 0 on error.
+unsigned getX86SubSuperRegisterOrZero(unsigned, MVT::SimpleValueType,
+                                      bool High = false);
 
 //get512BitRegister - X86 utility - returns 512-bit super register
 unsigned get512BitSuperRegister(unsigned Reg);

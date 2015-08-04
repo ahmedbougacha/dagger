@@ -656,10 +656,13 @@ namespace {
       LeaderTableEntry* Prev = nullptr;
       LeaderTableEntry* Curr = &LeaderTable[N];
 
-      while (Curr->Val != I || Curr->BB != BB) {
+      while (Curr && (Curr->Val != I || Curr->BB != BB)) {
         Prev = Curr;
         Curr = Curr->Next;
       }
+
+      if (!Curr)
+        return;
 
       if (Prev) {
         Prev->Next = Curr->Next;
@@ -693,7 +696,7 @@ namespace {
     }
 
 
-    // Helper fuctions of redundant load elimination 
+    // Helper functions of redundant load elimination 
     bool processLoad(LoadInst *L);
     bool processNonLocalLoad(LoadInst *L);
     void AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps, 
@@ -716,8 +719,6 @@ namespace {
     void verifyRemoved(const Instruction *I) const;
     bool splitCriticalEdges();
     BasicBlock *splitCriticalEdges(BasicBlock *Pred, BasicBlock *Succ);
-    unsigned replaceAllDominatedUsesWith(Value *From, Value *To,
-                                         const BasicBlockEdge &Root);
     bool propagateEquality(Value *LHS, Value *RHS, const BasicBlockEdge &Root);
     bool processFoldableCondBr(BranchInst *BI);
     void addDeadBlock(BasicBlock *BB);
@@ -854,13 +855,12 @@ static bool CanCoerceMustAliasedValueToLoad(Value *StoredVal,
 
 /// If we saw a store of a value to memory, and
 /// then a load from a must-aliased pointer of a different type, try to coerce
-/// the stored value.  LoadedTy is the type of the load we want to replace and
-/// InsertPt is the place to insert new instructions.
+/// the stored value.  LoadedTy is the type of the load we want to replace.
+/// IRB is IRBuilder used to insert new instructions.
 ///
 /// If we can't do it, return null.
-static Value *CoerceAvailableValueToLoadType(Value *StoredVal,
-                                             Type *LoadedTy,
-                                             Instruction *InsertPt,
+static Value *CoerceAvailableValueToLoadType(Value *StoredVal, Type *LoadedTy,
+                                             IRBuilder<> &IRB,
                                              const DataLayout &DL) {
   if (!CanCoerceMustAliasedValueToLoad(StoredVal, LoadedTy, DL))
     return nullptr;
@@ -876,12 +876,12 @@ static Value *CoerceAvailableValueToLoadType(Value *StoredVal,
     // Pointer to Pointer -> use bitcast.
     if (StoredValTy->getScalarType()->isPointerTy() &&
         LoadedTy->getScalarType()->isPointerTy())
-      return new BitCastInst(StoredVal, LoadedTy, "", InsertPt);
+      return IRB.CreateBitCast(StoredVal, LoadedTy);
 
     // Convert source pointers to integers, which can be bitcast.
     if (StoredValTy->getScalarType()->isPointerTy()) {
       StoredValTy = DL.getIntPtrType(StoredValTy);
-      StoredVal = new PtrToIntInst(StoredVal, StoredValTy, "", InsertPt);
+      StoredVal = IRB.CreatePtrToInt(StoredVal, StoredValTy);
     }
 
     Type *TypeToCastTo = LoadedTy;
@@ -889,11 +889,11 @@ static Value *CoerceAvailableValueToLoadType(Value *StoredVal,
       TypeToCastTo = DL.getIntPtrType(TypeToCastTo);
 
     if (StoredValTy != TypeToCastTo)
-      StoredVal = new BitCastInst(StoredVal, TypeToCastTo, "", InsertPt);
+      StoredVal = IRB.CreateBitCast(StoredVal, TypeToCastTo);
 
     // Cast to pointer if the load needs a pointer type.
     if (LoadedTy->getScalarType()->isPointerTy())
-      StoredVal = new IntToPtrInst(StoredVal, LoadedTy, "", InsertPt);
+      StoredVal = IRB.CreateIntToPtr(StoredVal, LoadedTy);
 
     return StoredVal;
   }
@@ -906,35 +906,34 @@ static Value *CoerceAvailableValueToLoadType(Value *StoredVal,
   // Convert source pointers to integers, which can be manipulated.
   if (StoredValTy->getScalarType()->isPointerTy()) {
     StoredValTy = DL.getIntPtrType(StoredValTy);
-    StoredVal = new PtrToIntInst(StoredVal, StoredValTy, "", InsertPt);
+    StoredVal = IRB.CreatePtrToInt(StoredVal, StoredValTy);
   }
 
   // Convert vectors and fp to integer, which can be manipulated.
   if (!StoredValTy->isIntegerTy()) {
     StoredValTy = IntegerType::get(StoredValTy->getContext(), StoreSize);
-    StoredVal = new BitCastInst(StoredVal, StoredValTy, "", InsertPt);
+    StoredVal = IRB.CreateBitCast(StoredVal, StoredValTy);
   }
 
   // If this is a big-endian system, we need to shift the value down to the low
   // bits so that a truncate will work.
   if (DL.isBigEndian()) {
-    Constant *Val = ConstantInt::get(StoredVal->getType(), StoreSize-LoadSize);
-    StoredVal = BinaryOperator::CreateLShr(StoredVal, Val, "tmp", InsertPt);
+    StoredVal = IRB.CreateLShr(StoredVal, StoreSize - LoadSize, "tmp");
   }
 
   // Truncate the integer to the right size now.
   Type *NewIntTy = IntegerType::get(StoredValTy->getContext(), LoadSize);
-  StoredVal = new TruncInst(StoredVal, NewIntTy, "trunc", InsertPt);
+  StoredVal  = IRB.CreateTrunc(StoredVal, NewIntTy, "trunc");
 
   if (LoadedTy == NewIntTy)
     return StoredVal;
 
   // If the result is a pointer, inttoptr.
   if (LoadedTy->getScalarType()->isPointerTy())
-    return new IntToPtrInst(StoredVal, LoadedTy, "inttoptr", InsertPt);
+    return IRB.CreateIntToPtr(StoredVal, LoadedTy, "inttoptr");
 
   // Otherwise, bitcast.
-  return new BitCastInst(StoredVal, LoadedTy, "bitcast", InsertPt);
+  return IRB.CreateBitCast(StoredVal, LoadedTy, "bitcast");
 }
 
 /// This function is called when we have a
@@ -1124,7 +1123,7 @@ static Value *GetStoreValueForLoad(Value *SrcVal, unsigned Offset,
   uint64_t StoreSize = (DL.getTypeSizeInBits(SrcVal->getType()) + 7) / 8;
   uint64_t LoadSize = (DL.getTypeSizeInBits(LoadTy) + 7) / 8;
 
-  IRBuilder<> Builder(InsertPt->getParent(), InsertPt);
+  IRBuilder<> Builder(InsertPt);
 
   // Compute which bits of the stored value are being used by the load.  Convert
   // to an integer type to start with.
@@ -1147,7 +1146,7 @@ static Value *GetStoreValueForLoad(Value *SrcVal, unsigned Offset,
   if (LoadSize != StoreSize)
     SrcVal = Builder.CreateTrunc(SrcVal, IntegerType::get(Ctx, LoadSize*8));
 
-  return CoerceAvailableValueToLoadType(SrcVal, LoadTy, InsertPt, DL);
+  return CoerceAvailableValueToLoadType(SrcVal, LoadTy, Builder, DL);
 }
 
 /// This function is called when we have a
@@ -1221,7 +1220,7 @@ static Value *GetMemInstValueForLoad(MemIntrinsic *SrcInst, unsigned Offset,
   LLVMContext &Ctx = LoadTy->getContext();
   uint64_t LoadSize = DL.getTypeSizeInBits(LoadTy)/8;
 
-  IRBuilder<> Builder(InsertPt->getParent(), InsertPt);
+  IRBuilder<> Builder(InsertPt);
 
   // We know that this method is only called when the mem transfer fully
   // provides the bits for the load.
@@ -1250,7 +1249,7 @@ static Value *GetMemInstValueForLoad(MemIntrinsic *SrcInst, unsigned Offset,
       ++NumBytesSet;
     }
 
-    return CoerceAvailableValueToLoadType(Val, LoadTy, InsertPt, DL);
+    return CoerceAvailableValueToLoadType(Val, LoadTy, Builder, DL);
   }
 
   // Otherwise, this is a memcpy/memmove from a constant global.
@@ -1302,28 +1301,7 @@ static Value *ConstructSSAForLoadSet(LoadInst *LI,
   }
 
   // Perform PHI construction.
-  Value *V = SSAUpdate.GetValueInMiddleOfBlock(LI->getParent());
-
-  // If new PHI nodes were created, notify alias analysis.
-  if (V->getType()->getScalarType()->isPointerTy()) {
-    AliasAnalysis *AA = gvn.getAliasAnalysis();
-
-    for (unsigned i = 0, e = NewPHIs.size(); i != e; ++i)
-      AA->copyValue(LI, NewPHIs[i]);
-
-    // Now that we've copied information to the new PHIs, scan through
-    // them again and inform alias analysis that we've added potentially
-    // escaping uses to any values that are operands to these PHIs.
-    for (unsigned i = 0, e = NewPHIs.size(); i != e; ++i) {
-      PHINode *P = NewPHIs[i];
-      for (unsigned ii = 0, ee = P->getNumIncomingValues(); ii != ee; ++ii) {
-        unsigned jj = PHINode::getOperandNumForIncomingValue(ii);
-        AA->addEscapingUse(P->getOperandUse(jj));
-      }
-    }
-  }
-
-  return V;
+  return SSAUpdate.GetValueInMiddleOfBlock(LI->getParent());
 }
 
 Value *AvailableValueInBlock::MaterializeAdjustedValue(LoadInst *LI,
@@ -1575,9 +1553,9 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
         return false;
       }
 
-      if (LoadBB->isLandingPad()) {
+      if (LoadBB->isEHPad()) {
         DEBUG(dbgs()
-              << "COULD NOT PRE LOAD BECAUSE OF LANDING PAD CRITICAL EDGE '"
+              << "COULD NOT PRE LOAD BECAUSE OF AN EH PAD CRITICAL EDGE '"
               << Pred->getName() << "': " << *LI << '\n');
         return false;
       }
@@ -1697,6 +1675,8 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
   LI->replaceAllUsesWith(V);
   if (isa<PHINode>(V))
     V->takeName(LI);
+  if (Instruction *I = dyn_cast<Instruction>(V))
+    I->setDebugLoc(LI->getDebugLoc());
   if (V->getType()->getScalarType()->isPointerTy())
     MD->invalidateCachedPointerInfo(V);
   markInstructionForDeletion(LI);
@@ -1763,6 +1743,8 @@ bool GVN::processNonLocalLoad(LoadInst *LI) {
 
     if (isa<PHINode>(V))
       V->takeName(LI);
+    if (Instruction *I = dyn_cast<Instruction>(V))
+      I->setDebugLoc(LI->getDebugLoc());
     if (V->getType()->getScalarType()->isPointerTy())
       MD->invalidateCachedPointerInfo(V);
     markInstructionForDeletion(LI);
@@ -1783,13 +1765,9 @@ static void patchReplacementInstruction(Instruction *I, Value *Repl) {
   // being replaced.
   BinaryOperator *Op = dyn_cast<BinaryOperator>(I);
   BinaryOperator *ReplOp = dyn_cast<BinaryOperator>(Repl);
-  if (Op && ReplOp && isa<OverflowingBinaryOperator>(Op) &&
-      isa<OverflowingBinaryOperator>(ReplOp)) {
-    if (ReplOp->hasNoSignedWrap() && !Op->hasNoSignedWrap())
-      ReplOp->setHasNoSignedWrap(false);
-    if (ReplOp->hasNoUnsignedWrap() && !Op->hasNoUnsignedWrap())
-      ReplOp->setHasNoUnsignedWrap(false);
-  }
+  if (Op && ReplOp)
+    ReplOp->andIRFlags(Op);
+
   if (Instruction *ReplInst = dyn_cast<Instruction>(Repl)) {
     // FIXME: If both the original and replacement value are part of the
     // same control-flow region (meaning that the execution of one
@@ -1800,7 +1778,7 @@ static void patchReplacementInstruction(Instruction *I, Value *Repl) {
     // In general, GVN unifies expressions over different control-flow
     // regions, and so we need a conservative combination of the noalias
     // scopes.
-    unsigned KnownIDs[] = {
+    static const unsigned KnownIDs[] = {
       LLVMContext::MD_tbaa,
       LLVMContext::MD_alias_scope,
       LLVMContext::MD_noalias,
@@ -1930,8 +1908,9 @@ bool GVN::processLoad(LoadInst *L) {
     // actually have the same type.  See if we know how to reuse the stored
     // value (depending on its type).
     if (StoredVal->getType() != L->getType()) {
+      IRBuilder<> Builder(L);
       StoredVal =
-          CoerceAvailableValueToLoadType(StoredVal, L->getType(), L, DL);
+          CoerceAvailableValueToLoadType(StoredVal, L->getType(), Builder, DL);
       if (!StoredVal)
         return false;
 
@@ -1955,7 +1934,9 @@ bool GVN::processLoad(LoadInst *L) {
     // the same type.  See if we know how to reuse the previously loaded value
     // (depending on its type).
     if (DepLI->getType() != L->getType()) {
-      AvailableVal = CoerceAvailableValueToLoadType(DepLI, L->getType(), L, DL);
+      IRBuilder<> Builder(L);
+      AvailableVal =
+          CoerceAvailableValueToLoadType(DepLI, L->getType(), Builder, DL);
       if (!AvailableVal)
         return false;
 
@@ -2031,23 +2012,6 @@ Value *GVN::findLeader(const BasicBlock *BB, uint32_t num) {
   }
 
   return Val;
-}
-
-/// Replace all uses of 'From' with 'To' if the use is dominated by the given
-/// basic block.  Returns the number of uses that were replaced.
-unsigned GVN::replaceAllDominatedUsesWith(Value *From, Value *To,
-                                          const BasicBlockEdge &Root) {
-  unsigned Count = 0;
-  for (Value::use_iterator UI = From->use_begin(), UE = From->use_end();
-       UI != UE; ) {
-    Use &U = *UI++;
-
-    if (DT->dominates(Root, U)) {
-      U.set(To);
-      ++Count;
-    }
-  }
-  return Count;
 }
 
 /// There is an edge from 'Src' to 'Dst'.  Return
@@ -2126,7 +2090,7 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
     // LHS always has at least one use that is not dominated by Root, this will
     // never do anything if LHS has only one use.
     if (!LHS->hasOneUse()) {
-      unsigned NumReplacements = replaceAllDominatedUsesWith(LHS, RHS, Root);
+      unsigned NumReplacements = replaceDominatedUsesWith(LHS, RHS, *DT, Root);
       Changed |= NumReplacements > 0;
       NumGVNEqProp += NumReplacements;
     }
@@ -2198,7 +2162,7 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
         Value *NotCmp = findLeader(Root.getEnd(), Num);
         if (NotCmp && isa<Instruction>(NotCmp)) {
           unsigned NumReplacements =
-            replaceAllDominatedUsesWith(NotCmp, NotVal, Root);
+            replaceDominatedUsesWith(NotCmp, NotVal, *DT, Root);
           Changed |= NumReplacements > 0;
           NumGVNEqProp += NumReplacements;
         }
@@ -2361,8 +2325,8 @@ bool GVN::runOnFunction(Function& F) {
   for (Function::iterator FI = F.begin(), FE = F.end(); FI != FE; ) {
     BasicBlock *BB = FI++;
 
-    bool removedBlock = MergeBlockIntoPredecessor(
-        BB, DT, /* LoopInfo */ nullptr, VN.getAliasAnalysis(), MD);
+    bool removedBlock =
+        MergeBlockIntoPredecessor(BB, DT, /* LoopInfo */ nullptr, MD);
     if (removedBlock) ++NumGVNBlocks;
 
     Changed |= removedBlock;
@@ -2600,18 +2564,8 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
   addToLeaderTable(ValNo, Phi, CurrentBlock);
   Phi->setDebugLoc(CurInst->getDebugLoc());
   CurInst->replaceAllUsesWith(Phi);
-  if (Phi->getType()->getScalarType()->isPointerTy()) {
-    // Because we have added a PHI-use of the pointer value, it has now
-    // "escaped" from alias analysis' perspective.  We need to inform
-    // AA of this.
-    for (unsigned ii = 0, ee = Phi->getNumIncomingValues(); ii != ee; ++ii) {
-      unsigned jj = PHINode::getOperandNumForIncomingValue(ii);
-      VN.getAliasAnalysis()->addEscapingUse(Phi->getOperandUse(jj));
-    }
-
-    if (MD)
-      MD->invalidateCachedPointerInfo(Phi);
-  }
+  if (MD && Phi->getType()->getScalarType()->isPointerTy())
+    MD->invalidateCachedPointerInfo(Phi);
   VN.erase(CurInst);
   removeFromLeaderTable(ValNo, CurInst, CurrentBlock);
 
@@ -2634,8 +2588,8 @@ bool GVN::performPRE(Function &F) {
     if (CurrentBlock == &F.getEntryBlock())
       continue;
 
-    // Don't perform PRE on a landing pad.
-    if (CurrentBlock->isLandingPad())
+    // Don't perform PRE on an EH pad.
+    if (CurrentBlock->isEHPad())
       continue;
 
     for (BasicBlock::iterator BI = CurrentBlock->begin(),
@@ -2655,8 +2609,8 @@ bool GVN::performPRE(Function &F) {
 /// Split the critical edge connecting the given two blocks, and return
 /// the block inserted to the critical edge.
 BasicBlock *GVN::splitCriticalEdges(BasicBlock *Pred, BasicBlock *Succ) {
-  BasicBlock *BB = SplitCriticalEdge(
-      Pred, Succ, CriticalEdgeSplittingOptions(getAliasAnalysis(), DT));
+  BasicBlock *BB =
+      SplitCriticalEdge(Pred, Succ, CriticalEdgeSplittingOptions(DT));
   if (MD)
     MD->invalidateCachedPredecessors();
   return BB;
@@ -2670,7 +2624,7 @@ bool GVN::splitCriticalEdges() {
   do {
     std::pair<TerminatorInst*, unsigned> Edge = toSplit.pop_back_val();
     SplitCriticalEdge(Edge.first, Edge.second,
-                      CriticalEdgeSplittingOptions(getAliasAnalysis(), DT));
+                      CriticalEdgeSplittingOptions(DT));
   } while (!toSplit.empty());
   if (MD) MD->invalidateCachedPredecessors();
   return true;
@@ -2820,6 +2774,10 @@ void GVN::addDeadBlock(BasicBlock *BB) {
 // Return true iff *NEW* dead code are found.
 bool GVN::processFoldableCondBr(BranchInst *BI) {
   if (!BI || BI->isUnconditional())
+    return false;
+
+  // If a branch has two identical successors, we cannot declare either dead.
+  if (BI->getSuccessor(0) == BI->getSuccessor(1))
     return false;
 
   ConstantInt *Cond = dyn_cast<ConstantInt>(BI->getCondition());

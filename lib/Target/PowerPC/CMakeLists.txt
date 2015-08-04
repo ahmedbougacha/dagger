@@ -32,7 +32,7 @@ add_llvm_target(PowerPCCodeGen
   PPCTargetMachine.cpp
   PPCTargetObjectFile.cpp
   PPCTargetTransformInfo.cpp
-  PPCSelectionDAGInfo.cpp
+  PPCTOCRegDeps.cpp
   PPCTLSDynamicCall.cpp
   PPCVSXCopy.cpp
   PPCVSXFMAMutate.cpp

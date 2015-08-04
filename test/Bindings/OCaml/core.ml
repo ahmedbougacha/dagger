@@ -1,7 +1,7 @@
 (* RUN: cp %s %T/core.ml
- * RUN: %ocamlc -g -warn-error A -package llvm.analysis -package llvm.bitwriter -linkpkg %T/core.ml -o %t
+ * RUN: %ocamlc -g -w +A -package llvm.analysis -package llvm.bitwriter -linkpkg %T/core.ml -o %t
  * RUN: %t %t.bc
- * RUN: %ocamlopt -g -warn-error A -package llvm.analysis -package llvm.bitwriter -linkpkg %T/core.ml -o %t
+ * RUN: %ocamlopt -g -w +A -package llvm.analysis -package llvm.bitwriter -linkpkg %T/core.ml -o %t
  * RUN: %t %t.bc
  * RUN: llvm-dis < %t.bc > %t.ll
  * RUN: FileCheck %s < %t.ll
@@ -1445,7 +1445,7 @@ let test_builder () =
  * CHECK: !llvm.module.flags = !{!0}
  * CHECK: !0 = !{i32 1, !"Debug Info Version", i32 3}
  * CHECK: !1 = !{i32 1, !"metadata test"}
- * CHECK: !2 = !MDLocation(line: 2, column: 3, scope: !3, inlinedAt: !3)
+ * CHECK: !2 = !DILocation(line: 2, column: 3, scope: !3, inlinedAt: !3)
  *)
 
 (*===-- Pass Managers -----------------------------------------------------===*)

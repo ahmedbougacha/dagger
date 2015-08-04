@@ -174,19 +174,6 @@
 #define LLVM_UNLIKELY(EXPR) (EXPR)
 #endif
 
-// C++ doesn't support 'extern template' of template specializations.  GCC does,
-// but requires __extension__ before it.  In the header, use this:
-//   EXTERN_TEMPLATE_INSTANTIATION(class foo<bar>);
-// in the .cpp file, use this:
-//   TEMPLATE_INSTANTIATION(class foo<bar>);
-#ifdef __GNUC__
-#define EXTERN_TEMPLATE_INSTANTIATION(X) __extension__ extern template X
-#define TEMPLATE_INSTANTIATION(X) template X
-#else
-#define EXTERN_TEMPLATE_INSTANTIATION(X)
-#define TEMPLATE_INSTANTIATION(X)
-#endif
-
 /// LLVM_ATTRIBUTE_NOINLINE - On compilers where we have a directive to do so,
 /// mark a method "not for inlining".
 #if __has_attribute(noinline) || LLVM_GNUC_PREREQ(3, 4, 0)
@@ -348,19 +335,6 @@
 # define LLVM_ADDRESS_SANITIZER_BUILD 1
 #else
 # define LLVM_ADDRESS_SANITIZER_BUILD 0
-#endif
-
-/// \macro LLVM_IS_UNALIGNED_ACCESS_FAST
-/// \brief Is unaligned memory access fast on the host machine.
-///
-/// Don't specialize on alignment for platforms where unaligned memory accesses
-/// generates the same code as aligned memory accesses for common types.
-#if defined(_M_AMD64) || defined(_M_IX86) || defined(__amd64) || \
-    defined(__amd64__) || defined(__x86_64) || defined(__x86_64__) || \
-    defined(_X86_) || defined(__i386) || defined(__i386__)
-# define LLVM_IS_UNALIGNED_ACCESS_FAST 1
-#else
-# define LLVM_IS_UNALIGNED_ACCESS_FAST 0
 #endif
 
 /// \brief Mark debug helper function definitions like dump() that should not be

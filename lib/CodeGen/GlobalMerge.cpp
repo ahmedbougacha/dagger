@@ -108,21 +108,28 @@ EnableGlobalMergeOnConst("global-merge-on-const", cl::Hidden,
 
 // FIXME: this could be a transitional option, and we probably need to remove
 // it if only we are sure this optimization could always benefit all targets.
-static cl::opt<bool>
+static cl::opt<cl::boolOrDefault>
 EnableGlobalMergeOnExternal("global-merge-on-external", cl::Hidden,
-     cl::desc("Enable global merge pass on external linkage"),
-     cl::init(false));
+     cl::desc("Enable global merge pass on external linkage"));
 
 STATISTIC(NumMerged, "Number of globals merged");
 namespace {
   class GlobalMerge : public FunctionPass {
     const TargetMachine *TM;
-    const DataLayout *DL;
     // FIXME: Infer the maximum possible offset depending on the actual users
     // (these max offsets are different for the users inside Thumb or ARM
     // functions), see the code that passes in the offset in the ARM backend
     // for more information.
     unsigned MaxOffset;
+
+    /// Whether we should try to optimize for size only.
+    /// Currently, this applies a dead simple heuristic: only consider globals
+    /// used in minsize functions for merging.
+    /// FIXME: This could learn about optsize, and be used in the cost model.
+    bool OnlyOptimizeForSize;
+
+    /// Whether we should merge global variables that have external linkage.
+    bool MergeExternalGlobals;
 
     bool doMerge(SmallVectorImpl<GlobalVariable*> &Globals,
                  Module &M, bool isConst, unsigned AddrSpace) const;
@@ -152,9 +159,12 @@ namespace {
   public:
     static char ID;             // Pass identification, replacement for typeid.
     explicit GlobalMerge(const TargetMachine *TM = nullptr,
-                         unsigned MaximalOffset = 0)
-        : FunctionPass(ID), TM(TM), DL(TM->getDataLayout()),
-          MaxOffset(MaximalOffset) {
+                         unsigned MaximalOffset = 0,
+                         bool OnlyOptimizeForSize = false,
+                         bool MergeExternalGlobals = false)
+        : FunctionPass(ID), TM(TM), MaxOffset(MaximalOffset),
+          OnlyOptimizeForSize(OnlyOptimizeForSize),
+          MergeExternalGlobals(MergeExternalGlobals) {
       initializeGlobalMergePass(*PassRegistry::getPassRegistry());
     }
 
@@ -181,14 +191,16 @@ INITIALIZE_PASS_END(GlobalMerge, "global-merge", "Merge global variables",
 
 bool GlobalMerge::doMerge(SmallVectorImpl<GlobalVariable*> &Globals,
                           Module &M, bool isConst, unsigned AddrSpace) const {
+  auto &DL = M.getDataLayout();
   // FIXME: Find better heuristics
-  std::stable_sort(Globals.begin(), Globals.end(),
-                   [this](const GlobalVariable *GV1, const GlobalVariable *GV2) {
-    Type *Ty1 = cast<PointerType>(GV1->getType())->getElementType();
-    Type *Ty2 = cast<PointerType>(GV2->getType())->getElementType();
+  std::stable_sort(
+      Globals.begin(), Globals.end(),
+      [&DL](const GlobalVariable *GV1, const GlobalVariable *GV2) {
+        Type *Ty1 = cast<PointerType>(GV1->getType())->getElementType();
+        Type *Ty2 = cast<PointerType>(GV2->getType())->getElementType();
 
-    return (DL->getTypeAllocSize(Ty1) < DL->getTypeAllocSize(Ty2));
-  });
+        return (DL.getTypeAllocSize(Ty1) < DL.getTypeAllocSize(Ty2));
+      });
 
   // If we want to just blindly group all globals together, do so.
   if (!GlobalMergeGroupByUse) {
@@ -273,6 +285,8 @@ bool GlobalMerge::doMerge(SmallVectorImpl<GlobalVariable*> &Globals,
       // users, so look through ConstantExpr...
       Use *UI, *UE;
       if (ConstantExpr *CE = dyn_cast<ConstantExpr>(U.getUser())) {
+        if (CE->use_empty())
+          continue;
         UI = &*CE->use_begin();
         UE = nullptr;
       } else if (isa<Instruction>(U.getUser())) {
@@ -290,6 +304,12 @@ bool GlobalMerge::doMerge(SmallVectorImpl<GlobalVariable*> &Globals,
           continue;
 
         Function *ParentFn = I->getParent()->getParent();
+
+        // If we're only optimizing for size, ignore non-minsize functions.
+        if (OnlyOptimizeForSize &&
+            !ParentFn->hasFnAttribute(Attribute::MinSize))
+          continue;
+
         size_t UGSIdx = GlobalUsesByFunction[ParentFn];
 
         // If this is the first global the basic block uses, map it to the set
@@ -395,6 +415,7 @@ bool GlobalMerge::doMerge(SmallVectorImpl<GlobalVariable *> &Globals,
                           unsigned AddrSpace) const {
 
   Type *Int32Ty = Type::getInt32Ty(M.getContext());
+  auto &DL = M.getDataLayout();
 
   assert(Globals.size() > 1);
 
@@ -412,7 +433,7 @@ bool GlobalMerge::doMerge(SmallVectorImpl<GlobalVariable *> &Globals,
     GlobalVariable *TheFirstExternal = 0;
     for (j = i; j != -1; j = GlobalSet.find_next(j)) {
       Type *Ty = Globals[j]->getType()->getElementType();
-      MergedSize += DL->getTypeAllocSize(Ty);
+      MergedSize += DL.getTypeAllocSize(Ty);
       if (MergedSize > MaxOffset) {
         break;
       }
@@ -459,8 +480,7 @@ bool GlobalMerge::doMerge(SmallVectorImpl<GlobalVariable *> &Globals,
       if (Linkage != GlobalValue::InternalLinkage) {
         // Generate a new alias...
         auto *PTy = cast<PointerType>(GEP->getType());
-        GlobalAlias::create(PTy->getElementType(), PTy->getAddressSpace(),
-                            Linkage, Name, GEP, &M);
+        GlobalAlias::create(PTy, Linkage, Name, GEP, &M);
       }
 
       NumMerged++;
@@ -512,6 +532,7 @@ bool GlobalMerge::doInitialization(Module &M) {
   if (!EnableGlobalMerge)
     return false;
 
+  auto &DL = M.getDataLayout();
   DenseMap<unsigned, SmallVector<GlobalVariable*, 16> > Globals, ConstGlobals,
                                                         BSSGlobals;
   bool Changed = false;
@@ -524,7 +545,7 @@ bool GlobalMerge::doInitialization(Module &M) {
     if (I->isDeclaration() || I->isThreadLocal() || I->hasSection())
       continue;
 
-    if (!(EnableGlobalMergeOnExternal && I->hasExternalLinkage()) &&
+    if (!(MergeExternalGlobals && I->hasExternalLinkage()) &&
         !I->hasInternalLinkage())
       continue;
 
@@ -534,9 +555,9 @@ bool GlobalMerge::doInitialization(Module &M) {
     unsigned AddressSpace = PT->getAddressSpace();
 
     // Ignore fancy-aligned globals for now.
-    unsigned Alignment = DL->getPreferredAlignment(I);
+    unsigned Alignment = DL.getPreferredAlignment(I);
     Type *Ty = I->getType()->getElementType();
-    if (Alignment > DL->getABITypeAlignment(Ty))
+    if (Alignment > DL.getABITypeAlignment(Ty))
       continue;
 
     // Ignore all 'special' globals.
@@ -548,7 +569,7 @@ bool GlobalMerge::doInitialization(Module &M) {
     if (isMustKeepGlobalVariable(I))
       continue;
 
-    if (DL->getTypeAllocSize(Ty) < MaxOffset) {
+    if (DL.getTypeAllocSize(Ty) < MaxOffset) {
       if (TargetLoweringObjectFile::getKindForGlobal(I, *TM).isBSSLocal())
         BSSGlobals[AddressSpace].push_back(I);
       else if (I->isConstant())
@@ -586,6 +607,10 @@ bool GlobalMerge::doFinalization(Module &M) {
   return false;
 }
 
-Pass *llvm::createGlobalMergePass(const TargetMachine *TM, unsigned Offset) {
-  return new GlobalMerge(TM, Offset);
+Pass *llvm::createGlobalMergePass(const TargetMachine *TM, unsigned Offset,
+                                  bool OnlyOptimizeForSize,
+                                  bool MergeExternalByDefault) {
+  bool MergeExternal = (EnableGlobalMergeOnExternal == cl::BOU_UNSET) ?
+    MergeExternalByDefault : (EnableGlobalMergeOnExternal == cl::BOU_TRUE);
+  return new GlobalMerge(TM, Offset, OnlyOptimizeForSize, MergeExternal);
 }

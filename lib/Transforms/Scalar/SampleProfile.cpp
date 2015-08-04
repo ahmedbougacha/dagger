@@ -224,7 +224,7 @@ unsigned SampleProfileLoader::getInstWeight(Instruction &Inst) {
   if (Lineno < HeaderLineno)
     return 0;
 
-  const MDLocation *DIL = DLoc;
+  const DILocation *DIL = DLoc;
   int LOffset = Lineno - HeaderLineno;
   unsigned Discriminator = DIL->getDiscriminator();
   unsigned Weight = Samples->samplesAt(LOffset, Discriminator);
@@ -282,7 +282,7 @@ bool SampleProfileLoader::computeBlockWeights(Function &F) {
 /// \brief Find equivalence classes for the given block.
 ///
 /// This finds all the blocks that are guaranteed to execute the same
-/// number of times as \p BB1. To do this, it traverses all the the
+/// number of times as \p BB1. To do this, it traverses all the
 /// descendants of \p BB1 in the dominator or post-dominator tree.
 ///
 /// A block BB2 will be in the same equivalence class as \p BB1 if
@@ -580,6 +580,10 @@ void SampleProfileLoader::propagateWeights(Function &F) {
   bool Changed = true;
   unsigned i = 0;
 
+  // Add an entry count to the function using the samples gathered
+  // at the function entry.
+  F.setEntryCount(Samples->getHeadSamples());
+
   // Before propagation starts, build, for each block, a list of
   // unique predecessors and successors. This is necessary to handle
   // identical edges in multiway branches. Since we visit all blocks and all
@@ -642,7 +646,7 @@ void SampleProfileLoader::propagateWeights(Function &F) {
 /// \returns the line number where \p F is defined. If it returns 0,
 ///          it means that there is no debug information available for \p F.
 unsigned SampleProfileLoader::getFunctionLoc(Function &F) {
-  if (MDSubprogram *S = getDISubprogram(&F))
+  if (DISubprogram *S = getDISubprogram(&F))
     return S->getLine();
 
   // If could not find the start of \p F, emit a diagnostic to inform the user

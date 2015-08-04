@@ -12,7 +12,8 @@
 // it then removes.
 //
 // Note that this pass must be run after register allocation, it cannot handle
-// SSA form.
+// SSA form. It also must handle virtual registers for targets that emit virtual
+// ISA (e.g. NVPTX).
 //
 //===----------------------------------------------------------------------===//
 
@@ -150,9 +151,13 @@ bool BranchFolder::OptimizeImpDefsBlock(MachineBasicBlock *MBB) {
     if (!I->isImplicitDef())
       break;
     unsigned Reg = I->getOperand(0).getReg();
-    for (MCSubRegIterator SubRegs(Reg, TRI, /*IncludeSelf=*/true);
-         SubRegs.isValid(); ++SubRegs)
-      ImpDefRegs.insert(*SubRegs);
+    if (TargetRegisterInfo::isPhysicalRegister(Reg)) {
+      for (MCSubRegIterator SubRegs(Reg, TRI, /*IncludeSelf=*/true);
+           SubRegs.isValid(); ++SubRegs)
+        ImpDefRegs.insert(*SubRegs);
+    } else {
+      ImpDefRegs.insert(Reg);
+    }
     ++I;
   }
   if (ImpDefRegs.empty())
@@ -270,11 +275,17 @@ static unsigned HashMachineInstr(const MachineInstr *MI) {
   for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
     const MachineOperand &Op = MI->getOperand(i);
 
-    // Merge in bits from the operand if easy.
+    // Merge in bits from the operand if easy. We can't use MachineOperand's
+    // hash_code here because it's not deterministic and we sort by hash value
+    // later.
     unsigned OperandHash = 0;
     switch (Op.getType()) {
-    case MachineOperand::MO_Register:          OperandHash = Op.getReg(); break;
-    case MachineOperand::MO_Immediate:         OperandHash = Op.getImm(); break;
+    case MachineOperand::MO_Register:
+      OperandHash = Op.getReg();
+      break;
+    case MachineOperand::MO_Immediate:
+      OperandHash = Op.getImm();
+      break;
     case MachineOperand::MO_MachineBasicBlock:
       OperandHash = Op.getMBB()->getNumber();
       break;
@@ -289,27 +300,20 @@ static unsigned HashMachineInstr(const MachineInstr *MI) {
       // pull in the offset.
       OperandHash = Op.getOffset();
       break;
-    default: break;
+    default:
+      break;
     }
 
-    Hash += ((OperandHash << 3) | Op.getType()) << (i&31);
+    Hash += ((OperandHash << 3) | Op.getType()) << (i & 31);
   }
   return Hash;
 }
 
 /// HashEndOfMBB - Hash the last instruction in the MBB.
 static unsigned HashEndOfMBB(const MachineBasicBlock *MBB) {
-  MachineBasicBlock::const_iterator I = MBB->end();
-  if (I == MBB->begin())
-    return 0;   // Empty MBB.
-
-  --I;
-  // Skip debug info so it will not affect codegen.
-  while (I->isDebugValue()) {
-    if (I==MBB->begin())
-      return 0;      // MBB empty except for debug info.
-    --I;
-  }
+  MachineBasicBlock::const_iterator I = MBB->getLastNonDebugInstr();
+  if (I == MBB->end())
+    return 0;
 
   return HashMachineInstr(I);
 }
@@ -602,6 +606,7 @@ static bool ProfitableToMerge(MachineBasicBlock *MBB1,
   // instructions that would be deleted in the merge.
   MachineFunction *MF = MBB1->getParent();
   if (EffectiveTailLen >= 2 &&
+      // FIXME: Use Function::optForSize().
       MF->getFunction()->hasFnAttribute(Attribute::OptimizeForSize) &&
       (I1 == MBB1->begin() || I2 == MBB2->begin()))
     return true;
@@ -1118,25 +1123,15 @@ bool BranchFolder::OptimizeBranches(MachineFunction &MF) {
 // Blocks should be considered empty if they contain only debug info;
 // else the debug info would affect codegen.
 static bool IsEmptyBlock(MachineBasicBlock *MBB) {
-  if (MBB->empty())
-    return true;
-  for (MachineBasicBlock::iterator MBBI = MBB->begin(), MBBE = MBB->end();
-       MBBI!=MBBE; ++MBBI) {
-    if (!MBBI->isDebugValue())
-      return false;
-  }
-  return true;
+  return MBB->getFirstNonDebugInstr() == MBB->end();
 }
 
 // Blocks with only debug info and branches should be considered the same
 // as blocks with only branches.
 static bool IsBranchOnlyBlock(MachineBasicBlock *MBB) {
-  MachineBasicBlock::iterator MBBI, MBBE;
-  for (MBBI = MBB->begin(), MBBE = MBB->end(); MBBI!=MBBE; ++MBBI) {
-    if (!MBBI->isDebugValue())
-      break;
-  }
-  return (MBBI->isBranch());
+  MachineBasicBlock::iterator I = MBB->getFirstNonDebugInstr();
+  assert(I != MBB->end() && "empty block!");
+  return I->isBranch();
 }
 
 /// IsBetterFallthrough - Return true if it would be clearly better to
@@ -1149,36 +1144,24 @@ static bool IsBetterFallthrough(MachineBasicBlock *MBB1,
   // MBB1 doesn't, we prefer to fall through into MBB1.  This allows us to
   // optimize branches that branch to either a return block or an assert block
   // into a fallthrough to the return.
-  if (IsEmptyBlock(MBB1) || IsEmptyBlock(MBB2)) return false;
+  MachineBasicBlock::iterator MBB1I = MBB1->getLastNonDebugInstr();
+  MachineBasicBlock::iterator MBB2I = MBB2->getLastNonDebugInstr();
+  if (MBB1I == MBB1->end() || MBB2I == MBB2->end())
+    return false;
 
   // If there is a clear successor ordering we make sure that one block
   // will fall through to the next
   if (MBB1->isSuccessor(MBB2)) return true;
   if (MBB2->isSuccessor(MBB1)) return false;
 
-  // Neither block consists entirely of debug info (per IsEmptyBlock check),
-  // so we needn't test for falling off the beginning here.
-  MachineBasicBlock::iterator MBB1I = --MBB1->end();
-  while (MBB1I->isDebugValue())
-    --MBB1I;
-  MachineBasicBlock::iterator MBB2I = --MBB2->end();
-  while (MBB2I->isDebugValue())
-    --MBB2I;
   return MBB2I->isCall() && !MBB1I->isCall();
 }
 
 /// getBranchDebugLoc - Find and return, if any, the DebugLoc of the branch
-/// instructions on the block. Always use the DebugLoc of the first
-/// branching instruction found unless its absent, in which case use the
-/// DebugLoc of the second if present.
+/// instructions on the block.
 static DebugLoc getBranchDebugLoc(MachineBasicBlock &MBB) {
-  MachineBasicBlock::iterator I = MBB.end();
-  if (I == MBB.begin())
-    return DebugLoc();
-  --I;
-  while (I->isDebugValue() && I != MBB.begin())
-    --I;
-  if (I->isBranch())
+  MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
+  if (I != MBB.end() && I->isBranch())
     return I->getDebugLoc();
   return DebugLoc();
 }
@@ -1203,6 +1186,11 @@ ReoptimizeBlock:
 
     if (FallThrough == MF.end()) {
       // TODO: Simplify preds to not branch here if possible!
+    } else if (FallThrough->isLandingPad()) {
+      // Don't rewrite to a landing pad fallthough.  That could lead to the case
+      // where a BB jumps to more than one landing pad.
+      // TODO: Is it ever worth rewriting predecessors which don't already
+      // jump to a landing pad, and so can safely jump to the fallthrough?
     } else {
       // Rewrite all predecessors of the old block to go to the fallthrough
       // instead.
@@ -1398,19 +1386,10 @@ ReoptimizeBlock:
       // If the only things remaining in the block are debug info, remove these
       // as well, so this will behave the same as an empty block in non-debug
       // mode.
-      if (!MBB->empty()) {
-        bool NonDebugInfoFound = false;
-        for (MachineBasicBlock::iterator I = MBB->begin(), E = MBB->end();
-             I != E; ++I) {
-          if (!I->isDebugValue()) {
-            NonDebugInfoFound = true;
-            break;
-          }
-        }
-        if (!NonDebugInfoFound)
-          // Make the block empty, losing the debug info (we could probably
-          // improve this in some cases.)
-          MBB->erase(MBB->begin(), MBB->end());
+      if (IsEmptyBlock(MBB)) {
+        // Make the block empty, losing the debug info (we could probably
+        // improve this in some cases.)
+        MBB->erase(MBB->begin(), MBB->end());
       }
       // If this block is just an unconditional branch to CurTBB, we can
       // usually completely eliminate the block.  The only case we cannot
@@ -1600,6 +1579,17 @@ static MachineBasicBlock *findFalseBlock(MachineBasicBlock *BB,
   return nullptr;
 }
 
+template <class Container>
+static void addRegAndItsAliases(unsigned Reg, const TargetRegisterInfo *TRI,
+                                Container &Set) {
+  if (TargetRegisterInfo::isPhysicalRegister(Reg)) {
+    for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
+      Set.insert(*AI);
+  } else {
+    Set.insert(Reg);
+  }
+}
+
 /// findHoistingInsertPosAndDeps - Find the location to move common instructions
 /// in successors to. The location is usually just before the terminator,
 /// however if the terminator is a conditional branch and its previous
@@ -1625,8 +1615,7 @@ MachineBasicBlock::iterator findHoistingInsertPosAndDeps(MachineBasicBlock *MBB,
     if (!Reg)
       continue;
     if (MO.isUse()) {
-      for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
-        Uses.insert(*AI);
+      addRegAndItsAliases(Reg, TRI, Uses);
     } else {
       if (!MO.isDead())
         // Don't try to hoist code in the rare case the terminator defines a
@@ -1635,8 +1624,7 @@ MachineBasicBlock::iterator findHoistingInsertPosAndDeps(MachineBasicBlock *MBB,
 
       // If the terminator defines a register, make sure we don't hoist
       // the instruction whose def might be clobbered by the terminator.
-      for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
-        Defs.insert(*AI);
+      addRegAndItsAliases(Reg, TRI, Defs);
     }
   }
 
@@ -1678,8 +1666,7 @@ MachineBasicBlock::iterator findHoistingInsertPosAndDeps(MachineBasicBlock *MBB,
   // Also avoid moving code above predicated instruction since it's hard to
   // reason about register liveness with predicated instruction.
   bool DontMoveAcrossStore = true;
-  if (!PI->isSafeToMove(TII, nullptr, DontMoveAcrossStore) ||
-      TII->isPredicated(PI))
+  if (!PI->isSafeToMove(nullptr, DontMoveAcrossStore) || TII->isPredicated(PI))
     return MBB->end();
 
 
@@ -1693,15 +1680,15 @@ MachineBasicBlock::iterator findHoistingInsertPosAndDeps(MachineBasicBlock *MBB,
     if (!Reg)
       continue;
     if (MO.isUse()) {
-      for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
-        Uses.insert(*AI);
+      addRegAndItsAliases(Reg, TRI, Uses);
     } else {
       if (Uses.erase(Reg)) {
-        for (MCSubRegIterator SubRegs(Reg, TRI); SubRegs.isValid(); ++SubRegs)
-          Uses.erase(*SubRegs); // Use sub-registers to be conservative
+        if (TargetRegisterInfo::isPhysicalRegister(Reg)) {
+          for (MCSubRegIterator SubRegs(Reg, TRI); SubRegs.isValid(); ++SubRegs)
+            Uses.erase(*SubRegs); // Use sub-registers to be conservative
+        }
       }
-      for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
-        Defs.insert(*AI);
+      addRegAndItsAliases(Reg, TRI, Defs);
     }
   }
 
@@ -1817,7 +1804,7 @@ bool BranchFolder::HoistCommonCodeInSuccs(MachineBasicBlock *MBB) {
       break;
 
     bool DontMoveAcrossStore = true;
-    if (!TIB->isSafeToMove(TII, nullptr, DontMoveAcrossStore))
+    if (!TIB->isSafeToMove(nullptr, DontMoveAcrossStore))
       break;
 
     // Remove kills from LocalDefsSet, these registers had short live ranges.
@@ -1828,8 +1815,12 @@ bool BranchFolder::HoistCommonCodeInSuccs(MachineBasicBlock *MBB) {
       unsigned Reg = MO.getReg();
       if (!Reg || !LocalDefsSet.count(Reg))
         continue;
-      for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
-        LocalDefsSet.erase(*AI);
+      if (TargetRegisterInfo::isPhysicalRegister(Reg)) {
+        for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
+          LocalDefsSet.erase(*AI);
+      } else {
+        LocalDefsSet.erase(Reg);
+      }
     }
 
     // Track local defs so we can update liveins.
@@ -1841,8 +1832,7 @@ bool BranchFolder::HoistCommonCodeInSuccs(MachineBasicBlock *MBB) {
       if (!Reg)
         continue;
       LocalDefs.push_back(Reg);
-      for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
-        LocalDefsSet.insert(*AI);
+      addRegAndItsAliases(Reg, TRI, LocalDefsSet);
     }
 
     HasDups = true;

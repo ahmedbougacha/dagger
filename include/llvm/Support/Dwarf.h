@@ -239,6 +239,11 @@ enum Attribute : uint16_t {
   DW_AT_GNU_pubnames = 0x2134,
   DW_AT_GNU_pubtypes = 0x2135,
 
+  // LLVM project extensions.
+  DW_AT_LLVM_include_path = 0x3e00,
+  DW_AT_LLVM_config_macros = 0x3e01,
+  DW_AT_LLVM_isysroot = 0x3e02,
+
   // Apple extensions.
   DW_AT_APPLE_optimized = 0x3fe1,
   DW_AT_APPLE_flags = 0x3fe2,
@@ -285,7 +290,11 @@ enum Form : uint16_t {
 
   // Extensions for Fission proposal
   DW_FORM_GNU_addr_index = 0x1f01,
-  DW_FORM_GNU_str_index = 0x1f02
+  DW_FORM_GNU_str_index = 0x1f02,
+
+  // Alternate debug sections proposal (output of "dwz" tool).
+  DW_FORM_GNU_ref_alt = 0x1f20,
+  DW_FORM_GNU_strp_alt = 0x1f21
 };
 
 enum LocationAtom {

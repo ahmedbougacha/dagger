@@ -42,12 +42,11 @@ using namespace llvm;
 #define GET_SUBTARGETINFO_MC_DESC
 #include "X86GenSubtargetInfo.inc"
 
-std::string X86_MC::ParseX86Triple(StringRef TT) {
-  Triple TheTriple(TT);
+std::string X86_MC::ParseX86Triple(const Triple &TT) {
   std::string FS;
-  if (TheTriple.getArch() == Triple::x86_64)
+  if (TT.getArch() == Triple::x86_64)
     FS = "+64bit-mode,-32bit-mode,-16bit-mode";
-  else if (TheTriple.getEnvironment() != Triple::CODE16)
+  else if (TT.getEnvironment() != Triple::CODE16)
     FS = "-64bit-mode,+32bit-mode,-16bit-mode";
   else
     FS = "-64bit-mode,-32bit-mode,+16bit-mode";
@@ -55,7 +54,7 @@ std::string X86_MC::ParseX86Triple(StringRef TT) {
   return FS;
 }
 
-unsigned X86_MC::getDwarfRegFlavour(Triple TT, bool isEH) {
+unsigned X86_MC::getDwarfRegFlavour(const Triple &TT, bool isEH) {
   if (TT.getArch() == Triple::x86_64)
     return DWARFFlavour::X86_64;
 
@@ -75,8 +74,8 @@ void X86_MC::InitLLVM2SEHRegisterMapping(MCRegisterInfo *MRI) {
   }
 }
 
-MCSubtargetInfo *X86_MC::createX86MCSubtargetInfo(StringRef TT, StringRef CPU,
-                                                  StringRef FS) {
+MCSubtargetInfo *X86_MC::createX86MCSubtargetInfo(const Triple &TT,
+                                                  StringRef CPU, StringRef FS) {
   std::string ArchFS = X86_MC::ParseX86Triple(TT);
   if (!FS.empty()) {
     if (!ArchFS.empty())
@@ -89,9 +88,7 @@ MCSubtargetInfo *X86_MC::createX86MCSubtargetInfo(StringRef TT, StringRef CPU,
   if (CPUName.empty())
     CPUName = "generic";
 
-  MCSubtargetInfo *X = new MCSubtargetInfo();
-  InitX86MCSubtargetInfo(X, TT, CPUName, ArchFS);
-  return X;
+  return createX86MCSubtargetInfoImpl(TT, CPUName, ArchFS);
 }
 
 static MCInstrInfo *createX86MCInstrInfo() {
@@ -100,23 +97,20 @@ static MCInstrInfo *createX86MCInstrInfo() {
   return X;
 }
 
-static MCRegisterInfo *createX86MCRegisterInfo(StringRef TT) {
-  Triple TheTriple(TT);
-  unsigned RA = (TheTriple.getArch() == Triple::x86_64)
-    ? X86::RIP     // Should have dwarf #16.
-    : X86::EIP;    // Should have dwarf #8.
+static MCRegisterInfo *createX86MCRegisterInfo(const Triple &TT) {
+  unsigned RA = (TT.getArch() == Triple::x86_64)
+                    ? X86::RIP  // Should have dwarf #16.
+                    : X86::EIP; // Should have dwarf #8.
 
   MCRegisterInfo *X = new MCRegisterInfo();
-  InitX86MCRegisterInfo(X, RA,
-                        X86_MC::getDwarfRegFlavour(TheTriple, false),
-                        X86_MC::getDwarfRegFlavour(TheTriple, true),
-                        RA);
+  InitX86MCRegisterInfo(X, RA, X86_MC::getDwarfRegFlavour(TT, false),
+                        X86_MC::getDwarfRegFlavour(TT, true), RA);
   X86_MC::InitLLVM2SEHRegisterMapping(X);
   return X;
 }
 
-static MCAsmInfo *createX86MCAsmInfo(const MCRegisterInfo &MRI, StringRef TT) {
-  Triple TheTriple(TT);
+static MCAsmInfo *createX86MCAsmInfo(const MCRegisterInfo &MRI,
+                                     const Triple &TheTriple) {
   bool is64Bit = TheTriple.getArch() == Triple::x86_64;
 
   MCAsmInfo *MAI;
@@ -157,24 +151,23 @@ static MCAsmInfo *createX86MCAsmInfo(const MCRegisterInfo &MRI, StringRef TT) {
   return MAI;
 }
 
-static MCCodeGenInfo *createX86MCCodeGenInfo(StringRef TT, Reloc::Model RM,
+static MCCodeGenInfo *createX86MCCodeGenInfo(const Triple &TT, Reloc::Model RM,
                                              CodeModel::Model CM,
                                              CodeGenOpt::Level OL) {
   MCCodeGenInfo *X = new MCCodeGenInfo();
 
-  Triple T(TT);
-  bool is64Bit = T.getArch() == Triple::x86_64;
+  bool is64Bit = TT.getArch() == Triple::x86_64;
 
   if (RM == Reloc::Default) {
     // Darwin defaults to PIC in 64 bit mode and dynamic-no-pic in 32 bit mode.
     // Win64 requires rip-rel addressing, thus we force it to PIC. Otherwise we
     // use static relocation model by default.
-    if (T.isOSDarwin()) {
+    if (TT.isOSDarwin()) {
       if (is64Bit)
         RM = Reloc::PIC_;
       else
         RM = Reloc::DynamicNoPIC;
-    } else if (T.isOSWindows() && is64Bit)
+    } else if (TT.isOSWindows() && is64Bit)
       RM = Reloc::PIC_;
     else
       RM = Reloc::Static;
@@ -187,13 +180,13 @@ static MCCodeGenInfo *createX86MCCodeGenInfo(StringRef TT, Reloc::Model RM,
   if (RM == Reloc::DynamicNoPIC) {
     if (is64Bit)
       RM = Reloc::PIC_;
-    else if (!T.isOSDarwin())
+    else if (!TT.isOSDarwin())
       RM = Reloc::Static;
   }
 
   // If we are on Darwin, disallow static relocation model in X86-64 mode, since
   // the Mach-O file format doesn't support it.
-  if (RM == Reloc::Static && T.isOSDarwin() && is64Bit)
+  if (RM == Reloc::Static && TT.isOSDarwin() && is64Bit)
     RM = Reloc::PIC_;
 
   // For static codegen, if we're not already set, use Small codegen.
@@ -203,7 +196,7 @@ static MCCodeGenInfo *createX86MCCodeGenInfo(StringRef TT, Reloc::Model RM,
     // 64-bit JIT places everything in the same buffer except external funcs.
     CM = is64Bit ? CodeModel::Large : CodeModel::Small;
 
-  X->InitMCCodeGenInfo(RM, CM, OL);
+  X->initMCCodeGenInfo(RM, CM, OL);
   return X;
 }
 
@@ -219,15 +212,14 @@ static MCInstPrinter *createX86MCInstPrinter(const Triple &T,
   return nullptr;
 }
 
-static MCRelocationInfo *createX86MCRelocationInfo(StringRef TT,
+static MCRelocationInfo *createX86MCRelocationInfo(const Triple &TheTriple,
                                                    MCContext &Ctx) {
-  Triple TheTriple(TT);
   if (TheTriple.isOSBinFormatMachO() && TheTriple.getArch() == Triple::x86_64)
     return createX86_64MachORelocationInfo(Ctx);
   else if (TheTriple.isOSBinFormatELF())
     return createX86_64ELFRelocationInfo(Ctx);
   // Default to the stock relocation info.
-  return llvm::createMCRelocationInfo(TT, Ctx);
+  return llvm::createMCRelocationInfo(TheTriple, Ctx);
 }
 
 static MCInstrAnalysis *createX86MCInstrAnalysis(const MCInstrInfo *Info) {

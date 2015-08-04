@@ -17,6 +17,7 @@
 #include "StatepointLowering.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/IR/CallSite.h"
@@ -340,6 +341,11 @@ private:
     const ConstantInt *LT;
   };
   typedef SmallVector<SwitchWorkListItem, 4> SwitchWorkList;
+
+  /// Determine the rank by weight of CC in [First,Last]. If CC has more weight
+  /// than each cluster in the range, its rank is 0.
+  static unsigned caseClusterRank(const CaseCluster &CC, CaseClusterIt First,
+                                  CaseClusterIt Last);
 
   /// Emit comparison and split W into two subtrees.
   void splitWorkItem(SwitchWorkList &WorkList, const SwitchWorkListItem &W,
@@ -678,12 +684,6 @@ public:
     N = NewN;
   }
 
-  void removeValue(const Value *V) {
-    // This is to support hack in lowerCallFromStatepoint
-    // Should be removed when hack is resolved
-    NodeMap.erase(V);
-  }
-
   void setUnusedArgValue(const Value *V, SDValue NewN) {
     SDValue &N = UnusedArgNodeMap[V];
     assert(!N.getNode() && "Already set a value for this node!");
@@ -692,7 +692,8 @@ public:
 
   void FindMergedConditions(const Value *Cond, MachineBasicBlock *TBB,
                             MachineBasicBlock *FBB, MachineBasicBlock *CurBB,
-                            MachineBasicBlock *SwitchBB, unsigned Opc,
+                            MachineBasicBlock *SwitchBB,
+                            Instruction::BinaryOps Opc,
                             uint32_t TW, uint32_t FW);
   void EmitBranchForMergedCondition(const Value *Cond, MachineBasicBlock *TBB,
                                     MachineBasicBlock *FBB,
@@ -711,7 +712,7 @@ public:
           unsigned ArgIdx,
           unsigned NumArgs,
           SDValue Callee,
-          bool UseVoidTy = false,
+          Type *ReturnTy,
           MachineBasicBlock *LandingPad = nullptr,
           bool IsPatchPoint = false);
 
@@ -734,6 +735,12 @@ private:
   void visitSwitch(const SwitchInst &I);
   void visitIndirectBr(const IndirectBrInst &I);
   void visitUnreachable(const UnreachableInst &I);
+  void visitCleanupRet(const CleanupReturnInst &I);
+  void visitCatchEndPad(const CatchEndPadInst &I);
+  void visitCatchRet(const CatchReturnInst &I);
+  void visitCatchPad(const CatchPadInst &I);
+  void visitTerminatePad(const TerminatePadInst &TPI);
+  void visitCleanupPad(const CleanupPadInst &CPI);
 
   uint32_t getEdgeWeight(const MachineBasicBlock *Src,
                          const MachineBasicBlock *Dst) const;
@@ -755,8 +762,6 @@ public:
   void visitJumpTable(JumpTable &JT);
   void visitJumpTableHeader(JumpTable &JT, JumpTableHeader &JTH,
                             MachineBasicBlock *SwitchBB);
-  unsigned visitLandingPadClauseBB(GlobalValue *ClauseGV,
-                                   MachineBasicBlock *LPadMBB);
 
 private:
   // These all get lowered before this pass.
@@ -866,8 +871,8 @@ private:
   /// EmitFuncArgumentDbgValue - If V is an function argument then create
   /// corresponding DBG_VALUE machine instruction for it now. At the end of
   /// instruction selection, they will be inserted to the entry BB.
-  bool EmitFuncArgumentDbgValue(const Value *V, MDLocalVariable *Variable,
-                                MDExpression *Expr, MDLocation *DL,
+  bool EmitFuncArgumentDbgValue(const Value *V, DILocalVariable *Variable,
+                                DIExpression *Expr, DILocation *DL,
                                 int64_t Offset, bool IsIndirect,
                                 const SDValue &N);
 
@@ -877,6 +882,80 @@ private:
   /// Update the DAG and DAG builder with the relevant information after
   /// a new root node has been created which could be a tail call.
   void updateDAGForMaybeTailCall(SDValue MaybeTC);
+};
+
+/// RegsForValue - This struct represents the registers (physical or virtual)
+/// that a particular set of values is assigned, and the type information about
+/// the value. The most common situation is to represent one value at a time,
+/// but struct or array values are handled element-wise as multiple values.  The
+/// splitting of aggregates is performed recursively, so that we never have
+/// aggregate-typed registers. The values at this point do not necessarily have
+/// legal types, so each value may require one or more registers of some legal
+/// type.
+///
+struct RegsForValue {
+  /// ValueVTs - The value types of the values, which may not be legal, and
+  /// may need be promoted or synthesized from one or more registers.
+  ///
+  SmallVector<EVT, 4> ValueVTs;
+
+  /// RegVTs - The value types of the registers. This is the same size as
+  /// ValueVTs and it records, for each value, what the type of the assigned
+  /// register or registers are. (Individual values are never synthesized
+  /// from more than one type of register.)
+  ///
+  /// With virtual registers, the contents of RegVTs is redundant with TLI's
+  /// getRegisterType member function, however when with physical registers
+  /// it is necessary to have a separate record of the types.
+  ///
+  SmallVector<MVT, 4> RegVTs;
+
+  /// Regs - This list holds the registers assigned to the values.
+  /// Each legal or promoted value requires one register, and each
+  /// expanded value requires multiple registers.
+  ///
+  SmallVector<unsigned, 4> Regs;
+
+  RegsForValue();
+
+  RegsForValue(const SmallVector<unsigned, 4> &regs, MVT regvt, EVT valuevt);
+
+  RegsForValue(LLVMContext &Context, const TargetLowering &TLI,
+               const DataLayout &DL, unsigned Reg, Type *Ty);
+
+  /// append - Add the specified values to this one.
+  void append(const RegsForValue &RHS) {
+    ValueVTs.append(RHS.ValueVTs.begin(), RHS.ValueVTs.end());
+    RegVTs.append(RHS.RegVTs.begin(), RHS.RegVTs.end());
+    Regs.append(RHS.Regs.begin(), RHS.Regs.end());
+  }
+
+  /// getCopyFromRegs - Emit a series of CopyFromReg nodes that copies from
+  /// this value and returns the result as a ValueVTs value.  This uses
+  /// Chain/Flag as the input and updates them for the output Chain/Flag.
+  /// If the Flag pointer is NULL, no flag is used.
+  SDValue getCopyFromRegs(SelectionDAG &DAG, FunctionLoweringInfo &FuncInfo,
+                          SDLoc dl,
+                          SDValue &Chain, SDValue *Flag,
+                          const Value *V = nullptr) const;
+
+  /// getCopyToRegs - Emit a series of CopyToReg nodes that copies the specified
+  /// value into the registers specified by this object.  This uses Chain/Flag
+  /// as the input and updates them for the output Chain/Flag.  If the Flag
+  /// pointer is nullptr, no flag is used.  If V is not nullptr, then it is used
+  /// in printing better diagnostic messages on error.
+  void
+  getCopyToRegs(SDValue Val, SelectionDAG &DAG, SDLoc dl, SDValue &Chain,
+                SDValue *Flag, const Value *V = nullptr,
+                ISD::NodeType PreferredExtendType = ISD::ANY_EXTEND) const;
+
+  /// AddInlineAsmOperands - Add this value to the specified inlineasm node
+  /// operand list.  This adds the code marker, matching input operand index
+  /// (if applicable), and includes the number of values added into it.
+  void AddInlineAsmOperands(unsigned Kind,
+                            bool HasMatching, unsigned MatchingIdx, SDLoc dl,
+                            SelectionDAG &DAG,
+                            std::vector<SDValue> &Ops) const;
 };
 
 } // end namespace llvm

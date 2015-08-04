@@ -67,19 +67,19 @@ namespace {
     const Constant *CP;
     const BlockAddress *BlockAddr;
     const char *ES;
+    MCSymbol *MCSym;
     int JT;
     unsigned Align;    // CP alignment.
     unsigned char SymbolFlags;  // X86II::MO_*
 
     X86ISelAddressMode()
-      : BaseType(RegBase), Base_FrameIndex(0), Scale(1), IndexReg(), Disp(0),
-        Segment(), GV(nullptr), CP(nullptr), BlockAddr(nullptr), ES(nullptr),
-        JT(-1), Align(0), SymbolFlags(X86II::MO_NO_FLAG) {
-    }
+        : BaseType(RegBase), Base_FrameIndex(0), Scale(1), IndexReg(), Disp(0),
+          Segment(), GV(nullptr), CP(nullptr), BlockAddr(nullptr), ES(nullptr),
+          MCSym(nullptr), JT(-1), Align(0), SymbolFlags(X86II::MO_NO_FLAG) {}
 
     bool hasSymbolicDisplacement() const {
       return GV != nullptr || CP != nullptr || ES != nullptr ||
-             JT != -1 || BlockAddr != nullptr;
+             MCSym != nullptr || JT != -1 || BlockAddr != nullptr;
     }
 
     bool hasBaseOrIndexReg() const {
@@ -132,6 +132,11 @@ namespace {
              << "ES ";
       if (ES)
         dbgs() << ES;
+      else
+        dbgs() << "nul";
+      dbgs() << " MCSym ";
+      if (MCSym)
+        dbgs() << MCSym;
       else
         dbgs() << "nul";
       dbgs() << " JT" << JT << " Align" << Align << '\n';
@@ -204,6 +209,9 @@ namespace {
     bool SelectAddr(SDNode *Parent, SDValue N, SDValue &Base,
                     SDValue &Scale, SDValue &Index, SDValue &Disp,
                     SDValue &Segment);
+    bool SelectVectorAddr(SDNode *Parent, SDValue N, SDValue &Base,
+                          SDValue &Scale, SDValue &Index, SDValue &Disp,
+                          SDValue &Segment);
     bool SelectMOV64Imm32(SDValue N, SDValue &Imm);
     bool SelectLEAAddr(SDValue N, SDValue &Base,
                        SDValue &Scale, SDValue &Index, SDValue &Disp,
@@ -238,8 +246,9 @@ namespace {
                                    SDValue &Index, SDValue &Disp,
                                    SDValue &Segment) {
       Base = (AM.BaseType == X86ISelAddressMode::FrameIndexBase)
-                 ? CurDAG->getTargetFrameIndex(AM.Base_FrameIndex,
-                                               TLI->getPointerTy())
+                 ? CurDAG->getTargetFrameIndex(
+                       AM.Base_FrameIndex,
+                       TLI->getPointerTy(CurDAG->getDataLayout()))
                  : AM.Base_Reg;
       Scale = getI8Imm(AM.Scale, DL);
       Index = AM.IndexReg;
@@ -255,6 +264,10 @@ namespace {
       else if (AM.ES) {
         assert(!AM.Disp && "Non-zero displacement is ignored with ES.");
         Disp = CurDAG->getTargetExternalSymbol(AM.ES, MVT::i32, AM.SymbolFlags);
+      } else if (AM.MCSym) {
+        assert(!AM.Disp && "Non-zero displacement is ignored with MCSym.");
+        assert(AM.SymbolFlags == 0 && "oo");
+        Disp = CurDAG->getMCSymbol(AM.MCSym, MVT::i32);
       } else if (AM.JT != -1) {
         assert(!AM.Disp && "Non-zero displacement is ignored with JT.");
         Disp = CurDAG->getTargetJumpTable(AM.JT, MVT::i32, AM.SymbolFlags);
@@ -449,6 +462,7 @@ static bool isCalleeLoad(SDValue Callee, SDValue &Chain, bool HasCallSeq) {
 
 void X86DAGToDAGISel::PreprocessISelDAG() {
   // OptForSize is used in pattern predicates that isel is matching.
+  // FIXME: Use Function::optForSize().
   OptForSize = MF->getFunction()->hasFnAttribute(Attribute::OptimizeForSize);
 
   for (SelectionDAG::allnodes_iterator I = CurDAG->allnodes_begin(),
@@ -569,11 +583,12 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
 void X86DAGToDAGISel::EmitSpecialCodeForMain() {
   if (Subtarget->isTargetCygMing()) {
     TargetLowering::ArgListTy Args;
+    auto &DL = CurDAG->getDataLayout();
 
     TargetLowering::CallLoweringInfo CLI(*CurDAG);
     CLI.setChain(CurDAG->getRoot())
         .setCallee(CallingConv::C, Type::getVoidTy(*CurDAG->getContext()),
-                   CurDAG->getExternalSymbol("__main", TLI->getPointerTy()),
+                   CurDAG->getExternalSymbol("__main", TLI->getPointerTy(DL)),
                    std::move(Args), 0);
     const TargetLowering &TLI = CurDAG->getTargetLoweringInfo();
     std::pair<SDValue, SDValue> Result = TLI.LowerCallTo(CLI);
@@ -600,6 +615,9 @@ static bool isDispSafeForFrameIndex(int64_t Val) {
 
 bool X86DAGToDAGISel::FoldOffsetIntoAddress(uint64_t Offset,
                                             X86ISelAddressMode &AM) {
+  // Cannot combine ExternalSymbol displacements with integer offsets.
+  if (Offset != 0 && (AM.ES || AM.MCSym))
+    return true;
   int64_t Val = AM.Disp + Offset;
   CodeModel::Model M = TM.getCodeModel();
   if (Subtarget->is64Bit()) {
@@ -684,6 +702,8 @@ bool X86DAGToDAGISel::MatchWrapper(SDValue N, X86ISelAddressMode &AM) {
     } else if (ExternalSymbolSDNode *S = dyn_cast<ExternalSymbolSDNode>(N0)) {
       AM.ES = S->getSymbol();
       AM.SymbolFlags = S->getTargetFlags();
+    } else if (auto *S = dyn_cast<MCSymbolSDNode>(N0)) {
+      AM.MCSym = S->getMCSymbol();
     } else if (JumpTableSDNode *J = dyn_cast<JumpTableSDNode>(N0)) {
       AM.JT = J->getIndex();
       AM.SymbolFlags = J->getTargetFlags();
@@ -722,6 +742,8 @@ bool X86DAGToDAGISel::MatchWrapper(SDValue N, X86ISelAddressMode &AM) {
     } else if (ExternalSymbolSDNode *S = dyn_cast<ExternalSymbolSDNode>(N0)) {
       AM.ES = S->getSymbol();
       AM.SymbolFlags = S->getTargetFlags();
+    } else if (auto *S = dyn_cast<MCSymbolSDNode>(N0)) {
+      AM.MCSym = S->getMCSymbol();
     } else if (JumpTableSDNode *J = dyn_cast<JumpTableSDNode>(N0)) {
       AM.JT = J->getIndex();
       AM.SymbolFlags = J->getTargetFlags();
@@ -995,7 +1017,8 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
     // FIXME: JumpTable and ExternalSymbol address currently don't like
     // displacements.  It isn't very important, but this should be fixed for
     // consistency.
-    if (!AM.ES && AM.JT != -1) return true;
+    if (!(AM.ES || AM.MCSym) && AM.JT != -1)
+      return true;
 
     if (ConstantSDNode *Cst = dyn_cast<ConstantSDNode>(N))
       if (!FoldOffsetIntoAddress(Cst->getSExtValue(), AM))
@@ -1005,13 +1028,13 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
 
   switch (N.getOpcode()) {
   default: break;
-  case ISD::FRAME_ALLOC_RECOVER: {
-    if (!AM.hasSymbolicDisplacement())
-      if (const auto *ESNode = dyn_cast<ExternalSymbolSDNode>(N.getOperand(0)))
-        if (ESNode->getOpcode() == ISD::TargetExternalSymbol) {
-          AM.ES = ESNode->getSymbol();
-          return false;
-        }
+  case ISD::LOCAL_RECOVER: {
+    if (!AM.hasSymbolicDisplacement() && AM.Disp == 0)
+      if (const auto *ESNode = dyn_cast<MCSymbolSDNode>(N.getOperand(0))) {
+        // Use the symbol and don't prefix it.
+        AM.MCSym = ESNode->getMCSymbol();
+        return false;
+      }
     break;
   }
   case ISD::Constant: {
@@ -1317,6 +1340,42 @@ bool X86DAGToDAGISel::MatchAddressBase(SDValue N, X86ISelAddressMode &AM) {
   return false;
 }
 
+bool X86DAGToDAGISel::SelectVectorAddr(SDNode *Parent, SDValue N, SDValue &Base,
+                                      SDValue &Scale, SDValue &Index,
+                                      SDValue &Disp, SDValue &Segment) {
+
+  MaskedGatherScatterSDNode *Mgs = dyn_cast<MaskedGatherScatterSDNode>(Parent);
+  if (!Mgs)
+    return false;
+  X86ISelAddressMode AM;
+  unsigned AddrSpace = Mgs->getPointerInfo().getAddrSpace();
+  // AddrSpace 256 -> GS, 257 -> FS.
+  if (AddrSpace == 256)
+    AM.Segment = CurDAG->getRegister(X86::GS, MVT::i16);
+  if (AddrSpace == 257)
+    AM.Segment = CurDAG->getRegister(X86::FS, MVT::i16);
+
+  SDLoc DL(N);
+  Base = Mgs->getBasePtr();
+  Index = Mgs->getIndex();
+  unsigned ScalarSize = Mgs->getValue().getValueType().getScalarSizeInBits();
+  Scale = getI8Imm(ScalarSize/8, DL);
+
+  // If Base is 0, the whole address is in index and the Scale is 1
+  if (isa<ConstantSDNode>(Base)) {
+    assert(dyn_cast<ConstantSDNode>(Base)->isNullValue() &&
+           "Unexpected base in gather/scatter");
+    Scale = getI8Imm(1, DL);
+    Base = CurDAG->getRegister(0, MVT::i32);
+  }
+  if (AM.Segment.getNode())
+    Segment = AM.Segment;
+  else
+    Segment = CurDAG->getRegister(0, MVT::i32);
+  Disp = CurDAG->getTargetConstant(0, DL, MVT::i32);
+  return true;
+}
+
 /// SelectAddr - returns true if it is able pattern match an addressing mode.
 /// It returns the operands which make up the maximal addressing mode it can
 /// match by reference.
@@ -1429,6 +1488,7 @@ bool X86DAGToDAGISel::SelectMOV64Imm32(SDValue N, SDValue &Imm) {
       N->getOpcode() != ISD::TargetJumpTable &&
       N->getOpcode() != ISD::TargetGlobalAddress &&
       N->getOpcode() != ISD::TargetExternalSymbol &&
+      N->getOpcode() != ISD::MCSymbol &&
       N->getOpcode() != ISD::TargetBlockAddress)
     return false;
 
@@ -1581,7 +1641,8 @@ bool X86DAGToDAGISel::TryFoldLoad(SDNode *P, SDValue N,
 ///
 SDNode *X86DAGToDAGISel::getGlobalBaseReg() {
   unsigned GlobalBaseReg = getInstrInfo()->getGlobalBaseReg(MF);
-  return CurDAG->getRegister(GlobalBaseReg, TLI->getPointerTy()).getNode();
+  auto &DL = MF->getDataLayout();
+  return CurDAG->getRegister(GlobalBaseReg, TLI->getPointerTy(DL)).getNode();
 }
 
 /// Atomic opcode table
@@ -2833,10 +2894,16 @@ SelectInlineAsmMemoryOperand(const SDValue &Op, unsigned ConstraintID,
                              std::vector<SDValue> &OutOps) {
   SDValue Op0, Op1, Op2, Op3, Op4;
   switch (ConstraintID) {
+  default:
+    llvm_unreachable("Unexpected asm memory constraint");
+  case InlineAsm::Constraint_i:
+    // FIXME: It seems strange that 'i' is needed here since it's supposed to
+    //        be an immediate and not a memory constraint.
+    // Fallthrough.
   case InlineAsm::Constraint_o: // offsetable        ??
   case InlineAsm::Constraint_v: // not offsetable    ??
-  default: return true;
   case InlineAsm::Constraint_m: // memory
+  case InlineAsm::Constraint_X:
     if (!SelectAddr(nullptr, Op, Op0, Op1, Op2, Op3, Op4))
       return true;
     break;

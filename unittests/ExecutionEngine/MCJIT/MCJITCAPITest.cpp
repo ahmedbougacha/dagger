@@ -127,6 +127,8 @@ protected:
     SupportedArchs.push_back(Triple::aarch64);
     SupportedArchs.push_back(Triple::arm);
     SupportedArchs.push_back(Triple::mips);
+    SupportedArchs.push_back(Triple::mips64);
+    SupportedArchs.push_back(Triple::mips64el);
     SupportedArchs.push_back(Triple::x86);
     SupportedArchs.push_back(Triple::x86_64);
 
@@ -486,3 +488,44 @@ TEST_F(MCJITCAPITest, yield) {
   EXPECT_TRUE(didCallYield);
 }
 
+static int localTestFunc() {
+  return 42;
+}
+
+TEST_F(MCJITCAPITest, addGlobalMapping) {
+  SKIP_UNSUPPORTED_PLATFORM;
+
+  Module = LLVMModuleCreateWithName("testModule");
+  LLVMSetTarget(Module, HostTriple.c_str());
+  LLVMTypeRef FunctionType = LLVMFunctionType(LLVMInt32Type(), NULL, 0, 0);
+  LLVMValueRef MappedFn = LLVMAddFunction(Module, "mapped_fn", FunctionType);
+
+  Function = LLVMAddFunction(Module, "test_fn", FunctionType);
+  LLVMBasicBlockRef Entry = LLVMAppendBasicBlock(Function, "");
+  LLVMBuilderRef Builder = LLVMCreateBuilder();
+  LLVMPositionBuilderAtEnd(Builder, Entry);
+  LLVMValueRef RetVal = LLVMBuildCall(Builder, MappedFn, NULL, 0, "");
+  LLVMBuildRet(Builder, RetVal);
+  LLVMDisposeBuilder(Builder);
+
+  LLVMVerifyModule(Module, LLVMAbortProcessAction, &Error);
+  LLVMDisposeMessage(Error);
+
+  buildMCJITOptions();
+  buildMCJITEngine();
+
+  union {
+    int (*raw)();
+    void *usable;
+  } functionPointer;
+  functionPointer.raw = &localTestFunc;
+
+  LLVMAddGlobalMapping(Engine, MappedFn, functionPointer.usable);
+
+  buildAndRunPasses();
+
+  uint64_t raw = LLVMGetFunctionAddress(Engine, "test_fn");
+  int (*usable)() = (int (*)()) raw;
+
+  EXPECT_EQ(42, usable());
+}

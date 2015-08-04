@@ -27,15 +27,17 @@ namespace dsymutil {
 struct LinkOptions {
   bool Verbose;  ///< Verbosity
   bool NoOutput; ///< Skip emitting output
+  bool NoODR;    ///< Do not unique types according to ODR
 
   LinkOptions() : Verbose(false), NoOutput(false) {}
 };
 
 /// \brief Extract the DebugMap from the given file.
 /// The file has to be a MachO object file.
-llvm::ErrorOr<std::unique_ptr<DebugMap>>
-parseDebugMap(StringRef InputFile, StringRef PrependPath = "",
-              bool Verbose = false);
+llvm::ErrorOr<std::unique_ptr<DebugMap>> parseDebugMap(StringRef InputFile,
+                                                       StringRef PrependPath,
+                                                       bool Verbose,
+                                                       bool InputIsYAML);
 
 /// \brief Link the Dwarf debuginfo as directed by the passed DebugMap
 /// \p DM into a DwarfFile named \p OutputFilename.

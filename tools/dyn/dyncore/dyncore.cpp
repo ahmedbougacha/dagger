@@ -102,15 +102,14 @@ public:
   typedef LazyEmitLayerT::ModuleSetHandleT ModuleHandleT;
 
   DYNJIT(TargetMachine &TM)
-    : Mang(TM.getDataLayout()),
-      CompileLayer(ObjectLayer, SimpleCompiler(TM)),
-      LazyEmitLayer(CompileLayer) {}
+      : DL(TM.createDataLayout()), CompileLayer(ObjectLayer, SimpleCompiler(TM)),
+        LazyEmitLayer(CompileLayer) {}
 
   std::string mangle(const std::string &Name) {
     std::string MangledName;
     {
       raw_string_ostream MangledNameStream(MangledName);
-      Mang.getNameWithPrefix(MangledNameStream, Name);
+      Mangler::getNameWithPrefix(MangledNameStream, Name, DL);
     }
     return MangledName;
   }
@@ -148,7 +147,7 @@ public:
   }
 
 private:
-  Mangler Mang;
+  const DataLayout DL;
   ObjLayerT ObjectLayer;
   CompileLayerT CompileLayer;
   LazyEmitLayerT LazyEmitLayer;
@@ -359,7 +358,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   if (!TM)
     llvm_unreachable("Unable to select target machine for JIT!");
 
-  const DataLayout *DL = TM->getDataLayout();
+  const DataLayout DL = TM->createDataLayout();
 
   // Add the program's symbols into the JIT's search space.
   if (sys::DynamicLibrary::LoadLibraryPermanently(nullptr)) {
@@ -370,7 +369,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   DYNJIT J(*TM);
 
   std::unique_ptr<DCTranslator> DT(
-    new DCTranslator(getGlobalContext(), DL->getStringRepresentation(),
+    new DCTranslator(getGlobalContext(), DL.getStringRepresentation(),
                      TransOpt::Default, *DIS, *DRS,
                      *MIP, *STI, *MCM, OD.get()));
 
@@ -386,7 +385,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   // Add these to the JIT.
   J.addModule(DT->finalizeTranslationModule());
 
-  const StructLayout *SL = DL->getStructLayout(DRS->getRegSetType());
+  const StructLayout *SL = DL.getStructLayout(DRS->getRegSetType());
   std::vector<uint8_t> RegSet(SL->getSizeInBytes());
   const unsigned StackSize = 4096 * 1024;
   std::vector<uint8_t> StackPtr(StackSize);

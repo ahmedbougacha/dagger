@@ -166,8 +166,8 @@ bool FunctionAttrs::AddReadAttrs(const CallGraphSCC &SCC) {
       // memory and give up.
       return false;
 
-    AliasAnalysis::ModRefBehavior MRB = AA->getModRefBehavior(F);
-    if (MRB == AliasAnalysis::DoesNotAccessMemory)
+    FunctionModRefBehavior MRB = AA->getModRefBehavior(F);
+    if (MRB == FMRB_DoesNotAccessMemory)
       // Already perfect!
       continue;
 
@@ -193,7 +193,7 @@ bool FunctionAttrs::AddReadAttrs(const CallGraphSCC &SCC) {
         // Ignore calls to functions in the same SCC.
         if (CS.getCalledFunction() && SCCNodes.count(CS.getCalledFunction()))
           continue;
-        AliasAnalysis::ModRefBehavior MRB = AA->getModRefBehavior(CS);
+        FunctionModRefBehavior MRB = AA->getModRefBehavior(CS);
         // If the call doesn't access arbitrary memory, we may be able to
         // figure out something.
         if (AliasAnalysis::onlyAccessesArgPointees(MRB)) {
@@ -208,13 +208,12 @@ bool FunctionAttrs::AddReadAttrs(const CallGraphSCC &SCC) {
                 AAMDNodes AAInfo;
                 I->getAAMetadata(AAInfo);
 
-                AliasAnalysis::Location Loc(Arg,
-                                            AliasAnalysis::UnknownSize, AAInfo);
+                MemoryLocation Loc(Arg, MemoryLocation::UnknownSize, AAInfo);
                 if (!AA->pointsToConstantMemory(Loc, /*OrLocal=*/true)) {
-                  if (MRB & AliasAnalysis::Mod)
+                  if (MRB & MRI_Mod)
                     // Writes non-local memory.  Give up.
                     return false;
-                  if (MRB & AliasAnalysis::Ref)
+                  if (MRB & MRI_Ref)
                     // Ok, it reads non-local memory.
                     ReadsMemory = true;
                 }
@@ -223,29 +222,29 @@ bool FunctionAttrs::AddReadAttrs(const CallGraphSCC &SCC) {
           continue;
         }
         // The call could access any memory. If that includes writes, give up.
-        if (MRB & AliasAnalysis::Mod)
+        if (MRB & MRI_Mod)
           return false;
         // If it reads, note it.
-        if (MRB & AliasAnalysis::Ref)
+        if (MRB & MRI_Ref)
           ReadsMemory = true;
         continue;
       } else if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
         // Ignore non-volatile loads from local memory. (Atomic is okay here.)
         if (!LI->isVolatile()) {
-          AliasAnalysis::Location Loc = AA->getLocation(LI);
+          MemoryLocation Loc = MemoryLocation::get(LI);
           if (AA->pointsToConstantMemory(Loc, /*OrLocal=*/true))
             continue;
         }
       } else if (StoreInst *SI = dyn_cast<StoreInst>(I)) {
         // Ignore non-volatile stores to local memory. (Atomic is okay here.)
         if (!SI->isVolatile()) {
-          AliasAnalysis::Location Loc = AA->getLocation(SI);
+          MemoryLocation Loc = MemoryLocation::get(SI);
           if (AA->pointsToConstantMemory(Loc, /*OrLocal=*/true))
             continue;
         }
       } else if (VAArgInst *VI = dyn_cast<VAArgInst>(I)) {
         // Ignore vaargs on local memory.
-        AliasAnalysis::Location Loc = AA->getLocation(VI);
+        MemoryLocation Loc = MemoryLocation::get(VI);
         if (AA->pointsToConstantMemory(Loc, /*OrLocal=*/true))
           continue;
       }
@@ -416,7 +415,6 @@ determinePointerReadAttrs(Argument *A,
                                                        
   SmallVector<Use*, 32> Worklist;
   SmallSet<Use*, 32> Visited;
-  int Count = 0;
 
   // inalloca arguments are always clobbered by the call.
   if (A->hasInAllocaAttr())
@@ -426,9 +424,6 @@ determinePointerReadAttrs(Argument *A,
   // We don't need to track IsWritten. If A is written to, return immediately.
 
   for (Use &U : A->uses()) {
-    if (Count++ >= 20)
-      return Attribute::None;
-
     Visited.insert(&U);
     Worklist.push_back(&U);
   }
@@ -703,10 +698,14 @@ bool FunctionAttrs::AddArgumentAttrs(const CallGraphSCC &SCC) {
     }
 
     if (ReadAttr != Attribute::None) {
-      AttrBuilder B;
+      AttrBuilder B, R;
       B.addAttribute(ReadAttr);
+      R.addAttribute(Attribute::ReadOnly)
+        .addAttribute(Attribute::ReadNone);
       for (unsigned i = 0, e = ArgumentSCC.size(); i != e; ++i) {
         Argument *A = ArgumentSCC[i]->Definition;
+        // Clear out existing readonly/readnone attributes
+        A->removeAttr(AttributeSet::get(A->getContext(), A->getArgNo() + 1, R));
         A->addAttr(AttributeSet::get(A->getContext(), A->getArgNo() + 1, B));
         ReadAttr == Attribute::ReadOnly ? ++NumReadOnlyArg : ++NumReadNoneArg;
         Changed = true;
@@ -755,8 +754,8 @@ bool FunctionAttrs::IsFunctionMallocLike(Function *F,
         }
         case Instruction::PHI: {
           PHINode *PN = cast<PHINode>(RVI);
-          for (int i = 0, e = PN->getNumIncomingValues(); i != e; ++i)
-            FlowsToReturn.insert(PN->getIncomingValue(i));
+          for (Value *IncValue : PN->incoming_values())
+            FlowsToReturn.insert(IncValue);
           continue;
         }
 

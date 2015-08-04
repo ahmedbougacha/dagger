@@ -31,8 +31,7 @@ MSP430Subtarget::initializeSubtargetDependencies(StringRef CPU, StringRef FS) {
   return *this;
 }
 
-MSP430Subtarget::MSP430Subtarget(const std::string &TT, const std::string &CPU,
+MSP430Subtarget::MSP430Subtarget(const Triple &TT, const std::string &CPU,
                                  const std::string &FS, const TargetMachine &TM)
     : MSP430GenSubtargetInfo(TT, CPU, FS), FrameLowering(),
-      InstrInfo(initializeSubtargetDependencies(CPU, FS)), TLInfo(TM, *this),
-      TSInfo(*TM.getDataLayout()) {}
+      InstrInfo(initializeSubtargetDependencies(CPU, FS)), TLInfo(TM, *this) {}

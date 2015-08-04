@@ -43,11 +43,9 @@ using namespace llvm;
 
 /// Select the Mips CPU for the given triple and cpu name.
 /// FIXME: Merge with the copy in MipsSubtarget.cpp
-StringRef MIPS_MC::selectMipsCPU(StringRef TT, StringRef CPU) {
+StringRef MIPS_MC::selectMipsCPU(const Triple &TT, StringRef CPU) {
   if (CPU.empty() || CPU == "generic") {
-    Triple TheTriple(TT);
-    if (TheTriple.getArch() == Triple::mips ||
-        TheTriple.getArch() == Triple::mipsel)
+    if (TT.getArch() == Triple::mips || TT.getArch() == Triple::mipsel)
       CPU = "mips32";
     else
       CPU = "mips64";
@@ -61,21 +59,20 @@ static MCInstrInfo *createMipsMCInstrInfo() {
   return X;
 }
 
-static MCRegisterInfo *createMipsMCRegisterInfo(StringRef TT) {
+static MCRegisterInfo *createMipsMCRegisterInfo(const Triple &TT) {
   MCRegisterInfo *X = new MCRegisterInfo();
   InitMipsMCRegisterInfo(X, Mips::RA);
   return X;
 }
 
-static MCSubtargetInfo *createMipsMCSubtargetInfo(StringRef TT, StringRef CPU,
-                                                  StringRef FS) {
+static MCSubtargetInfo *createMipsMCSubtargetInfo(const Triple &TT,
+                                                  StringRef CPU, StringRef FS) {
   CPU = MIPS_MC::selectMipsCPU(TT, CPU);
-  MCSubtargetInfo *X = new MCSubtargetInfo();
-  InitMipsMCSubtargetInfo(X, TT, CPU, FS);
-  return X;
+  return createMipsMCSubtargetInfoImpl(TT, CPU, FS);
 }
 
-static MCAsmInfo *createMipsMCAsmInfo(const MCRegisterInfo &MRI, StringRef TT) {
+static MCAsmInfo *createMipsMCAsmInfo(const MCRegisterInfo &MRI,
+                                      const Triple &TT) {
   MCAsmInfo *MAI = new MipsMCAsmInfo(TT);
 
   unsigned SP = MRI.getDwarfRegNum(Mips::SP, true);
@@ -85,7 +82,7 @@ static MCAsmInfo *createMipsMCAsmInfo(const MCRegisterInfo &MRI, StringRef TT) {
   return MAI;
 }
 
-static MCCodeGenInfo *createMipsMCCodeGenInfo(StringRef TT, Reloc::Model RM,
+static MCCodeGenInfo *createMipsMCCodeGenInfo(const Triple &TT, Reloc::Model RM,
                                               CodeModel::Model CM,
                                               CodeGenOpt::Level OL) {
   MCCodeGenInfo *X = new MCCodeGenInfo();
@@ -93,7 +90,7 @@ static MCCodeGenInfo *createMipsMCCodeGenInfo(StringRef TT, Reloc::Model RM,
     RM = Reloc::Static;
   else if (RM == Reloc::Default)
     RM = Reloc::PIC_;
-  X->InitMCCodeGenInfo(RM, CM, OL);
+  X->initMCCodeGenInfo(RM, CM, OL);
   return X;
 }
 

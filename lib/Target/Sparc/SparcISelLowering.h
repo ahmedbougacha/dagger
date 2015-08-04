@@ -22,7 +22,7 @@ namespace llvm {
   class SparcSubtarget;
 
   namespace SPISD {
-    enum {
+    enum NodeType : unsigned {
       FIRST_NUMBER = ISD::BUILTIN_OP_END,
       CMPICC,      // Compare two GPR operands, set icc+xcc.
       CMPFCC,      // Compare two FP operands, set fcc.
@@ -72,7 +72,7 @@ namespace llvm {
 
     const char *getTargetNodeName(unsigned Opcode) const override;
 
-    ConstraintType getConstraintType(const std::string &Constraint) const override;
+    ConstraintType getConstraintType(StringRef Constraint) const override;
     ConstraintWeight
     getSingleConstraintMatchWeight(AsmOperandInfo &info,
                                    const char *constraint) const override;
@@ -82,14 +82,16 @@ namespace llvm {
                                       SelectionDAG &DAG) const override;
     std::pair<unsigned, const TargetRegisterClass *>
     getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
-                                 const std::string &Constraint,
-                                 MVT VT) const override;
+                                 StringRef Constraint, MVT VT) const override;
 
     bool isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const override;
-    MVT getScalarShiftAmountTy(EVT LHSTy) const override { return MVT::i32; }
+    MVT getScalarShiftAmountTy(const DataLayout &, EVT) const override {
+      return MVT::i32;
+    }
 
     /// getSetCCResultType - Return the ISD::SETCC ValueType
-    EVT getSetCCResultType(LLVMContext &Context, EVT VT) const override;
+    EVT getSetCCResultType(const DataLayout &DL, LLVMContext &Context,
+                           EVT VT) const override;
 
     SDValue
       LowerFormalArguments(SDValue Chain,

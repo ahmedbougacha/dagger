@@ -24,7 +24,7 @@
 
 namespace llvm {
   namespace PPCISD {
-    enum NodeType {
+    enum NodeType : unsigned {
       // Start the numbering where the builtin ops and target ops leave off.
       FIRST_NUMBER = ISD::BUILTIN_OP_END,
 
@@ -275,6 +275,16 @@ namespace llvm {
       /// operand identifies the operating system entry point.
       SC,
 
+      /// CHAIN = CLRBHRB CHAIN - Clear branch history rolling buffer.
+      CLRBHRB,
+
+      /// GPRC, CHAIN = MFBHRBE CHAIN, Entry, Dummy - Move from branch
+      /// history rolling buffer entry.
+      MFBHRBE,
+
+      /// CHAIN = RFEBB CHAIN, State - Return from event-based branch.
+      RFEBB,
+
       /// VSRC, CHAIN = XXSWAPD CHAIN, VSRC - Occurs only for little
       /// endian.  Maps to an xxswapd instruction that corrects an lxvd2x
       /// or stxvd2x instruction.  The chain is necessary because the
@@ -357,6 +367,11 @@ namespace llvm {
     bool isVPKUWUMShuffleMask(ShuffleVectorSDNode *N, unsigned ShuffleKind,
                               SelectionDAG &DAG);
 
+    /// isVPKUDUMShuffleMask - Return true if this is the shuffle mask for a
+    /// VPKUDUM instruction.
+    bool isVPKUDUMShuffleMask(ShuffleVectorSDNode *N, unsigned ShuffleKind,
+                              SelectionDAG &DAG);
+
     /// isVMRGLShuffleMask - Return true if this is a shuffle mask suitable for
     /// a VRGL* instruction with the specified unit size (1,2 or 4 bytes).
     bool isVMRGLShuffleMask(ShuffleVectorSDNode *N, unsigned UnitSize,
@@ -367,6 +382,11 @@ namespace llvm {
     bool isVMRGHShuffleMask(ShuffleVectorSDNode *N, unsigned UnitSize,
                             unsigned ShuffleKind, SelectionDAG &DAG);
 
+    /// isVMRGEOShuffleMask - Return true if this is a shuffle mask suitable for
+    /// a VMRGEW or VMRGOW instruction
+    bool isVMRGEOShuffleMask(ShuffleVectorSDNode *N, bool CheckEven,
+                             unsigned ShuffleKind, SelectionDAG &DAG);
+  
     /// isVSLDOIShuffleMask - If this is a vsldoi shuffle mask, return the
     /// shift amount, otherwise return -1.
     int isVSLDOIShuffleMask(SDNode *N, unsigned ShuffleKind,
@@ -403,7 +423,9 @@ namespace llvm {
     /// DAG node.
     const char *getTargetNodeName(unsigned Opcode) const override;
 
-    MVT getScalarShiftAmountTy(EVT LHSTy) const override { return MVT::i32; }
+    MVT getScalarShiftAmountTy(const DataLayout &, EVT) const override {
+      return MVT::i32;
+    }
 
     bool isCheapToSpeculateCttz() const override {
       return true;
@@ -414,7 +436,8 @@ namespace llvm {
     }
 
     /// getSetCCResultType - Return the ISD::SETCC ValueType
-    EVT getSetCCResultType(LLVMContext &Context, EVT VT) const override;
+    EVT getSetCCResultType(const DataLayout &DL, LLVMContext &Context,
+                           EVT VT) const override;
 
     /// Return true if target always beneficiates from combining into FMA for a
     /// given value type. This must typically return false on targets where FMA
@@ -467,7 +490,8 @@ namespace llvm {
     SDValue BuildSDIVPow2(SDNode *N, const APInt &Divisor, SelectionDAG &DAG,
                           std::vector<SDNode *> *Created) const override;
 
-    unsigned getRegisterByName(const char* RegName, EVT VT) const override;
+    unsigned getRegisterByName(const char* RegName, EVT VT,
+                               SelectionDAG &DAG) const override;
 
     void computeKnownBitsForTargetNode(const SDValue Op,
                                        APInt &KnownZero,
@@ -499,8 +523,7 @@ namespace llvm {
     MachineBasicBlock *emitEHSjLjLongJmp(MachineInstr *MI,
                                          MachineBasicBlock *MBB) const;
 
-    ConstraintType
-    getConstraintType(const std::string &Constraint) const override;
+    ConstraintType getConstraintType(StringRef Constraint) const override;
 
     /// Examine constraint string and operand type and determine a weight value.
     /// The operand object must already have been set up with the operand type.
@@ -509,13 +532,13 @@ namespace llvm {
 
     std::pair<unsigned, const TargetRegisterClass *>
     getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
-                                 const std::string &Constraint,
-                                 MVT VT) const override;
+                                 StringRef Constraint, MVT VT) const override;
 
     /// getByValTypeAlignment - Return the desired alignment for ByVal aggregate
     /// function arguments in the caller parameter area.  This is the actual
     /// alignment, not its logarithm.
-    unsigned getByValTypeAlignment(Type *Ty) const override;
+    unsigned getByValTypeAlignment(Type *Ty,
+                                   const DataLayout &DL) const override;
 
     /// LowerAsmOperandForConstraint - Lower the specified operand into the Ops
     /// vector.  If it is invalid, don't add anything to Ops.
@@ -524,8 +547,8 @@ namespace llvm {
                                       std::vector<SDValue> &Ops,
                                       SelectionDAG &DAG) const override;
 
-    unsigned getInlineAsmMemConstraint(
-        const std::string &ConstraintCode) const override {
+    unsigned
+    getInlineAsmMemConstraint(StringRef ConstraintCode) const override {
       if (ConstraintCode == "es")
         return InlineAsm::Constraint_es;
       else if (ConstraintCode == "o")
@@ -541,7 +564,8 @@ namespace llvm {
 
     /// isLegalAddressingMode - Return true if the addressing mode represented
     /// by AM is legal for this target, for a load/store of the specified type.
-    bool isLegalAddressingMode(const AddrMode &AM, Type *Ty) const override;
+    bool isLegalAddressingMode(const DataLayout &DL, const AddrMode &AM,
+                               Type *Ty, unsigned AS) const override;
 
     /// isLegalICmpImmediate - Return true if the specified immediate is legal
     /// icmp immediate, that is the target has icmp instructions which can
@@ -724,7 +748,7 @@ namespace llvm {
                             SDLoc dl, SelectionDAG &DAG,
                             SmallVectorImpl<SDValue> &InVals) const;
     SDValue FinishCall(CallingConv::ID CallConv, SDLoc dl, bool isTailCall,
-                       bool isVarArg, bool IsPatchPoint,
+                       bool isVarArg, bool IsPatchPoint, bool hasNest,
                        SelectionDAG &DAG,
                        SmallVector<std::pair<unsigned, SDValue>, 8>
                          &RegsToPass,
@@ -829,7 +853,7 @@ namespace llvm {
                              bool &UseOneConstNR) const override;
     SDValue getRecipEstimate(SDValue Operand, DAGCombinerInfo &DCI,
                              unsigned &RefinementSteps) const override;
-    bool combineRepeatedFPDivisors(unsigned NumUsers) const override;
+    unsigned combineRepeatedFPDivisors() const override;
 
     CCAssignFn *useFastISelCCs(unsigned Flag) const;
   };

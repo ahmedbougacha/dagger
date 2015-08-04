@@ -19,7 +19,14 @@ using namespace llvm;
 //---------------------------------------------------------------------------
 // TargetSubtargetInfo Class
 //
-TargetSubtargetInfo::TargetSubtargetInfo() {}
+TargetSubtargetInfo::TargetSubtargetInfo(
+    const Triple &TT, StringRef CPU, StringRef FS,
+    ArrayRef<SubtargetFeatureKV> PF, ArrayRef<SubtargetFeatureKV> PD,
+    const SubtargetInfoKV *ProcSched, const MCWriteProcResEntry *WPR,
+    const MCWriteLatencyEntry *WL, const MCReadAdvanceEntry *RA,
+    const InstrStage *IS, const unsigned *OC, const unsigned *FP)
+    : MCSubtargetInfo(TT, CPU, FS, PF, PD, ProcSched, WPR, WL, RA, IS, OC, FP) {
+}
 
 TargetSubtargetInfo::~TargetSubtargetInfo() {}
 
@@ -40,7 +47,7 @@ bool TargetSubtargetInfo::enableRALocalReassignment(
   return true;
 }
 
-bool TargetSubtargetInfo::enablePostMachineScheduler() const {
+bool TargetSubtargetInfo::enablePostRAScheduler() const {
   return getSchedModel().PostRAScheduler;
 }
 

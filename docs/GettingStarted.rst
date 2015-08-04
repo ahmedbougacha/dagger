@@ -1,5 +1,5 @@
 ====================================
-Getting Started with the LLVM System  
+Getting Started with the LLVM System
 ====================================
 
 .. contents::
@@ -49,11 +49,18 @@ Here's the short story for getting up and running quickly with LLVM:
    * ``cd llvm/tools``
    * ``svn co http://llvm.org/svn/llvm-project/cfe/trunk clang``
 
-#. Checkout Compiler-RT:
+#. Checkout Compiler-RT (required to build the sanitizers):
 
    * ``cd where-you-want-llvm-to-live``
    * ``cd llvm/projects``
    * ``svn co http://llvm.org/svn/llvm-project/compiler-rt/trunk compiler-rt``
+
+#. Checkout libcxx and libcxxabi **[Optional]**:
+
+   * ``cd where-you-want-llvm-to-live``
+   * ``cd llvm/projects``
+   * ``svn co http://llvm.org/svn/llvm-project/libcxx/trunk libcxx``
+   * ``svn co http://llvm.org/svn/llvm-project/libcxxabi/trunk libcxxabi``
 
 #. Get the Test Suite Source Code **[Optional]**
 
@@ -62,7 +69,7 @@ Here's the short story for getting up and running quickly with LLVM:
    * ``svn co http://llvm.org/svn/llvm-project/test-suite/trunk test-suite``
 
 #. Configure and build LLVM and Clang:
-   
+
    The usual build uses `CMake <CMake.html>`_. If you would rather use
    autotools, see `Building LLVM with autotools <BuildingLLVMWithAutotools.html>`_.
 
@@ -70,7 +77,7 @@ Here's the short story for getting up and running quickly with LLVM:
    * ``mkdir build``
    * ``cd build``
    * ``cmake -G <generator> [options] <path to llvm sources>``
-     
+
      Some common generators are:
 
      * ``Unix Makefiles`` --- for generating make-compatible parallel makefiles.
@@ -79,7 +86,7 @@ Here's the short story for getting up and running quickly with LLVM:
      * ``Visual Studio`` --- for generating Visual Studio projects and
         solutions.
      * ``Xcode`` --- for generating Xcode projects.
-     
+
      Some Common options:
 
      * ``-DCMAKE_INSTALL_PREFIX=directory`` --- Specify for *directory* the full
@@ -125,20 +132,20 @@ Hardware
 LLVM is known to work on the following host platforms:
 
 ================== ===================== =============
-OS                 Arch                  Compilers               
+OS                 Arch                  Compilers
 ================== ===================== =============
-Linux              x86\ :sup:`1`         GCC, Clang              
-Linux              amd64                 GCC, Clang              
-Linux              ARM\ :sup:`4`         GCC, Clang              
-Linux              PowerPC               GCC, Clang              
-Solaris            V9 (Ultrasparc)       GCC                     
-FreeBSD            x86\ :sup:`1`         GCC, Clang              
-FreeBSD            amd64                 GCC, Clang              
-MacOS X\ :sup:`2`  PowerPC               GCC                     
-MacOS X            x86                   GCC, Clang              
-Cygwin/Win32       x86\ :sup:`1, 3`      GCC                     
-Windows            x86\ :sup:`1`         Visual Studio           
-Windows x64        x86-64                Visual Studio           
+Linux              x86\ :sup:`1`         GCC, Clang
+Linux              amd64                 GCC, Clang
+Linux              ARM\ :sup:`4`         GCC, Clang
+Linux              PowerPC               GCC, Clang
+Solaris            V9 (Ultrasparc)       GCC
+FreeBSD            x86\ :sup:`1`         GCC, Clang
+FreeBSD            amd64                 GCC, Clang
+MacOS X\ :sup:`2`  PowerPC               GCC
+MacOS X            x86                   GCC, Clang
+Cygwin/Win32       x86\ :sup:`1, 3`      GCC
+Windows            x86\ :sup:`1`         Visual Studio
+Windows x64        x86-64                Visual Studio
 ================== ===================== =============
 
 .. note::
@@ -207,14 +214,14 @@ Unix utilities. Specifically:
 * **chmod** --- change permissions on a file
 * **cat** --- output concatenation utility
 * **cp** --- copy files
-* **date** --- print the current date/time 
+* **date** --- print the current date/time
 * **echo** --- print to standard output
 * **egrep** --- extended regular expression search utility
 * **find** --- find files/dirs in a file system
 * **grep** --- regular expression search utility
 * **gzip** --- gzip command for distribution generation
 * **gunzip** --- gunzip command for distribution checking
-* **install** --- install directories/files 
+* **install** --- install directories/files
 * **mkdir** --- create a directory
 * **mv** --- move (rename) files
 * **ranlib** --- symbol table builder for archive libraries
@@ -326,7 +333,11 @@ Easy steps for installing GCC 4.8.2:
 
 .. code-block:: console
 
-  % wget ftp://ftp.gnu.org/gnu/gcc/gcc-4.8.2/gcc-4.8.2.tar.bz2
+  % wget https://ftp.gnu.org/gnu/gcc/gcc-4.8.2/gcc-4.8.2.tar.bz2
+  % wget https://ftp.gnu.org/gnu/gcc/gcc-4.8.2/gcc-4.8.2.tar.bz2.sig
+  % wget https://ftp.gnu.org/gnu/gnu-keyring.gpg
+  % signature_invalid=`gpg --verify --no-default-keyring --keyring ./gnu-keyring.gpg gcc-4.8.2.tar.bz2.sig`
+  % if [ $signature_invalid ]; then echo "Invalid signature" ; exit 1 ; fi
   % tar -xvjf gcc-4.8.2.tar.bz2
   % cd gcc-4.8.2
   % ./contrib/download_prerequisites
@@ -517,12 +528,20 @@ If you want to check out clang too, run:
   % cd llvm/tools
   % git clone http://llvm.org/git/clang.git
 
-If you want to check out compiler-rt too, run:
+If you want to check out compiler-rt (required to build the sanitizers), run:
 
 .. code-block:: console
 
   % cd llvm/projects
   % git clone http://llvm.org/git/compiler-rt.git
+
+If you want to check out libcxx and libcxxabi (optional), run:
+
+.. code-block:: console
+
+  % cd llvm/projects
+  % git clone http://llvm.org/git/libcxx.git
+  % git clone http://llvm.org/git/libcxxabi.git
 
 If you want to check out the Test Suite Source Code (optional), run:
 
@@ -711,7 +730,7 @@ used by people developing LLVM.
 |                         | as ``LLVM_ALL_TARGETS``, and can be set to include |
 |                         | out-of-tree targets. The default value includes:   |
 |                         | ``AArch64, ARM, CppBackend, Hexagon,               |
-|                         | Mips, MSP430, NVPTX, PowerPC, R600, Sparc,         |
+|                         | Mips, MSP430, NVPTX, PowerPC, AMDGPU, Sparc,       |
 |                         | SystemZ, X86, XCore``.                             |
 +-------------------------+----------------------------------------------------+
 | LLVM_ENABLE_DOXYGEN     | Build doxygen-based documentation from the source  |
@@ -877,7 +896,7 @@ Underneath that directory there is another directory with a name ending in
 For example:
 
   .. code-block:: console
-  
+
     % cd llvm_build_dir
     % find lib/Support/ -name APFloat*
     lib/Support/CMakeFiles/LLVMSupport.dir/APFloat.cpp.o
@@ -986,7 +1005,7 @@ different `tools`_.
   code generation.  For example, the ``llvm/lib/Target/X86`` directory holds the
   X86 machine description while ``llvm/lib/Target/ARM`` implements the ARM
   backend.
-    
+
 ``llvm/lib/CodeGen/``
 
   This directory contains the major parts of the code generator: Instruction
@@ -1071,7 +1090,7 @@ the `Command Guide <CommandGuide/index.html>`_.
 
   The archiver produces an archive containing the given LLVM bitcode files,
   optionally with an index for faster lookup.
-  
+
 ``llvm-as``
 
   The assembler transforms the human readable LLVM assembly to LLVM bitcode.
@@ -1084,7 +1103,7 @@ the `Command Guide <CommandGuide/index.html>`_.
 
   ``llvm-link``, not surprisingly, links multiple LLVM modules into a single
   program.
-  
+
 ``lli``
 
   ``lli`` is the LLVM interpreter, which can directly execute LLVM bitcode
@@ -1215,7 +1234,7 @@ Example with clang
    .. code-block:: console
 
       % ./hello
- 
+
    and
 
    .. code-block:: console

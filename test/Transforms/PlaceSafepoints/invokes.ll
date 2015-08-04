@@ -3,7 +3,7 @@
 declare i64 addrspace(1)* @"some_call"(i64 addrspace(1)*)
 declare i32 @"personality_function"()
 
-define i64 addrspace(1)* @test_basic(i64 addrspace(1)* %obj, i64 addrspace(1)* %obj1) gc "statepoint-example" {
+define i64 addrspace(1)* @test_basic(i64 addrspace(1)* %obj, i64 addrspace(1)* %obj1) gc "statepoint-example" personality i32 ()* @"personality_function" {
 ; CHECK-LABEL: entry:
 entry:
   ; CHECK: invoke
@@ -24,12 +24,12 @@ normal_return:
 ; CHECK: ret i64
 
 exceptional_return:
-  %landing_pad4 = landingpad {i8*, i32} personality i32 ()* @"personality_function"
+  %landing_pad4 = landingpad {i8*, i32}
           cleanup
   ret i64 addrspace(1)* %obj1
 }
 
-define i64 addrspace(1)* @test_two_invokes(i64 addrspace(1)* %obj, i64 addrspace(1)* %obj1) gc "statepoint-example" {
+define i64 addrspace(1)* @test_two_invokes(i64 addrspace(1)* %obj, i64 addrspace(1)* %obj1) gc "statepoint-example" personality i32 ()* @"personality_function" {
 ; CHECK-LABEL: entry:
 entry:
   ; CHECK: invoke 
@@ -56,12 +56,13 @@ normal_return:
 ; CHECK: ret i64
 
 exceptional_return:
-  %landing_pad4 = landingpad {i8*, i32} personality i32 ()* @"personality_function"
+  %landing_pad4 = landingpad {i8*, i32}
           cleanup
   ret i64 addrspace(1)* %obj1
 }
 
-define i64 addrspace(1)* @test_phi_node(i1 %cond, i64 addrspace(1)* %obj) gc "statepoint-example" {
+define i64 addrspace(1)* @test_phi_node(i1 %cond, i64 addrspace(1)* %obj) gc "statepoint-example" personality i32 ()* @"personality_function" {
+; CHECK-LABEL: @test_phi_node
 ; CHECK-LABEL: entry:
 entry:
   br i1 %cond, label %left, label %right
@@ -74,15 +75,15 @@ right:
   %ret_val_right = invoke i64 addrspace(1)* @"some_call"(i64 addrspace(1)* %obj)
                      to label %merge unwind label %exceptional_return
 
-; CHECK-LABEL: merge1:
+; CHECK: merge[[A:[0-9]]]:
 ; CHECK: gc.result
-; CHECK: br label %merge
+; CHECK: br label %[[with_phi:merge[0-9]*]]
 
-; CHECK-LABEL: merge3:
+; CHECK: merge[[B:[0-9]]]:
 ; CHECK: gc.result
-; CHECK: br label %merge
+; CHECK: br label %[[with_phi]]
 
-; CHECK-LABEL: merge:
+; CHECK: [[with_phi]]:
 ; CHECK: phi
 ; CHECK: ret i64 addrspace(1)* %ret_val
 merge:
@@ -93,7 +94,7 @@ merge:
 ; CHECK: ret i64 addrspace(1)*
 
 exceptional_return:
-  %landing_pad4 = landingpad {i8*, i32} personality i32 ()* @"personality_function"
+  %landing_pad4 = landingpad {i8*, i32}
           cleanup
   ret i64 addrspace(1)* %obj
 }

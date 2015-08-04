@@ -113,7 +113,7 @@ public:
       return *const_cast<BlockInfo*>(BI);
 
     // Otherwise, add a new record.
-    BlockInfoRecords.push_back(BlockInfo());
+    BlockInfoRecords.emplace_back();
     BlockInfoRecords.back().BlockID = BlockID;
     return BlockInfoRecords.back();
   }
@@ -325,6 +325,8 @@ public:
 
     // If we run out of data, stop at the end of the stream.
     if (BytesRead == 0) {
+      CurWord = 0;
+      BitsInCurWord = 0;
       Size = NextChar;
       return;
     }

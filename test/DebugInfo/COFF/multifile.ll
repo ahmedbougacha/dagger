@@ -58,7 +58,7 @@
 ; X86-NEXT: [[F2_START]]:
 ; X86-NEXT: .secrel32 _f
 ; X86-NEXT: .secidx _f
-; X86-NEXT: .short 0
+; X86-NEXT: .short 1
 ; X86-NEXT: .long [[END_OF_F]]-_f
 ; Segment for file 'D:\\one.c' begins
 ; X86-NEXT: [[FILE_SEGMENT_START:[^:]*]]:
@@ -67,6 +67,8 @@
 ; X86-NEXT: .long [[FILE_SEGMENT_END:.*]]-[[FILE_SEGMENT_START]]
 ; X86-NEXT: .long [[CALL_LINE_1]]-_f
 ; X86-NEXT: .long   1
+; X86-NEXT: .short  0
+; X86-NEXT: .short  0
 ; X86-NEXT: [[FILE_SEGMENT_END]]:
 ; Segment for file 'D:\\two.c' begins
 ; X86-NEXT: [[FILE_SEGMENT_START:[^:]*]]:
@@ -75,6 +77,8 @@
 ; X86-NEXT: .long [[FILE_SEGMENT_END:.*]]-[[FILE_SEGMENT_START]]
 ; X86-NEXT: .long [[CALL_LINE_2]]-_f
 ; X86-NEXT: .long   2
+; X86-NEXT: .short  0
+; X86-NEXT: .short  0
 ; X86-NEXT: [[FILE_SEGMENT_END]]:
 ; A new segment for file 'D:\\one.c' begins
 ; X86-NEXT: [[FILE_SEGMENT_START:[^:]*]]:
@@ -85,6 +89,10 @@
 ; X86-NEXT: .long   7
 ; X86-NEXT: .long [[RETURN_STMT]]-_f
 ; X86-NEXT: .long   8
+; X86-NEXT: .short  0
+; X86-NEXT: .short  0
+; X86-NEXT: .short  0
+; X86-NEXT: .short  0
 ; X86-NEXT: [[FILE_SEGMENT_END]]:
 ; X86-NEXT: [[F2_END]]:
 ; File index to string table offset subsection
@@ -126,19 +134,28 @@
 ; OBJ32-NEXT: ]
 ; OBJ32:      FunctionLineTable [
 ; OBJ32-NEXT:   Name: _f
+; OBJ32-NEXT:   Flags: 0x1
 ; OBJ32-NEXT:   CodeSize: 0x10
 ; OBJ32-NEXT:   FilenameSegment [
 ; OBJ32-NEXT:     Filename: D:\one.c
 ; OBJ32-NEXT:     +0x0: 1
+; OBJ32-NEXT:     ColStart: 0
+; OBJ32-NEXT:     ColEnd: 0
 ; OBJ32-NEXT:   ]
 ; OBJ32-NEXT:   FilenameSegment [
 ; OBJ32-NEXT:     Filename: D:\two.c
 ; OBJ32-NEXT:     +0x5: 2
+; OBJ32-NEXT:     ColStart: 0
+; OBJ32-NEXT:     ColEnd: 0
 ; OBJ32-NEXT:   ]
 ; OBJ32-NEXT:   FilenameSegment [
 ; OBJ32-NEXT:     Filename: D:\one.c
 ; OBJ32-NEXT:     +0xA: 7
 ; OBJ32-NEXT:     +0xF: 8
+; OBJ32-NEXT:     ColStart: 0
+; OBJ32-NEXT:     ColEnd: 0
+; OBJ32-NEXT:     ColStart: 0
+; OBJ32-NEXT:     ColEnd: 0
 ; OBJ32-NEXT:   ]
 ; OBJ32-NEXT: ]
 ; OBJ32:    }
@@ -189,7 +206,7 @@
 ; X64-NEXT: [[F2_START]]:
 ; X64-NEXT: .secrel32 f
 ; X64-NEXT: .secidx f
-; X64-NEXT: .short 0
+; X64-NEXT: .short 1
 ; X64-NEXT: .long [[END_OF_F]]-f
 ; Segment for file 'D:\\input.c' begins
 ; X64-NEXT: [[FILE_SEGMENT_START:[^:]*]]:
@@ -198,6 +215,8 @@
 ; X64-NEXT: .long [[FILE_SEGMENT_END:.*]]-[[FILE_SEGMENT_START]]
 ; X64-NEXT: .long [[START]]-f
 ; X64-NEXT: .long   3
+; X64-NEXT: .short  0
+; X64-NEXT: .short  0
 ; X64-NEXT: [[FILE_SEGMENT_END]]:
 ; Segment for file 'D:\\one.c' begins
 ; X64-NEXT: [[FILE_SEGMENT_START:[^:]*]]:
@@ -206,6 +225,8 @@
 ; X64-NEXT: .long [[FILE_SEGMENT_END:.*]]-[[FILE_SEGMENT_START]]
 ; X64-NEXT: .long [[CALL_LINE_1]]-f
 ; X64-NEXT: .long   1
+; X64-NEXT: .short  0
+; X64-NEXT: .short  0
 ; X64-NEXT: [[FILE_SEGMENT_END]]:
 ; Segment for file 'D:\\two.c' begins
 ; X64-NEXT: [[FILE_SEGMENT_START:[^:]*]]:
@@ -214,6 +235,8 @@
 ; X64-NEXT: .long [[FILE_SEGMENT_END:.*]]-[[FILE_SEGMENT_START]]
 ; X64-NEXT: .long [[CALL_LINE_2]]-f
 ; X64-NEXT: .long   2
+; X64-NEXT: .short  0
+; X64-NEXT: .short  0
 ; X64-NEXT: [[FILE_SEGMENT_END]]:
 ; A new segment for file 'D:\\one.c' begins
 ; X64-NEXT: [[FILE_SEGMENT_START:[^:]*]]:
@@ -224,6 +247,10 @@
 ; X64-NEXT: .long   7
 ; X64-NEXT: .long [[EPILOG_AND_RET]]-f
 ; X64-NEXT: .long   8
+; X64-NEXT: .short  0
+; X64-NEXT: .short  0
+; X64-NEXT: .short  0
+; X64-NEXT: .short  0
 ; X64-NEXT: [[FILE_SEGMENT_END]]:
 ; X64-NEXT: [[F2_END]]:
 ; File index to string table offset subsection
@@ -269,23 +296,34 @@
 ; OBJ64-NEXT: ]
 ; OBJ64:      FunctionLineTable [
 ; OBJ64-NEXT:   Name: f
+; OBJ64-NEXT:   Flags: 0x1
 ; OBJ64-NEXT:   CodeSize: 0x18
 ; OBJ64-NEXT:   FilenameSegment [
 ; OBJ64-NEXT:     Filename: D:\input.c
 ; OBJ64-NEXT:     +0x0: 3
+; OBJ64-NEXT:     ColStart: 0
+; OBJ64-NEXT:     ColEnd: 0
 ; OBJ64-NEXT:   ]
 ; OBJ64-NEXT:   FilenameSegment [
 ; OBJ64-NEXT:     Filename: D:\one.c
 ; OBJ64-NEXT:     +0x4: 1
+; OBJ64-NEXT:     ColStart: 0
+; OBJ64-NEXT:     ColEnd: 0
 ; OBJ64-NEXT:   ]
 ; OBJ64-NEXT:   FilenameSegment [
 ; OBJ64-NEXT:     Filename: D:\two.c
 ; OBJ64-NEXT:     +0x9: 2
+; OBJ64-NEXT:     ColStart: 0
+; OBJ64-NEXT:     ColEnd: 0
 ; OBJ64-NEXT:   ]
 ; OBJ64-NEXT:   FilenameSegment [
 ; OBJ64-NEXT:     Filename: D:\one.c
 ; OBJ64-NEXT:     +0xE: 7
 ; OBJ64-NEXT:     +0x13: 8
+; OBJ64-NEXT:     ColStart: 0
+; OBJ64-NEXT:     ColEnd: 0
+; OBJ64-NEXT:     ColStart: 0
+; OBJ64-NEXT:     ColEnd: 0
 ; OBJ64-NEXT:   ]
 ; OBJ64-NEXT: ]
 ; OBJ64:    }
@@ -308,23 +346,23 @@ attributes #1 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "
 !llvm.module.flags = !{!9, !10}
 !llvm.ident = !{!11}
 
-!0 = !MDCompileUnit(language: DW_LANG_C99, producer: "clang version 3.5 ", isOptimized: false, emissionKind: 0, file: !1, enums: !2, retainedTypes: !2, subprograms: !3, globals: !2, imports: !2)
-!1 = !MDFile(filename: "<unknown>", directory: "D:\5C")
+!0 = distinct !DICompileUnit(language: DW_LANG_C99, producer: "clang version 3.5 ", isOptimized: false, emissionKind: 0, file: !1, enums: !2, retainedTypes: !2, subprograms: !3, globals: !2, imports: !2)
+!1 = !DIFile(filename: "<unknown>", directory: "D:\5C")
 !2 = !{}
 !3 = !{!4}
-!4 = !MDSubprogram(name: "f", line: 3, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 3, file: !5, scope: !6, type: !7, function: void ()* @f, variables: !2)
-!5 = !MDFile(filename: "input.c", directory: "D:\5C")
-!6 = !MDFile(filename: "input.c", directory: "D:C")
-!7 = !MDSubroutineType(types: !8)
+!4 = !DISubprogram(name: "f", line: 3, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 3, file: !5, scope: !6, type: !7, function: void ()* @f, variables: !2)
+!5 = !DIFile(filename: "input.c", directory: "D:\5C")
+!6 = !DIFile(filename: "input.c", directory: "D:C")
+!7 = !DISubroutineType(types: !8)
 !8 = !{null}
 !9 = !{i32 2, !"Dwarf Version", i32 4}
 !10 = !{i32 1, !"Debug Info Version", i32 3}
 !11 = !{!"clang version 3.5 "}
-!12 = !MDLocation(line: 1, scope: !13)
-!13 = !MDLexicalBlockFile(discriminator: 0, file: !14, scope: !4)
-!14 = !MDFile(filename: "one.c", directory: "D:\5C")
-!15 = !MDLocation(line: 2, scope: !16)
-!16 = !MDLexicalBlockFile(discriminator: 0, file: !17, scope: !4)
-!17 = !MDFile(filename: "two.c", directory: "D:\5C")
-!18 = !MDLocation(line: 7, scope: !13)
-!19 = !MDLocation(line: 8, scope: !13)
+!12 = !DILocation(line: 1, scope: !13)
+!13 = !DILexicalBlockFile(discriminator: 0, file: !14, scope: !4)
+!14 = !DIFile(filename: "one.c", directory: "D:\5C")
+!15 = !DILocation(line: 2, scope: !16)
+!16 = !DILexicalBlockFile(discriminator: 0, file: !17, scope: !4)
+!17 = !DIFile(filename: "two.c", directory: "D:\5C")
+!18 = !DILocation(line: 7, scope: !13)
+!19 = !DILocation(line: 8, scope: !13)

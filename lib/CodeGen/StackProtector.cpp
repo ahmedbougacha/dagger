@@ -122,7 +122,7 @@ bool StackProtector::ContainsProtectableArray(Type *Ty, bool &IsLarge,
 
     // If an array has more than SSPBufferSize bytes of allocated space, then we
     // emit stack protectors.
-    if (SSPBufferSize <= TLI->getDataLayout()->getTypeAllocSize(AT)) {
+    if (SSPBufferSize <= M->getDataLayout().getTypeAllocSize(AT)) {
       IsLarge = true;
       return true;
     }
@@ -353,8 +353,8 @@ static bool CreatePrologue(Function *F, Module *M, ReturnInst *RI,
   IRBuilder<> B(&F->getEntryBlock().front());
   AI = B.CreateAlloca(PtrTy, nullptr, "StackGuardSlot");
   LoadInst *LI = B.CreateLoad(StackGuardVar, "StackGuard");
-  B.CreateCall2(Intrinsic::getDeclaration(M, Intrinsic::stackprotector), LI,
-                AI);
+  B.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::stackprotector),
+               {LI, AI});
 
   return SupportsSelectionDAGSP;
 }
@@ -488,7 +488,7 @@ BasicBlock *StackProtector::CreateFailBB() {
     Constant *StackChkFail =
         M->getOrInsertFunction("__stack_chk_fail", Type::getVoidTy(Context),
                                nullptr);
-    B.CreateCall(StackChkFail);
+    B.CreateCall(StackChkFail, {});
   }
   B.CreateUnreachable();
   return FailBB;

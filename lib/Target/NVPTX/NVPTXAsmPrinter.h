@@ -40,6 +40,7 @@
 // (subclass of MCStreamer).
 
 namespace llvm {
+  class MCOperand;
 
 class LineReader {
 private:
@@ -164,13 +165,15 @@ class LLVM_LIBRARY_VISIBILITY NVPTXAsmPrinter : public AsmPrinter {
               }
               if (EmitGeneric && !isa<Function>(v) && !IsNonGenericPointer) {
                 O << "generic(";
-                O << *Name;
+                Name->print(O, AP.MAI);
                 O << ")";
               } else {
-                O << *Name;
+                Name->print(O, AP.MAI);
               }
-            } else if (const ConstantExpr *Cexpr = dyn_cast<ConstantExpr>(v)) {
-              O << *AP.lowerConstant(Cexpr);
+            } else if (const ConstantExpr *CExpr = dyn_cast<ConstantExpr>(v0)) {
+              const MCExpr *Expr =
+                AP.lowerConstantForGV(cast<Constant>(CExpr), false);
+              AP.printMCExpr(*Expr, O);
             } else
               llvm_unreachable("symbol type unknown");
             nSym++;
@@ -230,7 +233,7 @@ private:
   void emitFunctionParamList(const MachineFunction &MF, raw_ostream &O);
   void setAndEmitFunctionVirtualRegisters(const MachineFunction &MF);
   void emitFunctionTempData(const MachineFunction &MF, unsigned &FrameSize);
-  bool isImageType(const Type *Ty);
+  bool isImageType(Type *Ty);
   void printReturnValStr(const Function *, raw_ostream &O);
   void printReturnValStr(const MachineFunction &MF, raw_ostream &O);
   bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
@@ -241,6 +244,10 @@ private:
   bool PrintAsmMemoryOperand(const MachineInstr *MI, unsigned OpNo,
                              unsigned AsmVariant, const char *ExtraCode,
                              raw_ostream &) override;
+
+  const MCExpr *lowerConstantForGV(const Constant *CV, bool ProcessingGeneric);
+  void printMCExpr(const MCExpr &Expr, raw_ostream &OS);
+
 protected:
   bool doInitialization(Module &M) override;
   bool doFinalization(Module &M) override;
@@ -264,7 +271,7 @@ private:
 
   // Build the map between type name and ID based on module's type
   // symbol table.
-  std::map<const Type *, std::string> TypeNameMap;
+  std::map<Type *, std::string> TypeNameMap;
 
   // List of variables demoted to a function scope.
   std::map<const Function *, std::vector<const GlobalVariable *> > localDecls;
@@ -275,7 +282,7 @@ private:
 
   void emitPTXGlobalVariable(const GlobalVariable *GVar, raw_ostream &O);
   void emitPTXAddressSpace(unsigned int AddressSpace, raw_ostream &O) const;
-  std::string getPTXFundamentalTypeStr(const Type *Ty, bool = true) const;
+  std::string getPTXFundamentalTypeStr(Type *Ty, bool = true) const;
   void printScalarConstant(const Constant *CPV, raw_ostream &O);
   void printFPConstant(const ConstantFP *Fp, raw_ostream &O);
   void bufferLEByte(const Constant *CPV, int Bytes, AggBuffer *aggBuffer);

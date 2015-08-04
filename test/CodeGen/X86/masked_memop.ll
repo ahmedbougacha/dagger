@@ -7,8 +7,8 @@
 ; AVX512: vmovdqu32       (%rdi), %zmm0 {%k1} {z}
 
 ; AVX2-LABEL: test1
-; AVX2: vpmaskmovd      32(%rdi)
-; AVX2: vpmaskmovd      (%rdi)
+; AVX2: vpmaskmovd      {{.*}}(%rdi)
+; AVX2: vpmaskmovd      {{.*}}(%rdi)
 ; AVX2-NOT: blend
 
 ; AVX_SCALAR-LABEL: test1
@@ -190,10 +190,13 @@ define void @test14(<2 x i32> %trigger, <2 x float>* %addr, <2 x float> %val) {
 ; AVX2-LABEL: test15
 ; AVX2: vpmaskmovd
 
-; SKX-LABEL: test15
-; SKX: kshiftl
-; SKX: kshiftr
-; SKX: vmovdqu32 {{.*}}{%k1}
+; SKX-LABEL: test15:
+; SKX:       ## BB#0:
+; SKX-NEXT:    vpxor %xmm2, %xmm2, %xmm2
+; SKX-NEXT:    vpblendd {{.*#+}} xmm0 = xmm0[0],xmm2[1],xmm0[2],xmm2[3]
+; SKX-NEXT:    vpcmpeqq %xmm2, %xmm0, %k1
+; SKX-NEXT:    vpmovqd %xmm1, (%rdi) {%k1}
+; SKX-NEXT:    retq
 define void @test15(<2 x i32> %trigger, <2 x i32>* %addr, <2 x i32> %val) {
   %mask = icmp eq <2 x i32> %trigger, zeroinitializer
   call void @llvm.masked.store.v2i32(<2 x i32>%val, <2 x i32>* %addr, i32 4, <2 x i1>%mask)

@@ -33,6 +33,9 @@
 
 namespace llvm {
 
+class BumpPtrStringSaver;
+class StringSaver;
+
 /// cl Namespace - This namespace contains all of the command line option
 /// processing machinery.  It is intentionally a short name to make qualified
 /// usage concise.
@@ -787,7 +790,7 @@ public:
   void anchor() override;
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class basic_parser<bool>);
+extern template class basic_parser<bool>;
 
 //--------------------------------------------------
 // parser<boolOrDefault>
@@ -813,7 +816,7 @@ public:
   void anchor() override;
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class basic_parser<boolOrDefault>);
+extern template class basic_parser<boolOrDefault>;
 
 //--------------------------------------------------
 // parser<int>
@@ -835,7 +838,7 @@ public:
   void anchor() override;
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class basic_parser<int>);
+extern template class basic_parser<int>;
 
 //--------------------------------------------------
 // parser<unsigned>
@@ -857,7 +860,7 @@ public:
   void anchor() override;
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class basic_parser<unsigned>);
+extern template class basic_parser<unsigned>;
 
 //--------------------------------------------------
 // parser<unsigned long long>
@@ -882,7 +885,7 @@ public:
   void anchor() override;
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class basic_parser<unsigned long long>);
+extern template class basic_parser<unsigned long long>;
 
 //--------------------------------------------------
 // parser<double>
@@ -904,7 +907,7 @@ public:
   void anchor() override;
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class basic_parser<double>);
+extern template class basic_parser<double>;
 
 //--------------------------------------------------
 // parser<float>
@@ -926,7 +929,7 @@ public:
   void anchor() override;
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class basic_parser<float>);
+extern template class basic_parser<float>;
 
 //--------------------------------------------------
 // parser<std::string>
@@ -951,7 +954,7 @@ public:
   void anchor() override;
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class basic_parser<std::string>);
+extern template class basic_parser<std::string>;
 
 //--------------------------------------------------
 // parser<char>
@@ -976,7 +979,7 @@ public:
   void anchor() override;
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class basic_parser<char>);
+extern template class basic_parser<char>;
 
 //--------------------------------------------------
 // PrintOptionDiff
@@ -1251,11 +1254,11 @@ public:
   }
 };
 
-EXTERN_TEMPLATE_INSTANTIATION(class opt<unsigned>);
-EXTERN_TEMPLATE_INSTANTIATION(class opt<int>);
-EXTERN_TEMPLATE_INSTANTIATION(class opt<std::string>);
-EXTERN_TEMPLATE_INSTANTIATION(class opt<char>);
-EXTERN_TEMPLATE_INSTANTIATION(class opt<bool>);
+extern template class opt<unsigned>;
+extern template class opt<int>;
+extern template class opt<std::string>;
+extern template class opt<char>;
+extern template class opt<bool>;
 
 //===----------------------------------------------------------------------===//
 // list_storage class
@@ -1284,24 +1287,81 @@ public:
   }
 };
 
-// Define how to hold a class type object, such as a string.  Since we can
-// inherit from a class, we do so.  This makes us exactly compatible with the
-// object in all cases that it is used.
+// Define how to hold a class type object, such as a string.
+// Originally this code inherited from std::vector. In transitioning to a new
+// API for command line options we should change this. The new implementation
+// of this list_storage specialization implements the minimum subset of the
+// std::vector API required for all the current clients.
 //
-template <class DataType>
-class list_storage<DataType, bool> : public std::vector<DataType> {
+// FIXME: Reduce this API to a more narrow subset of std::vector
+//
+template <class DataType> class list_storage<DataType, bool> {
+  std::vector<DataType> Storage;
+
 public:
-  template <class T> void addValue(const T &V) {
-    std::vector<DataType>::push_back(V);
+  typedef typename std::vector<DataType>::iterator iterator;
+
+  iterator begin() { return Storage.begin(); }
+  iterator end() { return Storage.end(); }
+
+  typedef typename std::vector<DataType>::const_iterator const_iterator;
+  const_iterator begin() const { return Storage.begin(); }
+  const_iterator end() const { return Storage.end(); }
+
+  typedef typename std::vector<DataType>::size_type size_type;
+  size_type size() const { return Storage.size(); }
+
+  bool empty() const { return Storage.empty(); }
+
+  void push_back(const DataType &value) { Storage.push_back(value); }
+  void push_back(DataType &&value) { Storage.push_back(value); }
+
+  typedef typename std::vector<DataType>::reference reference;
+  typedef typename std::vector<DataType>::const_reference const_reference;
+  reference operator[](size_type pos) { return Storage[pos]; }
+  const_reference operator[](size_type pos) const { return Storage[pos]; }
+
+  iterator erase(const_iterator pos) { return Storage.erase(pos); }
+  iterator erase(const_iterator first, const_iterator last) {
+    return Storage.erase(first, last);
   }
+
+  iterator erase(iterator pos) { return Storage.erase(pos); }
+  iterator erase(iterator first, iterator last) {
+    return Storage.erase(first, last);
+  }
+
+  iterator insert(const_iterator pos, const DataType &value) {
+    return Storage.insert(pos, value);
+  }
+  iterator insert(const_iterator pos, DataType &&value) {
+    return Storage.insert(pos, value);
+  }
+
+  iterator insert(iterator pos, const DataType &value) {
+    return Storage.insert(pos, value);
+  }
+  iterator insert(iterator pos, DataType &&value) {
+    return Storage.insert(pos, value);
+  }
+
+  reference front() { return Storage.front(); }
+  const_reference front() const { return Storage.front(); }
+
+  operator std::vector<DataType>&() { return Storage; }
+  operator ArrayRef<DataType>() { return Storage; }
+  std::vector<DataType> *operator&() { return &Storage; }
+  const std::vector<DataType> *operator&() const { return &Storage; }
+
+  template <class T> void addValue(const T &V) { Storage.push_back(V); }
 };
 
 //===----------------------------------------------------------------------===//
 // list - A list of command line options.
 //
-template <class DataType, class Storage = bool,
+template <class DataType, class StorageClass = bool,
           class ParserClass = parser<DataType>>
-class list : public Option, public list_storage<DataType, Storage> {
+class list : public Option, public list_storage<DataType, StorageClass> {
   std::vector<unsigned> Positions;
   ParserClass Parser;
 
@@ -1319,7 +1379,7 @@ class list : public Option, public list_storage<DataType, Storage> {
         typename ParserClass::parser_data_type();
     if (Parser.parse(*this, ArgName, Arg, Val))
       return true; // Parse Error!
-    list_storage<DataType, Storage>::addValue(Val);
+    list_storage<DataType, StorageClass>::addValue(Val);
     setPosition(pos);
     Positions.push_back(pos);
     return false;
@@ -1618,16 +1678,6 @@ StringMap<Option *> &getRegisteredOptions();
 //===----------------------------------------------------------------------===//
 // Standalone command line processing utilities.
 //
-
-/// \brief Saves strings in the inheritor's stable storage and returns a stable
-/// raw character pointer.
-class StringSaver {
-  virtual void anchor();
-
-public:
-  virtual const char *SaveString(const char *Str) = 0;
-  virtual ~StringSaver(){}; // Pacify -Wnon-virtual-dtor.
-};
 
 /// \brief Tokenizes a command line that can contain escapes and quotes.
 //

@@ -26,6 +26,7 @@
 #include "llvm/MC/MCParser/AsmCond.h"
 #include "llvm/MC/MCParser/AsmLexer.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
+#include "llvm/MC/MCParser/MCAsmParserUtils.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSectionMachO.h"
@@ -233,6 +234,8 @@ public:
   bool parseExpression(const MCExpr *&Res, SMLoc &EndLoc) override;
   bool parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) override;
   bool parseParenExpression(const MCExpr *&Res, SMLoc &EndLoc) override;
+  bool parseParenExprOfDepth(unsigned ParenDepth, const MCExpr *&Res,
+                             SMLoc &EndLoc) override;
   bool parseAbsoluteExpression(int64_t &Res) override;
 
   /// \brief Parse an identifier or string (as a quoted identifier)
@@ -550,6 +553,8 @@ void AsmParser::Note(SMLoc L, const Twine &Msg, ArrayRef<SMRange> Ranges) {
 }
 
 bool AsmParser::Warning(SMLoc L, const Twine &Msg, ArrayRef<SMRange> Ranges) {
+  if(getTargetParser().getTargetOptions().MCNoWarn)
+    return false;
   if (getTargetParser().getTargetOptions().MCFatalWarnings)
     return Error(L, Msg, Ranges);
   printMessage(L, SourceMgr::DK_Warning, Msg, Ranges);
@@ -630,12 +635,15 @@ bool AsmParser::Run(bool NoInitialTextSection, bool NoFinalize) {
   // If we are generating dwarf for assembly source files save the initial text
   // section and generate a .file directive.
   if (getContext().getGenDwarfForAssembly()) {
-    MCSymbol *SectionStartSym = getContext().CreateTempSymbol();
-    getStreamer().EmitLabel(SectionStartSym);
-    auto InsertResult = getContext().addGenDwarfSection(
-        getStreamer().getCurrentSection().first);
-    assert(InsertResult.second && ".text section should not have debug info yet");
-    InsertResult.first->second.first = SectionStartSym;
+    MCSection *Sec = getStreamer().getCurrentSection().first;
+    if (!Sec->getBeginSymbol()) {
+      MCSymbol *SectionStartSym = getContext().createTempSymbol();
+      getStreamer().EmitLabel(SectionStartSym);
+      Sec->setBeginSymbol(SectionStartSym);
+    }
+    bool InsertResult = getContext().addGenDwarfSection(Sec);
+    assert(InsertResult && ".text section should not have debug info yet");
+    (void)InsertResult;
     getContext().setGenDwarfFileNumber(getStreamer().EmitDwarfFileDirective(
         0, StringRef(), getContext().getMainFileName()));
   }
@@ -786,7 +794,7 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
     Lex(); // Eat the operator.
     if (parsePrimaryExpr(Res, EndLoc))
       return true;
-    Res = MCUnaryExpr::CreateLNot(Res, getContext());
+    Res = MCUnaryExpr::createLNot(Res, getContext());
     return false;
   case AsmToken::Dollar:
   case AsmToken::At:
@@ -798,9 +806,9 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
         if (Lexer.getMAI().getDollarIsPC()) {
           // This is a '$' reference, which references the current PC.  Emit a
           // temporary label to the streamer and refer to it.
-          MCSymbol *Sym = Ctx.CreateTempSymbol();
+          MCSymbol *Sym = Ctx.createTempSymbol();
           Out.EmitLabel(Sym);
-          Res = MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_None,
+          Res = MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_None,
                                         getContext());
           EndLoc = FirstTokenLoc;
           return false;
@@ -855,7 +863,7 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
       }
     }
 
-    MCSymbol *Sym = getContext().GetOrCreateSymbol(SymbolName);
+    MCSymbol *Sym = getContext().getOrCreateSymbol(SymbolName);
 
     // If this is an absolute variable reference, substitute it now to preserve
     // semantics in the face of reassignment.
@@ -868,7 +876,7 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
     }
 
     // Otherwise create a symbol ref.
-    Res = MCSymbolRefExpr::Create(Sym, Variant, getContext());
+    Res = MCSymbolRefExpr::create(Sym, Variant, getContext());
     return false;
   }
   case AsmToken::BigNum:
@@ -876,7 +884,7 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
   case AsmToken::Integer: {
     SMLoc Loc = getTok().getLoc();
     int64_t IntVal = getTok().getIntVal();
-    Res = MCConstantExpr::Create(IntVal, getContext());
+    Res = MCConstantExpr::create(IntVal, getContext());
     EndLoc = Lexer.getTok().getEndLoc();
     Lex(); // Eat token.
     // Look for 'b' or 'f' following an Integer as a directional label
@@ -893,8 +901,8 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
       }
       if (IDVal == "f" || IDVal == "b") {
         MCSymbol *Sym =
-            Ctx.GetDirectionalLocalSymbol(IntVal, IDVal == "b");
-        Res = MCSymbolRefExpr::Create(Sym, Variant, getContext());
+            Ctx.getDirectionalLocalSymbol(IntVal, IDVal == "b");
+        Res = MCSymbolRefExpr::create(Sym, Variant, getContext());
         if (IDVal == "b" && Sym->isUndefined())
           return Error(Loc, "invalid reference to undefined symbol");
         EndLoc = Lexer.getTok().getEndLoc();
@@ -906,7 +914,7 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
   case AsmToken::Real: {
     APFloat RealVal(APFloat::IEEEdouble, getTok().getString());
     uint64_t IntVal = RealVal.bitcastToAPInt().getZExtValue();
-    Res = MCConstantExpr::Create(IntVal, getContext());
+    Res = MCConstantExpr::create(IntVal, getContext());
     EndLoc = Lexer.getTok().getEndLoc();
     Lex(); // Eat token.
     return false;
@@ -914,9 +922,9 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
   case AsmToken::Dot: {
     // This is a '.' reference, which references the current PC.  Emit a
     // temporary label to the streamer and refer to it.
-    MCSymbol *Sym = Ctx.CreateTempSymbol();
+    MCSymbol *Sym = Ctx.createTempSymbol();
     Out.EmitLabel(Sym);
-    Res = MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_None, getContext());
+    Res = MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_None, getContext());
     EndLoc = Lexer.getTok().getEndLoc();
     Lex(); // Eat identifier.
     return false;
@@ -933,19 +941,19 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
     Lex(); // Eat the operator.
     if (parsePrimaryExpr(Res, EndLoc))
       return true;
-    Res = MCUnaryExpr::CreateMinus(Res, getContext());
+    Res = MCUnaryExpr::createMinus(Res, getContext());
     return false;
   case AsmToken::Plus:
     Lex(); // Eat the operator.
     if (parsePrimaryExpr(Res, EndLoc))
       return true;
-    Res = MCUnaryExpr::CreatePlus(Res, getContext());
+    Res = MCUnaryExpr::createPlus(Res, getContext());
     return false;
   case AsmToken::Tilde:
     Lex(); // Eat the operator.
     if (parsePrimaryExpr(Res, EndLoc))
       return true;
-    Res = MCUnaryExpr::CreateNot(Res, getContext());
+    Res = MCUnaryExpr::createNot(Res, getContext());
     return false;
   }
 }
@@ -978,7 +986,7 @@ AsmParser::applyModifierToExpr(const MCExpr *E,
       return E;
     }
 
-    return MCSymbolRefExpr::Create(&SRE->getSymbol(), Variant, getContext());
+    return MCSymbolRefExpr::create(&SRE->getSymbol(), Variant, getContext());
   }
 
   case MCExpr::Unary: {
@@ -986,7 +994,7 @@ AsmParser::applyModifierToExpr(const MCExpr *E,
     const MCExpr *Sub = applyModifierToExpr(UE->getSubExpr(), Variant);
     if (!Sub)
       return nullptr;
-    return MCUnaryExpr::Create(UE->getOpcode(), Sub, getContext());
+    return MCUnaryExpr::create(UE->getOpcode(), Sub, getContext());
   }
 
   case MCExpr::Binary: {
@@ -1002,7 +1010,7 @@ AsmParser::applyModifierToExpr(const MCExpr *E,
     if (!RHS)
       RHS = BE->getRHS();
 
-    return MCBinaryExpr::Create(BE->getOpcode(), LHS, RHS, getContext());
+    return MCBinaryExpr::create(BE->getOpcode(), LHS, RHS, getContext());
   }
   }
 
@@ -1051,8 +1059,8 @@ bool AsmParser::parseExpression(const MCExpr *&Res, SMLoc &EndLoc) {
 
   // Try to constant fold it up front, if possible.
   int64_t Value;
-  if (Res->EvaluateAsAbsolute(Value))
-    Res = MCConstantExpr::Create(Value, getContext());
+  if (Res->evaluateAsAbsolute(Value))
+    Res = MCConstantExpr::create(Value, getContext());
 
   return false;
 }
@@ -1062,6 +1070,27 @@ bool AsmParser::parseParenExpression(const MCExpr *&Res, SMLoc &EndLoc) {
   return parseParenExpr(Res, EndLoc) || parseBinOpRHS(1, Res, EndLoc);
 }
 
+bool AsmParser::parseParenExprOfDepth(unsigned ParenDepth, const MCExpr *&Res,
+                                      SMLoc &EndLoc) {
+  if (parseParenExpr(Res, EndLoc))
+    return true;
+
+  for (; ParenDepth > 0; --ParenDepth) {
+    if (parseBinOpRHS(1, Res, EndLoc))
+      return true;
+
+    // We don't Lex() the last RParen.
+    // This is the same behavior as parseParenExpression().
+    if (ParenDepth - 1 > 0) {
+      if (Lexer.isNot(AsmToken::RParen))
+        return TokError("expected ')' in parentheses expression");
+      EndLoc = Lexer.getTok().getEndLoc();
+      Lex();
+    }
+  }
+  return false;
+}
+
 bool AsmParser::parseAbsoluteExpression(int64_t &Res) {
   const MCExpr *Expr;
 
@@ -1069,7 +1098,7 @@ bool AsmParser::parseAbsoluteExpression(int64_t &Res) {
   if (parseExpression(Expr))
     return true;
 
-  if (!Expr->EvaluateAsAbsolute(Res))
+  if (!Expr->evaluateAsAbsolute(Res))
     return Error(StartLoc, "expected absolute expression");
 
   return false;
@@ -1180,7 +1209,7 @@ bool AsmParser::parseBinOpRHS(unsigned Precedence, const MCExpr *&Res,
       return true;
 
     // Merge LHS and RHS according to operator.
-    Res = MCBinaryExpr::Create(Kind, Res, RHS, getContext());
+    Res = MCBinaryExpr::create(Kind, Res, RHS, getContext());
   }
 }
 
@@ -1303,15 +1332,17 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
     MCSymbol *Sym;
     if (LocalLabelVal == -1) {
       if (ParsingInlineAsm && SI) {
-        StringRef RewrittenLabel = SI->LookupInlineAsmLabel(IDVal, getSourceManager(), IDLoc, true);
-        assert(RewrittenLabel.size() && "We should have an internal name here.");
+        StringRef RewrittenLabel =
+            SI->LookupInlineAsmLabel(IDVal, getSourceManager(), IDLoc, true);
+        assert(RewrittenLabel.size() &&
+               "We should have an internal name here.");
         Info.AsmRewrites->push_back(AsmRewrite(AOK_Label, IDLoc,
                                                IDVal.size(), RewrittenLabel));
         IDVal = RewrittenLabel;
       }
-      Sym = getContext().GetOrCreateSymbol(IDVal);
+      Sym = getContext().getOrCreateSymbol(IDVal);
     } else
-      Sym = Ctx.CreateDirectionalLocalSymbol(LocalLabelVal);
+      Sym = Ctx.createDirectionalLocalSymbol(LocalLabelVal);
 
     Sym->redefineIfPossible();
 
@@ -1617,8 +1648,8 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
     if (ActiveMacros.empty())
       Line = SrcMgr.FindLineNumber(IDLoc, CurBuffer);
     else
-      Line = SrcMgr.FindLineNumber(ActiveMacros.back()->InstantiationLoc,
-                                   ActiveMacros.back()->ExitBuffer);
+      Line = SrcMgr.FindLineNumber(ActiveMacros.front()->InstantiationLoc,
+                                   ActiveMacros.front()->ExitBuffer);
 
     // If we previously parsed a cpp hash file line comment then make sure the
     // current Dwarf File is for the CppHashFilename if not then emit the
@@ -1946,7 +1977,7 @@ bool AsmParser::parseMacroArgument(MCAsmMacroArgument &MA, bool Vararg) {
   if (Vararg) {
     if (Lexer.isNot(AsmToken::EndOfStatement)) {
       StringRef Str = parseStringToEndOfStatement();
-      MA.push_back(AsmToken(AsmToken::String, Str));
+      MA.emplace_back(AsmToken::String, Str);
     }
     return false;
   }
@@ -2173,82 +2204,20 @@ void AsmParser::handleMacroExit() {
   ActiveMacros.pop_back();
 }
 
-static bool isUsedIn(const MCSymbol *Sym, const MCExpr *Value) {
-  switch (Value->getKind()) {
-  case MCExpr::Binary: {
-    const MCBinaryExpr *BE = static_cast<const MCBinaryExpr *>(Value);
-    return isUsedIn(Sym, BE->getLHS()) || isUsedIn(Sym, BE->getRHS());
-  }
-  case MCExpr::Target:
-  case MCExpr::Constant:
-    return false;
-  case MCExpr::SymbolRef: {
-    const MCSymbol &S =
-        static_cast<const MCSymbolRefExpr *>(Value)->getSymbol();
-    if (S.isVariable())
-      return isUsedIn(Sym, S.getVariableValue());
-    return &S == Sym;
-  }
-  case MCExpr::Unary:
-    return isUsedIn(Sym, static_cast<const MCUnaryExpr *>(Value)->getSubExpr());
-  }
-
-  llvm_unreachable("Unknown expr kind!");
-}
-
 bool AsmParser::parseAssignment(StringRef Name, bool allow_redef,
                                 bool NoDeadStrip) {
-  // FIXME: Use better location, we should use proper tokens.
-  SMLoc EqualLoc = Lexer.getLoc();
-
+  MCSymbol *Sym;
   const MCExpr *Value;
-  if (parseExpression(Value))
+  if (MCParserUtils::parseAssignmentExpression(Name, allow_redef, *this, Sym,
+                                               Value))
     return true;
 
-  // Note: we don't count b as used in "a = b". This is to allow
-  // a = b
-  // b = c
-
-  if (Lexer.isNot(AsmToken::EndOfStatement))
-    return TokError("unexpected token in assignment");
-
-  // Eat the end of statement marker.
-  Lex();
-
-  // Validate that the LHS is allowed to be a variable (either it has not been
-  // used as a symbol, or it is an absolute symbol).
-  MCSymbol *Sym = getContext().LookupSymbol(Name);
-  if (Sym) {
-    // Diagnose assignment to a label.
-    //
-    // FIXME: Diagnostics. Note the location of the definition as a label.
-    // FIXME: Diagnose assignment to protected identifier (e.g., register name).
-    if (isUsedIn(Sym, Value))
-      return Error(EqualLoc, "Recursive use of '" + Name + "'");
-    else if (Sym->isUndefined() && !Sym->isUsed() && !Sym->isVariable())
-      ; // Allow redefinitions of undefined symbols only used in directives.
-    else if (Sym->isVariable() && !Sym->isUsed() && allow_redef)
-      ; // Allow redefinitions of variables that haven't yet been used.
-    else if (!Sym->isUndefined() && (!Sym->isVariable() || !allow_redef))
-      return Error(EqualLoc, "redefinition of '" + Name + "'");
-    else if (!Sym->isVariable())
-      return Error(EqualLoc, "invalid assignment to '" + Name + "'");
-    else if (!isa<MCConstantExpr>(Sym->getVariableValue()))
-      return Error(EqualLoc, "invalid reassignment of non-absolute variable '" +
-                                 Name + "'");
-
-    // Don't count these checks as uses.
-    Sym->setUsed(false);
-  } else if (Name == ".") {
-    if (Out.EmitValueToOffset(Value, 0)) {
-      Error(EqualLoc, "expected absolute expression");
-      eatToEndOfStatement();
-    }
+  if (!Sym) {
+    // In the case where we parse an expression starting with a '.', we will
+    // not generate an error, nor will we create a symbol.  In this case we
+    // should just return out.
     return false;
-  } else
-    Sym = getContext().GetOrCreateSymbol(Name);
-
-  Sym->setRedefinable(allow_redef);
+  }
 
   // Do the assignment.
   Out.EmitAssignment(Sym, Value);
@@ -3186,7 +3155,7 @@ bool AsmParser::parseDirectiveCFIPersonalityOrLsda(bool IsPersonality) {
   if (parseIdentifier(Name))
     return TokError("expected identifier in directive");
 
-  MCSymbol *Sym = getContext().GetOrCreateSymbol(Name);
+  MCSymbol *Sym = getContext().getOrCreateSymbol(Name);
 
   if (IsPersonality)
     getStreamer().EmitCFIPersonality(Sym, Encoding);
@@ -3700,7 +3669,7 @@ bool AsmParser::parseDirectiveSymbolAttribute(MCSymbolAttr Attr) {
       if (parseIdentifier(Name))
         return Error(Loc, "expected identifier in directive");
 
-      MCSymbol *Sym = getContext().GetOrCreateSymbol(Name);
+      MCSymbol *Sym = getContext().getOrCreateSymbol(Name);
 
       // Assembler local symbols don't make any sense here. Complain loudly.
       if (Sym->isTemporary())
@@ -3733,7 +3702,7 @@ bool AsmParser::parseDirectiveComm(bool IsLocal) {
     return TokError("expected identifier in directive");
 
   // Handle the identifier as the key symbol.
-  MCSymbol *Sym = getContext().GetOrCreateSymbol(Name);
+  MCSymbol *Sym = getContext().getOrCreateSymbol(Name);
 
   if (getLexer().isNot(AsmToken::Comma))
     return TokError("unexpected token in directive");
@@ -4030,7 +3999,7 @@ bool AsmParser::parseDirectiveIfdef(SMLoc DirectiveLoc, bool expect_defined) {
 
     Lex();
 
-    MCSymbol *Sym = getContext().LookupSymbol(Name);
+    MCSymbol *Sym = getContext().lookupSymbol(Name);
 
     if (expect_defined)
       TheCondState.CondMet = (Sym && !Sym->isUndefined());
@@ -4343,8 +4312,7 @@ MCAsmMacro *AsmParser::parseMacroLikeBody(SMLoc DirectiveLoc) {
   StringRef Body = StringRef(BodyStart, BodyEnd - BodyStart);
 
   // We Are Anonymous.
-  MacroLikeBodies.push_back(
-      MCAsmMacro(StringRef(), Body, MCAsmMacroParameters()));
+  MacroLikeBodies.emplace_back(StringRef(), Body, MCAsmMacroParameters());
   return &MacroLikeBodies.back();
 }
 
@@ -4376,7 +4344,7 @@ bool AsmParser::parseDirectiveRept(SMLoc DirectiveLoc, StringRef Dir) {
     return true;
 
   int64_t Count;
-  if (!CountExpr->EvaluateAsAbsolute(Count)) {
+  if (!CountExpr->evaluateAsAbsolute(Count)) {
     eatToEndOfStatement();
     return Error(CountLoc, "unexpected token in '" + Dir + "' directive");
   }
@@ -4487,7 +4455,7 @@ bool AsmParser::parseDirectiveIrpc(SMLoc DirectiveLoc) {
   StringRef Values = A.front().front().getString();
   for (std::size_t I = 0, End = Values.size(); I != End; ++I) {
     MCAsmMacroArgument Arg;
-    Arg.push_back(AsmToken(AsmToken::Identifier, Values.slice(I, I + 1)));
+    Arg.emplace_back(AsmToken::Identifier, Values.slice(I, I + 1));
 
     // Note that the AtPseudoVariable is enabled for instantiations of .irpc.
     // This is undocumented, but GAS seems to support it.
@@ -4772,6 +4740,103 @@ bool AsmParser::parseMSInlineAsm(
   AsmString = OS.str();
   return false;
 }
+
+namespace llvm {
+namespace MCParserUtils {
+
+/// Returns whether the given symbol is used anywhere in the given expression,
+/// or subexpressions.
+static bool isSymbolUsedInExpression(const MCSymbol *Sym, const MCExpr *Value) {
+  switch (Value->getKind()) {
+  case MCExpr::Binary: {
+    const MCBinaryExpr *BE = static_cast<const MCBinaryExpr *>(Value);
+    return isSymbolUsedInExpression(Sym, BE->getLHS()) ||
+           isSymbolUsedInExpression(Sym, BE->getRHS());
+  }
+  case MCExpr::Target:
+  case MCExpr::Constant:
+    return false;
+  case MCExpr::SymbolRef: {
+    const MCSymbol &S =
+        static_cast<const MCSymbolRefExpr *>(Value)->getSymbol();
+    if (S.isVariable())
+      return isSymbolUsedInExpression(Sym, S.getVariableValue());
+    return &S == Sym;
+  }
+  case MCExpr::Unary:
+    return isSymbolUsedInExpression(
+        Sym, static_cast<const MCUnaryExpr *>(Value)->getSubExpr());
+  }
+
+  llvm_unreachable("Unknown expr kind!");
+}
+
+bool parseAssignmentExpression(StringRef Name, bool allow_redef,
+                               MCAsmParser &Parser, MCSymbol *&Sym,
+                               const MCExpr *&Value) {
+  MCAsmLexer &Lexer = Parser.getLexer();
+
+  // FIXME: Use better location, we should use proper tokens.
+  SMLoc EqualLoc = Lexer.getLoc();
+
+  if (Parser.parseExpression(Value)) {
+    Parser.TokError("missing expression");
+    Parser.eatToEndOfStatement();
+    return true;
+  }
+
+  // Note: we don't count b as used in "a = b". This is to allow
+  // a = b
+  // b = c
+
+  if (Lexer.isNot(AsmToken::EndOfStatement))
+    return Parser.TokError("unexpected token in assignment");
+
+  // Eat the end of statement marker.
+  Parser.Lex();
+
+  // Validate that the LHS is allowed to be a variable (either it has not been
+  // used as a symbol, or it is an absolute symbol).
+  Sym = Parser.getContext().lookupSymbol(Name);
+  if (Sym) {
+    // Diagnose assignment to a label.
+    //
+    // FIXME: Diagnostics. Note the location of the definition as a label.
+    // FIXME: Diagnose assignment to protected identifier (e.g., register name).
+    if (isSymbolUsedInExpression(Sym, Value))
+      return Parser.Error(EqualLoc, "Recursive use of '" + Name + "'");
+    else if (Sym->isUndefined() && !Sym->isUsed() && !Sym->isVariable())
+      ; // Allow redefinitions of undefined symbols only used in directives.
+    else if (Sym->isVariable() && !Sym->isUsed() && allow_redef)
+      ; // Allow redefinitions of variables that haven't yet been used.
+    else if (!Sym->isUndefined() && (!Sym->isVariable() || !allow_redef))
+      return Parser.Error(EqualLoc, "redefinition of '" + Name + "'");
+    else if (!Sym->isVariable())
+      return Parser.Error(EqualLoc, "invalid assignment to '" + Name + "'");
+    else if (!isa<MCConstantExpr>(Sym->getVariableValue()))
+      return Parser.Error(EqualLoc,
+                          "invalid reassignment of non-absolute variable '" +
+                              Name + "'");
+
+    // Don't count these checks as uses.
+    Sym->setUsed(false);
+  } else if (Name == ".") {
+    if (Parser.getStreamer().EmitValueToOffset(Value, 0)) {
+      Parser.Error(EqualLoc, "expected absolute expression");
+      Parser.eatToEndOfStatement();
+      return true;
+    }
+    return false;
+  } else
+    Sym = Parser.getContext().getOrCreateSymbol(Name);
+
+  Sym->setRedefinable(allow_redef);
+
+  return false;
+}
+
+} // namespace MCParserUtils
+} // namespace llvm
 
 /// \brief Create an MCAsmParser instance.
 MCAsmParser *llvm::createMCAsmParser(SourceMgr &SM, MCContext &C,

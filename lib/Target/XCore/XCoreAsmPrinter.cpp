@@ -37,7 +37,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCStreamer.h"
-#include "llvm/MC/MCSymbol.h"
+#include "llvm/MC/MCSymbolELF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
@@ -96,11 +96,11 @@ void XCoreAsmPrinter::emitArrayBound(MCSymbol *Sym, const GlobalVariable *GV) {
   if (ArrayType *ATy = dyn_cast<ArrayType>(
                         cast<PointerType>(GV->getType())->getElementType())) {
 
-    MCSymbol *SymGlob = OutContext.GetOrCreateSymbol(
+    MCSymbol *SymGlob = OutContext.getOrCreateSymbol(
                           Twine(Sym->getName() + StringRef(".globound")));
     OutStreamer->EmitSymbolAttribute(SymGlob, MCSA_Global);
     OutStreamer->EmitAssignment(SymGlob,
-                                MCConstantExpr::Create(ATy->getNumElements(),
+                                MCConstantExpr::create(ATy->getNumElements(),
                                                        OutContext));
     if (GV->hasWeakLinkage() || GV->hasLinkOnceLinkage() ||
         GV->hasCommonLinkage()) {
@@ -115,14 +115,14 @@ void XCoreAsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
       EmitSpecialLLVMGlobal(GV))
     return;
 
-  const DataLayout *TD = TM.getDataLayout();
+  const DataLayout &DL = getDataLayout();
   OutStreamer->SwitchSection(
       getObjFileLowering().SectionForGlobal(GV, *Mang, TM));
 
   MCSymbol *GVSym = getSymbol(GV);
   const Constant *C = GV->getInitializer();
-  unsigned Align = (unsigned)TD->getPreferredTypeAlignmentShift(C->getType());
-  
+  unsigned Align = (unsigned)DL.getPreferredTypeAlignmentShift(C->getType());
+
   // Mark the start of the global
   getTargetStreamer().emitCCTopData(GVSym->getName());
 
@@ -154,14 +154,15 @@ void XCoreAsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
   if (GV->isThreadLocal()) {
     report_fatal_error("TLS is not supported by this target!");
   }
-  unsigned Size = TD->getTypeAllocSize(C->getType());
+  unsigned Size = DL.getTypeAllocSize(C->getType());
   if (MAI->hasDotTypeDotSizeDirective()) {
     OutStreamer->EmitSymbolAttribute(GVSym, MCSA_ELF_TypeObject);
-    OutStreamer->EmitELFSize(GVSym, MCConstantExpr::Create(Size, OutContext));
+    OutStreamer->emitELFSize(cast<MCSymbolELF>(GVSym),
+                             MCConstantExpr::create(Size, OutContext));
   }
   OutStreamer->EmitLabel(GVSym);
-  
-  EmitGlobalConstant(C);
+
+  EmitGlobalConstant(DL, C);
   // The ABI requires that unsigned scalar types smaller than 32 bits
   // are padded to 32 bits.
   if (Size < 4)
@@ -201,13 +202,13 @@ printInlineJT(const MachineInstr *MI, int opNum, raw_ostream &O,
     MachineBasicBlock *MBB = JTBBs[i];
     if (i > 0)
       O << ",";
-    O << *MBB->getSymbol();
+    MBB->getSymbol()->print(O, MAI);
   }
 }
 
 void XCoreAsmPrinter::printOperand(const MachineInstr *MI, int opNum,
                                    raw_ostream &O) {
-  const DataLayout *DL = TM.getDataLayout();
+  const DataLayout &DL = getDataLayout();
   const MachineOperand &MO = MI->getOperand(opNum);
   switch (MO.getType()) {
   case MachineOperand::MO_Register:
@@ -217,17 +218,17 @@ void XCoreAsmPrinter::printOperand(const MachineInstr *MI, int opNum,
     O << MO.getImm();
     break;
   case MachineOperand::MO_MachineBasicBlock:
-    O << *MO.getMBB()->getSymbol();
+    MO.getMBB()->getSymbol()->print(O, MAI);
     break;
   case MachineOperand::MO_GlobalAddress:
-    O << *getSymbol(MO.getGlobal());
+    getSymbol(MO.getGlobal())->print(O, MAI);
     break;
   case MachineOperand::MO_ConstantPoolIndex:
-    O << DL->getPrivateGlobalPrefix() << "CPI" << getFunctionNumber()
-      << '_' << MO.getIndex();
+    O << DL.getPrivateGlobalPrefix() << "CPI" << getFunctionNumber() << '_'
+      << MO.getIndex();
     break;
   case MachineOperand::MO_BlockAddress:
-    O << *GetBlockAddressSymbol(MO.getBlockAddress());
+    GetBlockAddressSymbol(MO.getBlockAddress())->print(O, MAI);
     break;
   default:
     llvm_unreachable("not implemented");

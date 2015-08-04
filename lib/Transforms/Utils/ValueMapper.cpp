@@ -156,12 +156,13 @@ static Metadata *mapToSelf(ValueToValueMapTy &VM, const Metadata *MD) {
 }
 
 static Metadata *MapMetadataImpl(const Metadata *MD,
-                                 SmallVectorImpl<MDNode *> &Cycles,
+                                 SmallVectorImpl<TrackingMDNodeRef> &Cycles,
                                  ValueToValueMapTy &VM, RemapFlags Flags,
                                  ValueMapTypeRemapper *TypeMapper,
                                  ValueMaterializer *Materializer);
 
-static Metadata *mapMetadataOp(Metadata *Op, SmallVectorImpl<MDNode *> &Cycles,
+static Metadata *mapMetadataOp(Metadata *Op,
+                               SmallVectorImpl<TrackingMDNodeRef> &Cycles,
                                ValueToValueMapTy &VM, RemapFlags Flags,
                                ValueMapTypeRemapper *TypeMapper,
                                ValueMaterializer *Materializer) {
@@ -189,8 +190,9 @@ static Metadata *mapMetadataOp(Metadata *Op, SmallVectorImpl<MDNode *> &Cycles,
 ///
 /// \pre \c NewNode is a clone of \c OldNode.
 static bool remap(const MDNode *OldNode, MDNode *NewNode,
-                  SmallVectorImpl<MDNode *> &Cycles, ValueToValueMapTy &VM,
-                  RemapFlags Flags, ValueMapTypeRemapper *TypeMapper,
+                  SmallVectorImpl<TrackingMDNodeRef> &Cycles,
+                  ValueToValueMapTy &VM, RemapFlags Flags,
+                  ValueMapTypeRemapper *TypeMapper,
                   ValueMaterializer *Materializer) {
   assert(OldNode->getNumOperands() == NewNode->getNumOperands() &&
          "Expected nodes to match");
@@ -205,8 +207,8 @@ static bool remap(const MDNode *OldNode, MDNode *NewNode,
     assert(NewNode->getOperand(I) == Old &&
            "Expected old operands to already be in place");
 
-    Metadata *New = mapMetadataOp(OldNode->getOperand(I), Cycles, VM, Flags,
-                                  TypeMapper, Materializer);
+    Metadata *New =
+        mapMetadataOp(Old, Cycles, VM, Flags, TypeMapper, Materializer);
     if (Old != New) {
       AnyChanged = true;
       NewNode->replaceOperandWith(I, New);
@@ -216,24 +218,32 @@ static bool remap(const MDNode *OldNode, MDNode *NewNode,
   return AnyChanged;
 }
 
-/// \brief Map a distinct MDNode.
+/// Map a distinct MDNode.
 ///
-/// Distinct nodes are not uniqued, so they must always recreated.
+/// Whether distinct nodes change is independent of their operands.  If \a
+/// RF_MoveDistinctMDs, then they are reused, and their operands remapped in
+/// place; effectively, they're moved from one graph to another.  Otherwise,
+/// they're cloned/duplicated, and the new copy's operands are remapped.
 static Metadata *mapDistinctNode(const MDNode *Node,
-                                 SmallVectorImpl<MDNode *> &Cycles,
+                                 SmallVectorImpl<TrackingMDNodeRef> &Cycles,
                                  ValueToValueMapTy &VM, RemapFlags Flags,
                                  ValueMapTypeRemapper *TypeMapper,
                                  ValueMaterializer *Materializer) {
   assert(Node->isDistinct() && "Expected distinct node");
 
-  MDNode *NewMD = MDNode::replaceWithDistinct(Node->clone());
-  remap(Node, NewMD, Cycles, VM, Flags, TypeMapper, Materializer);
+  MDNode *NewMD;
+  if (Flags & RF_MoveDistinctMDs)
+    NewMD = const_cast<MDNode *>(Node);
+  else
+    NewMD = MDNode::replaceWithDistinct(Node->clone());
 
-  // Track any cycles beneath this node.
-  for (Metadata *Op : NewMD->operands())
-    if (auto *Node = dyn_cast_or_null<MDNode>(Op))
-      if (!Node->isResolved())
-        Cycles.push_back(Node);
+  // Remap the operands.  If any change, track those that could be involved in
+  // uniquing cycles.
+  if (remap(Node, NewMD, Cycles, VM, Flags, TypeMapper, Materializer))
+    for (Metadata *Op : NewMD->operands())
+      if (auto *Node = dyn_cast_or_null<MDNode>(Op))
+        if (!Node->isResolved())
+          Cycles.emplace_back(Node);
 
   return NewMD;
 }
@@ -242,7 +252,7 @@ static Metadata *mapDistinctNode(const MDNode *Node,
 ///
 /// Uniqued nodes may not need to be recreated (they may map to themselves).
 static Metadata *mapUniquedNode(const MDNode *Node,
-                                SmallVectorImpl<MDNode *> &Cycles,
+                                SmallVectorImpl<TrackingMDNodeRef> &Cycles,
                                 ValueToValueMapTy &VM, RemapFlags Flags,
                                 ValueMapTypeRemapper *TypeMapper,
                                 ValueMaterializer *Materializer) {
@@ -250,9 +260,12 @@ static Metadata *mapUniquedNode(const MDNode *Node,
 
   // Create a temporary node upfront in case we have a metadata cycle.
   auto ClonedMD = Node->clone();
-  if (!remap(Node, ClonedMD.get(), Cycles, VM, Flags, TypeMapper, Materializer))
+  if (!remap(Node, ClonedMD.get(), Cycles, VM, Flags, TypeMapper,
+             Materializer)) {
     // No operands changed, so use the identity mapping.
+    ClonedMD->replaceAllUsesWith(const_cast<MDNode *>(Node));
     return mapToSelf(VM, Node);
+  }
 
   // At least one operand has changed, so uniquify the cloned node.
   return mapToMetadata(VM, Node,
@@ -260,7 +273,7 @@ static Metadata *mapUniquedNode(const MDNode *Node,
 }
 
 static Metadata *MapMetadataImpl(const Metadata *MD,
-                                 SmallVectorImpl<MDNode *> &Cycles,
+                                 SmallVectorImpl<TrackingMDNodeRef> &Cycles,
                                  ValueToValueMapTy &VM, RemapFlags Flags,
                                  ValueMapTypeRemapper *TypeMapper,
                                  ValueMaterializer *Materializer) {
@@ -313,23 +326,24 @@ static Metadata *MapMetadataImpl(const Metadata *MD,
 Metadata *llvm::MapMetadata(const Metadata *MD, ValueToValueMapTy &VM,
                             RemapFlags Flags, ValueMapTypeRemapper *TypeMapper,
                             ValueMaterializer *Materializer) {
-  SmallVector<MDNode *, 8> Cycles;
+  SmallVector<TrackingMDNodeRef, 8> Cycles;
   Metadata *NewMD =
       MapMetadataImpl(MD, Cycles, VM, Flags, TypeMapper, Materializer);
 
-  // Resolve cycles underneath MD.
-  if (NewMD && NewMD != MD) {
-    if (auto *N = dyn_cast<MDNode>(NewMD))
-      if (!N->isResolved())
-        N->resolveCycles();
-
-    for (MDNode *N : Cycles)
-      if (!N->isResolved())
-        N->resolveCycles();
-  } else {
-    // Shouldn't get unresolved cycles if nothing was remapped.
-    assert(Cycles.empty() && "Expected no unresolved cycles");
+  if ((Flags & RF_NoModuleLevelChanges) ||
+      (MD == NewMD && !(Flags & RF_MoveDistinctMDs))) {
+    assert(Cycles.empty() && "Unresolved cycles without remapping anything?");
+    return NewMD;
   }
+
+  if (auto *N = dyn_cast<MDNode>(NewMD))
+    if (!N->isResolved())
+      N->resolveCycles();
+
+  // Resolve cycles underneath MD.
+  for (MDNode *N : Cycles)
+    if (!N->isResolved())
+      N->resolveCycles();
 
   return NewMD;
 }
@@ -374,14 +388,11 @@ void llvm::RemapInstruction(Instruction *I, ValueToValueMapTy &VMap,
   // Remap attached metadata.
   SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
   I->getAllMetadata(MDs);
-  for (SmallVectorImpl<std::pair<unsigned, MDNode *>>::iterator
-           MI = MDs.begin(),
-           ME = MDs.end();
-       MI != ME; ++MI) {
-    MDNode *Old = MI->second;
+  for (const auto &MI : MDs) {
+    MDNode *Old = MI.second;
     MDNode *New = MapMetadata(Old, VMap, Flags, TypeMapper, Materializer);
     if (New != Old)
-      I->setMetadata(MI->first, New);
+      I->setMetadata(MI.first, New);
   }
   
   if (!TypeMapper)
@@ -396,6 +407,15 @@ void llvm::RemapInstruction(Instruction *I, ValueToValueMapTy &VMap,
       Tys.push_back(TypeMapper->remapType(Ty));
     CS.mutateFunctionType(FunctionType::get(
         TypeMapper->remapType(I->getType()), Tys, FTy->isVarArg()));
-  } else
-    I->mutateType(TypeMapper->remapType(I->getType()));
+    return;
+  }
+  if (auto *AI = dyn_cast<AllocaInst>(I))
+    AI->setAllocatedType(TypeMapper->remapType(AI->getAllocatedType()));
+  if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
+    GEP->setSourceElementType(
+        TypeMapper->remapType(GEP->getSourceElementType()));
+    GEP->setResultElementType(
+        TypeMapper->remapType(GEP->getResultElementType()));
+  }
+  I->mutateType(TypeMapper->remapType(I->getType()));
 }

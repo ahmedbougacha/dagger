@@ -329,8 +329,18 @@ bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
       } else if (!CurBundle)
         report("No bundle header", MBBI);
       visitMachineInstrBefore(MBBI);
-      for (unsigned I = 0, E = MBBI->getNumOperands(); I != E; ++I)
-        visitMachineOperand(&MBBI->getOperand(I), I);
+      for (unsigned I = 0, E = MBBI->getNumOperands(); I != E; ++I) {
+        const MachineInstr &MI = *MBBI;
+        const MachineOperand &Op = MI.getOperand(I);
+        if (Op.getParent() != &MI) {
+          // Make sure to use correct addOperand / RemoveOperand / ChangeTo
+          // functions when replacing operands of a MachineInstr.
+          report("Instruction has operand with wrong parent set", &MI);
+        }
+
+        visitMachineOperand(&Op, I);
+      }
+
       visitMachineInstrAfter(MBBI);
 
       // Was this the last bundled instruction?
@@ -684,7 +694,7 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
 
   const MachineFrameInfo *MFI = MF->getFrameInfo();
   assert(MFI && "Function has no frame info");
-  BitVector PR = MFI->getPristineRegs(MBB);
+  BitVector PR = MFI->getPristineRegs(*MF);
   for (int I = PR.find_first(); I>0; I = PR.find_next(I)) {
     for (MCSubRegIterator SubRegs(I, TRI, /*IncludeSelf=*/true);
          SubRegs.isValid(); ++SubRegs)
@@ -1661,6 +1671,8 @@ void MachineVerifier::verifyLiveInterval(const LiveInterval &LI) {
       report("Lane masks of sub ranges overlap in live interval", MF, LI);
     if ((SR.LaneMask & ~MaxMask) != 0)
       report("Subrange lanemask is invalid", MF, LI);
+    if (SR.empty())
+      report("Subrange must not be empty", MF, SR, LI.reg, SR.LaneMask);
     Mask |= SR.LaneMask;
     verifyLiveRange(SR, LI.reg, SR.LaneMask);
     if (!LI.covers(SR))
@@ -1706,8 +1718,8 @@ namespace {
 /// by a FrameDestroy <n>, stack adjustments are identical on all
 /// CFG edges to a merge point, and frame is destroyed at end of a return block.
 void MachineVerifier::verifyStackFrame() {
-  int FrameSetupOpcode   = TII->getCallFrameSetupOpcode();
-  int FrameDestroyOpcode = TII->getCallFrameDestroyOpcode();
+  unsigned FrameSetupOpcode   = TII->getCallFrameSetupOpcode();
+  unsigned FrameDestroyOpcode = TII->getCallFrameDestroyOpcode();
 
   SmallVector<StackStateOfBB, 8> SPState;
   SPState.resize(MF->getNumBlockIDs());

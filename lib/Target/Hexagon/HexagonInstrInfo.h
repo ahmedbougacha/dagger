@@ -32,9 +32,10 @@ class HexagonInstrInfo : public HexagonGenInstrInfo {
   virtual void anchor();
   const HexagonRegisterInfo RI;
   const HexagonSubtarget &Subtarget;
-  typedef unsigned Opcode_t;
 
 public:
+  typedef unsigned Opcode_t;
+
   explicit HexagonInstrInfo(HexagonSubtarget &ST);
 
   /// getRegisterInfo - TargetInstrInfo is a superset of MRegister info.  As
@@ -68,8 +69,7 @@ public:
   unsigned RemoveBranch(MachineBasicBlock &MBB) const override;
 
   unsigned InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
-                        MachineBasicBlock *FBB,
-                        const SmallVectorImpl<MachineOperand> &Cond,
+                        MachineBasicBlock *FBB, ArrayRef<MachineOperand> Cond,
                         DebugLoc DL) const override;
 
   bool analyzeCompare(const MachineInstr *MI,
@@ -113,10 +113,12 @@ public:
 
   MachineInstr *foldMemoryOperandImpl(MachineFunction &MF, MachineInstr *MI,
                                       ArrayRef<unsigned> Ops,
+                                      MachineBasicBlock::iterator InsertPt,
                                       int FrameIndex) const override;
 
   MachineInstr *foldMemoryOperandImpl(MachineFunction &MF, MachineInstr *MI,
                                       ArrayRef<unsigned> Ops,
+                                      MachineBasicBlock::iterator InsertPt,
                                       MachineInstr *LoadMI) const override {
     return nullptr;
   }
@@ -126,7 +128,7 @@ public:
   bool isBranch(const MachineInstr *MI) const;
   bool isPredicable(MachineInstr *MI) const override;
   bool PredicateInstruction(MachineInstr *MI,
-                    const SmallVectorImpl<MachineOperand> &Cond) const override;
+                            ArrayRef<MachineOperand> Cond) const override;
 
   bool isProfitableToIfCvt(MachineBasicBlock &MBB, unsigned NumCycles,
                            unsigned ExtraPredCycles,
@@ -146,8 +148,8 @@ public:
   bool isPredicatedNew(unsigned Opcode) const;
   bool DefinesPredicate(MachineInstr *MI,
                         std::vector<MachineOperand> &Pred) const override;
-  bool SubsumesPredicate(const SmallVectorImpl<MachineOperand> &Pred1,
-                   const SmallVectorImpl<MachineOperand> &Pred2) const override;
+  bool SubsumesPredicate(ArrayRef<MachineOperand> Pred1,
+                         ArrayRef<MachineOperand> Pred2) const override;
 
   bool
   ReverseBranchCondition(SmallVectorImpl<MachineOperand> &Cond) const override;
@@ -185,6 +187,7 @@ public:
   bool isConditionalStore(const MachineInstr* MI) const;
   bool isNewValueInst(const MachineInstr* MI) const;
   bool isNewValue(const MachineInstr* MI) const;
+  bool isNewValue(Opcode_t Opcode) const;
   bool isDotNewInst(const MachineInstr* MI) const;
   int GetDotOldOp(const int opc) const;
   int GetDotNewOp(const MachineInstr* MI) const;
@@ -200,6 +203,7 @@ public:
   bool isNewValueStore(const MachineInstr* MI) const;
   bool isNewValueStore(unsigned Opcode) const;
   bool isNewValueJump(const MachineInstr* MI) const;
+  bool isNewValueJump(Opcode_t Opcode) const;
   bool isNewValueJumpCandidate(const MachineInstr *MI) const;
 
 
@@ -217,7 +221,10 @@ public:
   bool NonExtEquivalentExists (const MachineInstr *MI) const;
   short getNonExtOpcode(const MachineInstr *MI) const;
   bool PredOpcodeHasJMP_c(Opcode_t Opcode) const;
-  bool PredOpcodeHasNot(Opcode_t Opcode) const;
+  bool predOpcodeHasNot(ArrayRef<MachineOperand> Cond) const;
+  bool isEndLoopN(Opcode_t Opcode) const;
+  bool getPredReg(ArrayRef<MachineOperand> Cond, unsigned &PredReg,
+                  unsigned &PredRegPos, unsigned &PredRegFlags) const;
   int getCondOpcode(int Opc, bool sense) const;
 
 };

@@ -37,10 +37,8 @@
 namespace llvm {
 
 // Implementation in LoopInfoImpl.h
-#ifdef __GNUC__
 class MachineLoop;
-__extension__ extern template class LoopBase<MachineBasicBlock, MachineLoop>;
-#endif
+extern template class LoopBase<MachineBasicBlock, MachineLoop>;
 
 class MachineLoop : public LoopBase<MachineBasicBlock, MachineLoop> {
 public:
@@ -65,10 +63,7 @@ private:
 };
 
 // Implementation in LoopInfoImpl.h
-#ifdef __GNUC__
-__extension__ extern template
-class LoopInfoBase<MachineBasicBlock, MachineLoop>;
-#endif
+extern template class LoopInfoBase<MachineBasicBlock, MachineLoop>;
 
 class MachineLoopInfo : public MachineFunctionPass {
   LoopInfoBase<MachineBasicBlock, MachineLoop> LI;
@@ -114,7 +109,7 @@ public:
   }
 
   // isLoopHeader - True if the block is a loop header node
-  inline bool isLoopHeader(MachineBasicBlock *BB) const {
+  inline bool isLoopHeader(const MachineBasicBlock *BB) const {
     return LI.isLoopHeader(BB);
   }
 

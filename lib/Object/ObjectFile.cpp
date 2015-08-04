@@ -28,20 +28,32 @@ void ObjectFile::anchor() { }
 ObjectFile::ObjectFile(unsigned int Type, MemoryBufferRef Source)
     : SymbolicFile(Type, Source) {}
 
-std::error_code ObjectFile::printSymbolName(raw_ostream &OS,
-                                            DataRefImpl Symb) const {
-  StringRef Name;
-  if (std::error_code EC = getSymbolName(Symb, Name))
-    return EC;
-  OS << Name;
-  return object_error::success;
+bool SectionRef::containsSymbol(SymbolRef S) const {
+  section_iterator SymSec = getObject()->section_end();
+  if (S.getSection(SymSec))
+    return false;
+  return *this == *SymSec;
 }
 
-std::error_code ObjectFile::getSymbolAlignment(DataRefImpl DRI,
-                                               uint32_t &Result) const {
-  Result = 0;
-  return object_error::success;
+uint64_t ObjectFile::getSymbolValue(DataRefImpl Ref) const {
+  uint32_t Flags = getSymbolFlags(Ref);
+  if (Flags & SymbolRef::SF_Undefined)
+    return 0;
+  if (Flags & SymbolRef::SF_Common)
+    return getCommonSymbolSize(Ref);
+  return getSymbolValueImpl(Ref);
 }
+
+std::error_code ObjectFile::printSymbolName(raw_ostream &OS,
+                                            DataRefImpl Symb) const {
+  ErrorOr<StringRef> Name = getSymbolName(Symb);
+  if (std::error_code EC = Name.getError())
+    return EC;
+  OS << *Name;
+  return std::error_code();
+}
+
+uint32_t ObjectFile::getSymbolAlignment(DataRefImpl DRI) const { return 0; }
 
 section_iterator ObjectFile::getRelocatedSection(DataRefImpl Sec) const {
   return section_iterator(SectionRef(Sec, this));

@@ -104,3 +104,32 @@ Function *llvm::checkSanitizerInterfaceFunction(Constant *FuncOrBitcast) {
   Stream << "Sanitizer interface function redefined: " << *FuncOrBitcast;
   report_fatal_error(Err);
 }
+
+std::pair<Function *, Function *> llvm::createSanitizerCtorAndInitFunctions(
+    Module &M, StringRef CtorName, StringRef InitName,
+    ArrayRef<Type *> InitArgTypes, ArrayRef<Value *> InitArgs,
+    StringRef VersionCheckName) {
+  assert(!InitName.empty() && "Expected init function name");
+  assert(InitArgTypes.size() == InitArgTypes.size() &&
+         "Sanitizer's init function expects different number of arguments");
+  Function *Ctor = Function::Create(
+      FunctionType::get(Type::getVoidTy(M.getContext()), false),
+      GlobalValue::InternalLinkage, CtorName, &M);
+  BasicBlock *CtorBB = BasicBlock::Create(M.getContext(), "", Ctor);
+  IRBuilder<> IRB(ReturnInst::Create(M.getContext(), CtorBB));
+  Function *InitFunction =
+      checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+          InitName, FunctionType::get(IRB.getVoidTy(), InitArgTypes, false),
+          AttributeSet()));
+  InitFunction->setLinkage(Function::ExternalLinkage);
+  IRB.CreateCall(InitFunction, InitArgs);
+  if (!VersionCheckName.empty()) {
+    Function *VersionCheckFunction =
+        checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+            VersionCheckName, FunctionType::get(IRB.getVoidTy(), {}, false),
+            AttributeSet()));
+    IRB.CreateCall(VersionCheckFunction, {});
+  }
+  return std::make_pair(Ctor, InitFunction);
+}
+

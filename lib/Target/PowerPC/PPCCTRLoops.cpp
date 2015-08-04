@@ -351,8 +351,9 @@ bool PPCCTRLoops::mightUseCTR(const Triple &TT, BasicBlock *BB) {
             Opcode = ISD::FTRUNC; break;
           }
 
-          MVT VTy =
-            TLI->getSimpleValueType(CI->getArgOperand(0)->getType(), true);
+          auto &DL = CI->getModule()->getDataLayout();
+          MVT VTy = TLI->getSimpleValueType(DL, CI->getArgOperand(0)->getType(),
+                                            true);
           if (VTy == MVT::Other)
             return true;
           
@@ -417,8 +418,8 @@ bool PPCCTRLoops::mightUseCTR(const Triple &TT, BasicBlock *BB) {
 bool PPCCTRLoops::convertToCTRLoop(Loop *L) {
   bool MadeChange = false;
 
-  Triple TT = Triple(L->getHeader()->getParent()->getParent()->
-                     getTargetTriple());
+  const Triple TT =
+      Triple(L->getHeader()->getParent()->getParent()->getTargetTriple());
   if (!TT.isArch32Bit() && !TT.isArch64Bit())
     return MadeChange; // Unknown arch. type.
 
@@ -553,7 +554,7 @@ bool PPCCTRLoops::convertToCTRLoop(Loop *L) {
   IRBuilder<> CondBuilder(CountedExitBranch);
   Value *DecFunc =
     Intrinsic::getDeclaration(M, Intrinsic::ppc_is_decremented_ctr_nonzero);
-  Value *NewCond = CondBuilder.CreateCall(DecFunc);
+  Value *NewCond = CondBuilder.CreateCall(DecFunc, {});
   Value *OldCond = CountedExitBranch->getCondition();
   CountedExitBranch->setCondition(NewCond);
 

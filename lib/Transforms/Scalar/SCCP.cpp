@@ -479,6 +479,11 @@ private:
   void visitExtractValueInst(ExtractValueInst &EVI);
   void visitInsertValueInst(InsertValueInst &IVI);
   void visitLandingPadInst(LandingPadInst &I) { markAnythingOverdefined(&I); }
+  void visitCleanupPadInst(CleanupPadInst &CPI) { markAnythingOverdefined(&CPI); }
+  void visitCatchPadInst(CatchPadInst &CPI) {
+    markAnythingOverdefined(&CPI);
+    visitTerminatorInst(CPI);
+  }
 
   // Instructions that cannot be folded away.
   void visitStoreInst     (StoreInst &I);
@@ -539,9 +544,9 @@ void SCCPSolver::getFeasibleSuccessors(TerminatorInst &TI,
     return;
   }
 
-  if (isa<InvokeInst>(TI)) {
-    // Invoke instructions successors are always executable.
-    Succs[0] = Succs[1] = true;
+  // Unwinding instructions successors are always executable.
+  if (TI.isExceptional()) {
+    Succs.assign(TI.getNumSuccessors(), true);
     return;
   }
 
@@ -605,8 +610,8 @@ bool SCCPSolver::isEdgeFeasible(BasicBlock *From, BasicBlock *To) {
     return BI->getSuccessor(CI->isZero()) == To;
   }
 
-  // Invoke instructions successors are always executable.
-  if (isa<InvokeInst>(TI))
+  // Unwinding instructions successors are always executable.
+  if (TI->isExceptional())
     return true;
 
   if (SwitchInst *SI = dyn_cast<SwitchInst>(TI)) {
@@ -1055,7 +1060,7 @@ void SCCPSolver::visitLoadInst(LoadInst &I) {
 
   // load null -> null
   if (isa<ConstantPointerNull>(Ptr) && I.getPointerAddressSpace() == 0)
-    return markConstant(IV, &I, Constant::getNullValue(I.getType()));
+    return markConstant(IV, &I, UndefValue::get(I.getType()));
 
   // Transform load (constant global) into the value loaded.
   if (GlobalVariable *GV = dyn_cast<GlobalVariable>(Ptr)) {
@@ -1545,7 +1550,7 @@ static void DeleteInstructionInBlock(BasicBlock *BB) {
     Instruction *Inst = --I;
     if (!Inst->use_empty())
       Inst->replaceAllUsesWith(UndefValue::get(Inst->getType()));
-    if (isa<LandingPadInst>(Inst)) {
+    if (Inst->isEHPad()) {
       EndInst = Inst;
       continue;
     }
@@ -1799,11 +1804,10 @@ bool IPSCCP::runOnModule(Module &M) {
         if (!TI->use_empty())
           TI->replaceAllUsesWith(UndefValue::get(TI->getType()));
         TI->eraseFromParent();
+        new UnreachableInst(M.getContext(), BB);
 
         if (&*BB != &F->front())
           BlocksToErase.push_back(BB);
-        else
-          new UnreachableInst(M.getContext(), BB);
         continue;
       }
 

@@ -38,6 +38,7 @@ class InlineAsm;
 class Instruction;
 class LLVMContext;
 class Module;
+class ModuleSlotTracker;
 class StringRef;
 class Twine;
 class Type;
@@ -69,9 +70,8 @@ class Value {
   Type *VTy;
   Use *UseList;
 
-  friend class ValueAsMetadata; // Allow access to NameAndIsUsedByMD.
+  friend class ValueAsMetadata; // Allow access to IsUsedByMD.
   friend class ValueHandleBase;
-  PointerIntPair<ValueName *, 1> NameAndIsUsedByMD;
 
   const unsigned char SubclassID;   // Subclass identifier (for isa/dyn_cast)
   unsigned char HasValueHandle : 1; // Has a ValueHandle pointing to this?
@@ -101,7 +101,15 @@ protected:
   /// This is stored here to save space in User on 64-bit hosts.  Since most
   /// instances of Value have operands, 32-bit hosts aren't significantly
   /// affected.
-  unsigned NumOperands;
+  ///
+  /// Note, this should *NOT* be used directly by any class other than User.
+  /// User uses this value to find the Use list.
+  enum : unsigned { NumUserOperandsBits = 29 };
+  unsigned NumUserOperands : NumUserOperandsBits;
+
+  bool IsUsedByMD : 1;
+  bool HasName : 1;
+  bool HasHungOffUses : 1;
 
 private:
   template <typename UseT> // UseT == 'Use' or 'const Use'
@@ -192,7 +200,10 @@ public:
   void dump() const;
 
   /// \brief Implement operator<< on Value.
+  /// @{
   void print(raw_ostream &O) const;
+  void print(raw_ostream &O, ModuleSlotTracker &MST) const;
+  /// @}
 
   /// \brief Print the name of this Value out to the specified raw_ostream.
   ///
@@ -200,8 +211,12 @@ public:
   /// instruction that generated it. If you specify a Module for context, then
   /// even constanst get pretty-printed; for example, the type of a null
   /// pointer is printed symbolically.
+  /// @{
   void printAsOperand(raw_ostream &O, bool PrintType = true,
                       const Module *M = nullptr) const;
+  void printAsOperand(raw_ostream &O, bool PrintType,
+                      ModuleSlotTracker &MST) const;
+  /// @}
 
   /// \brief All values are typed, get the type of this value.
   Type *getType() const { return VTy; }
@@ -210,12 +225,13 @@ public:
   LLVMContext &getContext() const;
 
   // \brief All values can potentially be named.
-  bool hasName() const { return getValueName() != nullptr; }
-  ValueName *getValueName() const { return NameAndIsUsedByMD.getPointer(); }
-  void setValueName(ValueName *VN) { NameAndIsUsedByMD.setPointer(VN); }
+  bool hasName() const { return HasName; }
+  ValueName *getValueName() const;
+  void setValueName(ValueName *VN);
 
 private:
   void destroyValueName();
+  void setNameImpl(const Twine &Name);
 
 public:
   /// \brief Return a constant reference to the value's name.
@@ -325,32 +341,12 @@ public:
   /// Value classes SubclassID field. They are used for concrete type
   /// identification.
   enum ValueTy {
-    ArgumentVal,              // This is an instance of Argument
-    BasicBlockVal,            // This is an instance of BasicBlock
-    FunctionVal,              // This is an instance of Function
-    GlobalAliasVal,           // This is an instance of GlobalAlias
-    GlobalVariableVal,        // This is an instance of GlobalVariable
-    UndefValueVal,            // This is an instance of UndefValue
-    BlockAddressVal,          // This is an instance of BlockAddress
-    ConstantExprVal,          // This is an instance of ConstantExpr
-    ConstantAggregateZeroVal, // This is an instance of ConstantAggregateZero
-    ConstantDataArrayVal,     // This is an instance of ConstantDataArray
-    ConstantDataVectorVal,    // This is an instance of ConstantDataVector
-    ConstantIntVal,           // This is an instance of ConstantInt
-    ConstantFPVal,            // This is an instance of ConstantFP
-    ConstantArrayVal,         // This is an instance of ConstantArray
-    ConstantStructVal,        // This is an instance of ConstantStruct
-    ConstantVectorVal,        // This is an instance of ConstantVector
-    ConstantPointerNullVal,   // This is an instance of ConstantPointerNull
-    MetadataAsValueVal,       // This is an instance of MetadataAsValue
-    InlineAsmVal,             // This is an instance of InlineAsm
-    InstructionVal,           // This is an instance of Instruction
-    // Enum values starting at InstructionVal are used for Instructions;
-    // don't add new values here!
+#define HANDLE_VALUE(Name) Name##Val,
+#include "llvm/IR/Value.def"
 
     // Markers:
-    ConstantFirstVal = FunctionVal,
-    ConstantLastVal  = ConstantPointerNullVal
+#define HANDLE_CONSTANT_MARKER(Marker, Constant) Marker = Constant##Val,
+#include "llvm/IR/Value.def"
   };
 
   /// \brief Return an ID for the concrete type of this object.
@@ -393,7 +389,7 @@ public:
   bool hasValueHandle() const { return HasValueHandle; }
 
   /// \brief Return true if there is metadata referencing this value.
-  bool isUsedByMetadata() const { return NameAndIsUsedByMD.getInt(); }
+  bool isUsedByMetadata() const { return IsUsedByMD; }
 
   /// \brief Strip off pointer casts, all-zero GEPs, and aliases.
   ///
@@ -497,7 +493,28 @@ private:
   template <class Compare>
   static Use *mergeUseLists(Use *L, Use *R, Compare Cmp) {
     Use *Merged;
-    mergeUseListsImpl(L, R, &Merged, Cmp);
+    Use **Next = &Merged;
+
+    for (;;) {
+      if (!L) {
+        *Next = R;
+        break;
+      }
+      if (!R) {
+        *Next = L;
+        break;
+      }
+      if (Cmp(*R, *L)) {
+        *Next = R;
+        Next = &R->Next;
+        R = R->Next;
+      } else {
+        *Next = L;
+        Next = &L->Next;
+        L = L->Next;
+      }
+    }
+
     return Merged;
   }
 
@@ -588,25 +605,6 @@ template <class Compare> void Value::sortUseList(Compare Cmp) {
     I->setPrev(Prev);
     Prev = &I->Next;
   }
-}
-
-template <class Compare>
-void Value::mergeUseListsImpl(Use *L, Use *R, Use **Next, Compare Cmp) {
-  if (!L) {
-    *Next = R;
-    return;
-  }
-  if (!R) {
-    *Next = L;
-    return;
-  }
-  if (Cmp(*R, *L)) {
-    *Next = R;
-    mergeUseListsImpl(L, R->Next, &R->Next, Cmp);
-    return;
-  }
-  *Next = L;
-  mergeUseListsImpl(L->Next, R, &L->Next, Cmp);
 }
 
 // isa - Provide some specializations of isa so that we don't have to include

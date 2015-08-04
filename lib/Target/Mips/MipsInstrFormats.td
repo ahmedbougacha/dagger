@@ -226,6 +226,18 @@ class MFC3OP_FM<bits<6> op, bits<5> mfmt>
   let Inst{2-0}   = sel;
 }
 
+class MFC2OP_FM<bits<6> op, bits<5> mfmt> : StdArch {
+  bits<5>  rt;
+  bits<16> imm16;
+
+  bits<32> Inst;
+
+  let Inst{31-26} = op;
+  let Inst{25-21} = mfmt;
+  let Inst{20-16} = rt;
+  let Inst{15-0}  = imm16;
+}
+
 class ADD_FM<bits<6> op, bits<6> funct> : StdArch {
   bits<5> rd;
   bits<5> rs;
@@ -632,15 +644,15 @@ class BRK_FM<bits<6> funct> : StdArch
 //  Exception return format <Cop0|1|0|funct>
 //===----------------------------------------------------------------------===//
 
-class ER_FM<bits<6> funct> : StdArch
+class ER_FM<bits<6> funct, bit LLBit> : StdArch
 {
   bits<32> Inst;
   let Inst{31-26} = 0x10;
   let Inst{25}    = 1;
-  let Inst{24-6}  = 0;
+  let Inst{24-7}  = 0;
+  let Inst{6} = LLBit;
   let Inst{5-0}   = funct;
 }
-
 
 //===----------------------------------------------------------------------===//
 //  Enable/disable interrupt instruction format <Cop0|MFMC0|rt|12|0|sc|0|0>

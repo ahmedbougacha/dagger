@@ -56,20 +56,16 @@ static const char *const LoopMDName = "llvm.loop";
 
 /// isLoopInvariant - Return true if the specified value is loop invariant
 ///
-bool Loop::isLoopInvariant(Value *V) const {
-  if (Instruction *I = dyn_cast<Instruction>(V))
+bool Loop::isLoopInvariant(const Value *V) const {
+  if (const Instruction *I = dyn_cast<Instruction>(V))
     return !contains(I);
   return true;  // All non-instructions are loop invariant
 }
 
 /// hasLoopInvariantOperands - Return true if all the operands of the
 /// specified instruction are loop invariant.
-bool Loop::hasLoopInvariantOperands(Instruction *I) const {
-  for (unsigned i = 0, e = I->getNumOperands(); i != e; ++i)
-    if (!isLoopInvariant(I->getOperand(i)))
-      return false;
-
-  return true;
+bool Loop::hasLoopInvariantOperands(const Instruction *I) const {
+  return all_of(I->operands(), [this](Value *V) { return isLoopInvariant(V); });
 }
 
 /// makeLoopInvariant - If the given value is an instruciton inside of the
@@ -106,8 +102,8 @@ bool Loop::makeLoopInvariant(Instruction *I, bool &Changed,
     return false;
   if (I->mayReadFromMemory())
     return false;
-  // The landingpad instruction is immobile.
-  if (isa<LandingPadInst>(I))
+  // EH block instructions are immobile.
+  if (I->isEHPad())
     return false;
   // Determine the insertion point, unless one was given.
   if (!InsertPt) {
@@ -606,6 +602,10 @@ Loop *UnloopUpdater::getNearestLoop(BasicBlock *BB, Loop *BBLoop) {
   return NearLoop;
 }
 
+LoopInfo::LoopInfo(const DominatorTreeBase<BasicBlock> &DomTree) {
+  analyze(DomTree);
+}
+
 /// updateUnloop - The last backedge has been removed from a loop--now the
 /// "unloop". Find a new parent for the blocks contained within unloop and
 /// update the loop tree. We don't necessarily have valid dominators at this
@@ -679,8 +679,8 @@ LoopInfo LoopAnalysis::run(Function &F, AnalysisManager<Function> *AM) {
   // objects. I don't want to add that kind of complexity until the scope of
   // the problem is better understood.
   LoopInfo LI;
-  LI.Analyze(AM->getResult<DominatorTreeAnalysis>(F));
-  return std::move(LI);
+  LI.analyze(AM->getResult<DominatorTreeAnalysis>(F));
+  return LI;
 }
 
 PreservedAnalyses LoopPrinterPass::run(Function &F,
@@ -702,7 +702,7 @@ INITIALIZE_PASS_END(LoopInfoWrapperPass, "loops", "Natural Loop Information",
 
 bool LoopInfoWrapperPass::runOnFunction(Function &) {
   releaseMemory();
-  LI.Analyze(getAnalysis<DominatorTreeWrapperPass>().getDomTree());
+  LI.analyze(getAnalysis<DominatorTreeWrapperPass>().getDomTree());
   return false;
 }
 

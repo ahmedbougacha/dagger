@@ -212,12 +212,12 @@ ScalarTraits<MCModuleYAML::Operand>::input(StringRef Scalar, void *Ctx,
     unsigned Reg;
     if (!IRI->matchRegister(Scalar.substr(1), Reg))
       return "Invalid register name.";
-    Val.MCOp = MCOperand::CreateReg(Reg);
+    Val.MCOp = MCOperand::createReg(Reg);
   } else if (Type == 'I') {
     int64_t RIVal;
     if (Scalar.substr(1).getAsInteger(10, RIVal))
       return "Invalid immediate value.";
-    Val.MCOp = MCOperand::CreateImm(RIVal);
+    Val.MCOp = MCOperand::createImm(RIVal);
   } else {
     Val.MCOp = MCOperand();
   }

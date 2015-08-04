@@ -32,7 +32,7 @@ class AttributeSet;
 /// function known by LLVM. The enum values are returned by
 /// Function::getIntrinsicID().
 namespace Intrinsic {
-  enum ID {
+  enum ID : unsigned {
     not_intrinsic = 0,   // Must be zero
 
     // Get the intrinsic enums generated from Intrinsics.td
@@ -51,6 +51,11 @@ namespace Intrinsic {
 
   /// Returns true if the intrinsic can be overloaded.
   bool isOverloaded(ID id);
+
+  /// Returns true if the intrinsic is a leaf, i.e. it does not make any calls
+  /// itself.  Most intrinsics are leafs, the exceptions being the patchpoint
+  /// and statepoint intrinsics. These call (or invoke) their "target" argument.
+  bool isLeaf(ID id);
 
   /// Return the attributes for an intrinsic.
   AttributeSet getAttributes(LLVMContext &C, ID id);

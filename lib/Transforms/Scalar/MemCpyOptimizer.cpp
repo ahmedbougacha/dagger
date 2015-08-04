@@ -30,7 +30,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
-#include <list>
+#include <algorithm>
 using namespace llvm;
 
 #define DEBUG_TYPE "memcpyopt"
@@ -200,15 +200,14 @@ bool MemsetRange::isProfitableToUseMemset(const DataLayout &DL) const {
 
 namespace {
 class MemsetRanges {
-  /// Ranges - A sorted list of the memset ranges.  We use std::list here
-  /// because each element is relatively large and expensive to copy.
-  std::list<MemsetRange> Ranges;
-  typedef std::list<MemsetRange>::iterator range_iterator;
+  /// Ranges - A sorted list of the memset ranges.
+  SmallVector<MemsetRange, 8> Ranges;
+  typedef SmallVectorImpl<MemsetRange>::iterator range_iterator;
   const DataLayout &DL;
 public:
   MemsetRanges(const DataLayout &DL) : DL(DL) {}
 
-  typedef std::list<MemsetRange>::const_iterator const_iterator;
+  typedef SmallVectorImpl<MemsetRange>::const_iterator const_iterator;
   const_iterator begin() const { return Ranges.begin(); }
   const_iterator end() const { return Ranges.end(); }
   bool empty() const { return Ranges.empty(); }
@@ -243,23 +242,17 @@ public:
 /// addRange - Add a new store to the MemsetRanges data structure.  This adds a
 /// new range for the specified store at the specified offset, merging into
 /// existing ranges as appropriate.
-///
-/// Do a linear search of the ranges to see if this can be joined and/or to
-/// find the insertion point in the list.  We keep the ranges sorted for
-/// simplicity here.  This is a linear search of a linked list, which is ugly,
-/// however the number of ranges is limited, so this won't get crazy slow.
 void MemsetRanges::addRange(int64_t Start, int64_t Size, Value *Ptr,
                             unsigned Alignment, Instruction *Inst) {
   int64_t End = Start+Size;
-  range_iterator I = Ranges.begin(), E = Ranges.end();
 
-  while (I != E && Start > I->End)
-    ++I;
+  range_iterator I = std::lower_bound(Ranges.begin(), Ranges.end(), Start,
+    [](const MemsetRange &LHS, int64_t RHS) { return LHS.End < RHS; });
 
   // We now know that I == E, in which case we didn't find anything to merge
   // with, or that Start <= I->End.  If End < I->Start or I == E, then we need
   // to insert a new range.  Handle this now.
-  if (I == E || End < I->Start) {
+  if (I == Ranges.end() || End < I->Start) {
     MemsetRange &R = *Ranges.insert(I, MemsetRange());
     R.Start        = Start;
     R.End          = End;
@@ -295,7 +288,7 @@ void MemsetRanges::addRange(int64_t Start, int64_t Size, Value *Ptr,
   if (End > I->End) {
     I->End = End;
     range_iterator NextI = I;
-    while (++NextI != E && End >= NextI->Start) {
+    while (++NextI != Ranges.end() && End >= NextI->Start) {
       // Merge the range in.
       I->TheStores.append(NextI->TheStores.begin(), NextI->TheStores.end());
       if (NextI->End > I->End)
@@ -337,16 +330,16 @@ namespace {
       AU.addPreserved<MemoryDependenceAnalysis>();
     }
 
-    // Helper fuctions
+    // Helper functions
     bool processStore(StoreInst *SI, BasicBlock::iterator &BBI);
     bool processMemSet(MemSetInst *SI, BasicBlock::iterator &BBI);
     bool processMemCpy(MemCpyInst *M);
     bool processMemMove(MemMoveInst *M);
     bool performCallSlotOptzn(Instruction *cpy, Value *cpyDst, Value *cpySrc,
                               uint64_t cpyLen, unsigned cpyAlign, CallInst *C);
-    bool processMemCpyMemCpyDependence(MemCpyInst *M, MemCpyInst *MDep,
-                                       uint64_t MSize);
+    bool processMemCpyMemCpyDependence(MemCpyInst *M, MemCpyInst *MDep);
     bool processMemSetMemCpyDependence(MemCpyInst *M, MemSetInst *MDep);
+    bool performMemCpyToMemSetOptzn(MemCpyInst *M, MemSetInst *MDep);
     bool processByValArgument(CallSite CS, unsigned ArgNo);
     Instruction *tryMergingIntoMemset(Instruction *I, Value *StartPtr,
                                       Value *ByteVal);
@@ -510,10 +503,10 @@ bool MemCpyOpt::processStore(StoreInst *SI, BasicBlock::iterator &BBI) {
         // Check that nothing touches the dest of the "copy" between
         // the call and the store.
         AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
-        AliasAnalysis::Location StoreLoc = AA.getLocation(SI);
+        MemoryLocation StoreLoc = MemoryLocation::get(SI);
         for (BasicBlock::iterator I = --BasicBlock::iterator(SI),
                                   E = C; I != E; --I) {
-          if (AA.getModRefInfo(&*I, StoreLoc) != AliasAnalysis::NoModRef) {
+          if (AA.getModRefInfo(&*I, StoreLoc) != MRI_NoModRef) {
             C = nullptr;
             break;
           }
@@ -711,11 +704,11 @@ bool MemCpyOpt::performCallSlotOptzn(Instruction *cpy,
   // the use analysis, we also need to know that it does not sneakily
   // access dest.  We rely on AA to figure this out for us.
   AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
-  AliasAnalysis::ModRefResult MR = AA.getModRefInfo(C, cpyDest, srcSize);
+  ModRefInfo MR = AA.getModRefInfo(C, cpyDest, srcSize);
   // If necessary, perform additional analysis.
-  if (MR != AliasAnalysis::NoModRef)
+  if (MR != MRI_NoModRef)
     MR = AA.callCapturesBefore(C, cpyDest, srcSize, &DT);
-  if (MR != AliasAnalysis::NoModRef)
+  if (MR != MRI_NoModRef)
     return false;
 
   // All the checks have passed, so do the transformation.
@@ -765,10 +758,9 @@ bool MemCpyOpt::performCallSlotOptzn(Instruction *cpy,
 
 /// processMemCpyMemCpyDependence - We've found that the (upward scanning)
 /// memory dependence of memcpy 'M' is the memcpy 'MDep'.  Try to simplify M to
-/// copy from MDep's input if we can.  MSize is the size of M's copy.
+/// copy from MDep's input if we can.
 ///
-bool MemCpyOpt::processMemCpyMemCpyDependence(MemCpyInst *M, MemCpyInst *MDep,
-                                              uint64_t MSize) {
+bool MemCpyOpt::processMemCpyMemCpyDependence(MemCpyInst *M, MemCpyInst *MDep) {
   // We can only transforms memcpy's where the dest of one is the source of the
   // other.
   if (M->getSource() != MDep->getDest() || MDep->isVolatile())
@@ -803,9 +795,8 @@ bool MemCpyOpt::processMemCpyMemCpyDependence(MemCpyInst *M, MemCpyInst *MDep,
   //
   // NOTE: This is conservative, it will stop on any read from the source loc,
   // not just the defining memcpy.
-  MemDepResult SourceDep =
-    MD->getPointerDependencyFrom(AA.getLocationForSource(MDep),
-                                 false, M, M->getParent());
+  MemDepResult SourceDep = MD->getPointerDependencyFrom(
+      MemoryLocation::getForSource(MDep), false, M, M->getParent());
   if (!SourceDep.isClobber() || SourceDep.getInst() != MDep)
     return false;
 
@@ -813,7 +804,8 @@ bool MemCpyOpt::processMemCpyMemCpyDependence(MemCpyInst *M, MemCpyInst *MDep,
   // source and dest might overlap.  We still want to eliminate the intermediate
   // value, but we have to generate a memmove instead of memcpy.
   bool UseMemMove = false;
-  if (!AA.isNoAlias(AA.getLocationForDest(M), AA.getLocationForSource(MDep)))
+  if (!AA.isNoAlias(MemoryLocation::getForDest(M),
+                    MemoryLocation::getForSource(MDep)))
     UseMemMove = true;
 
   // If all checks passed, then we can transform M.
@@ -860,6 +852,12 @@ bool MemCpyOpt::processMemSetMemCpyDependence(MemCpyInst *MemCpy,
   if (MemSet->getDest() != MemCpy->getDest())
     return false;
 
+  // Check that there are no other dependencies on the memset destination.
+  MemDepResult DstDepInfo = MD->getPointerDependencyFrom(
+      MemoryLocation::getForDest(MemSet), false, MemCpy, MemCpy->getParent());
+  if (DstDepInfo.getInst() != MemSet)
+    return false;
+
   // Use the same i8* dest as the memcpy, killing the memset dest if different.
   Value *Dest = MemCpy->getRawDest();
   Value *DestSize = MemSet->getLength();
@@ -875,7 +873,7 @@ bool MemCpyOpt::processMemSetMemCpyDependence(MemCpyInst *MemCpy,
     if (ConstantInt *SrcSizeC = dyn_cast<ConstantInt>(SrcSize))
       Align = MinAlign(SrcSizeC->getZExtValue(), DestAlign);
 
-  IRBuilder<> Builder(MemCpy->getNextNode());
+  IRBuilder<> Builder(MemCpy);
 
   // If the sizes have different types, zext the smaller one.
   if (DestSize->getType() != SrcSize->getType()) {
@@ -895,6 +893,39 @@ bool MemCpyOpt::processMemSetMemCpyDependence(MemCpyInst *MemCpy,
 
   MD->removeInstruction(MemSet);
   MemSet->eraseFromParent();
+  return true;
+}
+
+/// Transform memcpy to memset when its source was just memset.
+/// In other words, turn:
+/// \code
+///   memset(dst1, c, dst1_size);
+///   memcpy(dst2, dst1, dst2_size);
+/// \endcode
+/// into:
+/// \code
+///   memset(dst1, c, dst1_size);
+///   memset(dst2, c, dst2_size);
+/// \endcode
+/// When dst2_size <= dst1_size.
+///
+/// The \p MemCpy must have a Constant length.
+bool MemCpyOpt::performMemCpyToMemSetOptzn(MemCpyInst *MemCpy,
+                                           MemSetInst *MemSet) {
+  // This only makes sense on memcpy(..., memset(...), ...).
+  if (MemSet->getRawDest() != MemCpy->getRawSource())
+    return false;
+
+  ConstantInt *CopySize = cast<ConstantInt>(MemCpy->getLength());
+  ConstantInt *MemSetSize = dyn_cast<ConstantInt>(MemSet->getLength());
+  // Make sure the memcpy doesn't read any more than what the memset wrote.
+  // Don't worry about sizes larger than i64.
+  if (!MemSetSize || CopySize->getZExtValue() > MemSetSize->getZExtValue())
+    return false;
+
+  IRBuilder<> Builder(MemCpy);
+  Builder.CreateMemSet(MemCpy->getRawDest(), MemSet->getOperand(1),
+                       CopySize, MemCpy->getAlignment());
   return true;
 }
 
@@ -927,14 +958,12 @@ bool MemCpyOpt::processMemCpy(MemCpyInst *M) {
         return true;
       }
 
-  AliasAnalysis::Location SrcLoc = AliasAnalysis::getLocationForSource(M);
-  MemDepResult SrcDepInfo = MD->getPointerDependencyFrom(SrcLoc, true,
-                                                         M, M->getParent());
+  MemDepResult DepInfo = MD->getDependency(M);
 
   // Try to turn a partially redundant memset + memcpy into
   // memcpy + smaller memset.  We don't need the memcpy size for this.
-  if (SrcDepInfo.isClobber())
-    if (MemSetInst *MDep = dyn_cast<MemSetInst>(SrcDepInfo.getInst()))
+  if (DepInfo.isClobber())
+    if (MemSetInst *MDep = dyn_cast<MemSetInst>(DepInfo.getInst()))
       if (processMemSetMemCpyDependence(M, MDep))
         return true;
 
@@ -942,13 +971,13 @@ bool MemCpyOpt::processMemCpy(MemCpyInst *M) {
   ConstantInt *CopySize = dyn_cast<ConstantInt>(M->getLength());
   if (!CopySize) return false;
 
-  // The are three possible optimizations we can do for memcpy:
+  // There are four possible optimizations we can do for memcpy:
   //   a) memcpy-memcpy xform which exposes redundance for DSE.
   //   b) call-memcpy xform for return slot optimization.
   //   c) memcpy from freshly alloca'd space or space that has just started its
   //      lifetime copies undefined data, and we can therefore eliminate the
   //      memcpy in favor of the data that was already at the destination.
-  MemDepResult DepInfo = MD->getDependency(M);
+  //   d) memcpy from a just-memset'd source can be turned into memset.
   if (DepInfo.isClobber()) {
     if (CallInst *C = dyn_cast<CallInst>(DepInfo.getInst())) {
       if (performCallSlotOptzn(M, M->getDest(), M->getSource(),
@@ -961,9 +990,13 @@ bool MemCpyOpt::processMemCpy(MemCpyInst *M) {
     }
   }
 
+  MemoryLocation SrcLoc = MemoryLocation::getForSource(M);
+  MemDepResult SrcDepInfo = MD->getPointerDependencyFrom(SrcLoc, true,
+                                                         M, M->getParent());
+
   if (SrcDepInfo.isClobber()) {
     if (MemCpyInst *MDep = dyn_cast<MemCpyInst>(SrcDepInfo.getInst()))
-      return processMemCpyMemCpyDependence(M, MDep, CopySize->getZExtValue());
+      return processMemCpyMemCpyDependence(M, MDep);
   } else if (SrcDepInfo.isDef()) {
     Instruction *I = SrcDepInfo.getInst();
     bool hasUndefContents = false;
@@ -985,6 +1018,15 @@ bool MemCpyOpt::processMemCpy(MemCpyInst *M) {
     }
   }
 
+  if (SrcDepInfo.isClobber())
+    if (MemSetInst *MDep = dyn_cast<MemSetInst>(SrcDepInfo.getInst()))
+      if (performMemCpyToMemSetOptzn(M, MDep)) {
+        MD->removeInstruction(M);
+        M->eraseFromParent();
+        ++NumCpyToSet;
+        return true;
+      }
+
   return false;
 }
 
@@ -997,7 +1039,8 @@ bool MemCpyOpt::processMemMove(MemMoveInst *M) {
     return false;
 
   // See if the pointers alias.
-  if (!AA.isNoAlias(AA.getLocationForDest(M), AA.getLocationForSource(M)))
+  if (!AA.isNoAlias(MemoryLocation::getForDest(M),
+                    MemoryLocation::getForSource(M)))
     return false;
 
   DEBUG(dbgs() << "MemCpyOpt: Optimizing memmove -> memcpy: " << *M << "\n");
@@ -1025,10 +1068,9 @@ bool MemCpyOpt::processByValArgument(CallSite CS, unsigned ArgNo) {
   Value *ByValArg = CS.getArgument(ArgNo);
   Type *ByValTy = cast<PointerType>(ByValArg->getType())->getElementType();
   uint64_t ByValSize = DL.getTypeAllocSize(ByValTy);
-  MemDepResult DepInfo =
-    MD->getPointerDependencyFrom(AliasAnalysis::Location(ByValArg, ByValSize),
-                                 true, CS.getInstruction(),
-                                 CS.getInstruction()->getParent());
+  MemDepResult DepInfo = MD->getPointerDependencyFrom(
+      MemoryLocation(ByValArg, ByValSize), true, CS.getInstruction(),
+      CS.getInstruction()->getParent());
   if (!DepInfo.isClobber())
     return false;
 
@@ -1071,8 +1113,8 @@ bool MemCpyOpt::processByValArgument(CallSite CS, unsigned ArgNo) {
   // NOTE: This is conservative, it will stop on any read from the source loc,
   // not just the defining memcpy.
   MemDepResult SourceDep =
-    MD->getPointerDependencyFrom(AliasAnalysis::getLocationForSource(MDep),
-                                 false, CS.getInstruction(), MDep->getParent());
+      MD->getPointerDependencyFrom(MemoryLocation::getForSource(MDep), false,
+                                   CS.getInstruction(), MDep->getParent());
   if (!SourceDep.isClobber() || SourceDep.getInst() != MDep)
     return false;
 

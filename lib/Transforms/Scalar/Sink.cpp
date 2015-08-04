@@ -163,14 +163,20 @@ static bool isSafeToMove(Instruction *Inst, AliasAnalysis *AA,
   }
 
   if (LoadInst *L = dyn_cast<LoadInst>(Inst)) {
-    AliasAnalysis::Location Loc = AA->getLocation(L);
+    MemoryLocation Loc = MemoryLocation::get(L);
     for (Instruction *S : Stores)
-      if (AA->getModRefInfo(S, Loc) & AliasAnalysis::Mod)
+      if (AA->getModRefInfo(S, Loc) & MRI_Mod)
         return false;
   }
 
   if (isa<TerminatorInst>(Inst) || isa<PHINode>(Inst))
     return false;
+
+  // Convergent operations can only be moved to control equivalent blocks.
+  if (auto CS = CallSite(Inst)) {
+    if (CS.hasFnAttr(Attribute::Convergent))
+      return false;
+  }
 
   return true;
 }

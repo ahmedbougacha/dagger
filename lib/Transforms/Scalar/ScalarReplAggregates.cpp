@@ -1052,7 +1052,7 @@ class AllocaPromoter : public LoadAndStorePromoter {
   SmallVector<DbgDeclareInst *, 4> DDIs;
   SmallVector<DbgValueInst *, 4> DVIs;
 public:
-  AllocaPromoter(const SmallVectorImpl<Instruction*> &Insts, SSAUpdater &S,
+  AllocaPromoter(ArrayRef<Instruction*> Insts, SSAUpdater &S,
                  DIBuilder *DB)
     : LoadAndStorePromoter(Insts, S), AI(nullptr), DIB(DB) {}
 
@@ -1060,8 +1060,8 @@ public:
     // Remember which alloca we're promoting (for isInstInList).
     this->AI = AI;
     if (auto *L = LocalAsMetadata::getIfExists(AI)) {
-      if (auto *DebugNode = MetadataAsValue::getIfExists(AI->getContext(), L)) {
-        for (User *U : DebugNode->users())
+      if (auto *DINode = MetadataAsValue::getIfExists(AI->getContext(), L)) {
+        for (User *U : DINode->users())
           if (DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(U))
             DDIs.push_back(DDI);
           else if (DbgValueInst *DVI = dyn_cast<DbgValueInst>(U))

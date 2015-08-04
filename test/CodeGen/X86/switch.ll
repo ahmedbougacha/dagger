@@ -9,29 +9,25 @@ entry:
     i32 3, label %bb0
     i32 1, label %bb1
     i32 4, label %bb1
-    i32 5, label %bb0
+    i32 5, label %bb2
   ]
 bb0: tail call void @g(i32 0) br label %return
 bb1: tail call void @g(i32 1) br label %return
+bb2: tail call void @g(i32 1) br label %return
 return: ret void
 
-; Should be lowered as straight compares in -O0 mode.
-; NOOPT-LABEL: basic
-; NOOPT: subl $3, %eax
-; NOOPT: je
-; NOOPT: subl $1, %eax
-; NOOPT: je
-; NOOPT: subl $4, %eax
-; NOOPT: je
-; NOOPT: subl $5, %eax
-; NOOPT: je
-
-; Jump table otherwise.
+; Lowered as a jump table, both with and without optimization.
 ; CHECK-LABEL: basic
 ; CHECK: decl
 ; CHECK: cmpl $4
 ; CHECK: ja
 ; CHECK: jmpq *.LJTI
+; NOOPT-LABEL: basic
+; NOOPT: decl
+; NOOPT: subl $4
+; NOOPT: ja
+; NOOPT: movq .LJTI
+; NOOPT: jmpq
 }
 
 
@@ -58,6 +54,14 @@ return: ret void
 ; CHECK: jae
 ; CHECK: cmpl $3
 ; CHECK: ja
+
+; We do this even at -O0, because it's cheap and makes codegen faster.
+; NOOPT-LABEL: simple_ranges
+; NOOPT: subl $4
+; NOOPT: jb
+; NOOPT: addl $-100
+; NOOPT: subl $4
+; NOOPT: jb
 }
 
 
@@ -196,6 +200,21 @@ return: ret void
 ; CHECK: leal -5
 ; CHECK: cmpl $10
 ; CHECK: jmpq *.LJTI
+
+; At -O0, we don't build jump tables for only parts of a switch.
+; NOOPT-LABEL: optimal_jump_table1
+; NOOPT: testl %edi, %edi
+; NOOPT: je
+; NOOPT: subl $5, %eax
+; NOOPT: je
+; NOOPT: subl $6, %eax
+; NOOPT: je
+; NOOPT: subl $12, %eax
+; NOOPT: je
+; NOOPT: subl $13, %eax
+; NOOPT: je
+; NOOPT: subl $15, %eax
+; NOOPT: je
 }
 
 
@@ -442,3 +461,174 @@ return: ret void
        i32 1000,
        ; Case 300:
        i32 10}
+
+
+define void @zero_weight_tree(i32 %x) {
+entry:
+  switch i32 %x, label %return [
+    i32 0,  label %bb0
+    i32 10, label %bb1
+    i32 20, label %bb2
+    i32 30, label %bb3
+    i32 40, label %bb4
+    i32 50, label %bb5
+  ], !prof !3
+bb0: tail call void @g(i32 0) br label %return
+bb1: tail call void @g(i32 1) br label %return
+bb2: tail call void @g(i32 2) br label %return
+bb3: tail call void @g(i32 3) br label %return
+bb4: tail call void @g(i32 4) br label %return
+bb5: tail call void @g(i32 5) br label %return
+return: ret void
+
+; Make sure to pick a pivot in the middle also with zero-weight cases.
+; CHECK-LABEL: zero_weight_tree
+; CHECK-NOT: cmpl
+; CHECK: cmpl $29
+}
+
+!3 = !{!"branch_weights", i32 1, i32 10, i32 0, i32 0, i32 0, i32 0, i32 10}
+
+
+define void @left_leaning_weight_balanced_tree(i32 %x) {
+entry:
+  switch i32 %x, label %return [
+    i32 0,  label %bb0
+    i32 10, label %bb1
+    i32 20, label %bb2
+    i32 30, label %bb3
+    i32 40, label %bb4
+    i32 50, label %bb5
+    i32 60, label %bb6
+    i32 70, label %bb6
+  ], !prof !4
+bb0: tail call void @g(i32 0) br label %return
+bb1: tail call void @g(i32 1) br label %return
+bb2: tail call void @g(i32 2) br label %return
+bb3: tail call void @g(i32 3) br label %return
+bb4: tail call void @g(i32 4) br label %return
+bb5: tail call void @g(i32 5) br label %return
+bb6: tail call void @g(i32 6) br label %return
+bb7: tail call void @g(i32 7) br label %return
+return: ret void
+
+; Without branch probabilities, the pivot would be 40, since that would yield
+; equal-sized sub-trees. When taking weights into account, case 70 becomes the
+; pivot. Since there is room for 3 cases in a leaf, cases 50 and 60 are also
+; included in the right-hand side because that doesn't reduce their rank.
+
+; CHECK-LABEL: left_leaning_weight_balanced_tree
+; CHECK-NOT: cmpl
+; CHECK: cmpl $49
+}
+
+!4 = !{!"branch_weights", i32 1, i32 10, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1000}
+
+
+define void @left_leaning_weight_balanced_tree2(i32 %x) {
+entry:
+  switch i32 %x, label %return [
+    i32 0,  label %bb0
+    i32 10, label %bb1
+    i32 20, label %bb2
+    i32 30, label %bb3
+    i32 40, label %bb4
+    i32 50, label %bb5
+    i32 60, label %bb6
+    i32 70, label %bb6
+  ], !prof !5
+bb0: tail call void @g(i32 0) br label %return
+bb1: tail call void @g(i32 1) br label %return
+bb2: tail call void @g(i32 2) br label %return
+bb3: tail call void @g(i32 3) br label %return
+bb4: tail call void @g(i32 4) br label %return
+bb5: tail call void @g(i32 5) br label %return
+bb6: tail call void @g(i32 6) br label %return
+bb7: tail call void @g(i32 7) br label %return
+return: ret void
+
+; Same as the previous test, except case 50 has higher rank to the left than it
+; would have on the right. Case 60 would have the same rank on both sides, so is
+; moved into the leaf.
+
+; CHECK-LABEL: left_leaning_weight_balanced_tree2
+; CHECK-NOT: cmpl
+; CHECK: cmpl $59
+}
+
+!5 = !{!"branch_weights", i32 1, i32 10, i32 1, i32 1, i32 1, i32 1, i32 90, i32 70, i32 1000}
+
+
+define void @right_leaning_weight_balanced_tree(i32 %x) {
+entry:
+  switch i32 %x, label %return [
+    i32 0,  label %bb0
+    i32 10, label %bb1
+    i32 20, label %bb2
+    i32 30, label %bb3
+    i32 40, label %bb4
+    i32 50, label %bb5
+    i32 60, label %bb6
+    i32 70, label %bb6
+  ], !prof !6
+bb0: tail call void @g(i32 0) br label %return
+bb1: tail call void @g(i32 1) br label %return
+bb2: tail call void @g(i32 2) br label %return
+bb3: tail call void @g(i32 3) br label %return
+bb4: tail call void @g(i32 4) br label %return
+bb5: tail call void @g(i32 5) br label %return
+bb6: tail call void @g(i32 6) br label %return
+bb7: tail call void @g(i32 7) br label %return
+return: ret void
+
+; Analogous to left_leaning_weight_balanced_tree.
+
+; CHECK-LABEL: right_leaning_weight_balanced_tree
+; CHECK-NOT: cmpl
+; CHECK: cmpl $19
+}
+
+!6 = !{!"branch_weights", i32 1, i32 1000, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 10}
+
+
+define void @jump_table_affects_balance(i32 %x) {
+entry:
+  switch i32 %x, label %return [
+    ; Jump table:
+    i32 0,  label %bb0
+    i32 1,  label %bb1
+    i32 2,  label %bb2
+    i32 3,  label %bb3
+
+    i32 100, label %bb0
+    i32 200, label %bb1
+    i32 300, label %bb2
+  ]
+bb0: tail call void @g(i32 0) br label %return
+bb1: tail call void @g(i32 1) br label %return
+bb2: tail call void @g(i32 2) br label %return
+bb3: tail call void @g(i32 3) br label %return
+return: ret void
+
+; CHECK-LABEL: jump_table_affects_balance
+; If the tree were balanced based on number of clusters, {0-3,100} would go on
+; the left and {200,300} on the right. However, the jump table weights as much
+; as its components, so 100 is selected as the pivot.
+; CHECK-NOT: cmpl
+; CHECK: cmpl $99
+}
+
+
+define void @pr23738(i4 %x) {
+entry:
+  switch i4 %x, label %bb0 [
+    i4 0, label %bb1
+    i4 1, label %bb1
+    i4 -5, label %bb1
+  ]
+bb0: tail call void @g(i32 0) br label %return
+bb1: tail call void @g(i32 1) br label %return
+return: ret void
+; Don't assert due to truncating the bitwidth (64) to i4 when checking
+; that the bit-test range fits in a word.
+}

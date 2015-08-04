@@ -27,29 +27,45 @@ using namespace llvm::dsymutil;
 namespace {
 using namespace llvm::cl;
 
-static opt<std::string> InputFile(Positional, desc("<input file>"),
-                                  init("a.out"));
+OptionCategory DsymCategory("Specific Options");
+static opt<bool> Help("h", desc("Alias for -help"), Hidden);
+static opt<bool> Version("v", desc("Alias for -version"), Hidden);
 
-static opt<std::string> OutputFileOpt("o", desc("Specify the output file."
-                                                " default: <input file>.dwarf"),
-                                      value_desc("filename"));
+static list<std::string> InputFiles(Positional, OneOrMore,
+                                    desc("<input files>"), cat(DsymCategory));
 
-static opt<std::string> OsoPrependPath("oso-prepend-path",
-                                       desc("Specify a directory to prepend "
-                                            "to the paths of object files."),
-                                       value_desc("path"));
+static opt<std::string>
+    OutputFileOpt("o",
+                  desc("Specify the output file. default: <input file>.dwarf"),
+                  value_desc("filename"), cat(DsymCategory));
 
-static opt<bool> Verbose("v", desc("Verbosity level"), init(false));
+static opt<std::string> OsoPrependPath(
+    "oso-prepend-path",
+    desc("Specify a directory to prepend to the paths of object files."),
+    value_desc("path"), cat(DsymCategory));
 
-static opt<bool> NoOutput("no-output", desc("Do the link in memory, but do "
-                                            "not emit the result file."),
-                          init(false));
+static opt<bool> Verbose("verbose", desc("Verbosity level"), init(false),
+                         cat(DsymCategory));
 
 static opt<bool>
-    ParseOnly("parse-only",
-              desc("Only parse the debug map, do not actaully link "
-                   "the DWARF."),
-              init(false));
+    NoOutput("no-output",
+             desc("Do the link in memory, but do not emit the result file."),
+             init(false), cat(DsymCategory));
+
+static opt<bool>
+    NoODR("no-odr",
+          desc("Do not use ODR (One Definition Rule) for type uniquing."),
+          init(false), cat(DsymCategory));
+
+static opt<bool> DumpDebugMap(
+    "dump-debug-map",
+    desc("Parse and dump the debug map to standard output. Not DWARF link "
+         "will take place."),
+    init(false), cat(DsymCategory));
+
+static opt<bool> InputIsYAMLDebugMap(
+    "y", desc("Treat the input file is a YAML debug map rather than a binary."),
+    init(false), cat(DsymCategory));
 }
 
 int main(int argc, char **argv) {
@@ -58,38 +74,65 @@ int main(int argc, char **argv) {
   llvm::llvm_shutdown_obj Shutdown;
   LinkOptions Options;
 
-  llvm::cl::ParseCommandLineOptions(argc, argv, "llvm dsymutil\n");
-  auto DebugMapPtrOrErr = parseDebugMap(InputFile, OsoPrependPath, Verbose);
+  HideUnrelatedOptions(DsymCategory);
+  llvm::cl::ParseCommandLineOptions(
+      argc, argv,
+      "manipulate archived DWARF debug symbol files.\n\n"
+      "dsymutil links the DWARF debug information found in the object files\n"
+      "for the executable <input file> by using debug symbols information\n"
+      "contained in its symbol table.\n");
+
+  if (Help)
+    PrintHelpMessage();
+
+  if (Version) {
+    llvm::cl::PrintVersionMessage();
+    return 0;
+  }
 
   Options.Verbose = Verbose;
   Options.NoOutput = NoOutput;
+  Options.NoODR = NoODR;
 
   llvm::InitializeAllTargetInfos();
   llvm::InitializeAllTargetMCs();
   llvm::InitializeAllTargets();
   llvm::InitializeAllAsmPrinters();
 
-  if (auto EC = DebugMapPtrOrErr.getError()) {
-    llvm::errs() << "error: cannot parse the debug map for \"" << InputFile
-                 << "\": " << EC.message() << '\n';
+  if (InputFiles.size() > 1 && !OutputFileOpt.empty()) {
+    llvm::errs() << "error: cannot use -o with multiple inputs\n";
     return 1;
   }
 
-  if (Verbose)
-    (*DebugMapPtrOrErr)->print(llvm::outs());
+  for (auto &InputFile : InputFiles) {
+    auto DebugMapPtrOrErr =
+        parseDebugMap(InputFile, OsoPrependPath, Verbose, InputIsYAMLDebugMap);
 
-  if (ParseOnly)
-    return 0;
+    if (auto EC = DebugMapPtrOrErr.getError()) {
+      llvm::errs() << "error: cannot parse the debug map for \"" << InputFile
+                   << "\": " << EC.message() << '\n';
+      return 1;
+    }
 
-  std::string OutputFile;
-  if (OutputFileOpt.empty()) {
-    if (InputFile == "-")
-      OutputFile = "a.out.dwarf";
-    else
-      OutputFile = InputFile + ".dwarf";
-  } else {
-    OutputFile = OutputFileOpt;
+    if (Verbose || DumpDebugMap)
+      (*DebugMapPtrOrErr)->print(llvm::outs());
+
+    if (DumpDebugMap)
+      continue;
+
+    std::string OutputFile;
+    if (OutputFileOpt.empty()) {
+      if (InputFile == "-")
+        OutputFile = "a.out.dwarf";
+      else
+        OutputFile = InputFile + ".dwarf";
+    } else {
+      OutputFile = OutputFileOpt;
+    }
+
+    if (!linkDwarf(OutputFile, **DebugMapPtrOrErr, Options))
+      return 1;
   }
 
-  return !linkDwarf(OutputFile, **DebugMapPtrOrErr, Options);
+  return 0;
 }

@@ -26,7 +26,7 @@ namespace llvm {
   class XCoreTargetMachine;
 
   namespace XCoreISD {
-    enum NodeType {
+    enum NodeType : unsigned {
       // Start the numbering where the builtin ops and target ops leave off.
       FIRST_NUMBER = ISD::BUILTIN_OP_END,
 
@@ -101,7 +101,9 @@ namespace llvm {
 
 
     unsigned getJumpTableEncoding() const override;
-    MVT getScalarShiftAmountTy(EVT LHSTy) const override { return MVT::i32; }
+    MVT getScalarShiftAmountTy(const DataLayout &DL, EVT) const override {
+      return MVT::i32;
+    }
 
     /// LowerOperation - Provide custom lowering hooks for some operations.
     SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
@@ -120,7 +122,8 @@ namespace llvm {
       EmitInstrWithCustomInserter(MachineInstr *MI,
                                   MachineBasicBlock *MBB) const override;
 
-    bool isLegalAddressingMode(const AddrMode &AM, Type *Ty) const override;
+    bool isLegalAddressingMode(const DataLayout &DL, const AddrMode &AM,
+                               Type *Ty, unsigned AS) const override;
 
   private:
     const TargetMachine &TM;
@@ -174,14 +177,7 @@ namespace llvm {
     // Inline asm support
     std::pair<unsigned, const TargetRegisterClass *>
     getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
-                                 const std::string &Constraint,
-                                 MVT VT) const override;
-
-    unsigned getInlineAsmMemConstraint(
-        const std::string &ConstraintCode) const override {
-      // FIXME: Map different constraints differently.
-      return InlineAsm::Constraint_m;
-    }
+                                 StringRef Constraint, MVT VT) const override;
 
     // Expand specifics
     SDValue TryExpandADDWithMul(SDNode *Op, SelectionDAG &DAG) const;

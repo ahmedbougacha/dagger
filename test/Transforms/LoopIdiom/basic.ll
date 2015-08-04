@@ -5,7 +5,7 @@ target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f3
 ; CHECK: @.memset_pattern = private unnamed_addr constant [4 x i32] [i32 1, i32 1, i32 1, i32 1]
 
 ; For @test13_pattern
-; CHECK: @.memset_pattern1 = private unnamed_addr constant [2 x i32*] [i32* @G, i32* @G]
+; CHECK: @.memset_pattern.1 = private unnamed_addr constant [2 x i32*] [i32* @G, i32* @G]
 
 target triple = "x86_64-apple-darwin10.0.0"
 
@@ -69,7 +69,7 @@ for.end:                                          ; preds = %for.body, %entry
   ret void
 ; CHECK-LABEL: @test2(
 ; CHECK: br i1 %cmp10,
-; CHECK: %0 = mul i64 %Size, 4
+; CHECK: %0 = shl i64 %Size, 2
 ; CHECK: call void @llvm.memset.p0i8.i64(i8* %Base1, i8 1, i64 %0, i32 4, i1 false)
 ; CHECK-NOT: store
 }

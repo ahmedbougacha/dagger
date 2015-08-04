@@ -100,7 +100,7 @@ define void @test11(i32* %P) {
 }
 
 declare i32 @__gxx_personality_v0(...)
-define void @test_invoke_vararg_cast(i32* %a, i32* %b) {
+define void @test_invoke_vararg_cast(i32* %a, i32* %b) personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*) {
 entry:
   %0 = bitcast i32* %b to i8*
   %1 = bitcast i32* %a to i64*
@@ -111,7 +111,7 @@ invoke.cont:                                      ; preds = %entry
   ret void
 
 lpad:                                             ; preds = %entry
-  %2 = landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*)
+  %2 = landingpad { i8*, i32 }
           cleanup
   ret void
 ; CHECK-LABEL: test_invoke_vararg_cast
@@ -187,8 +187,8 @@ define i32 @test21(i32 %X) {
         %c2 = sext i8 %c1 to i32                ; <i32> [#uses=1]
         %RV = and i32 %c2, 255          ; <i32> [#uses=1]
         ret i32 %RV
-; CHECK: %c21 = and i32 %X, 255
-; CHECK: ret i32 %c21
+; CHECK: %c2.1 = and i32 %X, 255
+; CHECK: ret i32 %c2.1
 }
 
 define i32 @test22(i32 %X) {

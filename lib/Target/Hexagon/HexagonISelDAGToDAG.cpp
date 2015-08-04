@@ -104,6 +104,7 @@ public:
   SDNode *SelectConstantFP(SDNode *N);
   SDNode *SelectAdd(SDNode *N);
   SDNode *SelectBitOp(SDNode *N);
+  bool isConstExtProfitable(SDNode *N) const;
 
   // XformMskToBitPosU5Imm - Returns the bit position which
   // the single bit 32 bit mask represents.
@@ -1327,11 +1328,25 @@ SelectInlineAsmMemoryOperand(const SDValue &Op, unsigned ConstraintID,
   return false;
 }
 
+bool HexagonDAGToDAGISel::isConstExtProfitable(SDNode *N) const {
+  unsigned UseCount = 0;
+  unsigned CallCount = 0;
+  for (SDNode::use_iterator I = N->use_begin(), E = N->use_end(); I != E; ++I) {
+    // Ignore call instructions.
+    if (I->getOpcode() == ISD::CopyToReg)
+      ++CallCount;
+    UseCount++;
+  }
+
+  return (UseCount <= 1) || (CallCount > 1);
+
+}
+
 void HexagonDAGToDAGISel::PreprocessISelDAG() {
   SelectionDAG &DAG = *CurDAG;
   std::vector<SDNode*> Nodes;
-  for (auto I = DAG.allnodes_begin(), E = DAG.allnodes_end(); I != E; ++I)
-    Nodes.push_back(I);
+  for (SDNode &Node : DAG.allnodes())
+    Nodes.push_back(&Node);
 
   // Simplify: (or (select c x 0) z)  ->  (select c (or x z) z)
   //           (or (select c 0 y) z)  ->  (select c z (or y z))

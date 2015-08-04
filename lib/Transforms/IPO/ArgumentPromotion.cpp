@@ -90,7 +90,7 @@ namespace {
     bool doInitialization(CallGraph &CG) override;
     /// The maximum number of elements to expand, or 0 for unlimited.
     unsigned maxElements;
-    DenseMap<const Function *, MDSubprogram *> FunctionDIs;
+    DenseMap<const Function *, DISubprogram *> FunctionDIs;
   };
 }
 
@@ -245,6 +245,24 @@ CallGraphNode *ArgPromotion::PromoteArguments(CallGraphNode *CGN) {
     Argument *PtrArg = PointerArgs[i];
     Type *AgTy = cast<PointerType>(PtrArg->getType())->getElementType();
 
+    // Replace sret attribute with noalias. This reduces register pressure by
+    // avoiding a register copy.
+    if (PtrArg->hasStructRetAttr()) {
+      unsigned ArgNo = PtrArg->getArgNo();
+      F->setAttributes(
+          F->getAttributes()
+              .removeAttribute(F->getContext(), ArgNo + 1, Attribute::StructRet)
+              .addAttribute(F->getContext(), ArgNo + 1, Attribute::NoAlias));
+      for (Use &U : F->uses()) {
+        CallSite CS(U.getUser());
+        CS.setAttributes(
+            CS.getAttributes()
+                .removeAttribute(F->getContext(), ArgNo + 1,
+                                 Attribute::StructRet)
+                .addAttribute(F->getContext(), ArgNo + 1, Attribute::NoAlias));
+      }
+    }
+
     // If this is a byval argument, and if the aggregate type is small, just
     // pass the elements, which is always safe, if the passed value is densely
     // packed or if we can prove the padding bytes are never accessed. This does
@@ -263,8 +281,8 @@ CallGraphNode *ArgPromotion::PromoteArguments(CallGraphNode *CGN) {
         
         // If all the elements are single-value types, we can promote it.
         bool AllSimple = true;
-        for (unsigned i = 0, e = STy->getNumElements(); i != e; ++i) {
-          if (!STy->getElementType(i)->isSingleValueType()) {
+        for (const auto *EltTy : STy->elements()) {
+          if (!EltTy->isSingleValueType()) {
             AllSimple = false;
             break;
           }
@@ -285,8 +303,8 @@ CallGraphNode *ArgPromotion::PromoteArguments(CallGraphNode *CGN) {
     if (isSelfRecursive) {
       if (StructType *STy = dyn_cast<StructType>(AgTy)) {
         bool RecursiveType = false;
-        for (unsigned i = 0, e = STy->getNumElements(); i != e; ++i) {
-          if (STy->getElementType(i) == PtrArg->getType()) {
+        for (const auto *EltTy : STy->elements()) {
+          if (EltTy == PtrArg->getType()) {
             RecursiveType = true;
             break;
           }
@@ -483,7 +501,6 @@ bool ArgPromotion::isSafeToPromoteArgument(Argument *Arg,
       if (GEP->use_empty()) {
         // Dead GEP's cause trouble later.  Just remove them if we run into
         // them.
-        getAnalysis<AliasAnalysis>().deleteValue(GEP);
         GEP->eraseFromParent();
         // TODO: This runs the above loop over and over again for dead GEPs
         // Couldn't we just do increment the UI iterator earlier and erase the
@@ -553,9 +570,8 @@ bool ArgPromotion::isSafeToPromoteArgument(Argument *Arg,
     LoadInst *Load = Loads[i];
     BasicBlock *BB = Load->getParent();
 
-    AliasAnalysis::Location Loc = AA.getLocation(Load);
-    if (AA.canInstructionRangeModRef(BB->front(), *Load, Loc,
-        AliasAnalysis::Mod))
+    MemoryLocation Loc = MemoryLocation::get(Load);
+    if (AA.canInstructionRangeModRef(BB->front(), *Load, Loc, MRI_Mod))
       return false;  // Pointer is invalidated!
 
     // Now check every path from the entry block to the load for transparency.
@@ -706,7 +722,7 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
   // Patch the pointer to LLVM function in debug info descriptor.
   auto DI = FunctionDIs.find(F);
   if (DI != FunctionDIs.end()) {
-    MDSubprogram *SP = DI->second;
+    DISubprogram *SP = DI->second;
     SP->replaceFunction(NF);
     // Ensure the map is updated so it can be reused on subsequent argument
     // promotions of the same function.
@@ -724,10 +740,6 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
 
   F->getParent()->getFunctionList().insert(F, NF);
   NF->takeName(F);
-
-  // Get the alias analysis information that we need to update to reflect our
-  // changes.
-  AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
 
   // Get the callgraph information that we need to update to reflect our
   // changes.
@@ -774,7 +786,7 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
         for (unsigned i = 0, e = STy->getNumElements(); i != e; ++i) {
           Idxs[1] = ConstantInt::get(Type::getInt32Ty(F->getContext()), i);
           Value *Idx = GetElementPtrInst::Create(
-              STy, *AI, Idxs, (*AI)->getName() + "." + utostr(i), Call);
+              STy, *AI, Idxs, (*AI)->getName() + "." + Twine(i), Call);
           // TODO: Tell AA about the new values?
           Args.push_back(new LoadInst(Idx, Idx->getName()+".val", Call));
         }
@@ -807,7 +819,6 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
             V = GetElementPtrInst::Create(SI->first, V, Ops,
                                           V->getName() + ".idx", Call);
             Ops.clear();
-            AA.copyValue(OrigLoad->getOperand(0), V);
           }
           // Since we're replacing a load make sure we take the alignment
           // of the previous load.
@@ -819,7 +830,6 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
           newLoad->setAAMetadata(AAInfo);
 
           Args.push_back(newLoad);
-          AA.copyValue(OrigLoad, Args.back());
         }
       }
 
@@ -857,10 +867,6 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
     Args.clear();
     AttributesVec.clear();
 
-    // Update the alias analysis implementation to know that we are replacing
-    // the old call with a new one.
-    AA.replaceWithNewValue(Call, New);
-
     // Update the callgraph to know that the callsite has been transformed.
     CallGraphNode *CalleeNode = CG[Call->getParent()->getParent()];
     CalleeNode->replaceCallEdge(CS, CallSite(New), NF_CGN);
@@ -890,7 +896,6 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
       // new version.
       I->replaceAllUsesWith(I2);
       I2->takeName(I);
-      AA.replaceWithNewValue(I, I2);
       ++I2;
       continue;
     }
@@ -919,7 +924,6 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
       // Anything that used the arg should now use the alloca.
       I->replaceAllUsesWith(TheAlloca);
       TheAlloca->takeName(I);
-      AA.replaceWithNewValue(I, TheAlloca);
 
       // If the alloca is used in a call, we must clear the tail flag since
       // the callee now uses an alloca from the caller.
@@ -932,10 +936,8 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
       continue;
     }
 
-    if (I->use_empty()) {
-      AA.deleteValue(I);
+    if (I->use_empty())
       continue;
-    }
 
     // Otherwise, if we promoted this argument, then all users are load
     // instructions (or GEPs with only load users), and all loads should be
@@ -948,7 +950,6 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
                "Load element should sort to front!");
         I2->setName(I->getName()+".val");
         LI->replaceAllUsesWith(I2);
-        AA.replaceWithNewValue(LI, I2);
         LI->eraseFromParent();
         DEBUG(dbgs() << "*** Promoted load of argument '" << I->getName()
               << "' in function '" << F->getName() << "'\n");
@@ -985,10 +986,8 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
         while (!GEP->use_empty()) {
           LoadInst *L = cast<LoadInst>(GEP->user_back());
           L->replaceAllUsesWith(TheArg);
-          AA.replaceWithNewValue(L, TheArg);
           L->eraseFromParent();
         }
-        AA.deleteValue(GEP);
         GEP->eraseFromParent();
       }
     }
@@ -997,10 +996,6 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
     std::advance(I2, ArgIndices.size());
   }
 
-  // Tell the alias analysis that the old function is about to disappear.
-  AA.replaceWithNewValue(F, NF);
-
-  
   NF_CGN->stealCalledFunctionsFrom(CG[F]);
   
   // Now that the old function is dead, delete it.  If there is a dangling

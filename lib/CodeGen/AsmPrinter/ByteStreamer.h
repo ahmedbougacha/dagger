@@ -24,16 +24,19 @@
 
 namespace llvm {
 class ByteStreamer {
- public:
-  virtual ~ByteStreamer() {}
+ protected:
+  ~ByteStreamer() = default;
+  ByteStreamer(const ByteStreamer&) = default;
+  ByteStreamer() = default;
 
+ public:
   // For now we're just handling the calls we need for dwarf emission/hashing.
   virtual void EmitInt8(uint8_t Byte, const Twine &Comment = "") = 0;
   virtual void EmitSLEB128(uint64_t DWord, const Twine &Comment = "") = 0;
   virtual void EmitULEB128(uint64_t DWord, const Twine &Comment = "") = 0;
 };
 
-class APByteStreamer : public ByteStreamer {
+class APByteStreamer final : public ByteStreamer {
 private:
   AsmPrinter &AP;
 
@@ -53,7 +56,7 @@ public:
   }
 };
 
-class HashingByteStreamer : public ByteStreamer {
+class HashingByteStreamer final : public ByteStreamer {
  private:
   DIEHash &Hash;
  public:
@@ -69,29 +72,37 @@ class HashingByteStreamer : public ByteStreamer {
   }
 };
 
-class BufferByteStreamer : public ByteStreamer {
+class BufferByteStreamer final : public ByteStreamer {
 private:
   SmallVectorImpl<char> &Buffer;
-  // FIXME: This is actually only needed for textual asm output.
   SmallVectorImpl<std::string> &Comments;
+
+  /// \brief Only verbose textual output needs comments.  This will be set to
+  /// true for that case, and false otherwise.  If false, comments passed in to
+  /// the emit methods will be ignored.
+  bool GenerateComments;
 
 public:
   BufferByteStreamer(SmallVectorImpl<char> &Buffer,
-                     SmallVectorImpl<std::string> &Comments)
-  : Buffer(Buffer), Comments(Comments) {}
+                     SmallVectorImpl<std::string> &Comments,
+                     bool GenerateComments)
+  : Buffer(Buffer), Comments(Comments), GenerateComments(GenerateComments) {}
   void EmitInt8(uint8_t Byte, const Twine &Comment) override {
     Buffer.push_back(Byte);
-    Comments.push_back(Comment.str());
+    if (GenerateComments)
+      Comments.push_back(Comment.str());
   }
   void EmitSLEB128(uint64_t DWord, const Twine &Comment) override {
     raw_svector_ostream OSE(Buffer);
     encodeSLEB128(DWord, OSE);
-    Comments.push_back(Comment.str());
+    if (GenerateComments)
+      Comments.push_back(Comment.str());
   }
   void EmitULEB128(uint64_t DWord, const Twine &Comment) override {
     raw_svector_ostream OSE(Buffer);
     encodeULEB128(DWord, OSE);
-    Comments.push_back(Comment.str());
+    if (GenerateComments)
+      Comments.push_back(Comment.str());
   }
 };
 

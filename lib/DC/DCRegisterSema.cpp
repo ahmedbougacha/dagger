@@ -319,12 +319,12 @@ Type *DCRegisterSema::getRegType(unsigned RegNo) {
 }
 
 std::pair<size_t, size_t>
-DCRegisterSema::getRegSizeOffsetInRegSet(const DataLayout *DL,
+DCRegisterSema::getRegSizeOffsetInRegSet(const DataLayout &DL,
                                          unsigned RegNo) const {
   size_t Size, Offset;
   Size = RegSizes[RegNo] / 8;
 
-  const StructLayout *SL = DL->getStructLayout(RegSetType);
+  const StructLayout *SL = DL.getStructLayout(RegSetType);
   unsigned Largest = RegLargestSupers[RegNo];
   unsigned Idx = RegOffsetsInSet[Largest];
   Offset = SL->getElementOffset(Idx);
@@ -419,8 +419,8 @@ Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
     Value *RegName = Builder->CreateBitCast(
         Builder->CreateGlobalString(MRI.getName(Reg)), I8PtrTy);
 
-    Builder->CreateCall4(RegDiffFnPtr, RegName, Reg1Ptr, Reg2Ptr,
-                         Builder->getInt32(RegSizes[Reg] / 8));
+    Builder->CreateCall(RegDiffFnPtr, {RegName, Reg1Ptr, Reg2Ptr,
+                                       Builder->getInt32(RegSizes[Reg] / 8)});
   }
 
   Builder->CreateRetVoid();

@@ -54,6 +54,11 @@ class CallAnalyzer : public InstVisitor<CallAnalyzer, bool> {
   // The called function.
   Function &F;
 
+  // The candidate callsite being analyzed. Please do not use this to do
+  // analysis in the caller function; we want the inline cost query to be
+  // easily cacheable. Instead, use the cover function paramHasAttr.
+  CallSite CandidateCS;
+
   int Threshold;
   int Cost;
 
@@ -106,6 +111,17 @@ class CallAnalyzer : public InstVisitor<CallAnalyzer, bool> {
   bool simplifyCallSite(Function *F, CallSite CS);
   ConstantInt *stripAndComputeInBoundsConstantOffsets(Value *&V);
 
+  /// Return true if the given argument to the function being considered for
+  /// inlining has the given attribute set either at the call site or the
+  /// function declaration.  Primarily used to inspect call site specific
+  /// attributes since these can be more precise than the ones on the callee
+  /// itself. 
+  bool paramHasAttr(Argument *A, Attribute::AttrKind Attr);
+  
+  /// Return true if the given value is known non null within the callee if
+  /// inlined through this particular callsite. 
+  bool isKnownNonNullInCallee(Value *V);
+
   // Custom analysis routines.
   bool analyzeBlock(BasicBlock *BB, SmallPtrSetImpl<const Value *> &EphValues);
 
@@ -140,13 +156,15 @@ class CallAnalyzer : public InstVisitor<CallAnalyzer, bool> {
   bool visitSwitchInst(SwitchInst &SI);
   bool visitIndirectBrInst(IndirectBrInst &IBI);
   bool visitResumeInst(ResumeInst &RI);
+  bool visitCleanupReturnInst(CleanupReturnInst &RI);
+  bool visitCatchReturnInst(CatchReturnInst &RI);
   bool visitUnreachableInst(UnreachableInst &I);
 
 public:
   CallAnalyzer(const TargetTransformInfo &TTI, AssumptionCacheTracker *ACT,
-               Function &Callee, int Threshold)
-      : TTI(TTI), ACT(ACT), F(Callee), Threshold(Threshold), Cost(0),
-        IsCallerRecursive(false), IsRecursiveCall(false),
+               Function &Callee, int Threshold, CallSite CSArg)
+    : TTI(TTI), ACT(ACT), F(Callee), CandidateCS(CSArg), Threshold(Threshold),
+        Cost(0), IsCallerRecursive(false), IsRecursiveCall(false),
         ExposesReturnsTwice(false), HasDynamicAlloca(false),
         ContainsNoDuplicateCall(false), HasReturn(false), HasIndirectBr(false),
         HasFrameEscape(false), AllocatedSize(0), NumInstructions(0),
@@ -496,6 +514,33 @@ bool CallAnalyzer::visitUnaryInstruction(UnaryInstruction &I) {
   return false;
 }
 
+bool CallAnalyzer::paramHasAttr(Argument *A, Attribute::AttrKind Attr) {
+  unsigned ArgNo = A->getArgNo();
+  return CandidateCS.paramHasAttr(ArgNo+1, Attr);
+}
+
+bool CallAnalyzer::isKnownNonNullInCallee(Value *V) {
+  // Does the *call site* have the NonNull attribute set on an argument?  We
+  // use the attribute on the call site to memoize any analysis done in the
+  // caller. This will also trip if the callee function has a non-null
+  // parameter attribute, but that's a less interesting case because hopefully
+  // the callee would already have been simplified based on that.
+  if (Argument *A = dyn_cast<Argument>(V))
+    if (paramHasAttr(A, Attribute::NonNull))
+      return true;
+  
+  // Is this an alloca in the caller?  This is distinct from the attribute case
+  // above because attributes aren't updated within the inliner itself and we
+  // always want to catch the alloca derived case.
+  if (isAllocaDerivedArg(V))
+    // We can actually predict the result of comparisons between an
+    // alloca-derived value and null. Note that this fires regardless of
+    // SROA firing.
+    return true;
+  
+  return false;
+}
+
 bool CallAnalyzer::visitCmpInst(CmpInst &I) {
   Value *LHS = I.getOperand(0), *RHS = I.getOperand(1);
   // First try to handle simplified comparisons.
@@ -537,18 +582,14 @@ bool CallAnalyzer::visitCmpInst(CmpInst &I) {
   }
 
   // If the comparison is an equality comparison with null, we can simplify it
-  // for any alloca-derived argument.
-  if (I.isEquality() && isa<ConstantPointerNull>(I.getOperand(1)))
-    if (isAllocaDerivedArg(I.getOperand(0))) {
-      // We can actually predict the result of comparisons between an
-      // alloca-derived value and null. Note that this fires regardless of
-      // SROA firing.
-      bool IsNotEqual = I.getPredicate() == CmpInst::ICMP_NE;
-      SimplifiedValues[&I] = IsNotEqual ? ConstantInt::getTrue(I.getType())
-                                        : ConstantInt::getFalse(I.getType());
-      return true;
-    }
-
+  // if we know the value (argument) can't be null
+  if (I.isEquality() && isa<ConstantPointerNull>(I.getOperand(1)) &&
+      isKnownNonNullInCallee(I.getOperand(0))) {
+    bool IsNotEqual = I.getPredicate() == CmpInst::ICMP_NE;
+    SimplifiedValues[&I] = IsNotEqual ? ConstantInt::getTrue(I.getType())
+                                      : ConstantInt::getFalse(I.getType());
+    return true;
+  }
   // Finally check for SROA candidates in comparisons.
   Value *SROAArg;
   DenseMap<Value *, int>::iterator CostIt;
@@ -744,7 +785,7 @@ bool CallAnalyzer::visitCallSite(CallSite CS) {
       case Intrinsic::memmove:
         // SROA can usually chew through these intrinsics, but they aren't free.
         return false;
-      case Intrinsic::frameescape:
+      case Intrinsic::localescape:
         HasFrameEscape = true;
         return false;
       }
@@ -790,7 +831,7 @@ bool CallAnalyzer::visitCallSite(CallSite CS) {
   // during devirtualization and so we want to give it a hefty bonus for
   // inlining, but cap that bonus in the event that inlining wouldn't pan
   // out. Pretend to inline the function, with a custom threshold.
-  CallAnalyzer CA(TTI, ACT, *F, InlineConstants::IndirectCallThreshold);
+  CallAnalyzer CA(TTI, ACT, *F, InlineConstants::IndirectCallThreshold, CS);
   if (CA.analyzeCall(CS)) {
     // We were able to inline the indirect call! Subtract the cost from the
     // bonus we want to apply, but don't go below zero.
@@ -861,6 +902,18 @@ bool CallAnalyzer::visitIndirectBrInst(IndirectBrInst &IBI) {
 bool CallAnalyzer::visitResumeInst(ResumeInst &RI) {
   // FIXME: It's not clear that a single instruction is an accurate model for
   // the inline cost of a resume instruction.
+  return false;
+}
+
+bool CallAnalyzer::visitCleanupReturnInst(CleanupReturnInst &CRI) {
+  // FIXME: It's not clear that a single instruction is an accurate model for
+  // the inline cost of a cleanupret instruction.
+  return false;
+}
+
+bool CallAnalyzer::visitCatchReturnInst(CatchReturnInst &CRI) {
+  // FIXME: It's not clear that a single instruction is an accurate model for
+  // the inline cost of a cleanupret instruction.
   return false;
 }
 
@@ -955,16 +1008,9 @@ bool CallAnalyzer::analyzeBlock(BasicBlock *BB,
         AllocatedSize > InlineConstants::TotalAllocaSizeRecursiveCaller)
       return false;
 
-    if (NumVectorInstructions > NumInstructions/2)
-      VectorBonus = FiftyPercentVectorBonus;
-    else if (NumVectorInstructions > NumInstructions/10)
-      VectorBonus = TenPercentVectorBonus;
-    else
-      VectorBonus = 0;
-
-    // Check if we've past the threshold so we don't spin in huge basic
-    // blocks that will never inline.
-    if (Cost > (Threshold + VectorBonus))
+    // Check if we've past the maximum possible threshold so we don't spin in
+    // huge basic blocks that will never inline.
+    if (Cost > Threshold)
       return false;
   }
 
@@ -1020,24 +1066,32 @@ ConstantInt *CallAnalyzer::stripAndComputeInBoundsConstantOffsets(Value *&V) {
 bool CallAnalyzer::analyzeCall(CallSite CS) {
   ++NumCallsAnalyzed;
 
-  // Track whether the post-inlining function would have more than one basic
-  // block. A single basic block is often intended for inlining. Balloon the
-  // threshold by 50% until we pass the single-BB phase.
-  bool SingleBB = true;
-  int SingleBBBonus = Threshold / 2;
-  Threshold += SingleBBBonus;
-
   // Perform some tweaks to the cost and threshold based on the direct
   // callsite information.
 
   // We want to more aggressively inline vector-dense kernels, so up the
   // threshold, and we'll lower it if the % of vector instructions gets too
-  // low.
+  // low. Note that these bonuses are some what arbitrary and evolved over time
+  // by accident as much as because they are principled bonuses.
+  //
+  // FIXME: It would be nice to remove all such bonuses. At least it would be
+  // nice to base the bonus values on something more scientific.
   assert(NumInstructions == 0);
   assert(NumVectorInstructions == 0);
-  FiftyPercentVectorBonus = Threshold;
-  TenPercentVectorBonus = Threshold / 2;
+  FiftyPercentVectorBonus = 3 * Threshold / 2;
+  TenPercentVectorBonus = 3 * Threshold / 4;
   const DataLayout &DL = F.getParent()->getDataLayout();
+
+  // Track whether the post-inlining function would have more than one basic
+  // block. A single basic block is often intended for inlining. Balloon the
+  // threshold by 50% until we pass the single-BB phase.
+  bool SingleBB = true;
+  int SingleBBBonus = Threshold / 2;
+
+  // Speculatively apply all possible bonuses to Threshold. If cost exceeds
+  // this Threshold any time, and cost cannot decrease, we can stop processing
+  // the rest of the function body.
+  Threshold += (SingleBBBonus + FiftyPercentVectorBonus);
 
   // Give out bonuses per argument, as the instructions setting them up will
   // be gone after inlining.
@@ -1081,9 +1135,9 @@ bool CallAnalyzer::analyzeCall(CallSite CS) {
   Instruction *Instr = CS.getInstruction();
   if (InvokeInst *II = dyn_cast<InvokeInst>(Instr)) {
     if (isa<UnreachableInst>(II->getNormalDest()->begin()))
-      Threshold = 1;
+      Threshold = 0;
   } else if (isa<UnreachableInst>(++BasicBlock::iterator(Instr)))
-    Threshold = 1;
+    Threshold = 0;
 
   // If this function uses the coldcc calling convention, prefer not to inline
   // it.
@@ -1155,7 +1209,7 @@ bool CallAnalyzer::analyzeCall(CallSite CS) {
   for (unsigned Idx = 0; Idx != BBWorklist.size(); ++Idx) {
     // Bail out the moment we cross the threshold. This means we'll under-count
     // the cost, but only when undercounting doesn't matter.
-    if (Cost > (Threshold + VectorBonus))
+    if (Cost > Threshold)
       break;
 
     BasicBlock *BB = BBWorklist[Idx];
@@ -1233,7 +1287,13 @@ bool CallAnalyzer::analyzeCall(CallSite CS) {
   if (!OnlyOneCallAndLocalLinkage && ContainsNoDuplicateCall)
     return false;
 
-  Threshold += VectorBonus;
+  // We applied the maximum possible vector bonus at the beginning. Now,
+  // subtract the excess bonus, if any, from the Threshold before
+  // comparing against Cost.
+  if (NumVectorInstructions <= NumInstructions / 10)
+    Threshold -= FiftyPercentVectorBonus;
+  else if (NumVectorInstructions <= NumInstructions / 2)
+    Threshold -= (FiftyPercentVectorBonus - TenPercentVectorBonus);
 
   return Cost < Threshold;
 }
@@ -1248,12 +1308,12 @@ void CallAnalyzer::dump() {
   DEBUG_PRINT_STAT(NumConstantPtrCmps);
   DEBUG_PRINT_STAT(NumConstantPtrDiffs);
   DEBUG_PRINT_STAT(NumInstructionsSimplified);
+  DEBUG_PRINT_STAT(NumInstructions);
   DEBUG_PRINT_STAT(SROACostSavings);
   DEBUG_PRINT_STAT(SROACostSavingsLost);
   DEBUG_PRINT_STAT(ContainsNoDuplicateCall);
   DEBUG_PRINT_STAT(Cost);
   DEBUG_PRINT_STAT(Threshold);
-  DEBUG_PRINT_STAT(VectorBonus);
 #undef DEBUG_PRINT_STAT
 }
 #endif
@@ -1298,9 +1358,9 @@ static bool attributeMatches(Function *F1, Function *F2, AttrKind Attr) {
 /// \brief Test that there are no attribute conflicts between Caller and Callee
 ///        that prevent inlining.
 static bool functionsHaveCompatibleAttributes(Function *Caller,
-                                              Function *Callee) {
-  return attributeMatches(Caller, Callee, "target-cpu") &&
-         attributeMatches(Caller, Callee, "target-features") &&
+                                              Function *Callee,
+                                              TargetTransformInfo &TTI) {
+  return TTI.areInlineCompatible(Caller, Callee) &&
          attributeMatches(Caller, Callee, Attribute::SanitizeAddress) &&
          attributeMatches(Caller, Callee, Attribute::SanitizeMemory) &&
          attributeMatches(Caller, Callee, Attribute::SanitizeThread);
@@ -1322,7 +1382,8 @@ InlineCost InlineCostAnalysis::getInlineCost(CallSite CS, Function *Callee,
 
   // Never inline functions with conflicting attributes (unless callee has
   // always-inline attribute).
-  if (!functionsHaveCompatibleAttributes(CS.getCaller(), Callee))
+  if (!functionsHaveCompatibleAttributes(CS.getCaller(), Callee,
+                                         TTIWP->getTTI(*Callee)))
     return llvm::InlineCost::getNever();
 
   // Don't inline this call if the caller has the optnone attribute.
@@ -1339,7 +1400,7 @@ InlineCost InlineCostAnalysis::getInlineCost(CallSite CS, Function *Callee,
   DEBUG(llvm::dbgs() << "      Analyzing call of " << Callee->getName()
         << "...\n");
 
-  CallAnalyzer CA(TTIWP->getTTI(*Callee), ACT, *Callee, Threshold);
+  CallAnalyzer CA(TTIWP->getTTI(*Callee), ACT, *Callee, Threshold, CS);
   bool ShouldInline = CA.analyzeCall(CS);
 
   DEBUG(CA.dump());
@@ -1377,11 +1438,11 @@ bool InlineCostAnalysis::isInlineViable(Function &F) {
           cast<CallInst>(CS.getInstruction())->canReturnTwice())
         return false;
 
-      // Disallow inlining functions that call @llvm.frameescape. Doing this
+      // Disallow inlining functions that call @llvm.localescape. Doing this
       // correctly would require major changes to the inliner.
       if (CS.getCalledFunction() &&
           CS.getCalledFunction()->getIntrinsicID() ==
-              llvm::Intrinsic::frameescape)
+              llvm::Intrinsic::localescape)
         return false;
     }
   }

@@ -250,8 +250,8 @@ bool LTOCodeGenerator::compileOptimizedToFile(const char **name,
   return true;
 }
 
-const void *LTOCodeGenerator::compileOptimized(size_t *length,
-                                               std::string &errMsg) {
+std::unique_ptr<MemoryBuffer>
+LTOCodeGenerator::compileOptimized(std::string &errMsg) {
   const char *name;
   if (!compileOptimizedToFile(&name, errMsg))
     return nullptr;
@@ -264,16 +264,11 @@ const void *LTOCodeGenerator::compileOptimized(size_t *length,
     sys::fs::remove(NativeObjectPath);
     return nullptr;
   }
-  NativeObjectFile = std::move(*BufferOrErr);
 
   // remove temp files
   sys::fs::remove(NativeObjectPath);
 
-  // return buffer, unless error
-  if (!NativeObjectFile)
-    return nullptr;
-  *length = NativeObjectFile->getBufferSize();
-  return NativeObjectFile->getBufferStart();
+  return std::move(*BufferOrErr);
 }
 
 
@@ -289,16 +284,14 @@ bool LTOCodeGenerator::compile_to_file(const char **name,
   return compileOptimizedToFile(name, errMsg);
 }
 
-const void* LTOCodeGenerator::compile(size_t *length,
-                                      bool disableInline,
-                                      bool disableGVNLoadPRE,
-                                      bool disableVectorization,
-                                      std::string &errMsg) {
+std::unique_ptr<MemoryBuffer>
+LTOCodeGenerator::compile(bool disableInline, bool disableGVNLoadPRE,
+                          bool disableVectorization, std::string &errMsg) {
   if (!optimize(disableInline, disableGVNLoadPRE,
                 disableVectorization, errMsg))
     return nullptr;
 
-  return compileOptimized(length, errMsg);
+  return compileOptimized(errMsg);
 }
 
 bool LTOCodeGenerator::determineTarget(std::string &errMsg) {
@@ -460,7 +453,7 @@ void LTOCodeGenerator::applyScopeRestrictions() {
   passes.add(createVerifierPass());
 
   // mark which symbols can not be internalized
-  Mangler Mangler(TargetMach->getDataLayout());
+  Mangler Mangler;
   std::vector<const char*> MustPreserveList;
   SmallPtrSet<GlobalValue*, 8> AsmUsed;
   std::vector<StringRef> Libcalls;
@@ -528,7 +521,7 @@ bool LTOCodeGenerator::optimize(bool DisableInline,
   legacy::PassManager passes;
 
   // Add an appropriate DataLayout instance for this module...
-  mergedModule->setDataLayout(*TargetMach->getDataLayout());
+  mergedModule->setDataLayout(TargetMach->createDataLayout());
 
   passes.add(
       createTargetTransformInfoWrapperPass(TargetMach->getTargetIRAnalysis()));

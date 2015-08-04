@@ -842,8 +842,8 @@ getPatternComplexity(const CodeGenDAGPatterns &CGP) const {
 ///
 std::string PatternToMatch::getPredicateCheck() const {
   std::string PredicateCheck;
-  for (unsigned i = 0, e = Predicates->getSize(); i != e; ++i) {
-    if (DefInit *Pred = dyn_cast<DefInit>(Predicates->getElement(i))) {
+  for (Init *I : Predicates->getValues()) {
+    if (DefInit *Pred = dyn_cast<DefInit>(I)) {
       Record *Def = Pred->getDef();
       if (!Def->isSubClassOf("Predicate")) {
 #ifndef NDEBUG
@@ -913,8 +913,7 @@ SDTypeConstraint::SDTypeConstraint(Record *R) {
     x.SDTCisSameNumEltsAs_Info.OtherOperandNum =
       R->getValueAsInt("OtherOperandNum");
   } else {
-    errs() << "Unrecognized SDTypeConstraint '" << R->getName() << "'!\n";
-    exit(1);
+    PrintFatalError("Unrecognized SDTypeConstraint '" + R->getName() + "'!\n");
   }
 }
 
@@ -932,11 +931,12 @@ static TreePatternNode *getOperandNum(unsigned OpNo, TreePatternNode *N,
   OpNo -= NumResults;
 
   if (OpNo >= N->getNumChildren()) {
-    errs() << "Invalid operand number in type constraint "
+    std::string S;
+    raw_string_ostream OS(S);
+    OS << "Invalid operand number in type constraint "
            << (OpNo+NumResults) << " ";
-    N->dump();
-    errs() << '\n';
-    exit(1);
+    N->print(OS);
+    PrintFatalError(OS.str());
   }
 
   return N->getChild(OpNo);
@@ -1116,9 +1116,9 @@ SDNodeInfo::SDNodeInfo(Record *R) : Def(R) {
     } else if (PropList[i]->getName() == "SDNPVariadic") {
       Properties |= 1 << SDNPVariadic;
     } else {
-      errs() << "Unknown SD Node property '" << PropList[i]->getName()
-             << "' on node '" << R->getName() << "'!\n";
-      exit(1);
+      PrintFatalError("Unknown SD Node property '" +
+                      PropList[i]->getName() + "' on node '" +
+                      R->getName() + "'!");
     }
   }
 
@@ -1223,8 +1223,7 @@ static unsigned GetNumNodeResults(Record *Operator, CodeGenDAGPatterns &CDP) {
     return 1;
 
   Operator->dump();
-  errs() << "Unhandled node in GetNumNodeResults\n";
-  exit(1);
+  PrintFatalError("Unhandled node in GetNumNodeResults");
 }
 
 void TreePatternNode::print(raw_ostream &OS) const {
@@ -2000,8 +1999,8 @@ bool TreePatternNode::canPatternMatch(std::string &Reason,
 TreePattern::TreePattern(Record *TheRec, ListInit *RawPat, bool isInput,
                          CodeGenDAGPatterns &cdp) : TheRecord(TheRec), CDP(cdp),
                          isInputPattern(isInput), HasError(false) {
-  for (unsigned i = 0, e = RawPat->getSize(); i != e; ++i)
-    Trees.push_back(ParseTreePattern(RawPat->getElement(i), ""));
+  for (Init *I : RawPat->getValues())
+    Trees.push_back(ParseTreePattern(I, ""));
 }
 
 TreePattern::TreePattern(Record *TheRec, DagInit *Pat, bool isInput,
@@ -2144,7 +2143,8 @@ TreePatternNode *TreePattern::ParseTreePattern(Init *TheInit, StringRef OpName){
         Operator->getName() != "tblockaddress" &&
         Operator->getName() != "tglobaladdr" &&
         Operator->getName() != "bb" &&
-        Operator->getName() != "vt")
+        Operator->getName() != "vt" &&
+        Operator->getName() != "mcsym")
       error("Cannot use '" + Operator->getName() + "' in an output pattern!");
   }
 
@@ -2373,10 +2373,9 @@ CodeGenDAGPatterns::CodeGenDAGPatterns(RecordKeeper &R) :
 
 Record *CodeGenDAGPatterns::getSDNodeNamed(const std::string &Name) const {
   Record *N = Records.getDef(Name);
-  if (!N || !N->isSubClassOf("SDNode")) {
-    errs() << "Error getting SDNode '" << Name << "'!\n";
-    exit(1);
-  }
+  if (!N || !N->isSubClassOf("SDNode"))
+    PrintFatalError("Error getting SDNode '" + Name + "'!");
+
   return N;
 }
 
@@ -2862,8 +2861,8 @@ static bool hasNullFragReference(DagInit *DI) {
 /// hasNullFragReference - Return true if any DAG in the list references
 /// the null_frag operator.
 static bool hasNullFragReference(ListInit *LI) {
-  for (unsigned i = 0, e = LI->getSize(); i != e; ++i) {
-    DagInit *DI = dyn_cast<DagInit>(LI->getElement(i));
+  for (Init *I : LI->getValues()) {
+    DagInit *DI = dyn_cast<DagInit>(I);
     assert(DI && "non-dag in an instruction Pattern list?!");
     if (hasNullFragReference(DI))
       return true;
@@ -3078,7 +3077,7 @@ void CodeGenDAGPatterns::ParseInstructions() {
     // null_frag operator is as-if no pattern were specified. Normally this
     // is from a multiclass expansion w/ a SDPatternOperator passed in as
     // null_frag.
-    if (!LI || LI->getSize() == 0 || hasNullFragReference(LI)) {
+    if (!LI || LI->empty() || hasNullFragReference(LI)) {
       std::vector<Record*> Results;
       std::vector<Record*> Operands;
 
@@ -3401,7 +3400,7 @@ void CodeGenDAGPatterns::ParsePatterns() {
     Pattern->InlinePatternFragments();
 
     ListInit *LI = CurPattern->getValueAsListInit("ResultInstrs");
-    if (LI->getSize() == 0) continue;  // no pattern.
+    if (LI->empty()) continue;  // no pattern.
 
     // Parse the instruction.
     TreePattern Result(CurPattern, LI, false, *this);
@@ -3800,13 +3799,11 @@ void CodeGenDAGPatterns::GenerateVariants() {
       if (AlreadyExists) continue;
 
       // Otherwise, add it to the list of patterns we have.
-      PatternsToMatch.
-        push_back(PatternToMatch(PatternsToMatch[i].getSrcRecord(),
-                                 PatternsToMatch[i].getPredicates(),
-                                 Variant, PatternsToMatch[i].getDstPattern(),
-                                 PatternsToMatch[i].getDstRegs(),
-                                 PatternsToMatch[i].getAddedComplexity(),
-                                 Record::getNewUID()));
+      PatternsToMatch.emplace_back(
+          PatternsToMatch[i].getSrcRecord(), PatternsToMatch[i].getPredicates(),
+          Variant, PatternsToMatch[i].getDstPattern(),
+          PatternsToMatch[i].getDstRegs(),
+          PatternsToMatch[i].getAddedComplexity(), Record::getNewUID());
     }
 
     DEBUG(errs() << "\n");

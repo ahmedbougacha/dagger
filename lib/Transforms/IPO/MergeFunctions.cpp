@@ -389,11 +389,21 @@ private:
 };
 
 class FunctionNode {
-  AssertingVH<Function> F;
+  mutable AssertingVH<Function> F;
 
 public:
   FunctionNode(Function *F) : F(F) {}
   Function *getFunc() const { return F; }
+
+  /// Replace the reference to the function F by the function G, assuming their
+  /// implementations are equal.
+  void replaceBy(Function *G) const {
+    assert(!(*this < FunctionNode(G)) && !(FunctionNode(G) < *this) &&
+           "The two functions must be equal");
+
+    F = G;
+  }
+
   void release() { F = 0; }
   bool operator<(const FunctionNode &RHS) const {
     return (FunctionComparator(F, RHS.getFunc()).compare()) == -1;
@@ -490,9 +500,9 @@ int FunctionComparator::cmpConstants(const Constant *L, const Constant *R) {
     unsigned TyLWidth = 0;
     unsigned TyRWidth = 0;
 
-    if (const VectorType *VecTyL = dyn_cast<VectorType>(TyL))
+    if (auto *VecTyL = dyn_cast<VectorType>(TyL))
       TyLWidth = VecTyL->getBitWidth();
-    if (const VectorType *VecTyR = dyn_cast<VectorType>(TyR))
+    if (auto *VecTyR = dyn_cast<VectorType>(TyR))
       TyRWidth = VecTyR->getBitWidth();
 
     if (TyLWidth != TyRWidth)
@@ -718,6 +728,15 @@ int FunctionComparator::cmpOperations(const Instruction *L,
   if (int Res = cmpNumbers(L->getRawSubclassOptionalData(),
                            R->getRawSubclassOptionalData()))
     return Res;
+
+  if (const AllocaInst *AI = dyn_cast<AllocaInst>(L)) {
+    if (int Res = cmpTypes(AI->getAllocatedType(),
+                           cast<AllocaInst>(R)->getAllocatedType()))
+      return Res;
+    if (int Res =
+            cmpNumbers(AI->getAlignment(), cast<AllocaInst>(R)->getAlignment()))
+      return Res;
+  }
 
   // We have two instructions of identical opcode and #operands.  Check to see
   // if all operands are the same type
@@ -1113,6 +1132,9 @@ private:
   /// Replace G with an alias to F. Deletes G.
   void writeAlias(Function *F, Function *G);
 
+  /// Replace function F with function G in the function tree.
+  void replaceFunctionInTree(FnTreeType::iterator &IterToF, Function *G);
+
   /// The set of all distinct functions. Use the insert() and remove() methods
   /// to modify it.
   FnTreeType FnTree;
@@ -1260,6 +1282,25 @@ void MergeFunctions::replaceDirectCallers(Function *Old, Function *New) {
     ++UI;
     CallSite CS(U->getUser());
     if (CS && CS.isCallee(U)) {
+      // Transfer the called function's attributes to the call site. Due to the
+      // bitcast we will 'loose' ABI changing attributes because the 'called
+      // function' is no longer a Function* but the bitcast. Code that looks up
+      // the attributes from the called function will fail.
+      auto &Context = New->getContext();
+      auto NewFuncAttrs = New->getAttributes();
+      auto CallSiteAttrs = CS.getAttributes();
+
+      CallSiteAttrs = CallSiteAttrs.addAttributes(
+          Context, AttributeSet::ReturnIndex, NewFuncAttrs.getRetAttributes());
+
+      for (unsigned argIdx = 0; argIdx < CS.arg_size(); argIdx++) {
+        AttributeSet Attrs = NewFuncAttrs.getParamAttributes(argIdx);
+        if (Attrs.getNumSlots())
+          CallSiteAttrs = CallSiteAttrs.addAttributes(Context, argIdx, Attrs);
+      }
+
+      CS.setAttributes(CallSiteAttrs);
+
       remove(CS.getInstruction()->getParent()->getParent());
       U->set(BitcastNew);
     }
@@ -1358,8 +1399,7 @@ void MergeFunctions::writeThunk(Function *F, Function *G) {
 // Replace G with an alias to F and delete G.
 void MergeFunctions::writeAlias(Function *F, Function *G) {
   PointerType *PTy = G->getType();
-  auto *GA = GlobalAlias::create(PTy->getElementType(), PTy->getAddressSpace(),
-                                 G->getLinkage(), "", F);
+  auto *GA = GlobalAlias::create(PTy, G->getLinkage(), "", F);
   F->setAlignment(std::max(F->getAlignment(), G->getAlignment()));
   GA->takeName(G);
   GA->setVisibility(G->getVisibility());
@@ -1376,34 +1416,47 @@ void MergeFunctions::mergeTwoFunctions(Function *F, Function *G) {
   if (F->mayBeOverridden()) {
     assert(G->mayBeOverridden());
 
+    // Make them both thunks to the same internal function.
+    Function *H = Function::Create(F->getFunctionType(), F->getLinkage(), "",
+                                   F->getParent());
+    H->copyAttributesFrom(F);
+    H->takeName(F);
+    removeUsers(F);
+    F->replaceAllUsesWith(H);
+
+    unsigned MaxAlignment = std::max(G->getAlignment(), H->getAlignment());
+
     if (HasGlobalAliases) {
-      // Make them both thunks to the same internal function.
-      Function *H = Function::Create(F->getFunctionType(), F->getLinkage(), "",
-                                     F->getParent());
-      H->copyAttributesFrom(F);
-      H->takeName(F);
-      removeUsers(F);
-      F->replaceAllUsesWith(H);
-
-      unsigned MaxAlignment = std::max(G->getAlignment(), H->getAlignment());
-
       writeAlias(F, G);
       writeAlias(F, H);
-
-      F->setAlignment(MaxAlignment);
-      F->setLinkage(GlobalValue::PrivateLinkage);
     } else {
-      // We can't merge them. Instead, pick one and update all direct callers
-      // to call it and hope that we improve the instruction cache hit rate.
-      replaceDirectCallers(G, F);
+      writeThunk(F, G);
+      writeThunk(F, H);
     }
 
+    F->setAlignment(MaxAlignment);
+    F->setLinkage(GlobalValue::PrivateLinkage);
     ++NumDoubleWeak;
   } else {
     writeThunkOrAlias(F, G);
   }
 
   ++NumFunctionsMerged;
+}
+
+/// Replace function F for function G in the map.
+void MergeFunctions::replaceFunctionInTree(FnTreeType::iterator &IterToF,
+                                           Function *G) {
+  Function *F = IterToF->getFunc();
+
+  // A total order is already guaranteed otherwise because we process strong
+  // functions before weak functions.
+  assert(((F->mayBeOverridden() && G->mayBeOverridden()) ||
+          (!F->mayBeOverridden() && !G->mayBeOverridden())) &&
+         "Only change functions if both are strong or both are weak");
+  (void)F;
+
+  IterToF->replaceBy(G);
 }
 
 // Insert a ComparableFunction into the FnTree, or merge it away if equal to one
@@ -1431,6 +1484,22 @@ bool MergeFunctions::insert(Function *NewFunction) {
     }
   }
 
+  // Impose a total order (by name) on the replacement of functions. This is
+  // important when operating on more than one module independently to prevent
+  // cycles of thunks calling each other when the modules are linked together.
+  //
+  // When one function is weak and the other is strong there is an order imposed
+  // already. We process strong functions before weak functions.
+  if ((OldF.getFunc()->mayBeOverridden() && NewFunction->mayBeOverridden()) ||
+      (!OldF.getFunc()->mayBeOverridden() && !NewFunction->mayBeOverridden()))
+    if (OldF.getFunc()->getName() > NewFunction->getName()) {
+      // Swap the two functions.
+      Function *F = OldF.getFunc();
+      replaceFunctionInTree(Result.first, NewFunction);
+      NewFunction = F;
+      assert(OldF.getFunc() != F && "Must have swapped the functions.");
+    }
+
   // Never thunk a strong function to a weak function.
   assert(!OldF.getFunc()->mayBeOverridden() || NewFunction->mayBeOverridden());
 
@@ -1457,7 +1526,7 @@ void MergeFunctions::remove(Function *F) {
   if (Erased) {
     DEBUG(dbgs() << "Removed " << F->getName()
                  << " from set and deferred it.\n");
-    Deferred.push_back(F);
+    Deferred.emplace_back(F);
   }
 }
 
@@ -1466,6 +1535,8 @@ void MergeFunctions::remove(Function *F) {
 void MergeFunctions::removeUsers(Value *V) {
   std::vector<Value *> Worklist;
   Worklist.push_back(V);
+  SmallSet<Value*, 8> Visited;
+  Visited.insert(V);
   while (!Worklist.empty()) {
     Value *V = Worklist.back();
     Worklist.pop_back();
@@ -1476,8 +1547,10 @@ void MergeFunctions::removeUsers(Value *V) {
       } else if (isa<GlobalValue>(U)) {
         // do nothing
       } else if (Constant *C = dyn_cast<Constant>(U)) {
-        for (User *UU : C->users())
-          Worklist.push_back(UU);
+        for (User *UU : C->users()) {
+          if (!Visited.insert(UU).second)
+            Worklist.push_back(UU);
+        }
       }
     }
   }

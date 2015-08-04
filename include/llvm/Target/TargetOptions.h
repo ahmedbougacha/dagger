@@ -15,19 +15,20 @@
 #ifndef LLVM_TARGET_TARGETOPTIONS_H
 #define LLVM_TARGET_TARGETOPTIONS_H
 
+#include "llvm/Target/TargetRecip.h"
 #include "llvm/MC/MCTargetOptions.h"
 #include <string>
 
 namespace llvm {
   class MachineFunction;
+  class Module;
   class StringRef;
 
-  // Possible float ABI settings. Used with FloatABIType in TargetOptions.h.
   namespace FloatABI {
     enum ABIType {
-      Default, // Target-specific (either soft or hard depending on triple,etc).
-      Soft, // Soft float.
-      Hard  // Hard float.
+      Default, // Target-specific (either soft or hard depending on triple, etc).
+      Soft,    // Soft float.
+      Hard     // Hard float.
     };
   }
 
@@ -60,30 +61,26 @@ namespace llvm {
   class TargetOptions {
   public:
     TargetOptions()
-        : PrintMachineCode(false), NoFramePointerElim(false),
+        : PrintMachineCode(false),
           LessPreciseFPMADOption(false), UnsafeFPMath(false),
           NoInfsFPMath(false), NoNaNsFPMath(false),
-          HonorSignDependentRoundingFPMathOption(false), UseSoftFloat(false),
+          HonorSignDependentRoundingFPMathOption(false),
           NoZerosInBSS(false),
           GuaranteedTailCallOpt(false),
-          DisableTailCalls(false), StackAlignmentOverride(0),
+          StackAlignmentOverride(0),
           EnableFastISel(false), PositionIndependentExecutable(false),
           UseInitArray(false), DisableIntegratedAS(false),
           CompressDebugSections(false), FunctionSections(false),
           DataSections(false), UniqueSectionNames(true), TrapUnreachable(false),
-          TrapFuncName(), FloatABIType(FloatABI::Default),
-          AllowFPOpFusion(FPOpFusion::Standard), JTType(JumpTable::Single),
+          EmulatedTLS(false), FloatABIType(FloatABI::Default),
+          AllowFPOpFusion(FPOpFusion::Standard), Reciprocals(TargetRecip()),
+          JTType(JumpTable::Single),
           ThreadModel(ThreadModel::POSIX) {}
 
     /// PrintMachineCode - This flag is enabled when the -print-machineinstrs
     /// option is specified on the command line, and should enable debugging
     /// output from the code generator.
     unsigned PrintMachineCode : 1;
-
-    /// NoFramePointerElim - This flag is enabled when the -disable-fp-elim is
-    /// specified on the command line.  If the target supports the frame pointer
-    /// elimination optimization, this option should disable it.
-    unsigned NoFramePointerElim : 1;
 
     /// DisableFramePointerElim - This returns true if frame pointer elimination
     /// optimization should be disabled for the given machine function.
@@ -127,12 +124,6 @@ namespace llvm {
     unsigned HonorSignDependentRoundingFPMathOption : 1;
     bool HonorSignDependentRoundingFPMath() const;
 
-    /// UseSoftFloat - This flag is enabled when the -soft-float flag is
-    /// specified on the command line.  When this flag is on, the code generator
-    /// will generate libcalls to the software floating point library instead of
-    /// target FP instructions.
-    unsigned UseSoftFloat : 1;
-
     /// NoZerosInBSS - By default some codegens place zero-initialized data to
     /// .bss section. This flag disables such behaviour (necessary, e.g. for
     /// crt*.o compiling).
@@ -145,10 +136,6 @@ namespace llvm {
     /// criteria (being at the end of a function, having the same return type
     /// as their parent function, etc.), using an alternate ABI if necessary.
     unsigned GuaranteedTailCallOpt : 1;
-
-    /// DisableTailCalls - This flag controls whether we will use tail calls.
-    /// Disabling them may be useful to maintain a correct call stack.
-    unsigned DisableTailCalls : 1;
 
     /// StackAlignmentOverride - Override default stack alignment for target.
     unsigned StackAlignmentOverride;
@@ -185,11 +172,9 @@ namespace llvm {
     /// Emit target-specific trap instruction for 'unreachable' IR instructions.
     unsigned TrapUnreachable : 1;
 
-    /// getTrapFunctionName - If this returns a non-empty string, this means
-    /// isel should lower Intrinsic::trap to a call to the specified function
-    /// name instead of an ISD::TRAP node.
-    std::string TrapFuncName;
-    StringRef getTrapFunctionName() const;
+    /// EmulatedTLS - This flag enables emulated TLS model, using emutls
+    /// function in the runtime library..
+    unsigned EmulatedTLS : 1;
 
     /// FloatABIType - This setting is set by -float-abi=xxx option is specfied
     /// on the command line. This setting may either be Default, Soft, or Hard.
@@ -217,6 +202,9 @@ namespace llvm {
     /// the value of this option.
     FPOpFusion::FPOpFusionMode AllowFPOpFusion;
 
+    /// This class encapsulates options for reciprocal-estimate code generation.
+    TargetRecip Reciprocals;
+    
     /// JTType - This flag specifies the type of jump-instruction table to
     /// create for functions that have the jumptable attribute.
     JumpTable::JumpTableType JTType;
@@ -240,18 +228,17 @@ inline bool operator==(const TargetOptions &LHS,
     ARE_EQUAL(NoInfsFPMath) &&
     ARE_EQUAL(NoNaNsFPMath) &&
     ARE_EQUAL(HonorSignDependentRoundingFPMathOption) &&
-    ARE_EQUAL(UseSoftFloat) &&
     ARE_EQUAL(NoZerosInBSS) &&
     ARE_EQUAL(GuaranteedTailCallOpt) &&
-    ARE_EQUAL(DisableTailCalls) &&
     ARE_EQUAL(StackAlignmentOverride) &&
     ARE_EQUAL(EnableFastISel) &&
     ARE_EQUAL(PositionIndependentExecutable) &&
     ARE_EQUAL(UseInitArray) &&
     ARE_EQUAL(TrapUnreachable) &&
-    ARE_EQUAL(TrapFuncName) &&
+    ARE_EQUAL(EmulatedTLS) &&
     ARE_EQUAL(FloatABIType) &&
     ARE_EQUAL(AllowFPOpFusion) &&
+    ARE_EQUAL(Reciprocals) &&
     ARE_EQUAL(JTType) &&
     ARE_EQUAL(ThreadModel) &&
     ARE_EQUAL(MCOptions);

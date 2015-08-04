@@ -89,7 +89,7 @@ public:
       LoadedSourceFiles;
   bool CompareFilenamesOnly;
   StringMap<std::string> RemappedFilenames;
-  llvm::Triple::ArchType CoverageArch;
+  std::string CoverageArch;
 };
 }
 
@@ -116,8 +116,7 @@ CodeCoverageTool::getSourceFile(StringRef SourceFile) {
     error(EC.message(), SourceFile);
     return EC;
   }
-  LoadedSourceFiles.push_back(
-      std::make_pair(SourceFile, std::move(Buffer.get())));
+  LoadedSourceFiles.emplace_back(SourceFile, std::move(Buffer.get()));
   return *LoadedSourceFiles.back().second;
 }
 
@@ -195,7 +194,20 @@ CodeCoverageTool::createSourceFileView(StringRef SourceFile,
   return View;
 }
 
+static bool modifiedTimeGT(StringRef LHS, StringRef RHS) {
+  sys::fs::file_status Status;
+  if (sys::fs::status(LHS, Status))
+    return false;
+  auto LHSTime = Status.getLastModificationTime();
+  if (sys::fs::status(RHS, Status))
+    return false;
+  auto RHSTime = Status.getLastModificationTime();
+  return LHSTime > RHSTime;
+}
+
 std::unique_ptr<CoverageMapping> CodeCoverageTool::load() {
+  if (modifiedTimeGT(ObjectFilename, PGOFilename))
+    errs() << "warning: profile data may be out of date - object is newer\n";
   auto CoverageOrErr = CoverageMapping::load(ObjectFilename, PGOFilename,
                                              CoverageArch);
   if (std::error_code EC = CoverageOrErr.getError()) {
@@ -337,15 +349,12 @@ int CodeCoverageTool::run(Command Cmd, int argc, const char **argv) {
       Filters.push_back(std::unique_ptr<CoverageFilter>(StatFilterer));
     }
 
-    if (Arch.empty())
-      CoverageArch = llvm::Triple::ArchType::UnknownArch;
-    else {
-      CoverageArch = Triple(Arch).getArch();
-      if (CoverageArch == llvm::Triple::ArchType::UnknownArch) {
-        errs() << "error: Unknown architecture: " << Arch << "\n";
-        return 1;
-      }
+    if (!Arch.empty() &&
+        Triple(Arch).getArch() == llvm::Triple::ArchType::UnknownArch) {
+      errs() << "error: Unknown architecture: " << Arch << "\n";
+      return 1;
     }
+    CoverageArch = Arch;
 
     for (const auto &File : InputSourceFiles) {
       SmallString<128> Path(File);

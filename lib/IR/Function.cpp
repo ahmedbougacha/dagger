@@ -19,10 +19,13 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/RWMutex.h"
@@ -117,6 +120,12 @@ uint64_t Argument::getDereferenceableBytes() const {
   return getParent()->getDereferenceableBytes(getArgNo()+1);
 }
 
+uint64_t Argument::getDereferenceableOrNullBytes() const {
+  assert(getType()->isPointerTy() &&
+         "Only pointers have dereferenceable bytes");
+  return getParent()->getDereferenceableOrNullBytes(getArgNo()+1);
+}
+
 /// hasNestAttr - Return true if this argument has the nest attribute on
 /// it in its containing function.
 bool Argument::hasNestAttr() const {
@@ -145,10 +154,8 @@ bool Argument::hasNoCaptureAttr() const {
 /// it in its containing function.
 bool Argument::hasStructRetAttr() const {
   if (!getType()->isPointerTy()) return false;
-  if (this != getParent()->arg_begin())
-    return false; // StructRet param must be first param
   return getParent()->getAttributes().
-    hasAttribute(1, Attribute::StructRet);
+    hasAttribute(getArgNo()+1, Attribute::StructRet);
 }
 
 /// hasReturnedAttr - Return true if this argument has the returned attribute on
@@ -241,8 +248,8 @@ void Function::eraseFromParent() {
 
 Function::Function(FunctionType *Ty, LinkageTypes Linkage, const Twine &name,
                    Module *ParentModule)
-    : GlobalObject(PointerType::getUnqual(Ty), Value::FunctionVal, nullptr, 0,
-                   Linkage, name),
+    : GlobalObject(PointerType::getUnqual(Ty), Value::FunctionVal,
+                   OperandTraits<Function>::op_begin(this), 0, Linkage, name),
       Ty(Ty) {
   assert(FunctionType::isValidReturnType(getReturnType()) &&
          "invalid return type");
@@ -257,9 +264,10 @@ Function::Function(FunctionType *Ty, LinkageTypes Linkage, const Twine &name,
     ParentModule->getFunctionList().push_back(this);
 
   // Ensure intrinsics have the right parameter attributes.
-  if (unsigned IID = getIntrinsicID())
-    setAttributes(Intrinsic::getAttributes(getContext(), Intrinsic::ID(IID)));
-
+  // Note, the IntID field will have been set in Value::setName if this function
+  // name is a valid intrinsic ID.
+  if (IntID)
+    setAttributes(Intrinsic::getAttributes(getContext(), IntID));
 }
 
 Function::~Function() {
@@ -272,9 +280,8 @@ Function::~Function() {
   // Remove the function from the on-the-side GC table.
   clearGC();
 
-  // Remove the intrinsicID from the Cache.
-  if (getValueName() && isIntrinsic())
-    getContext().pImpl->IntrinsicIDCache.erase(this);
+  // FIXME: needed by operator delete
+  setFunctionNumOperands(1);
 }
 
 void Function::BuildLazyArguments() const {
@@ -327,6 +334,8 @@ void Function::dropAllReferences() {
 
   // Metadata is stored in a side-table.
   clearMetadata();
+
+  setPersonalityFn(nullptr);
 }
 
 void Function::addAttribute(unsigned i, Attribute::AttrKind attr) {
@@ -422,35 +431,15 @@ void Function::copyAttributesFrom(const GlobalValue *Src) {
     setPrologueData(SrcF->getPrologueData());
   else
     setPrologueData(nullptr);
+  if (SrcF->hasPersonalityFn())
+    setPersonalityFn(SrcF->getPersonalityFn());
+  else
+    setPersonalityFn(nullptr);
 }
 
-/// getIntrinsicID - This method returns the ID number of the specified
-/// function, or Intrinsic::not_intrinsic if the function is not an
-/// intrinsic, or if the pointer is null.  This value is always defined to be
-/// zero to allow easy checking for whether a function is intrinsic or not.  The
-/// particular intrinsic functions which correspond to this value are defined in
-/// llvm/Intrinsics.h.  Results are cached in the LLVM context, subsequent
-/// requests for the same ID return results much faster from the cache.
-///
-unsigned Function::getIntrinsicID() const {
-  const ValueName *ValName = this->getValueName();
-  if (!ValName || !isIntrinsic())
-    return 0;
-
-  LLVMContextImpl::IntrinsicIDCacheTy &IntrinsicIDCache =
-    getContext().pImpl->IntrinsicIDCache;
-  if (!IntrinsicIDCache.count(this)) {
-    unsigned Id = lookupIntrinsicID();
-    IntrinsicIDCache[this]=Id;
-    return Id;
-  }
-  return IntrinsicIDCache[this];
-}
-
-/// This private method does the actual lookup of an intrinsic ID when the query
-/// could not be answered from the cache.
-unsigned Function::lookupIntrinsicID() const {
-  const ValueName *ValName = this->getValueName();
+/// \brief This does the actual lookup of an intrinsic ID which
+/// matches the given function name.
+static Intrinsic::ID lookupIntrinsicID(const ValueName *ValName) {
   unsigned Len = ValName->getKeyLength();
   const char *Name = ValName->getKeyData();
 
@@ -458,7 +447,16 @@ unsigned Function::lookupIntrinsicID() const {
 #include "llvm/IR/Intrinsics.gen"
 #undef GET_FUNCTION_RECOGNIZER
 
-  return 0;
+  return Intrinsic::not_intrinsic;
+}
+
+void Function::recalculateIntrinsicID() {
+  const ValueName *ValName = this->getValueName();
+  if (!ValName || !isIntrinsic()) {
+    IntID = Intrinsic::not_intrinsic;
+    return;
+  }
+  IntID = lookupIntrinsicID(ValName);
 }
 
 /// Returns a stable mangling for the type specified for use in the name
@@ -484,10 +482,8 @@ static std::string getMangledTypeStr(Type* Ty) {
     Result += "a" + llvm::utostr(ATyp->getNumElements()) +
       getMangledTypeStr(ATyp->getElementType());
   } else if (StructType* STyp = dyn_cast<StructType>(Ty)) {
-    if (!STyp->isLiteral())
-      Result += STyp->getName();
-    else
-      llvm_unreachable("TODO: implement literal types");
+    assert(!STyp->isLiteral() && "TODO: implement literal types");
+    Result += STyp->getName();
   } else if (FunctionType* FT = dyn_cast<FunctionType>(Ty)) {
     Result += "f_" + getMangledTypeStr(FT->getReturnType());
     for (size_t i = 0; i < FT->getNumParams(); i++)
@@ -559,7 +555,8 @@ enum IIT_Info {
   IIT_HALF_VEC_ARG = 29,
   IIT_SAME_VEC_WIDTH_ARG = 30,
   IIT_PTR_TO_ARG = 31,
-  IIT_VEC_OF_PTRS_TO_ELT = 32
+  IIT_VEC_OF_PTRS_TO_ELT = 32,
+  IIT_I128 = 33
 };
 
 
@@ -605,6 +602,9 @@ static void DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
     return;
   case IIT_I64:
     OutputTable.push_back(IITDescriptor::get(IITDescriptor::Integer, 64));
+    return;
+  case IIT_I128:
+    OutputTable.push_back(IITDescriptor::get(IITDescriptor::Integer, 128));
     return;
   case IIT_V1:
     OutputTable.push_back(IITDescriptor::get(IITDescriptor::Vector, 1));
@@ -846,6 +846,18 @@ bool Intrinsic::isOverloaded(ID id) {
 #undef GET_INTRINSIC_OVERLOAD_TABLE
 }
 
+bool Intrinsic::isLeaf(ID id) {
+  switch (id) {
+  default:
+    return true;
+
+  case Intrinsic::experimental_gc_statepoint:
+  case Intrinsic::experimental_patchpoint_void:
+  case Intrinsic::experimental_patchpoint_i64:
+    return false;
+  }
+}
+
 /// This defines the "Intrinsic::getAttributes(ID id)" method.
 #define GET_INTRINSIC_ATTRIBUTES
 #include "llvm/IR/Intrinsics.gen"
@@ -968,4 +980,39 @@ void Function::setPrologueData(Constant *PrologueData) {
     PDData &= ~(1<<2);
   }
   setValueSubclassData(PDData);
+}
+
+void Function::setEntryCount(uint64_t Count) {
+  MDBuilder MDB(getContext());
+  setMetadata(LLVMContext::MD_prof, MDB.createFunctionEntryCount(Count));
+}
+
+Optional<uint64_t> Function::getEntryCount() const {
+  MDNode *MD = getMetadata(LLVMContext::MD_prof);
+  if (MD && MD->getOperand(0))
+    if (MDString *MDS = dyn_cast<MDString>(MD->getOperand(0)))
+      if (MDS->getString().equals("function_entry_count")) {
+        ConstantInt *CI = mdconst::extract<ConstantInt>(MD->getOperand(1));
+        return CI->getValue().getZExtValue();
+      }
+  return None;
+}
+
+void Function::setPersonalityFn(Constant *C) {
+  if (!C) {
+    if (hasPersonalityFn()) {
+      // Note, the num operands is used to compute the offset of the operand, so
+      // the order here matters.  Clearing the operand then clearing the num
+      // operands ensures we have the correct offset to the operand.
+      Op<0>().set(nullptr);
+      setFunctionNumOperands(0);
+    }
+  } else {
+    // Note, the num operands is used to compute the offset of the operand, so
+    // the order here matters.  We need to set num operands to 1 first so that
+    // we get the correct offset to the first operand when we set it.
+    if (!hasPersonalityFn())
+      setFunctionNumOperands(1);
+    Op<0>().set(C);
+  }
 }

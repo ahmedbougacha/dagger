@@ -44,11 +44,12 @@ private:
   void operator=(const InlineAsm&) = delete;
 
   std::string AsmString, Constraints;
+  FunctionType *FTy;
   bool HasSideEffects;
   bool IsAlignStack;
   AsmDialect Dialect;
 
-  InlineAsm(PointerType *Ty, const std::string &AsmString,
+  InlineAsm(FunctionType *Ty, const std::string &AsmString,
             const std::string &Constraints, bool hasSideEffects,
             bool isAlignStack, AsmDialect asmDialect);
   ~InlineAsm() override;
@@ -248,6 +249,14 @@ public:
     Constraint_R,
     Constraint_S,
     Constraint_T,
+    Constraint_Um,
+    Constraint_Un,
+    Constraint_Uq,
+    Constraint_Us,
+    Constraint_Ut,
+    Constraint_Uv,
+    Constraint_Uy,
+    Constraint_X,
     Constraint_Z,
     Constraint_ZC,
     Constraint_Zy,

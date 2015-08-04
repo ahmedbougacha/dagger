@@ -138,6 +138,21 @@ void llvm::computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
                      Query(AC, safeCxtI(V, CxtI), DT));
 }
 
+bool llvm::haveNoCommonBitsSet(Value *LHS, Value *RHS, const DataLayout &DL,
+                               AssumptionCache *AC, const Instruction *CxtI,
+                               const DominatorTree *DT) {
+  assert(LHS->getType() == RHS->getType() &&
+         "LHS and RHS should have the same type");
+  assert(LHS->getType()->isIntOrIntVectorTy() &&
+         "LHS and RHS should be integers");
+  IntegerType *IT = cast<IntegerType>(LHS->getType()->getScalarType());
+  APInt LHSKnownZero(IT->getBitWidth(), 0), LHSKnownOne(IT->getBitWidth(), 0);
+  APInt RHSKnownZero(IT->getBitWidth(), 0), RHSKnownOne(IT->getBitWidth(), 0);
+  computeKnownBits(LHS, LHSKnownZero, LHSKnownOne, DL, 0, AC, CxtI, DT);
+  computeKnownBits(RHS, RHSKnownZero, RHSKnownOne, DL, 0, AC, CxtI, DT);
+  return (LHSKnownZero | RHSKnownZero).isAllOnesValue();
+}
+
 static void ComputeSignBit(Value *V, bool &KnownZero, bool &KnownOne,
                            const DataLayout &DL, unsigned Depth,
                            const Query &Q);
@@ -536,12 +551,17 @@ static void computeKnownBitsFromTrueCondition(Value *V, ICmpInst *Cmp,
     }
     break;
   case ICmpInst::ICMP_EQ:
-    if (LHS == V)
-      computeKnownBits(RHS, KnownZero, KnownOne, DL, Depth + 1, Q);
-    else if (RHS == V)
-      computeKnownBits(LHS, KnownZero, KnownOne, DL, Depth + 1, Q);
-    else
-      llvm_unreachable("missing use?");
+    {
+      APInt KnownZeroTemp(BitWidth, 0), KnownOneTemp(BitWidth, 0);
+      if (LHS == V)
+        computeKnownBits(RHS, KnownZeroTemp, KnownOneTemp, DL, Depth + 1, Q);
+      else if (RHS == V)
+        computeKnownBits(LHS, KnownZeroTemp, KnownOneTemp, DL, Depth + 1, Q);
+      else
+        llvm_unreachable("missing use?");
+      KnownZero |= KnownZeroTemp;
+      KnownOne |= KnownOneTemp;
+    }
     break;
   case ICmpInst::ICMP_ULE:
     if (LHS == V) {
@@ -921,146 +941,10 @@ static void computeKnownBitsFromAssume(Value *V, APInt &KnownZero,
   }
 }
 
-/// Determine which bits of V are known to be either zero or one and return
-/// them in the KnownZero/KnownOne bit sets.
-///
-/// NOTE: we cannot consider 'undef' to be "IsZero" here.  The problem is that
-/// we cannot optimize based on the assumption that it is zero without changing
-/// it to be an explicit zero.  If we don't change it to zero, other code could
-/// optimized based on the contradictory assumption that it is non-zero.
-/// Because instcombine aggressively folds operations with undef args anyway,
-/// this won't lose us code quality.
-///
-/// This function is defined on values with integer type, values with pointer
-/// type, and vectors of integers.  In the case
-/// where V is a vector, known zero, and known one values are the
-/// same width as the vector element, and the bit is set only if it is true
-/// for all of the elements in the vector.
-void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
-                      const DataLayout &DL, unsigned Depth, const Query &Q) {
-  assert(V && "No Value?");
-  assert(Depth <= MaxDepth && "Limit Search Depth");
+static void computeKnownBitsFromOperator(Operator *I, APInt &KnownZero,
+                                         APInt &KnownOne, const DataLayout &DL,
+                                         unsigned Depth, const Query &Q) {
   unsigned BitWidth = KnownZero.getBitWidth();
-
-  assert((V->getType()->isIntOrIntVectorTy() ||
-          V->getType()->getScalarType()->isPointerTy()) &&
-         "Not integer or pointer type!");
-  assert((DL.getTypeSizeInBits(V->getType()->getScalarType()) == BitWidth) &&
-         (!V->getType()->isIntOrIntVectorTy() ||
-          V->getType()->getScalarSizeInBits() == BitWidth) &&
-         KnownZero.getBitWidth() == BitWidth &&
-         KnownOne.getBitWidth() == BitWidth &&
-         "V, KnownOne and KnownZero should have same BitWidth");
-
-  if (ConstantInt *CI = dyn_cast<ConstantInt>(V)) {
-    // We know all of the bits for a constant!
-    KnownOne = CI->getValue();
-    KnownZero = ~KnownOne;
-    return;
-  }
-  // Null and aggregate-zero are all-zeros.
-  if (isa<ConstantPointerNull>(V) ||
-      isa<ConstantAggregateZero>(V)) {
-    KnownOne.clearAllBits();
-    KnownZero = APInt::getAllOnesValue(BitWidth);
-    return;
-  }
-  // Handle a constant vector by taking the intersection of the known bits of
-  // each element.  There is no real need to handle ConstantVector here, because
-  // we don't handle undef in any particularly useful way.
-  if (ConstantDataSequential *CDS = dyn_cast<ConstantDataSequential>(V)) {
-    // We know that CDS must be a vector of integers. Take the intersection of
-    // each element.
-    KnownZero.setAllBits(); KnownOne.setAllBits();
-    APInt Elt(KnownZero.getBitWidth(), 0);
-    for (unsigned i = 0, e = CDS->getNumElements(); i != e; ++i) {
-      Elt = CDS->getElementAsInteger(i);
-      KnownZero &= ~Elt;
-      KnownOne &= Elt;
-    }
-    return;
-  }
-
-  // The address of an aligned GlobalValue has trailing zeros.
-  if (auto *GO = dyn_cast<GlobalObject>(V)) {
-    unsigned Align = GO->getAlignment();
-    if (Align == 0) {
-      if (auto *GVar = dyn_cast<GlobalVariable>(GO)) {
-        Type *ObjectType = GVar->getType()->getElementType();
-        if (ObjectType->isSized()) {
-          // If the object is defined in the current Module, we'll be giving
-          // it the preferred alignment. Otherwise, we have to assume that it
-          // may only have the minimum ABI alignment.
-          if (!GVar->isDeclaration() && !GVar->isWeakForLinker())
-            Align = DL.getPreferredAlignment(GVar);
-          else
-            Align = DL.getABITypeAlignment(ObjectType);
-        }
-      }
-    }
-    if (Align > 0)
-      KnownZero = APInt::getLowBitsSet(BitWidth,
-                                       countTrailingZeros(Align));
-    else
-      KnownZero.clearAllBits();
-    KnownOne.clearAllBits();
-    return;
-  }
-
-  if (Argument *A = dyn_cast<Argument>(V)) {
-    unsigned Align = A->getType()->isPointerTy() ? A->getParamAlignment() : 0;
-
-    if (!Align && A->hasStructRetAttr()) {
-      // An sret parameter has at least the ABI alignment of the return type.
-      Type *EltTy = cast<PointerType>(A->getType())->getElementType();
-      if (EltTy->isSized())
-        Align = DL.getABITypeAlignment(EltTy);
-    }
-
-    if (Align)
-      KnownZero = APInt::getLowBitsSet(BitWidth, countTrailingZeros(Align));
-    else
-      KnownZero.clearAllBits();
-    KnownOne.clearAllBits();
-
-    // Don't give up yet... there might be an assumption that provides more
-    // information...
-    computeKnownBitsFromAssume(V, KnownZero, KnownOne, DL, Depth, Q);
-
-    // Or a dominating condition for that matter
-    if (EnableDomConditions && Depth <= DomConditionsMaxDepth)
-      computeKnownBitsFromDominatingCondition(V, KnownZero, KnownOne, DL,
-                                              Depth, Q);
-    return;
-  }
-
-  // Start out not knowing anything.
-  KnownZero.clearAllBits(); KnownOne.clearAllBits();
-
-  // Limit search depth.
-  // All recursive calls that increase depth must come after this.
-  if (Depth == MaxDepth)
-    return;  
-
-  // A weak GlobalAlias is totally unknown. A non-weak GlobalAlias has
-  // the bits of its aliasee.
-  if (GlobalAlias *GA = dyn_cast<GlobalAlias>(V)) {
-    if (!GA->mayBeOverridden())
-      computeKnownBits(GA->getAliasee(), KnownZero, KnownOne, DL, Depth + 1, Q);
-    return;
-  }
-
-  // Check whether a nearby assume intrinsic can determine some known bits.
-  computeKnownBitsFromAssume(V, KnownZero, KnownOne, DL, Depth, Q);
-
-  // Check whether there's a dominating condition which implies something about
-  // this value at the given context.
-  if (EnableDomConditions && Depth <= DomConditionsMaxDepth)
-    computeKnownBitsFromDominatingCondition(V, KnownZero, KnownOne, DL, Depth,
-                                            Q);
-
-  Operator *I = dyn_cast<Operator>(V);
-  if (!I) return;
 
   APInt KnownZero2(KnownZero), KnownOne2(KnownOne);
   switch (I->getOpcode()) {
@@ -1313,7 +1197,7 @@ void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
   }
 
   case Instruction::Alloca: {
-    AllocaInst *AI = cast<AllocaInst>(V);
+    AllocaInst *AI = cast<AllocaInst>(I);
     unsigned Align = AI->getAlignment();
     if (Align == 0)
       Align = DL.getABITypeAlignment(AI->getType()->getElementType());
@@ -1429,15 +1313,15 @@ void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
 
       KnownZero = APInt::getAllOnesValue(BitWidth);
       KnownOne = APInt::getAllOnesValue(BitWidth);
-      for (unsigned i = 0, e = P->getNumIncomingValues(); i != e; ++i) {
+      for (Value *IncValue : P->incoming_values()) {
         // Skip direct self references.
-        if (P->getIncomingValue(i) == P) continue;
+        if (IncValue == P) continue;
 
         KnownZero2 = APInt(BitWidth, 0);
         KnownOne2 = APInt(BitWidth, 0);
         // Recurse, but cap the recursion to one level, because we don't
         // want to waste time spinning around in loops.
-        computeKnownBits(P->getIncomingValue(i), KnownZero2, KnownOne2, DL,
+        computeKnownBits(IncValue, KnownZero2, KnownOne2, DL,
                          MaxDepth - 1, Q);
         KnownZero &= KnownZero2;
         KnownOne &= KnownOne2;
@@ -1508,6 +1392,151 @@ void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
       }
     }
   }
+}
+
+/// Determine which bits of V are known to be either zero or one and return
+/// them in the KnownZero/KnownOne bit sets.
+///
+/// NOTE: we cannot consider 'undef' to be "IsZero" here.  The problem is that
+/// we cannot optimize based on the assumption that it is zero without changing
+/// it to be an explicit zero.  If we don't change it to zero, other code could
+/// optimized based on the contradictory assumption that it is non-zero.
+/// Because instcombine aggressively folds operations with undef args anyway,
+/// this won't lose us code quality.
+///
+/// This function is defined on values with integer type, values with pointer
+/// type, and vectors of integers.  In the case
+/// where V is a vector, known zero, and known one values are the
+/// same width as the vector element, and the bit is set only if it is true
+/// for all of the elements in the vector.
+void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
+                      const DataLayout &DL, unsigned Depth, const Query &Q) {
+  assert(V && "No Value?");
+  assert(Depth <= MaxDepth && "Limit Search Depth");
+  unsigned BitWidth = KnownZero.getBitWidth();
+
+  assert((V->getType()->isIntOrIntVectorTy() ||
+          V->getType()->getScalarType()->isPointerTy()) &&
+         "Not integer or pointer type!");
+  assert((DL.getTypeSizeInBits(V->getType()->getScalarType()) == BitWidth) &&
+         (!V->getType()->isIntOrIntVectorTy() ||
+          V->getType()->getScalarSizeInBits() == BitWidth) &&
+         KnownZero.getBitWidth() == BitWidth &&
+         KnownOne.getBitWidth() == BitWidth &&
+         "V, KnownOne and KnownZero should have same BitWidth");
+
+  if (ConstantInt *CI = dyn_cast<ConstantInt>(V)) {
+    // We know all of the bits for a constant!
+    KnownOne = CI->getValue();
+    KnownZero = ~KnownOne;
+    return;
+  }
+  // Null and aggregate-zero are all-zeros.
+  if (isa<ConstantPointerNull>(V) ||
+      isa<ConstantAggregateZero>(V)) {
+    KnownOne.clearAllBits();
+    KnownZero = APInt::getAllOnesValue(BitWidth);
+    return;
+  }
+  // Handle a constant vector by taking the intersection of the known bits of
+  // each element.  There is no real need to handle ConstantVector here, because
+  // we don't handle undef in any particularly useful way.
+  if (ConstantDataSequential *CDS = dyn_cast<ConstantDataSequential>(V)) {
+    // We know that CDS must be a vector of integers. Take the intersection of
+    // each element.
+    KnownZero.setAllBits(); KnownOne.setAllBits();
+    APInt Elt(KnownZero.getBitWidth(), 0);
+    for (unsigned i = 0, e = CDS->getNumElements(); i != e; ++i) {
+      Elt = CDS->getElementAsInteger(i);
+      KnownZero &= ~Elt;
+      KnownOne &= Elt;
+    }
+    return;
+  }
+
+  // The address of an aligned GlobalValue has trailing zeros.
+  if (auto *GO = dyn_cast<GlobalObject>(V)) {
+    unsigned Align = GO->getAlignment();
+    if (Align == 0) {
+      if (auto *GVar = dyn_cast<GlobalVariable>(GO)) {
+        Type *ObjectType = GVar->getType()->getElementType();
+        if (ObjectType->isSized()) {
+          // If the object is defined in the current Module, we'll be giving
+          // it the preferred alignment. Otherwise, we have to assume that it
+          // may only have the minimum ABI alignment.
+          if (GVar->isStrongDefinitionForLinker())
+            Align = DL.getPreferredAlignment(GVar);
+          else
+            Align = DL.getABITypeAlignment(ObjectType);
+        }
+      }
+    }
+    if (Align > 0)
+      KnownZero = APInt::getLowBitsSet(BitWidth,
+                                       countTrailingZeros(Align));
+    else
+      KnownZero.clearAllBits();
+    KnownOne.clearAllBits();
+    return;
+  }
+
+  if (Argument *A = dyn_cast<Argument>(V)) {
+    unsigned Align = A->getType()->isPointerTy() ? A->getParamAlignment() : 0;
+
+    if (!Align && A->hasStructRetAttr()) {
+      // An sret parameter has at least the ABI alignment of the return type.
+      Type *EltTy = cast<PointerType>(A->getType())->getElementType();
+      if (EltTy->isSized())
+        Align = DL.getABITypeAlignment(EltTy);
+    }
+
+    if (Align)
+      KnownZero = APInt::getLowBitsSet(BitWidth, countTrailingZeros(Align));
+    else
+      KnownZero.clearAllBits();
+    KnownOne.clearAllBits();
+
+    // Don't give up yet... there might be an assumption that provides more
+    // information...
+    computeKnownBitsFromAssume(V, KnownZero, KnownOne, DL, Depth, Q);
+
+    // Or a dominating condition for that matter
+    if (EnableDomConditions && Depth <= DomConditionsMaxDepth)
+      computeKnownBitsFromDominatingCondition(V, KnownZero, KnownOne, DL,
+                                              Depth, Q);
+    return;
+  }
+
+  // Start out not knowing anything.
+  KnownZero.clearAllBits(); KnownOne.clearAllBits();
+
+  // Limit search depth.
+  // All recursive calls that increase depth must come after this.
+  if (Depth == MaxDepth)
+    return;
+
+  // A weak GlobalAlias is totally unknown. A non-weak GlobalAlias has
+  // the bits of its aliasee.
+  if (GlobalAlias *GA = dyn_cast<GlobalAlias>(V)) {
+    if (!GA->mayBeOverridden())
+      computeKnownBits(GA->getAliasee(), KnownZero, KnownOne, DL, Depth + 1, Q);
+    return;
+  }
+
+  if (Operator *I = dyn_cast<Operator>(V))
+    computeKnownBitsFromOperator(I, KnownZero, KnownOne, DL, Depth, Q);
+  // computeKnownBitsFromAssume and computeKnownBitsFromDominatingCondition
+  // strictly refines KnownZero and KnownOne. Therefore, we run them after
+  // computeKnownBitsFromOperator.
+
+  // Check whether a nearby assume intrinsic can determine some known bits.
+  computeKnownBitsFromAssume(V, KnownZero, KnownOne, DL, Depth, Q);
+
+  // Check whether there's a dominating condition which implies something about
+  // this value at the given context.
+  if (EnableDomConditions && Depth <= DomConditionsMaxDepth)
+    computeKnownBitsFromDominatingCondition(V, KnownZero, KnownOne, DL, Depth,
+                                            Q);
 
   assert((KnownZero & KnownOne) == 0 && "Bits known to be one AND zero?");
 }
@@ -2691,8 +2720,8 @@ static uint64_t GetStringLengthH(Value *V, SmallPtrSetImpl<PHINode*> &PHIs) {
 
     // If it was new, see if all the input strings are the same length.
     uint64_t LenSoFar = ~0ULL;
-    for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i) {
-      uint64_t Len = GetStringLengthH(PN->getIncomingValue(i), PHIs);
+    for (Value *IncValue : PN->incoming_values()) {
+      uint64_t Len = GetStringLengthH(IncValue, PHIs);
       if (Len == 0) return 0; // Unknown length -> unknown.
 
       if (Len == ~0ULL) continue;
@@ -2826,8 +2855,8 @@ void llvm::GetUnderlyingObjects(Value *V, SmallVectorImpl<Value *> &Objects,
       // underlying objects.
       if (!LI || !LI->isLoopHeader(PN->getParent()) ||
           isSameUnderlyingObjectInLoop(PN, LI))
-        for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i)
-          Worklist.push_back(PN->getIncomingValue(i));
+        for (Value *IncValue : PN->incoming_values())
+          Worklist.push_back(IncValue);
       continue;
     }
 
@@ -2849,33 +2878,61 @@ bool llvm::onlyUsedByLifetimeMarkers(const Value *V) {
 }
 
 static bool isDereferenceableFromAttribute(const Value *BV, APInt Offset,
-                                           Type *Ty, const DataLayout &DL) {
+                                           Type *Ty, const DataLayout &DL,
+                                           const Instruction *CtxI,
+                                           const DominatorTree *DT,
+                                           const TargetLibraryInfo *TLI) {
   assert(Offset.isNonNegative() && "offset can't be negative");
   assert(Ty->isSized() && "must be sized");
   
   APInt DerefBytes(Offset.getBitWidth(), 0);
+  bool CheckForNonNull = false;
   if (const Argument *A = dyn_cast<Argument>(BV)) {
     DerefBytes = A->getDereferenceableBytes();
+    if (!DerefBytes.getBoolValue()) {
+      DerefBytes = A->getDereferenceableOrNullBytes();
+      CheckForNonNull = true;
+    }
   } else if (auto CS = ImmutableCallSite(BV)) {
     DerefBytes = CS.getDereferenceableBytes(0);
+    if (!DerefBytes.getBoolValue()) {
+      DerefBytes = CS.getDereferenceableOrNullBytes(0);
+      CheckForNonNull = true;
+    }
+  } else if (const LoadInst *LI = dyn_cast<LoadInst>(BV)) {
+    if (MDNode *MD = LI->getMetadata(LLVMContext::MD_dereferenceable)) {
+      ConstantInt *CI = mdconst::extract<ConstantInt>(MD->getOperand(0));
+      DerefBytes = CI->getLimitedValue();
+    }
+    if (!DerefBytes.getBoolValue()) {
+      if (MDNode *MD = 
+              LI->getMetadata(LLVMContext::MD_dereferenceable_or_null)) {
+        ConstantInt *CI = mdconst::extract<ConstantInt>(MD->getOperand(0));
+        DerefBytes = CI->getLimitedValue();
+      }
+      CheckForNonNull = true;
+    }
   }
   
   if (DerefBytes.getBoolValue())
     if (DerefBytes.uge(Offset + DL.getTypeStoreSize(Ty)))
-      return true;
-  
+      if (!CheckForNonNull || isKnownNonNullAt(BV, CtxI, DT, TLI))
+        return true;
+
   return false;
 }
 
-static bool isDereferenceableFromAttribute(const Value *V, 
-                                           const DataLayout &DL) {
+static bool isDereferenceableFromAttribute(const Value *V, const DataLayout &DL,
+                                           const Instruction *CtxI,
+                                           const DominatorTree *DT,
+                                           const TargetLibraryInfo *TLI) {
   Type *VTy = V->getType();
   Type *Ty = VTy->getPointerElementType();
   if (!Ty->isSized())
     return false;
   
   APInt Offset(DL.getTypeStoreSizeInBits(VTy), 0);
-  return isDereferenceableFromAttribute(V, Offset, Ty, DL);
+  return isDereferenceableFromAttribute(V, Offset, Ty, DL, CtxI, DT, TLI);
 }
 
 /// Return true if Value is always a dereferenceable pointer.
@@ -2883,6 +2940,9 @@ static bool isDereferenceableFromAttribute(const Value *V,
 /// Test if V is always a pointer to allocated and suitably aligned memory for
 /// a simple load or store.
 static bool isDereferenceablePointer(const Value *V, const DataLayout &DL,
+                                     const Instruction *CtxI,
+                                     const DominatorTree *DT,
+                                     const TargetLibraryInfo *TLI,
                                      SmallPtrSetImpl<const Value *> &Visited) {
   // Note that it is not safe to speculate into a malloc'd region because
   // malloc may return null.
@@ -2903,7 +2963,8 @@ static bool isDereferenceablePointer(const Value *V, const DataLayout &DL,
     if (STy->isSized() && DTy->isSized() &&
         (DL.getTypeStoreSize(STy) >= DL.getTypeStoreSize(DTy)) &&
         (DL.getABITypeAlignment(STy) >= DL.getABITypeAlignment(DTy)))
-      return isDereferenceablePointer(BC->getOperand(0), DL, Visited);
+      return isDereferenceablePointer(BC->getOperand(0), DL, CtxI,
+                                      DT, TLI, Visited);
   }
 
   // Global variables which can't collapse to null are ok.
@@ -2915,59 +2976,52 @@ static bool isDereferenceablePointer(const Value *V, const DataLayout &DL,
     if (A->hasByValAttr())
       return true;
     
-  if (isDereferenceableFromAttribute(V, DL))
+  if (isDereferenceableFromAttribute(V, DL, CtxI, DT, TLI))
     return true;
 
   // For GEPs, determine if the indexing lands within the allocated object.
   if (const GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
+    Type *VTy = GEP->getType();
+    Type *Ty = VTy->getPointerElementType();
+    const Value *Base = GEP->getPointerOperand();
+
     // Conservatively require that the base pointer be fully dereferenceable.
-    if (!Visited.insert(GEP->getOperand(0)).second)
+    if (!Visited.insert(Base).second)
       return false;
-    if (!isDereferenceablePointer(GEP->getOperand(0), DL, Visited))
+    if (!isDereferenceablePointer(Base, DL, CtxI,
+                                  DT, TLI, Visited))
       return false;
-    // Check the indices.
-    gep_type_iterator GTI = gep_type_begin(GEP);
-    for (User::const_op_iterator I = GEP->op_begin()+1,
-         E = GEP->op_end(); I != E; ++I) {
-      Value *Index = *I;
-      Type *Ty = *GTI++;
-      // Struct indices can't be out of bounds.
-      if (isa<StructType>(Ty))
-        continue;
-      ConstantInt *CI = dyn_cast<ConstantInt>(Index);
-      if (!CI)
-        return false;
-      // Zero is always ok.
-      if (CI->isZero())
-        continue;
-      // Check to see that it's within the bounds of an array.
-      ArrayType *ATy = dyn_cast<ArrayType>(Ty);
-      if (!ATy)
-        return false;
-      if (CI->getValue().getActiveBits() > 64)
-        return false;
-      if (CI->getZExtValue() >= ATy->getNumElements())
-        return false;
-    }
-    // Indices check out; this is dereferenceable.
-    return true;
+    
+    APInt Offset(DL.getPointerTypeSizeInBits(VTy), 0);
+    if (!GEP->accumulateConstantOffset(DL, Offset))
+      return false;
+    
+    // Check if the load is within the bounds of the underlying object.
+    uint64_t LoadSize = DL.getTypeStoreSize(Ty);
+    Type *BaseType = Base->getType()->getPointerElementType();
+    return (Offset + LoadSize).ule(DL.getTypeAllocSize(BaseType));
   }
 
   // For gc.relocate, look through relocations
   if (const IntrinsicInst *I = dyn_cast<IntrinsicInst>(V))
     if (I->getIntrinsicID() == Intrinsic::experimental_gc_relocate) {
       GCRelocateOperands RelocateInst(I);
-      return isDereferenceablePointer(RelocateInst.derivedPtr(), DL, Visited);
+      return isDereferenceablePointer(RelocateInst.getDerivedPtr(), DL, CtxI,
+                                      DT, TLI, Visited);
     }
 
   if (const AddrSpaceCastInst *ASC = dyn_cast<AddrSpaceCastInst>(V))
-    return isDereferenceablePointer(ASC->getOperand(0), DL, Visited);
+    return isDereferenceablePointer(ASC->getOperand(0), DL, CtxI,
+                                    DT, TLI, Visited);
 
   // If we don't know, assume the worst.
   return false;
 }
 
-bool llvm::isDereferenceablePointer(const Value *V, const DataLayout &DL) {
+bool llvm::isDereferenceablePointer(const Value *V, const DataLayout &DL,
+                                    const Instruction *CtxI,
+                                    const DominatorTree *DT,
+                                    const TargetLibraryInfo *TLI) {
   // When dereferenceability information is provided by a dereferenceable
   // attribute, we know exactly how many bytes are dereferenceable. If we can
   // determine the exact offset to the attributed variable, we can use that
@@ -2979,15 +3033,19 @@ bool llvm::isDereferenceablePointer(const Value *V, const DataLayout &DL) {
     const Value *BV = V->stripAndAccumulateInBoundsConstantOffsets(DL, Offset);
     
     if (Offset.isNonNegative())
-      if (isDereferenceableFromAttribute(BV, Offset, Ty, DL))
+      if (isDereferenceableFromAttribute(BV, Offset, Ty, DL,
+                                         CtxI, DT, TLI))
         return true;
   }
 
   SmallPtrSet<const Value *, 32> Visited;
-  return ::isDereferenceablePointer(V, DL, Visited);
+  return ::isDereferenceablePointer(V, DL, CtxI, DT, TLI, Visited);
 }
 
-bool llvm::isSafeToSpeculativelyExecute(const Value *V) {
+bool llvm::isSafeToSpeculativelyExecute(const Value *V,
+                                        const Instruction *CtxI,
+                                        const DominatorTree *DT,
+                                        const TargetLibraryInfo *TLI) {
   const Operator *Inst = dyn_cast<Operator>(V);
   if (!Inst)
     return false;
@@ -3034,7 +3092,7 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V) {
         LI->getParent()->getParent()->hasFnAttribute(Attribute::SanitizeThread))
       return false;
     const DataLayout &DL = LI->getModule()->getDataLayout();
-    return isDereferenceablePointer(LI->getPointerOperand(), DL);
+    return isDereferenceablePointer(LI->getPointerOperand(), DL, CtxI, DT, TLI);
   }
   case Instruction::Call: {
     if (const IntrinsicInst *II = dyn_cast<IntrinsicInst>(Inst)) {
@@ -3089,10 +3147,16 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V) {
   case Instruction::Switch:
   case Instruction::Unreachable:
   case Instruction::Fence:
-  case Instruction::LandingPad:
   case Instruction::AtomicRMW:
   case Instruction::AtomicCmpXchg:
+  case Instruction::LandingPad:
   case Instruction::Resume:
+  case Instruction::CatchPad:
+  case Instruction::CatchEndPad:
+  case Instruction::CatchRet:
+  case Instruction::CleanupPad:
+  case Instruction::CleanupRet:
+  case Instruction::TerminatePad:
     return false; // Misc instructions which have effects
   }
 }
@@ -3123,6 +3187,60 @@ bool llvm::isKnownNonNull(const Value *V, const TargetLibraryInfo *TLI) {
     return true;
 
   return false;
+}
+
+static bool isKnownNonNullFromDominatingCondition(const Value *V,
+                                                  const Instruction *CtxI,
+                                                  const DominatorTree *DT) {
+  unsigned NumUsesExplored = 0;
+  for (auto U : V->users()) {
+    // Avoid massive lists
+    if (NumUsesExplored >= DomConditionsMaxUses)
+      break;
+    NumUsesExplored++;
+    // Consider only compare instructions uniquely controlling a branch
+    const ICmpInst *Cmp = dyn_cast<ICmpInst>(U);
+    if (!Cmp)
+      continue;
+
+    if (DomConditionsSingleCmpUse && !Cmp->hasOneUse())
+      continue;
+
+    for (auto *CmpU : Cmp->users()) {
+      const BranchInst *BI = dyn_cast<BranchInst>(CmpU);
+      if (!BI)
+        continue;
+      
+      assert(BI->isConditional() && "uses a comparison!");
+
+      BasicBlock *NonNullSuccessor = nullptr;
+      CmpInst::Predicate Pred;
+
+      if (match(const_cast<ICmpInst*>(Cmp),
+                m_c_ICmp(Pred, m_Specific(V), m_Zero()))) {
+        if (Pred == ICmpInst::ICMP_EQ)
+          NonNullSuccessor = BI->getSuccessor(1);
+        else if (Pred == ICmpInst::ICMP_NE)
+          NonNullSuccessor = BI->getSuccessor(0);
+      }
+
+      if (NonNullSuccessor) {
+        BasicBlockEdge Edge(BI->getParent(), NonNullSuccessor);
+        if (Edge.isSingleEdge() && DT->dominates(Edge, CtxI->getParent()))
+          return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+bool llvm::isKnownNonNullAt(const Value *V, const Instruction *CtxI,
+                   const DominatorTree *DT, const TargetLibraryInfo *TLI) {
+  if (isKnownNonNull(V, TLI))
+    return true;
+
+  return CtxI ? ::isKnownNonNullFromDominatingCondition(V, CtxI, DT) : false;
 }
 
 OverflowResult llvm::computeOverflowForUnsignedMul(Value *LHS, Value *RHS,
@@ -3202,4 +3320,295 @@ OverflowResult llvm::computeOverflowForUnsignedAdd(Value *LHS, Value *RHS,
   }
 
   return OverflowResult::MayOverflow;
+}
+
+bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
+  // FIXME: This conservative implementation can be relaxed. E.g. most
+  // atomic operations are guaranteed to terminate on most platforms
+  // and most functions terminate.
+
+  return !I->isAtomic() &&       // atomics may never succeed on some platforms
+         !isa<CallInst>(I) &&    // could throw and might not terminate
+         !isa<InvokeInst>(I) &&  // might not terminate and could throw to
+                                 //   non-successor (see bug 24185 for details).
+         !isa<ResumeInst>(I) &&  // has no successors
+         !isa<ReturnInst>(I);    // has no successors
+}
+
+bool llvm::isGuaranteedToExecuteForEveryIteration(const Instruction *I,
+                                                  const Loop *L) {
+  // The loop header is guaranteed to be executed for every iteration.
+  //
+  // FIXME: Relax this constraint to cover all basic blocks that are
+  // guaranteed to be executed at every iteration.
+  if (I->getParent() != L->getHeader()) return false;
+
+  for (const Instruction &LI : *L->getHeader()) {
+    if (&LI == I) return true;
+    if (!isGuaranteedToTransferExecutionToSuccessor(&LI)) return false;
+  }
+  llvm_unreachable("Instruction not contained in its own parent basic block.");
+}
+
+bool llvm::propagatesFullPoison(const Instruction *I) {
+  switch (I->getOpcode()) {
+    case Instruction::Add:
+    case Instruction::Sub:
+    case Instruction::Xor:
+    case Instruction::Trunc:
+    case Instruction::BitCast:
+    case Instruction::AddrSpaceCast:
+      // These operations all propagate poison unconditionally. Note that poison
+      // is not any particular value, so xor or subtraction of poison with
+      // itself still yields poison, not zero.
+      return true;
+
+    case Instruction::AShr:
+    case Instruction::SExt:
+      // For these operations, one bit of the input is replicated across
+      // multiple output bits. A replicated poison bit is still poison.
+      return true;
+
+    case Instruction::Shl: {
+      // Left shift *by* a poison value is poison. The number of
+      // positions to shift is unsigned, so no negative values are
+      // possible there. Left shift by zero places preserves poison. So
+      // it only remains to consider left shift of poison by a positive
+      // number of places.
+      //
+      // A left shift by a positive number of places leaves the lowest order bit
+      // non-poisoned. However, if such a shift has a no-wrap flag, then we can
+      // make the poison operand violate that flag, yielding a fresh full-poison
+      // value.
+      auto *OBO = cast<OverflowingBinaryOperator>(I);
+      return OBO->hasNoUnsignedWrap() || OBO->hasNoSignedWrap();
+    }
+
+    case Instruction::Mul: {
+      // A multiplication by zero yields a non-poison zero result, so we need to
+      // rule out zero as an operand. Conservatively, multiplication by a
+      // non-zero constant is not multiplication by zero.
+      //
+      // Multiplication by a non-zero constant can leave some bits
+      // non-poisoned. For example, a multiplication by 2 leaves the lowest
+      // order bit unpoisoned. So we need to consider that.
+      //
+      // Multiplication by 1 preserves poison. If the multiplication has a
+      // no-wrap flag, then we can make the poison operand violate that flag
+      // when multiplied by any integer other than 0 and 1.
+      auto *OBO = cast<OverflowingBinaryOperator>(I);
+      if (OBO->hasNoUnsignedWrap() || OBO->hasNoSignedWrap()) {
+        for (Value *V : OBO->operands()) {
+          if (auto *CI = dyn_cast<ConstantInt>(V)) {
+            // A ConstantInt cannot yield poison, so we can assume that it is
+            // the other operand that is poison.
+            return !CI->isZero();
+          }
+        }
+      }
+      return false;
+    }
+
+    case Instruction::GetElementPtr:
+      // A GEP implicitly represents a sequence of additions, subtractions,
+      // truncations, sign extensions and multiplications. The multiplications
+      // are by the non-zero sizes of some set of types, so we do not have to be
+      // concerned with multiplication by zero. If the GEP is in-bounds, then
+      // these operations are implicitly no-signed-wrap so poison is propagated
+      // by the arguments above for Add, Sub, Trunc, SExt and Mul.
+      return cast<GEPOperator>(I)->isInBounds();
+
+    default:
+      return false;
+  }
+}
+
+const Value *llvm::getGuaranteedNonFullPoisonOp(const Instruction *I) {
+  switch (I->getOpcode()) {
+    case Instruction::Store:
+      return cast<StoreInst>(I)->getPointerOperand();
+
+    case Instruction::Load:
+      return cast<LoadInst>(I)->getPointerOperand();
+
+    case Instruction::AtomicCmpXchg:
+      return cast<AtomicCmpXchgInst>(I)->getPointerOperand();
+
+    case Instruction::AtomicRMW:
+      return cast<AtomicRMWInst>(I)->getPointerOperand();
+
+    case Instruction::UDiv:
+    case Instruction::SDiv:
+    case Instruction::URem:
+    case Instruction::SRem:
+      return I->getOperand(1);
+
+    default:
+      return nullptr;
+  }
+}
+
+bool llvm::isKnownNotFullPoison(const Instruction *PoisonI) {
+  // We currently only look for uses of poison values within the same basic
+  // block, as that makes it easier to guarantee that the uses will be
+  // executed given that PoisonI is executed.
+  //
+  // FIXME: Expand this to consider uses beyond the same basic block. To do
+  // this, look out for the distinction between post-dominance and strong
+  // post-dominance.
+  const BasicBlock *BB = PoisonI->getParent();
+
+  // Set of instructions that we have proved will yield poison if PoisonI
+  // does.
+  SmallSet<const Value *, 16> YieldsPoison;
+  YieldsPoison.insert(PoisonI);
+
+  for (const Instruction *I = PoisonI, *E = BB->end(); I != E;
+       I = I->getNextNode()) {
+    if (I != PoisonI) {
+      const Value *NotPoison = getGuaranteedNonFullPoisonOp(I);
+      if (NotPoison != nullptr && YieldsPoison.count(NotPoison)) return true;
+      if (!isGuaranteedToTransferExecutionToSuccessor(I)) return false;
+    }
+
+    // Mark poison that propagates from I through uses of I.
+    if (YieldsPoison.count(I)) {
+      for (const User *User : I->users()) {
+        const Instruction *UserI = cast<Instruction>(User);
+        if (UserI->getParent() == BB && propagatesFullPoison(UserI))
+          YieldsPoison.insert(User);
+      }
+    }
+  }
+  return false;
+}
+
+static SelectPatternFlavor matchSelectPattern(ICmpInst::Predicate Pred,
+                                              Value *CmpLHS, Value *CmpRHS,
+                                              Value *TrueVal, Value *FalseVal,
+                                              Value *&LHS, Value *&RHS) {
+  LHS = CmpLHS;
+  RHS = CmpRHS;
+
+  // (icmp X, Y) ? X : Y
+  if (TrueVal == CmpLHS && FalseVal == CmpRHS) {
+    switch (Pred) {
+    default: return SPF_UNKNOWN; // Equality.
+    case ICmpInst::ICMP_UGT:
+    case ICmpInst::ICMP_UGE: return SPF_UMAX;
+    case ICmpInst::ICMP_SGT:
+    case ICmpInst::ICMP_SGE: return SPF_SMAX;
+    case ICmpInst::ICMP_ULT:
+    case ICmpInst::ICMP_ULE: return SPF_UMIN;
+    case ICmpInst::ICMP_SLT:
+    case ICmpInst::ICMP_SLE: return SPF_SMIN;
+    }
+  }
+
+  // (icmp X, Y) ? Y : X
+  if (TrueVal == CmpRHS && FalseVal == CmpLHS) {
+    switch (Pred) {
+    default: return SPF_UNKNOWN; // Equality.
+    case ICmpInst::ICMP_UGT:
+    case ICmpInst::ICMP_UGE: return SPF_UMIN;
+    case ICmpInst::ICMP_SGT:
+    case ICmpInst::ICMP_SGE: return SPF_SMIN;
+    case ICmpInst::ICMP_ULT:
+    case ICmpInst::ICMP_ULE: return SPF_UMAX;
+    case ICmpInst::ICMP_SLT:
+    case ICmpInst::ICMP_SLE: return SPF_SMAX;
+    }
+  }
+
+  if (ConstantInt *C1 = dyn_cast<ConstantInt>(CmpRHS)) {
+    if ((CmpLHS == TrueVal && match(FalseVal, m_Neg(m_Specific(CmpLHS)))) ||
+        (CmpLHS == FalseVal && match(TrueVal, m_Neg(m_Specific(CmpLHS))))) {
+
+      // ABS(X) ==> (X >s 0) ? X : -X and (X >s -1) ? X : -X
+      // NABS(X) ==> (X >s 0) ? -X : X and (X >s -1) ? -X : X
+      if (Pred == ICmpInst::ICMP_SGT && (C1->isZero() || C1->isMinusOne())) {
+        return (CmpLHS == TrueVal) ? SPF_ABS : SPF_NABS;
+      }
+
+      // ABS(X) ==> (X <s 0) ? -X : X and (X <s 1) ? -X : X
+      // NABS(X) ==> (X <s 0) ? X : -X and (X <s 1) ? X : -X
+      if (Pred == ICmpInst::ICMP_SLT && (C1->isZero() || C1->isOne())) {
+        return (CmpLHS == FalseVal) ? SPF_ABS : SPF_NABS;
+      }
+    }
+    
+    // Y >s C ? ~Y : ~C == ~Y <s ~C ? ~Y : ~C = SMIN(~Y, ~C)
+    if (const auto *C2 = dyn_cast<ConstantInt>(FalseVal)) {
+      if (C1->getType() == C2->getType() && ~C1->getValue() == C2->getValue() &&
+          (match(TrueVal, m_Not(m_Specific(CmpLHS))) ||
+           match(CmpLHS, m_Not(m_Specific(TrueVal))))) {
+        LHS = TrueVal;
+        RHS = FalseVal;
+        return SPF_SMIN;
+      }
+    }
+  }
+
+  // TODO: (X > 4) ? X : 5   -->  (X >= 5) ? X : 5  -->  MAX(X, 5)
+
+  return SPF_UNKNOWN;
+}
+
+static Constant *lookThroughCast(ICmpInst *CmpI, Value *V1, Value *V2,
+                                 Instruction::CastOps *CastOp) {
+  CastInst *CI = dyn_cast<CastInst>(V1);
+  Constant *C = dyn_cast<Constant>(V2);
+  if (!CI || !C)
+    return nullptr;
+  *CastOp = CI->getOpcode();
+
+  if (isa<SExtInst>(CI) && CmpI->isSigned()) {
+    Constant *T = ConstantExpr::getTrunc(C, CI->getSrcTy());
+    // This is only valid if the truncated value can be sign-extended
+    // back to the original value.
+    if (ConstantExpr::getSExt(T, C->getType()) == C)
+      return T;
+    return nullptr;
+  }
+  if (isa<ZExtInst>(CI) && CmpI->isUnsigned())
+    return ConstantExpr::getTrunc(C, CI->getSrcTy());
+
+  if (isa<TruncInst>(CI))
+    return ConstantExpr::getIntegerCast(C, CI->getSrcTy(), CmpI->isSigned());
+
+  return nullptr;
+}
+
+SelectPatternFlavor llvm::matchSelectPattern(Value *V,
+                                             Value *&LHS, Value *&RHS,
+                                             Instruction::CastOps *CastOp) {
+  SelectInst *SI = dyn_cast<SelectInst>(V);
+  if (!SI) return SPF_UNKNOWN;
+
+  ICmpInst *CmpI = dyn_cast<ICmpInst>(SI->getCondition());
+  if (!CmpI) return SPF_UNKNOWN;
+
+  ICmpInst::Predicate Pred = CmpI->getPredicate();
+  Value *CmpLHS = CmpI->getOperand(0);
+  Value *CmpRHS = CmpI->getOperand(1);
+  Value *TrueVal = SI->getTrueValue();
+  Value *FalseVal = SI->getFalseValue();
+
+  // Bail out early.
+  if (CmpI->isEquality())
+    return SPF_UNKNOWN;
+
+  // Deal with type mismatches.
+  if (CastOp && CmpLHS->getType() != TrueVal->getType()) {
+    if (Constant *C = lookThroughCast(CmpI, TrueVal, FalseVal, CastOp))
+      return ::matchSelectPattern(Pred, CmpLHS, CmpRHS,
+                                  cast<CastInst>(TrueVal)->getOperand(0), C,
+                                  LHS, RHS);
+    if (Constant *C = lookThroughCast(CmpI, FalseVal, TrueVal, CastOp))
+      return ::matchSelectPattern(Pred, CmpLHS, CmpRHS,
+                                  C, cast<CastInst>(FalseVal)->getOperand(0),
+                                  LHS, RHS);
+  }
+  return ::matchSelectPattern(Pred, CmpLHS, CmpRHS, TrueVal, FalseVal,
+                              LHS, RHS);
 }

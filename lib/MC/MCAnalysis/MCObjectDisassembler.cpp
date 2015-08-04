@@ -67,7 +67,7 @@ MCModule *MCObjectDisassembler::buildModule() {
       uint64_t SecSize = Section.getSize();
 
       // FIXME
-      if (StartAddr == UnknownAddressOrSize || SecSize == UnknownAddressOrSize)
+      if (!SecSize)
         continue;
       if (MOS)
         StartAddr = MOS->getEffectiveLoadAddr(StartAddr);
@@ -117,14 +117,12 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
   AddressSetTy TailCallTargets;
 
   for (const SymbolRef &Symbol : Obj.symbols()) {
-    SymbolRef::Type SymType;
-    uint64_t SymAddr;
-    std::error_code ec;
-    if (Symbol.getType(SymType))
-      continue;
+    SymbolRef::Type SymType = Symbol.getType();
     if (SymType == SymbolRef::ST_Function) {
-      if (Symbol.getAddress(SymAddr))
+      ErrorOr<uint64_t> SymAddrOrErr = Symbol.getAddress();
+      if (SymAddrOrErr.getError())
         continue;
+      uint64_t SymAddr = *SymAddrOrErr;
       if (MOS)
         SymAddr = MOS->getEffectiveLoadAddr(SymAddr);
       if (getRegionFor(SymAddr).Bytes.empty())

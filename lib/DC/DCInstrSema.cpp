@@ -105,9 +105,9 @@ Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
   Function *InitFn = getOrCreateInitRegSetFunction();
   Function *FiniFn = getOrCreateFiniRegSetFunction();
 
-  Builder->CreateCall5(InitFn, Regset, StackPtr, StackSize, ArgC, ArgV);
-  Builder->CreateCall(EntryFn, Regset);
-  Builder->CreateRet(Builder->CreateCall(FiniFn, Regset));
+  Builder->CreateCall(InitFn, {Regset, StackPtr, StackSize, ArgC, ArgV});
+  Builder->CreateCall(EntryFn, {Regset});
+  Builder->CreateRet(Builder->CreateCall(FiniFn, {Regset}));
   return IRMain;
 }
 
@@ -215,8 +215,8 @@ void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
         ExitBBBuilder.getInt64(reinterpret_cast<uint64_t>(StartAddr)),
         ExitBBBuilder.getInt8PtrTy());
 
-    ExitBBBuilder.CreateCall3(DRS.getOrCreateRegSetDiffFunction(), FnAddr,
-                              SavedRegSet, RegSetArg);
+    ExitBBBuilder.CreateCall(DRS.getOrCreateRegSetDiffFunction(),
+                             {FnAddr, SavedRegSet, RegSetArg});
     ReturnInst::Create(*Ctx, DiffExitBB);
     BranchInst::Create(DiffExitBB, ExitBB);
   } else {
@@ -289,7 +289,7 @@ BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
       BasicBlock::Create(*Ctx, TheBB->getName() + "_call", TheFunction);
   Value *RegSetArg = &TheFunction->getArgumentList().front();
   DCIRBuilder CallBuilder(CallBB);
-  CallBuilder.CreateCall(Target, RegSetArg);
+  CallBuilder.CreateCall(Target, {RegSetArg});
   Builder->CreateBr(CallBB);
   assert(Builder->GetInsertPoint() == TheBB->end() &&
          "Call basic blocks can't be inserted at the middle of a basic block!");
@@ -323,7 +323,7 @@ Value *DCInstrSema::insertTranslateAt(Value *OrigTarget) {
       FuncType->getPointerTo(), Builder->getInt8PtrTy(), false);
   return Builder->CreateCall(
       DRS.getCallTargetForExtFn(CallbackType, CBPtr),
-      Builder->CreateIntToPtr(OrigTarget, Builder->getInt8PtrTy()));
+      {Builder->CreateIntToPtr(OrigTarget, Builder->getInt8PtrTy())});
 }
 
 void DCInstrSema::insertCall(Value *CallTarget) {
@@ -428,10 +428,9 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
 
   case ISD::FSQRT: {
     Value *V = getNextOperand();
-    registerResult(
-        Builder->CreateCall(Intrinsic::getDeclaration(
-                                TheModule, Intrinsic::sqrt, V->getType()),
-                            V));
+    registerResult(Builder->CreateCall(
+        Intrinsic::getDeclaration(TheModule, Intrinsic::sqrt, V->getType()),
+        {V}));
     break;
   }
 

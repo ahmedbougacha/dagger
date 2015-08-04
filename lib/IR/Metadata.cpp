@@ -256,9 +256,9 @@ ValueAsMetadata *ValueAsMetadata::get(Value *V) {
   if (!Entry) {
     assert((isa<Constant>(V) || isa<Argument>(V) || isa<Instruction>(V)) &&
            "Expected constant or function-local value");
-    assert(!V->NameAndIsUsedByMD.getInt() &&
+    assert(!V->IsUsedByMD &&
            "Expected this to be the only metadata use");
-    V->NameAndIsUsedByMD.setInt(true);
+    V->IsUsedByMD = true;
     if (auto *C = dyn_cast<Constant>(V))
       Entry = new ConstantAsMetadata(C);
     else
@@ -302,15 +302,15 @@ void ValueAsMetadata::handleRAUW(Value *From, Value *To) {
   auto &Store = Context.pImpl->ValuesAsMetadata;
   auto I = Store.find(From);
   if (I == Store.end()) {
-    assert(!From->NameAndIsUsedByMD.getInt() &&
+    assert(!From->IsUsedByMD &&
            "Expected From not to be used by metadata");
     return;
   }
 
   // Remove old entry from the map.
-  assert(From->NameAndIsUsedByMD.getInt() &&
+  assert(From->IsUsedByMD &&
          "Expected From to be used by metadata");
-  From->NameAndIsUsedByMD.setInt(false);
+  From->IsUsedByMD = false;
   ValueAsMetadata *MD = I->second;
   assert(MD && "Expected valid metadata");
   assert(MD->getValue() == From && "Expected valid mapping");
@@ -346,9 +346,9 @@ void ValueAsMetadata::handleRAUW(Value *From, Value *To) {
   }
 
   // Update MD in place (and update the map entry).
-  assert(!To->NameAndIsUsedByMD.getInt() &&
+  assert(!To->IsUsedByMD &&
          "Expected this to be the only metadata use");
-  To->NameAndIsUsedByMD.setInt(true);
+  To->IsUsedByMD = true;
   MD->V = To;
   Entry = MD;
 }
@@ -381,20 +381,35 @@ StringRef MDString::getString() const {
 // MDNode implementation.
 //
 
+// Assert that the MDNode types will not be unaligned by the objects
+// prepended to them.
+#define HANDLE_MDNODE_LEAF(CLASS)                                              \
+  static_assert(                                                               \
+      llvm::AlignOf<uint64_t>::Alignment >= llvm::AlignOf<CLASS>::Alignment,   \
+      "Alignment is insufficient after objects prepended to " #CLASS);
+#include "llvm/IR/Metadata.def"
+
 void *MDNode::operator new(size_t Size, unsigned NumOps) {
-  void *Ptr = ::operator new(Size + NumOps * sizeof(MDOperand));
+  size_t OpSize = NumOps * sizeof(MDOperand);
+  // uint64_t is the most aligned type we need support (ensured by static_assert
+  // above)
+  OpSize = RoundUpToAlignment(OpSize, llvm::alignOf<uint64_t>());
+  void *Ptr = reinterpret_cast<char *>(::operator new(OpSize + Size)) + OpSize;
   MDOperand *O = static_cast<MDOperand *>(Ptr);
-  for (MDOperand *E = O + NumOps; O != E; ++O)
-    (void)new (O) MDOperand;
-  return O;
+  for (MDOperand *E = O - NumOps; O != E; --O)
+    (void)new (O - 1) MDOperand;
+  return Ptr;
 }
 
 void MDNode::operator delete(void *Mem) {
   MDNode *N = static_cast<MDNode *>(Mem);
+  size_t OpSize = N->NumOperands * sizeof(MDOperand);
+  OpSize = RoundUpToAlignment(OpSize, llvm::alignOf<uint64_t>());
+
   MDOperand *O = static_cast<MDOperand *>(Mem);
   for (MDOperand *E = O - N->NumOperands; O != E; --O)
     (O - 1)->~MDOperand();
-  ::operator delete(O);
+  ::operator delete(reinterpret_cast<char *>(Mem) - OpSize);
 }
 
 MDNode::MDNode(LLVMContext &Context, unsigned ID, StorageType Storage,
@@ -530,6 +545,18 @@ static bool hasSelfReference(MDNode *N) {
 }
 
 MDNode *MDNode::replaceWithPermanentImpl() {
+  switch (getMetadataID()) {
+  default:
+    // If this type isn't uniquable, replace with a distinct node.
+    return replaceWithDistinctImpl();
+
+#define HANDLE_MDNODE_LEAF_UNIQUABLE(CLASS)                                    \
+  case CLASS##Kind:                                                            \
+    break;
+#include "llvm/IR/Metadata.def"
+  }
+
+  // Even if this type is uniquable, self-references have to be distinct.
   if (hasSelfReference(this))
     return replaceWithDistinctImpl();
   return replaceWithUniquedImpl();
@@ -656,8 +683,8 @@ MDNode *MDNode::uniquify() {
   // Try to insert into uniquing store.
   switch (getMetadataID()) {
   default:
-    llvm_unreachable("Invalid subclass of MDNode");
-#define HANDLE_MDNODE_LEAF(CLASS)                                              \
+    llvm_unreachable("Invalid or non-uniquable subclass of MDNode");
+#define HANDLE_MDNODE_LEAF_UNIQUABLE(CLASS)                                    \
   case CLASS##Kind: {                                                          \
     CLASS *SubclassThis = cast<CLASS>(this);                                   \
     std::integral_constant<bool, HasCachedHash<CLASS>::value>                  \
@@ -672,8 +699,8 @@ MDNode *MDNode::uniquify() {
 void MDNode::eraseFromStore() {
   switch (getMetadataID()) {
   default:
-    llvm_unreachable("Invalid subclass of MDNode");
-#define HANDLE_MDNODE_LEAF(CLASS)                                              \
+    llvm_unreachable("Invalid or non-uniquable subclass of MDNode");
+#define HANDLE_MDNODE_LEAF_UNIQUABLE(CLASS)                                    \
   case CLASS##Kind:                                                            \
     getContext().pImpl->CLASS##s.erase(cast<CLASS>(this));                     \
     break;

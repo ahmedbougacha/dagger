@@ -73,6 +73,7 @@ public:
     ByVal,                 ///< Pass structure by value
     InAlloca,              ///< Pass structure in an alloca
     Cold,                  ///< Marks function as being in a cold path.
+    Convergent,            ///< Can only be moved to control-equivalent blocks
     InlineHint,            ///< Source said inlining was desirable
     InReg,                 ///< Force argument to be passed in register
     JumpTable,             ///< Build jump-instruction tables and replace refs.
@@ -97,6 +98,8 @@ public:
     OptimizeNone,          ///< Function must not be optimized.
     ReadNone,              ///< Function does not access memory
     ReadOnly,              ///< Function only reads from memory
+    ArgMemOnly,            ///< Funciton can access memory only using pointers
+                           ///< based on its arguments.
     Returned,              ///< Return value is always equal to this argument
     ReturnsTwice,          ///< Function can return twice
     SExt,                  ///< Sign extended before/after call
@@ -107,6 +110,7 @@ public:
     StackProtect,          ///< Stack protection.
     StackProtectReq,       ///< Stack protection required.
     StackProtectStrong,    ///< Strong Stack protection.
+    SafeStack,             ///< Safe Stack protection.
     StructRet,             ///< Hidden pointer to structure to return
     SanitizeAddress,       ///< AddressSanitizer is on.
     SanitizeThread,        ///< ThreadSanitizer is on.
@@ -260,42 +264,48 @@ public:
                           ArrayRef<Attribute::AttrKind> Kind);
   static AttributeSet get(LLVMContext &C, unsigned Index, const AttrBuilder &B);
 
-  /// \brief Add an attribute to the attribute set at the given index. Since
+  /// \brief Add an attribute to the attribute set at the given index. Because
   /// attribute sets are immutable, this returns a new set.
   AttributeSet addAttribute(LLVMContext &C, unsigned Index,
                             Attribute::AttrKind Attr) const;
 
-  /// \brief Add an attribute to the attribute set at the given index. Since
+  /// \brief Add an attribute to the attribute set at the given index. Because
   /// attribute sets are immutable, this returns a new set.
   AttributeSet addAttribute(LLVMContext &C, unsigned Index,
                             StringRef Kind) const;
   AttributeSet addAttribute(LLVMContext &C, unsigned Index,
                             StringRef Kind, StringRef Value) const;
 
-  /// \brief Add attributes to the attribute set at the given index. Since
+  /// \brief Add attributes to the attribute set at the given index. Because
   /// attribute sets are immutable, this returns a new set.
   AttributeSet addAttributes(LLVMContext &C, unsigned Index,
                              AttributeSet Attrs) const;
 
   /// \brief Remove the specified attribute at the specified index from this
-  /// attribute list. Since attribute lists are immutable, this returns the new
-  /// list.
+  /// attribute list. Because attribute lists are immutable, this returns the
+  /// new list.
   AttributeSet removeAttribute(LLVMContext &C, unsigned Index, 
                                Attribute::AttrKind Attr) const;
 
   /// \brief Remove the specified attributes at the specified index from this
-  /// attribute list. Since attribute lists are immutable, this returns the new
-  /// list.
+  /// attribute list. Because attribute lists are immutable, this returns the
+  /// new list.
   AttributeSet removeAttributes(LLVMContext &C, unsigned Index, 
                                 AttributeSet Attrs) const;
 
+  /// \brief Remove the specified attributes at the specified index from this
+  /// attribute list. Because attribute lists are immutable, this returns the
+  /// new list.
+  AttributeSet removeAttributes(LLVMContext &C, unsigned Index,
+                                const AttrBuilder &Attrs) const;
+
   /// \brief Add the dereferenceable attribute to the attribute set at the given
-  /// index. Since attribute sets are immutable, this returns a new set.
+  /// index. Because attribute sets are immutable, this returns a new set.
   AttributeSet addDereferenceableAttr(LLVMContext &C, unsigned Index,
                                       uint64_t Bytes) const;
 
   /// \brief Add the dereferenceable_or_null attribute to the attribute set at
-  /// the given index. Since attribute sets are immutable, this returns a new
+  /// the given index. Because attribute sets are immutable, this returns a new
   /// set.
   AttributeSet addDereferenceableOrNullAttr(LLVMContext &C, unsigned Index,
                                             uint64_t Bytes) const;
@@ -430,13 +440,17 @@ class AttrBuilder {
   uint64_t DerefBytes;
   uint64_t DerefOrNullBytes;
 public:
-  AttrBuilder() : Attrs(0), Alignment(0), StackAlignment(0), DerefBytes(0) {}
+  AttrBuilder()
+      : Attrs(0), Alignment(0), StackAlignment(0), DerefBytes(0),
+        DerefOrNullBytes(0) {}
   explicit AttrBuilder(uint64_t Val)
-    : Attrs(0), Alignment(0), StackAlignment(0), DerefBytes(0) {
+      : Attrs(0), Alignment(0), StackAlignment(0), DerefBytes(0),
+        DerefOrNullBytes(0) {
     addRawValue(Val);
   }
   AttrBuilder(const Attribute &A)
-    : Attrs(0), Alignment(0), StackAlignment(0), DerefBytes(0) {
+      : Attrs(0), Alignment(0), StackAlignment(0), DerefBytes(0),
+        DerefOrNullBytes(0) {
     addAttribute(A);
   }
   AttrBuilder(AttributeSet AS, unsigned Idx);
@@ -463,6 +477,13 @@ public:
 
   /// \brief Add the attributes from the builder.
   AttrBuilder &merge(const AttrBuilder &B);
+
+  /// \brief Remove the attributes from the builder.
+  AttrBuilder &remove(const AttrBuilder &B);
+
+  /// \brief Return true if the builder has any attribute that's in the
+  /// specified builder.
+  bool overlaps(const AttrBuilder &B) const;
 
   /// \brief Return true if the builder has the specified attribute.
   bool contains(Attribute::AttrKind A) const {
@@ -552,7 +573,7 @@ public:
 namespace AttributeFuncs {
 
 /// \brief Which attributes cannot be applied to a type.
-AttributeSet typeIncompatible(Type *Ty, uint64_t Index);
+AttrBuilder typeIncompatible(Type *Ty);
 
 } // end AttributeFuncs namespace
 

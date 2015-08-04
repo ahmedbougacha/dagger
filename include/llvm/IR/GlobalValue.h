@@ -28,6 +28,10 @@ class Comdat;
 class PointerType;
 class Module;
 
+namespace Intrinsic {
+  enum ID : unsigned;
+}
+
 class GlobalValue : public Constant {
   GlobalValue(const GlobalValue &) = delete;
 public:
@@ -66,7 +70,7 @@ protected:
       : Constant(Ty, VTy, Ops, NumOps), Linkage(Linkage),
         Visibility(DefaultVisibility), UnnamedAddr(0),
         DllStorageClass(DefaultStorageClass),
-        ThreadLocal(NotThreadLocal), Parent(nullptr) {
+        ThreadLocal(NotThreadLocal), IntID((Intrinsic::ID)0U), Parent(nullptr) {
     setName(Name);
   }
 
@@ -79,18 +83,31 @@ protected:
 
   unsigned ThreadLocal : 3; // Is this symbol "Thread Local", if so, what is
                             // the desired model?
+  static const unsigned GlobalValueSubClassDataBits = 19;
 
 private:
   // Give subclasses access to what otherwise would be wasted padding.
   // (19 + 3 + 2 + 1 + 2 + 5) == 32.
-  unsigned SubClassData : 19;
+  unsigned SubClassData : GlobalValueSubClassDataBits;
+
+  friend class Constant;
+  void destroyConstantImpl();
+  Value *handleOperandChangeImpl(Value *From, Value *To, Use *U);
+
 protected:
-  static const unsigned GlobalValueSubClassDataBits = 19;
+  /// \brief The intrinsic ID for this subclass (which must be a Function).
+  ///
+  /// This member is defined by this class, but not used for anything.
+  /// Subclasses can use it to store their intrinsic ID, if they have one.
+  ///
+  /// This is stored here to save space in Function on 64-bit hosts.
+  Intrinsic::ID IntID;
+
   unsigned getGlobalValueSubClassData() const {
     return SubClassData;
   }
   void setGlobalValueSubClassData(unsigned V) {
-    assert(V < (1 << 19) && "It will not fit");
+    assert(V < (1 << GlobalValueSubClassDataBits) && "It will not fit");
     SubClassData = V;
   }
 
@@ -235,10 +252,9 @@ public:
   /// mistake: when working at the IR level use mayBeOverridden instead as it
   /// knows about ODR semantics.
   static bool isWeakForLinker(LinkageTypes Linkage)  {
-    return Linkage == AvailableExternallyLinkage || Linkage == WeakAnyLinkage ||
-           Linkage == WeakODRLinkage || Linkage == LinkOnceAnyLinkage ||
-           Linkage == LinkOnceODRLinkage || Linkage == CommonLinkage ||
-           Linkage == ExternalWeakLinkage;
+    return Linkage == WeakAnyLinkage || Linkage == WeakODRLinkage ||
+           Linkage == LinkOnceAnyLinkage || Linkage == LinkOnceODRLinkage ||
+           Linkage == CommonLinkage || Linkage == ExternalWeakLinkage;
   }
 
   bool hasExternalLinkage() const { return isExternalLinkage(Linkage); }
@@ -317,12 +333,9 @@ public:
   /// If this GlobalValue is read in, and if the GVMaterializer supports it,
   /// release the memory for the function, and set it up to be materialized
   /// lazily. If !isDematerializable(), this method is a noop.
-  void Dematerialize();
+  void dematerialize();
 
 /// @}
-
-  /// Override from Constant class.
-  void destroyConstant() override;
 
   /// Return true if the primary definition of this global value is outside of
   /// the current translation unit.
@@ -333,6 +346,12 @@ public:
       return true;
 
     return isDeclaration();
+  }
+
+  /// Returns true if this global's definition will be the one chosen by the
+  /// linker.
+  bool isStrongDefinitionForLinker() const {
+    return !(isDeclarationForLinker() || isWeakForLinker());
   }
 
   /// This method unlinks 'this' from the containing module, but does not delete

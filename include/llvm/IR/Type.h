@@ -265,7 +265,7 @@ public:
   /// get the actual size for a particular target, it is reasonable to use the
   /// DataLayout subsystem to do this.
   ///
-  bool isSized(SmallPtrSetImpl<const Type*> *Visited = nullptr) const {
+  bool isSized(SmallPtrSetImpl<Type*> *Visited = nullptr) const {
     // If it's a primitive, it is always sized.
     if (getTypeID() == IntegerTyID || isFloatingPointTy() ||
         getTypeID() == PointerTyID ||
@@ -304,8 +304,7 @@ public:
 
   /// getScalarType - If this is a vector type, return the element type,
   /// otherwise return 'this'.
-  const Type *getScalarType() const LLVM_READONLY;
-  Type *getScalarType() LLVM_READONLY;
+  Type *getScalarType() const LLVM_READONLY;
 
   //===--------------------------------------------------------------------===//
   // Type Iteration support.
@@ -417,13 +416,13 @@ public:
 
   /// getPointerTo - Return a pointer to the current type.  This is equivalent
   /// to PointerType::get(Foo, AddrSpace).
-  PointerType *getPointerTo(unsigned AddrSpace = 0);
+  PointerType *getPointerTo(unsigned AddrSpace = 0) const;
 
 private:
   /// isSizedDerivedType - Derived types like structures and arrays are sized
   /// iff all of the members of the type are sized as well.  Since asking for
   /// their size is relatively uncommon, move this operation out of line.
-  bool isSizedDerivedType(SmallPtrSetImpl<const Type*> *Visited = nullptr) const;
+  bool isSizedDerivedType(SmallPtrSetImpl<Type*> *Visited = nullptr) const;
 };
 
 // Printing of types.

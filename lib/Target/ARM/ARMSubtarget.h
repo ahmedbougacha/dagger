@@ -100,18 +100,21 @@ protected:
   /// InThumbMode - True if compiling for Thumb, false for ARM.
   bool InThumbMode;
 
+  /// UseSoftFloat - True if we're using software floating point features.
+  bool UseSoftFloat;
+
   /// HasThumb2 - True if Thumb2 instructions are supported.
   bool HasThumb2;
 
   /// NoARM - True if subtarget does not support ARM mode execution.
   bool NoARM;
 
-  /// IsR9Reserved - True if R9 is a not available as general purpose register.
-  bool IsR9Reserved;
+  /// ReserveR9 - True if R9 is not available as a general purpose register.
+  bool ReserveR9;
 
-  /// UseMovt - True if MOVT / MOVW pairs are used for materialization of 32-bit
-  /// imms (including global addresses).
-  bool UseMovt;
+  /// NoMovt - True if MOVT / MOVW pairs are not used for materialization of
+  /// 32-bit imms (including global addresses).
+  bool NoMovt;
 
   /// SupportsTailCall - True if the OS supports tail call. The dynamic linker
   /// must be able to synthesize call stubs for interworking between ARM and
@@ -187,10 +190,10 @@ protected:
   /// particularly effective at zeroing a VFP register.
   bool HasZeroCycleZeroing;
 
-  /// AllowsUnalignedMem - If true, the subtarget allows unaligned memory
+  /// StrictAlign - If true, the subtarget disallows unaligned memory
   /// accesses for some types.  For details, see
   /// ARMTargetLowering::allowsMisalignedMemoryAccesses().
-  bool AllowsUnalignedMem;
+  bool StrictAlign;
 
   /// RestrictIT - If true, the subtarget disallows generation of deprecated IT
   ///  blocks to conform to ARMv8 rule.
@@ -202,6 +205,9 @@ protected:
 
   /// NaCl TRAP instruction is generated instead of the regular TRAP.
   bool UseNaClTrap;
+
+  /// Generate calls via indirect call instructions.
+  bool GenLongCalls;
 
   /// Target machine allowed unsafe FP math (such as use of NEON fp)
   bool UnsafeFPMath;
@@ -234,8 +240,8 @@ public:
   /// This constructor initializes the data members to match that
   /// of the specified triple.
   ///
-  ARMSubtarget(const std::string &TT, const std::string &CPU,
-               const std::string &FS, const ARMBaseTargetMachine &TM, bool IsLittle);
+  ARMSubtarget(const Triple &TT, const std::string &CPU, const std::string &FS,
+               const ARMBaseTargetMachine &TM, bool IsLittle);
 
   /// getMaxInlineSizeThreshold - Returns the maximum memset / memcpy size
   /// that still makes it profitable to inline the call.
@@ -339,6 +345,7 @@ public:
   bool hasMPExtension() const { return HasMPExtension; }
   bool hasThumb2DSP() const { return Thumb2DSP; }
   bool useNaClTrap() const { return UseNaClTrap; }
+  bool genLongCalls() const { return GenLongCalls; }
 
   bool hasFP16() const { return HasFP16; }
   bool hasD16() const { return HasD16; }
@@ -393,6 +400,7 @@ public:
   bool isAPCS_ABI() const;
   bool isAAPCS_ABI() const;
 
+  bool useSoftFloat() const { return UseSoftFloat; }
   bool isThumb() const { return InThumbMode; }
   bool isThumb1Only() const { return InThumbMode && !HasThumb2; }
   bool isThumb2() const { return InThumbMode && HasThumb2; }
@@ -401,17 +409,17 @@ public:
   bool isRClass() const { return ARMProcClass == RClass; }
   bool isAClass() const { return ARMProcClass == AClass; }
 
-  bool isV6M() const {
-    return isThumb1Only() && isMClass();
+  bool isR9Reserved() const {
+    return isTargetMachO() ? (ReserveR9 || !HasV6Ops) : ReserveR9;
   }
 
-  bool isR9Reserved() const { return IsR9Reserved; }
+  bool useStride4VFPs(const MachineFunction &MF) const;
 
   bool useMovt(const MachineFunction &MF) const;
 
   bool supportsTailCall() const { return SupportsTailCall; }
 
-  bool allowsUnalignedMem() const { return AllowsUnalignedMem; }
+  bool allowsUnalignedMem() const { return !StrictAlign; }
 
   bool restrictIT() const { return RestrictIT; }
 
@@ -425,8 +433,11 @@ public:
   /// compiler runtime or math libraries.
   bool hasSinCos() const;
 
+  /// Returns true if machine scheduler should be enabled.
+  bool enableMachineScheduler() const override;
+
   /// True for some subtargets at > -O0.
-  bool enablePostMachineScheduler() const override;
+  bool enablePostRAScheduler() const override;
 
   // enableAtomicExpand- True if we need to expand our atomics.
   bool enableAtomicExpand() const override;
@@ -446,6 +457,8 @@ public:
   /// symbol.
   bool GVIsIndirectSymbol(const GlobalValue *GV, Reloc::Model RelocM) const;
 
+  /// True if fast-isel is used.
+  bool useFastISel() const;
 };
 } // End llvm namespace
 

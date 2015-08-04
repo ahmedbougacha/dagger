@@ -3,8 +3,14 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+/* Exported configuration */
+#include "llvm/Config/llvm-config.h"
+
 /* Bug report URL. */
 #undef BUG_REPORT_URL
+
+/* Default OpenMP runtime used by -fopenmp. */
+#undef CLANG_DEFAULT_OPENMP_RUNTIME
 
 /* Define if we have libxml2 */
 #undef CLANG_HAVE_LIBXML
@@ -131,11 +137,11 @@
 /* Define if libedit is available on this platform. */
 #undef HAVE_LIBEDIT
 
-/* Define to 1 if you have the `imagehlp' library (-limagehlp). */
-#undef HAVE_LIBIMAGEHLP
-
 /* Define to 1 if you have the `m' library (-lm). */
 #undef HAVE_LIBM
+
+/* Define to 1 if you have the `ole32' library (-lole32). */
+#undef HAVE_LIBOLE32
 
 /* Define to 1 if you have the `psapi' library (-lpsapi). */
 #undef HAVE_LIBPSAPI
@@ -311,9 +317,6 @@
 
 /* Define to 1 if you have the <sys/uio.h> header file. */
 #undef HAVE_SYS_UIO_H
-
-/* Define to 1 if you have <sys/wait.h> that is POSIX.1 compatible. */
-#undef HAVE_SYS_WAIT_H
 
 /* Define if the setupterm() function is supported this platform. */
 #undef HAVE_TERMINFO

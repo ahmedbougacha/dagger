@@ -315,6 +315,14 @@ void RegDefsUses::init(const MachineInstr &MI) {
 void RegDefsUses::setCallerSaved(const MachineInstr &MI) {
   assert(MI.isCall());
 
+  // Add RA/RA_64 to Defs to prevent users of RA/RA_64 from going into
+  // the delay slot. The reason is that RA/RA_64 must not be changed
+  // in the delay slot so that the callee can return to the caller.
+  if (MI.definesRegister(Mips::RA) || MI.definesRegister(Mips::RA_64)) {
+    Defs.set(Mips::RA);
+    Defs.set(Mips::RA_64);
+  }
+
   // If MI is a call, add all caller-saved registers to Defs.
   BitVector CallerSavedRegs(TRI.getNumRegs(), true);
 
@@ -705,8 +713,9 @@ bool Filler::searchBackward(MachineBasicBlock &MBB, Iter Slot) const {
   if (DisableBackwardSearch)
     return false;
 
-  RegDefsUses RegDU(*MBB.getParent()->getSubtarget().getRegisterInfo());
-  MemDefsUses MemDU(*TM.getDataLayout(), MBB.getParent()->getFrameInfo());
+  auto *Fn = MBB.getParent();
+  RegDefsUses RegDU(*Fn->getSubtarget().getRegisterInfo());
+  MemDefsUses MemDU(Fn->getDataLayout(), Fn->getFrameInfo());
   ReverseIter Filler;
 
   RegDU.init(*Slot);
@@ -755,6 +764,7 @@ bool Filler::searchSuccBBs(MachineBasicBlock &MBB, Iter Slot) const {
   BB2BrMap BrMap;
   std::unique_ptr<InspectMemInstr> IM;
   Iter Filler;
+  auto *Fn = MBB.getParent();
 
   // Iterate over SuccBB's predecessor list.
   for (MachineBasicBlock::pred_iterator PI = SuccBB->pred_begin(),
@@ -764,15 +774,15 @@ bool Filler::searchSuccBBs(MachineBasicBlock &MBB, Iter Slot) const {
 
   // Do not allow moving instructions which have unallocatable register operands
   // across basic block boundaries.
-  RegDU.setUnallocatableRegs(*MBB.getParent());
+  RegDU.setUnallocatableRegs(*Fn);
 
   // Only allow moving loads from stack or constants if any of the SuccBB's
   // predecessors have multiple successors.
   if (HasMultipleSuccs) {
     IM.reset(new LoadFromStackOrConst());
   } else {
-    const MachineFrameInfo *MFI = MBB.getParent()->getFrameInfo();
-    IM.reset(new MemDefsUses(*TM.getDataLayout(), MFI));
+    const MachineFrameInfo *MFI = Fn->getFrameInfo();
+    IM.reset(new MemDefsUses(Fn->getDataLayout(), MFI));
   }
 
   if (!searchRange(MBB, SuccBB->begin(), SuccBB->end(), RegDU, *IM, Slot,

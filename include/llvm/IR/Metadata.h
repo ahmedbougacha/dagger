@@ -27,8 +27,11 @@
 #include <type_traits>
 
 namespace llvm {
+
 class LLVMContext;
 class Module;
+class ModuleSlotTracker;
+
 template<typename ValueSubClass, typename ItemParentClass>
   class SymbolTableListTraits;
 
@@ -59,27 +62,28 @@ protected:
 public:
   enum MetadataKind {
     MDTupleKind,
-    MDLocationKind,
-    GenericDebugNodeKind,
-    MDSubrangeKind,
-    MDEnumeratorKind,
-    MDBasicTypeKind,
-    MDDerivedTypeKind,
-    MDCompositeTypeKind,
-    MDSubroutineTypeKind,
-    MDFileKind,
-    MDCompileUnitKind,
-    MDSubprogramKind,
-    MDLexicalBlockKind,
-    MDLexicalBlockFileKind,
-    MDNamespaceKind,
-    MDTemplateTypeParameterKind,
-    MDTemplateValueParameterKind,
-    MDGlobalVariableKind,
-    MDLocalVariableKind,
-    MDExpressionKind,
-    MDObjCPropertyKind,
-    MDImportedEntityKind,
+    DILocationKind,
+    GenericDINodeKind,
+    DISubrangeKind,
+    DIEnumeratorKind,
+    DIBasicTypeKind,
+    DIDerivedTypeKind,
+    DICompositeTypeKind,
+    DISubroutineTypeKind,
+    DIFileKind,
+    DICompileUnitKind,
+    DISubprogramKind,
+    DILexicalBlockKind,
+    DILexicalBlockFileKind,
+    DINamespaceKind,
+    DIModuleKind,
+    DITemplateTypeParameterKind,
+    DITemplateValueParameterKind,
+    DIGlobalVariableKind,
+    DILocalVariableKind,
+    DIExpressionKind,
+    DIObjCPropertyKind,
+    DIImportedEntityKind,
     ConstantAsMetadataKind,
     LocalAsMetadataKind,
     MDStringKind
@@ -121,7 +125,11 @@ public:
   ///
   /// If \c M is provided, metadata nodes will be numbered canonically;
   /// otherwise, pointer addresses are substituted.
+  /// @{
   void print(raw_ostream &OS, const Module *M = nullptr) const;
+  void print(raw_ostream &OS, ModuleSlotTracker &MST,
+             const Module *M = nullptr) const;
+  /// @}
 
   /// \brief Print as operand.
   ///
@@ -129,7 +137,11 @@ public:
   ///
   /// If \c M is provided, metadata nodes will be numbered canonically;
   /// otherwise, pointer addresses are substituted.
+  /// @{
   void printAsOperand(raw_ostream &OS, const Module *M = nullptr) const;
+  void printAsOperand(raw_ostream &OS, ModuleSlotTracker &MST,
+                      const Module *M = nullptr) const;
+  /// @}
 };
 
 #define HANDLE_METADATA(CLASS) class CLASS;
@@ -869,6 +881,7 @@ protected:
   void storeDistinctInContext();
   template <class T, class StoreT>
   static T *storeImpl(T *N, StorageType Storage, StoreT &Store);
+  template <class T> static T *storeImpl(T *N, StorageType Storage);
 
 private:
   void handleChangedOperand(void *Ref, Metadata *New);
