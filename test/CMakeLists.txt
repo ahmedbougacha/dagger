@@ -59,6 +59,7 @@ set(LLVM_TEST_DEPENDS
           llvm-dc
           llvm-dec
           llvm-mccfg
+          DYN
           verify-uselistorder
         )
 
