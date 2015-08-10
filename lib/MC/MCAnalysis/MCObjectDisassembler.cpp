@@ -195,7 +195,6 @@ void MCObjectDisassembler::disassembleFunctionAt(
   for (size_t wi = 0; wi < Worklist.size(); ++wi) {
     const uint64_t BeginAddr = Worklist[wi];
 
-    bool FailedDisassembly = false;
     AddrPrettyStackTraceEntry X(BeginAddr, "Basic Block");
 
     DEBUG(dbgs() << "Looking for block at " << utohexstr(BeginAddr) << "\n");
@@ -291,7 +290,6 @@ void MCObjectDisassembler::disassembleFunctionAt(
           AddInst(Inst, Addr, InstSize);
         } else {
           DEBUG(dbgs() << "Failed disassembly at " << utohexstr(Addr) << "!\n");
-          FailedDisassembly = true;
           break;
         }
 
