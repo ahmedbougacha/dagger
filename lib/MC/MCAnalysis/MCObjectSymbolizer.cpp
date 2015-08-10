@@ -42,11 +42,10 @@ static bool RelocU64OffsetComparator(const object::RelocationRef &LHS,
 
 MCMachObjectSymbolizer::MCMachObjectSymbolizer(
     MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
-    const MachOObjectFile &MOOF, uint64_t VMAddrSlide,
-    uint64_t HeaderLoadAddress)
+    const MachOObjectFile &MOOF, uint64_t VMAddrSlide)
     : MCObjectSymbolizer(Ctx, std::move(RelInfo), MOOF), MOOF(MOOF),
       StubsStart(0), StubsCount(0), StubSize(0), StubsIndSymIndex(0),
-      VMAddrSlide(VMAddrSlide), HeaderLoadAddress(HeaderLoadAddress) {
+      VMAddrSlide(VMAddrSlide) {
 
   for (const SectionRef &Section : MOOF.sections()) {
     StringRef Name;

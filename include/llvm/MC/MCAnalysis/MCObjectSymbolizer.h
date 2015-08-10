@@ -129,7 +129,6 @@ class MCMachObjectSymbolizer final : public MCObjectSymbolizer {
   uint64_t StubsIndSymIndex;
 
   uint64_t VMAddrSlide;
-  uint64_t HeaderLoadAddress;
 
   // __DATA;__mod_init_func support.
   llvm::StringRef ModInitContents;
@@ -139,13 +138,10 @@ class MCMachObjectSymbolizer final : public MCObjectSymbolizer {
 public:
   /// \brief Construct a Mach-O specific object symbolizer.
   /// \param VMAddrSlide The virtual address slide applied by dyld.
-  /// \param HeaderLoadAddress The load address of the mach_header for this
-  /// object.
   MCMachObjectSymbolizer(MCContext &Ctx,
                          std::unique_ptr<MCRelocationInfo> RelInfo,
                          const object::MachOObjectFile &MOOF,
-                         uint64_t VMAddrSlide = 0,
-                         uint64_t HeaderLoadAddress = 0);
+                         uint64_t VMAddrSlide = 0);
 
   StringRef findExternalFunctionAt(uint64_t Addr) override;
 

@@ -306,7 +306,6 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   // in the main executable, we don't look at anything beyond object boundaries.
   // The first image is the main executable.
   uint64_t VMAddrSlide = _dyld_get_image_vmaddr_slide(0);
-  uint64_t HeaderLoadAddress = (uint64_t)_dyld_get_image_header(0);
 
   MachOObjectFile *MOOF = dyn_cast<MachOObjectFile>(Obj);
   if (!MOOF) {
@@ -316,7 +315,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   // Explicitly use a Mach-O-specific symbolizer to give it dyld info.
   std::unique_ptr<MCMachObjectSymbolizer> MOS(new MCMachObjectSymbolizer(
-      Ctx, std::move(RelInfo), *MOOF, VMAddrSlide, HeaderLoadAddress));
+      Ctx, std::move(RelInfo), *MOOF, VMAddrSlide));
 
   std::unique_ptr<MCObjectDisassembler> OD(
       new MCObjectDisassembler(*Obj, *DisAsm, *MIA));
