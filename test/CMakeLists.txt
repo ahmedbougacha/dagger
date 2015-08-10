@@ -59,9 +59,12 @@ set(LLVM_TEST_DEPENDS
           llvm-dc
           llvm-dec
           llvm-mccfg
-          DYN
           verify-uselistorder
         )
+
+if(APPLE)
+  set(LLVM_TEST_DEPENDS  DYN)
+endif()
 
 # If Intel JIT events are supported, depend on a tool that tests the listener.
 if( LLVM_USE_INTEL_JITEVENTS )

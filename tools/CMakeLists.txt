@@ -37,6 +37,11 @@ add_llvm_external_project(llgo)
 add_llvm_external_project(lld)
 add_llvm_external_project(lldb)
 
+# libDYN.dylib only works on Mach-O for now.
+if(NOT APPLE)
+  set(LLVM_TOOL_DYN_BUILD off)
+endif()
+
 # Automatically add remaining sub-directories containing a 'CMakeLists.txt'
 # file as external projects.
 add_llvm_implicit_projects()
