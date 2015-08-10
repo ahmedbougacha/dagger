@@ -136,6 +136,8 @@ struct DOTMCFunction {
       : Fn(Fn), IP(IP), STI(STI) {}
 };
 
+namespace llvm {
+
 template<>
 struct GraphTraits<DOTMCFunction> {
   typedef const MCBasicBlock NodeType;
@@ -188,6 +190,7 @@ struct DOTGraphTraits<DOTMCFunction> : public DefaultDOTGraphTraits {
   }
 };
 
+} // end llvm namespace
 
 // Write a graphviz file for the CFG inside an MCFunction.
 // FIXME: Use GraphWriter
