@@ -1,0 +1,23 @@
+#RUN: llvm-dec %p/Inputs/f2_entrypoint.macho-x86_64 | FileCheck %s
+
+# Test that we correctly support Mach-O LC_MAIN. See also f1_entrypoint.test.
+
+# Assembly source, linked with -e _f2
+# .global _f1
+# _f1:
+# movq $1234h, %rax
+# retq
+# .global _f2
+# _f2:
+# movq $5678h, %rax
+# retq
+
+# CHECK-LABEL: define void @fn_100000FB0(%regset* noalias nocapture) {
+# CHECK:   store i64 22136, i64* %RAX
+# CHECK: }
+
+# CHECK-LABEL: define i32 @main(i32, i8**) {
+# CHECK:   call void @fn_100000FB0(%regset* %3)
+# CHECK:   %6 = call i32 @main_fini_regset(%regset* %3)
+# CHECK:   ret i32 %6
+# CHECK: }

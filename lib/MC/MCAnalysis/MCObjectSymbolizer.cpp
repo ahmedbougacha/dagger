@@ -148,7 +148,7 @@ StringRef MCMachObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
 uint64_t MCMachObjectSymbolizer::getEntrypoint() {
   uint64_t EntryFileOffset = 0;
 
-  // Look for LC_MAIN.
+  // Look for LC_MAIN first.
   for (auto LC : MOOF.load_commands()) {
     if (LC.C.cmd == MachO::LC_MAIN) {
       EntryFileOffset = MOOF.getEntryPointCommand(LC).entryoff;
@@ -156,12 +156,28 @@ uint64_t MCMachObjectSymbolizer::getEntrypoint() {
     }
   }
 
-  // If we didn't find anything, default to the common implementation.
-  // FIXME: Maybe we could also look at LC_UNIXTHREAD and friends?
-  if (EntryFileOffset)
-    return MCObjectSymbolizer::getEntrypoint();
+  // If we did find LC_MAIN, compute the virtual address, by looking for the
+  // segment that it points into.
+  if (EntryFileOffset) {
+    for (auto LC : MOOF.load_commands()) {
+      if (LC.C.cmd == MachO::LC_SEGMENT_64) {
+        auto S64LC = MOOF.getSegment64LoadCommand(LC);
+        if (S64LC.fileoff <= EntryFileOffset &&
+            S64LC.fileoff + S64LC.filesize > EntryFileOffset)
+          return EntryFileOffset + S64LC.vmaddr;
+      }
+      if (LC.C.cmd == MachO::LC_SEGMENT) {
+        auto SLC = MOOF.getSegmentLoadCommand(LC);
+        if (SLC.fileoff <= EntryFileOffset &&
+            SLC.fileoff + SLC.filesize > EntryFileOffset)
+          return EntryFileOffset + SLC.vmaddr;
+      }
+    }
+  }
 
-  return EntryFileOffset + HeaderLoadAddress;
+  // We tried harder, but none of our tricks worked, fall back to the common
+  // implementation for good.
+  return MCObjectSymbolizer::getEntrypoint();
 }
 
 void MCMachObjectSymbolizer::
