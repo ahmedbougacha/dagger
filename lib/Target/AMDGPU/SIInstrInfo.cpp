@@ -360,7 +360,7 @@ SIInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
       } else {
         // FIXME: Hack until VReg_1 removed.
         assert(AMDGPU::VGPR_32RegClass.contains(SrcReg));
-        BuildMI(MBB, MI, DL, get(AMDGPU::V_CMP_NE_I32_e32), AMDGPU::VCC)
+        BuildMI(MBB, MI, DL, get(AMDGPU::V_CMP_NE_I32_e32))
           .addImm(0)
           .addReg(SrcReg, getKillRegState(KillSrc));
       }
@@ -898,11 +898,6 @@ bool SIInstrInfo::isMov(unsigned Opcode) const {
   }
 }
 
-bool
-SIInstrInfo::isSafeToMoveRegClassDefs(const TargetRegisterClass *RC) const {
-  return RC != &AMDGPU::EXECRegRegClass;
-}
-
 static void removeModOperands(MachineInstr &MI) {
   unsigned Opc = MI.getOpcode();
   int Src0ModIdx = AMDGPU::getNamedOperandIdx(Opc,
@@ -1093,7 +1088,7 @@ bool SIInstrInfo::areMemAccessesTriviallyDisjoint(MachineInstr *MIa,
 
   // TODO: Should we check the address space from the MachineMemOperand? That
   // would allow us to distinguish objects we know don't alias based on the
-  // underlying addres space, even if it was lowered to a different one,
+  // underlying address space, even if it was lowered to a different one,
   // e.g. private accesses lowered to use MUBUF instructions on a scratch
   // buffer.
   if (isDS(Opc0)) {

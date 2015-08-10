@@ -78,6 +78,10 @@ private:
   typedef typename ELFO::Elf_Hash Elf_Hash;
   typedef typename ELFO::Elf_Ehdr Elf_Ehdr;
   typedef typename ELFO::uintX_t uintX_t;
+  typedef typename ELFO::Elf_Versym Elf_Versym;
+  typedef typename ELFO::Elf_Verneed Elf_Verneed;
+  typedef typename ELFO::Elf_Vernaux Elf_Vernaux;
+  typedef typename ELFO::Elf_Verdef Elf_Verdef;
 
   /// \brief Represents a region described by entries in the .dynamic table.
   struct DynRegionInfo {
@@ -100,19 +104,68 @@ private:
   const Elf_Rela *dyn_rela_end() const;
   Elf_Rela_Range dyn_relas() const;
   StringRef getDynamicString(uint64_t Offset) const;
-  const Elf_Dyn *dynamic_table_begin() const;
-  const Elf_Dyn *dynamic_table_end() const;
-  Elf_Dyn_Range dynamic_table() const {
-    return make_range(dynamic_table_begin(), dynamic_table_end());
+  const Elf_Dyn *dynamic_table_begin() const {
+    ErrorOr<const Elf_Dyn *> Ret = Obj->dynamic_table_begin(DynamicProgHeader);
+    error(Ret.getError());
+    return *Ret;
   }
+  const Elf_Dyn *dynamic_table_end() const {
+    ErrorOr<const Elf_Dyn *> Ret = Obj->dynamic_table_end(DynamicProgHeader);
+    error(Ret.getError());
+    return *Ret;
+  }
+  Elf_Dyn_Range dynamic_table() const {
+    ErrorOr<Elf_Dyn_Range> Ret = Obj->dynamic_table(DynamicProgHeader);
+    error(Ret.getError());
+    return *Ret;
+  }
+
+  StringRef getSymbolVersion(StringRef StrTab, const Elf_Sym *symb,
+                             bool &IsDefault);
+  void LoadVersionMap();
+  void LoadVersionNeeds(const Elf_Shdr *ec) const;
+  void LoadVersionDefs(const Elf_Shdr *sec) const;
 
   const ELFO *Obj;
   DynRegionInfo DynRelaRegion;
-  DynRegionInfo DynamicRegion;
+  const Elf_Phdr *DynamicProgHeader = nullptr;
   StringRef DynamicStringTable;
   const Elf_Sym *DynSymStart = nullptr;
   StringRef SOName;
   const Elf_Hash *HashTable = nullptr;
+  const Elf_Shdr *DotDynSymSec = nullptr;
+
+  const Elf_Shdr *dot_gnu_version_sec = nullptr;   // .gnu.version
+  const Elf_Shdr *dot_gnu_version_r_sec = nullptr; // .gnu.version_r
+  const Elf_Shdr *dot_gnu_version_d_sec = nullptr; // .gnu.version_d
+
+  // Records for each version index the corresponding Verdef or Vernaux entry.
+  // This is filled the first time LoadVersionMap() is called.
+  class VersionMapEntry : public PointerIntPair<const void *, 1> {
+  public:
+    // If the integer is 0, this is an Elf_Verdef*.
+    // If the integer is 1, this is an Elf_Vernaux*.
+    VersionMapEntry() : PointerIntPair<const void *, 1>(nullptr, 0) {}
+    VersionMapEntry(const Elf_Verdef *verdef)
+        : PointerIntPair<const void *, 1>(verdef, 0) {}
+    VersionMapEntry(const Elf_Vernaux *vernaux)
+        : PointerIntPair<const void *, 1>(vernaux, 1) {}
+    bool isNull() const { return getPointer() == nullptr; }
+    bool isVerdef() const { return !isNull() && getInt() == 0; }
+    bool isVernaux() const { return !isNull() && getInt() == 1; }
+    const Elf_Verdef *getVerdef() const {
+      return isVerdef() ? (const Elf_Verdef *)getPointer() : nullptr;
+    }
+    const Elf_Vernaux *getVernaux() const {
+      return isVernaux() ? (const Elf_Vernaux *)getPointer() : nullptr;
+    }
+  };
+  mutable SmallVector<VersionMapEntry, 16> VersionMap;
+
+public:
+  std::string getFullSymbolName(const Elf_Sym *Symbol, StringRef StrTable,
+                                bool IsDynamic);
+  const Elf_Shdr *getDotDynSymSec() const { return DotDynSymSec; }
 };
 
 template <class T> T errorOrDefault(ErrorOr<T> Val, T Default = T()) {
@@ -159,10 +212,145 @@ std::error_code createELFDumper(const object::ObjectFile *Obj,
 
 } // namespace llvm
 
-template <typename ELFO>
-static std::string getFullSymbolName(const ELFO &Obj,
-                                     const typename ELFO::Elf_Sym *Symbol,
-                                     StringRef StrTable, bool IsDynamic) {
+// Iterate through the versions needed section, and place each Elf_Vernaux
+// in the VersionMap according to its index.
+template <class ELFT>
+void ELFDumper<ELFT>::LoadVersionNeeds(const Elf_Shdr *sec) const {
+  unsigned vn_size = sec->sh_size;  // Size of section in bytes
+  unsigned vn_count = sec->sh_info; // Number of Verneed entries
+  const char *sec_start = (const char *)Obj->base() + sec->sh_offset;
+  const char *sec_end = sec_start + vn_size;
+  // The first Verneed entry is at the start of the section.
+  const char *p = sec_start;
+  for (unsigned i = 0; i < vn_count; i++) {
+    if (p + sizeof(Elf_Verneed) > sec_end)
+      report_fatal_error("Section ended unexpectedly while scanning "
+                         "version needed records.");
+    const Elf_Verneed *vn = reinterpret_cast<const Elf_Verneed *>(p);
+    if (vn->vn_version != ELF::VER_NEED_CURRENT)
+      report_fatal_error("Unexpected verneed version");
+    // Iterate through the Vernaux entries
+    const char *paux = p + vn->vn_aux;
+    for (unsigned j = 0; j < vn->vn_cnt; j++) {
+      if (paux + sizeof(Elf_Vernaux) > sec_end)
+        report_fatal_error("Section ended unexpected while scanning auxiliary "
+                           "version needed records.");
+      const Elf_Vernaux *vna = reinterpret_cast<const Elf_Vernaux *>(paux);
+      size_t index = vna->vna_other & ELF::VERSYM_VERSION;
+      if (index >= VersionMap.size())
+        VersionMap.resize(index + 1);
+      VersionMap[index] = VersionMapEntry(vna);
+      paux += vna->vna_next;
+    }
+    p += vn->vn_next;
+  }
+}
+
+// Iterate through the version definitions, and place each Elf_Verdef
+// in the VersionMap according to its index.
+template <class ELFT>
+void ELFDumper<ELFT>::LoadVersionDefs(const Elf_Shdr *sec) const {
+  unsigned vd_size = sec->sh_size;  // Size of section in bytes
+  unsigned vd_count = sec->sh_info; // Number of Verdef entries
+  const char *sec_start = (const char *)Obj->base() + sec->sh_offset;
+  const char *sec_end = sec_start + vd_size;
+  // The first Verdef entry is at the start of the section.
+  const char *p = sec_start;
+  for (unsigned i = 0; i < vd_count; i++) {
+    if (p + sizeof(Elf_Verdef) > sec_end)
+      report_fatal_error("Section ended unexpectedly while scanning "
+                         "version definitions.");
+    const Elf_Verdef *vd = reinterpret_cast<const Elf_Verdef *>(p);
+    if (vd->vd_version != ELF::VER_DEF_CURRENT)
+      report_fatal_error("Unexpected verdef version");
+    size_t index = vd->vd_ndx & ELF::VERSYM_VERSION;
+    if (index >= VersionMap.size())
+      VersionMap.resize(index + 1);
+    VersionMap[index] = VersionMapEntry(vd);
+    p += vd->vd_next;
+  }
+}
+
+template <class ELFT> void ELFDumper<ELFT>::LoadVersionMap() {
+  // If there is no dynamic symtab or version table, there is nothing to do.
+  if (!DynSymStart || !dot_gnu_version_sec)
+    return;
+
+  // Has the VersionMap already been loaded?
+  if (VersionMap.size() > 0)
+    return;
+
+  // The first two version indexes are reserved.
+  // Index 0 is LOCAL, index 1 is GLOBAL.
+  VersionMap.push_back(VersionMapEntry());
+  VersionMap.push_back(VersionMapEntry());
+
+  if (dot_gnu_version_d_sec)
+    LoadVersionDefs(dot_gnu_version_d_sec);
+
+  if (dot_gnu_version_r_sec)
+    LoadVersionNeeds(dot_gnu_version_r_sec);
+}
+
+template <typename ELFT>
+StringRef ELFDumper<ELFT>::getSymbolVersion(StringRef StrTab,
+                                            const Elf_Sym *symb,
+                                            bool &IsDefault) {
+  // This is a dynamic symbol. Look in the GNU symbol version table.
+  if (!dot_gnu_version_sec) {
+    // No version table.
+    IsDefault = false;
+    return StringRef("");
+  }
+
+  // Determine the position in the symbol table of this entry.
+  size_t entry_index = (reinterpret_cast<uintptr_t>(symb) -
+                        reinterpret_cast<uintptr_t>(DynSymStart)) /
+                       sizeof(Elf_Sym);
+
+  // Get the corresponding version index entry
+  const Elf_Versym *vs =
+      Obj->template getEntry<Elf_Versym>(dot_gnu_version_sec, entry_index);
+  size_t version_index = vs->vs_index & ELF::VERSYM_VERSION;
+
+  // Special markers for unversioned symbols.
+  if (version_index == ELF::VER_NDX_LOCAL ||
+      version_index == ELF::VER_NDX_GLOBAL) {
+    IsDefault = false;
+    return StringRef("");
+  }
+
+  // Lookup this symbol in the version table
+  LoadVersionMap();
+  if (version_index >= VersionMap.size() || VersionMap[version_index].isNull())
+    reportError("Invalid version entry");
+  const VersionMapEntry &entry = VersionMap[version_index];
+
+  // Get the version name string
+  size_t name_offset;
+  if (entry.isVerdef()) {
+    // The first Verdaux entry holds the name.
+    name_offset = entry.getVerdef()->getAux()->vda_name;
+  } else {
+    name_offset = entry.getVernaux()->vna_name;
+  }
+
+  // Set IsDefault
+  if (entry.isVerdef()) {
+    IsDefault = !(vs->vs_index & ELF::VERSYM_HIDDEN);
+  } else {
+    IsDefault = false;
+  }
+
+  if (name_offset >= StrTab.size())
+    reportError("Invalid string offset");
+  return StringRef(StrTab.data() + name_offset);
+}
+
+template <typename ELFT>
+std::string ELFDumper<ELFT>::getFullSymbolName(const Elf_Sym *Symbol,
+                                               StringRef StrTable,
+                                               bool IsDynamic) {
   StringRef SymbolName = errorOrDefault(Symbol->getName(StrTable));
   if (!IsDynamic)
     return SymbolName;
@@ -170,13 +358,9 @@ static std::string getFullSymbolName(const ELFO &Obj,
   std::string FullSymbolName(SymbolName);
 
   bool IsDefault;
-  ErrorOr<StringRef> Version =
-      Obj.getSymbolVersion(StrTable, &*Symbol, IsDefault);
-  if (Version) {
-    FullSymbolName += (IsDefault ? "@@" : "@");
-    FullSymbolName += *Version;
-  } else
-    error(Version.getError());
+  StringRef Version = getSymbolVersion(StrTable, &*Symbol, IsDefault);
+  FullSymbolName += (IsDefault ? "@@" : "@");
+  FullSymbolName += Version;
   return FullSymbolName;
 }
 
@@ -446,6 +630,12 @@ static const EnumEntry<unsigned> ElfSymbolTypes[] = {
   { "GNU_IFunc", ELF::STT_GNU_IFUNC }
 };
 
+static const EnumEntry<unsigned> AMDGPUSymbolTypes[] = {
+  { "AMDGPU_HSA_KERNEL",            ELF::STT_AMDGPU_HSA_KERNEL },
+  { "AMDGPU_HSA_INDIRECT_FUNCTION", ELF::STT_AMDGPU_HSA_INDIRECT_FUNCTION },
+  { "AMDGPU_HSA_METADATA",          ELF::STT_AMDGPU_HSA_METADATA }
+};
+
 static const char *getElfSectionType(unsigned Arch, unsigned Type) {
   switch (Arch) {
   case ELF::EM_ARM:
@@ -510,13 +700,24 @@ static const EnumEntry<unsigned> ElfSectionFlags[] = {
   LLVM_READOBJ_ENUM_ENT(ELF, SHF_TLS             ),
   LLVM_READOBJ_ENUM_ENT(ELF, XCORE_SHF_CP_SECTION),
   LLVM_READOBJ_ENUM_ENT(ELF, XCORE_SHF_DP_SECTION),
-  LLVM_READOBJ_ENUM_ENT(ELF, SHF_MIPS_NOSTRIP    )
+  LLVM_READOBJ_ENUM_ENT(ELF, SHF_MIPS_NOSTRIP    ),
+  LLVM_READOBJ_ENUM_ENT(ELF, SHF_AMDGPU_HSA_GLOBAL),
+  LLVM_READOBJ_ENUM_ENT(ELF, SHF_AMDGPU_HSA_READONLY),
+  LLVM_READOBJ_ENUM_ENT(ELF, SHF_AMDGPU_HSA_CODE),
+  LLVM_READOBJ_ENUM_ENT(ELF, SHF_AMDGPU_HSA_AGENT)
 };
 
 static const char *getElfSegmentType(unsigned Arch, unsigned Type) {
   // Check potentially overlapped processor-specific
   // program header type.
   switch (Arch) {
+  case ELF::EM_AMDGPU:
+    switch (Type) {
+    LLVM_READOBJ_ENUM_CASE(ELF, PT_AMDGPU_HSA_LOAD_GLOBAL_PROGRAM);
+    LLVM_READOBJ_ENUM_CASE(ELF, PT_AMDGPU_HSA_LOAD_GLOBAL_AGENT);
+    LLVM_READOBJ_ENUM_CASE(ELF, PT_AMDGPU_HSA_LOAD_READONLY_AGENT);
+    LLVM_READOBJ_ENUM_CASE(ELF, PT_AMDGPU_HSA_LOAD_CODE_AGENT);
+    }
   case ELF::EM_ARM:
     switch (Type) {
     LLVM_READOBJ_ENUM_CASE(ELF, PT_ARM_EXIDX);
@@ -609,11 +810,7 @@ ELFDumper<ELFT>::ELFDumper(const ELFFile<ELFT> *Obj, StreamWriter &Writer)
   SmallVector<const Elf_Phdr *, 4> LoadSegments;
   for (const Elf_Phdr &Phdr : Obj->program_headers()) {
     if (Phdr.p_type == ELF::PT_DYNAMIC) {
-      DynamicRegion.Addr = Obj->base() + Phdr.p_offset;
-      uint64_t Size = Phdr.p_filesz;
-      if (Size % sizeof(Elf_Dyn))
-        report_fatal_error("Invalid dynamic table size");
-      DynamicRegion.Size = Phdr.p_filesz;
+      DynamicProgHeader = &Phdr;
       continue;
     }
     if (Phdr.p_type != ELF::PT_LOAD || Phdr.p_filesz == 0)
@@ -671,6 +868,31 @@ ELFDumper<ELFT>::ELFDumper(const ELFFile<ELFT> *Obj, StreamWriter &Writer)
     DynamicStringTable = StringRef(StringTableBegin, StringTableSize);
   if (SONameOffset)
     SOName = getDynamicString(SONameOffset);
+
+  for (const Elf_Shdr &Sec : Obj->sections()) {
+    switch (Sec.sh_type) {
+    case ELF::SHT_GNU_versym:
+      if (dot_gnu_version_sec != nullptr)
+        reportError("Multiple SHT_GNU_versym");
+      dot_gnu_version_sec = &Sec;
+      break;
+    case ELF::SHT_GNU_verdef:
+      if (dot_gnu_version_d_sec != nullptr)
+        reportError("Multiple SHT_GNU_verdef");
+      dot_gnu_version_d_sec = &Sec;
+      break;
+    case ELF::SHT_GNU_verneed:
+      if (dot_gnu_version_r_sec != nullptr)
+        reportError("Multilpe SHT_GNU_verneed");
+      dot_gnu_version_r_sec = &Sec;
+      break;
+    case ELF::SHT_DYNSYM:
+      if (DotDynSymSec != nullptr)
+        reportError("Multilpe SHT_DYNSYM");
+      DotDynSymSec = &Sec;
+      break;
+    }
+  }
 }
 
 template <typename ELFT>
@@ -693,19 +915,6 @@ ELFDumper<ELFT>::dyn_rela_end() const {
 template <typename ELFT>
 typename ELFDumper<ELFT>::Elf_Rela_Range ELFDumper<ELFT>::dyn_relas() const {
   return make_range(dyn_rela_begin(), dyn_rela_end());
-}
-
-template <typename ELFT>
-const typename ELFDumper<ELFT>::Elf_Dyn *
-ELFDumper<ELFT>::dynamic_table_begin() const {
-  return reinterpret_cast<const Elf_Dyn *>(DynamicRegion.Addr);
-}
-
-template <typename ELFT>
-const typename ELFDumper<ELFT>::Elf_Dyn *
-ELFDumper<ELFT>::dynamic_table_end() const {
-  uint64_t Size = DynamicRegion.Size;
-  return dynamic_table_begin() + Size / sizeof(Elf_Dyn);
 }
 
 template<class ELFT>
@@ -793,7 +1002,7 @@ void ELFDumper<ELFT>::printSections() {
       error(StrTableOrErr.getError());
       StringRef StrTable = *StrTableOrErr;
 
-      for (const Elf_Sym &Sym : Obj->symbols()) {
+      for (const Elf_Sym &Sym : Obj->symbols(Symtab)) {
         ErrorOr<const Elf_Shdr *> SymSec = Obj->getSection(&Sym);
         if (!SymSec)
           continue;
@@ -924,7 +1133,7 @@ void ELFDumper<ELFT>::printSymbols() {
   ErrorOr<StringRef> StrTableOrErr = Obj->getStringTableForSymtab(*Symtab);
   error(StrTableOrErr.getError());
   StringRef StrTable = *StrTableOrErr;
-  for (const Elf_Sym &Sym : Obj->symbols())
+  for (const Elf_Sym &Sym : Obj->symbols(Symtab))
     printSymbol(&Sym, StrTable, false);
 }
 
@@ -932,7 +1141,7 @@ template<class ELFT>
 void ELFDumper<ELFT>::printDynamicSymbols() {
   ListScope Group(W, "DynamicSymbols");
 
-  const Elf_Shdr *Symtab = Obj->getDotDynSymSec();
+  const Elf_Shdr *Symtab = DotDynSymSec;
   ErrorOr<StringRef> StrTableOrErr = Obj->getStringTableForSymtab(*Symtab);
   error(StrTableOrErr.getError());
   StringRef StrTable = *StrTableOrErr;
@@ -946,8 +1155,8 @@ void ELFDumper<ELFT>::printSymbol(const Elf_Sym *Symbol, StringRef StrTable,
   unsigned SectionIndex = 0;
   StringRef SectionName;
   getSectionNameIndex(*Obj, Symbol, SectionName, SectionIndex);
-  std::string FullSymbolName =
-      getFullSymbolName(*Obj, Symbol, StrTable, IsDynamic);
+  std::string FullSymbolName = getFullSymbolName(Symbol, StrTable, IsDynamic);
+  unsigned char SymbolType = Symbol->getType();
 
   DictScope D(W, "Symbol");
   W.printNumber("Name", FullSymbolName, Symbol->st_name);
@@ -955,7 +1164,11 @@ void ELFDumper<ELFT>::printSymbol(const Elf_Sym *Symbol, StringRef StrTable,
   W.printNumber("Size", Symbol->st_size);
   W.printEnum  ("Binding", Symbol->getBinding(),
                   makeArrayRef(ElfSymbolBindings));
-  W.printEnum  ("Type", Symbol->getType(), makeArrayRef(ElfSymbolTypes));
+  if (Obj->getHeader()->e_machine == ELF::EM_AMDGPU &&
+      SymbolType >= ELF::STT_LOOS && SymbolType < ELF::STT_HIOS)
+    W.printEnum  ("Type", SymbolType, makeArrayRef(AMDGPUSymbolTypes));
+  else
+    W.printEnum  ("Type", SymbolType, makeArrayRef(ElfSymbolTypes));
   W.printNumber("Other", Symbol->st_other);
   W.printHex("Section", SectionName, SectionIndex);
 }
@@ -1260,8 +1473,8 @@ void ELFDumper<ELFT>::printNeededLibraries() {
 
   std::stable_sort(Libs.begin(), Libs.end());
 
-  for (LibsTy::const_iterator I = Libs.begin(), E = Libs.end(); I != E; ++I) {
-    outs() << "  " << *I << "\n";
+  for (const auto &L : Libs) {
+    outs() << "  " << L << "\n";
   }
 }
 
@@ -1346,12 +1559,14 @@ public:
   typedef typename ELFO::Elf_Rel Elf_Rel;
   typedef typename ELFO::Elf_Rela Elf_Rela;
 
-  MipsGOTParser(const ELFO *Obj, Elf_Dyn_Range DynTable, StreamWriter &W);
+  MipsGOTParser(ELFDumper<ELFT> *Dumper, const ELFO *Obj,
+                Elf_Dyn_Range DynTable, StreamWriter &W);
 
   void parseGOT();
   void parsePLT();
 
 private:
+  ELFDumper<ELFT> *Dumper;
   const ELFO *Obj;
   StreamWriter &W;
   llvm::Optional<uint64_t> DtPltGot;
@@ -1377,9 +1592,9 @@ private:
 }
 
 template <class ELFT>
-MipsGOTParser<ELFT>::MipsGOTParser(const ELFO *Obj, Elf_Dyn_Range DynTable,
-                                   StreamWriter &W)
-    : Obj(Obj), W(W) {
+MipsGOTParser<ELFT>::MipsGOTParser(ELFDumper<ELFT> *Dumper, const ELFO *Obj,
+                                   Elf_Dyn_Range DynTable, StreamWriter &W)
+    : Dumper(Dumper), Obj(Obj), W(W) {
   for (const auto &Entry : DynTable) {
     switch (Entry.getTag()) {
     case ELF::DT_PLTGOT:
@@ -1435,7 +1650,7 @@ template <class ELFT> void MipsGOTParser<ELFT>::parseGOT() {
     return;
   }
 
-  const Elf_Shdr *DynSymSec = Obj->getDotDynSymSec();
+  const Elf_Shdr *DynSymSec = Dumper->getDotDynSymSec();
   ErrorOr<StringRef> StrTable = Obj->getStringTableForSymtab(*DynSymSec);
   error(StrTable.getError());
   const Elf_Sym *DynSymBegin = Obj->symbol_begin(DynSymSec);
@@ -1606,7 +1821,7 @@ void MipsGOTParser<ELFT>::printGlobalGotEntry(
   W.printHex("Section", SectionName, SectionIndex);
 
   std::string FullSymbolName =
-      getFullSymbolName(*Obj, Sym, StrTable, IsDynamic);
+      Dumper->getFullSymbolName(Sym, StrTable, IsDynamic);
   W.printNumber("Name", FullSymbolName, Sym->st_name);
 }
 
@@ -1638,7 +1853,7 @@ void MipsGOTParser<ELFT>::printPLTEntry(uint64_t PLTAddr,
   getSectionNameIndex(*Obj, Sym, SectionName, SectionIndex);
   W.printHex("Section", SectionName, SectionIndex);
 
-  std::string FullSymbolName = getFullSymbolName(*Obj, Sym, StrTable, true);
+  std::string FullSymbolName = Dumper->getFullSymbolName(Sym, StrTable, true);
   W.printNumber("Name", FullSymbolName, Sym->st_name);
 }
 
@@ -1648,7 +1863,7 @@ template <class ELFT> void ELFDumper<ELFT>::printMipsPLTGOT() {
     return;
   }
 
-  MipsGOTParser<ELFT> GOTParser(Obj, dynamic_table(), W);
+  MipsGOTParser<ELFT> GOTParser(this, Obj, dynamic_table(), W);
   GOTParser.parseGOT();
   GOTParser.parsePLT();
 }

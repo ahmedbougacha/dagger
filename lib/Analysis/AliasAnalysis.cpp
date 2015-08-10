@@ -416,13 +416,6 @@ void AliasAnalysis::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<AliasAnalysis>();         // All AA's chain
 }
 
-/// getTypeStoreSize - Return the DataLayout store size for the given type,
-/// if known, or a conservative value otherwise.
-///
-uint64_t AliasAnalysis::getTypeStoreSize(Type *Ty) {
-  return DL ? DL->getTypeStoreSize(Ty) : MemoryLocation::UnknownSize;
-}
-
 /// canBasicBlockModify - Return true if it is possible for execution of the
 /// specified basic block to modify the location Loc.
 ///
@@ -455,9 +448,8 @@ bool AliasAnalysis::canInstructionRangeModRef(const Instruction &I1,
 /// isNoAliasCall - Return true if this pointer is returned by a noalias
 /// function.
 bool llvm::isNoAliasCall(const Value *V) {
-  if (isa<CallInst>(V) || isa<InvokeInst>(V))
-    return ImmutableCallSite(cast<Instruction>(V))
-      .paramHasAttr(0, Attribute::NoAlias);
+  if (auto CS = ImmutableCallSite(V))
+    return CS.paramHasAttr(0, Attribute::NoAlias);
   return false;
 }
 

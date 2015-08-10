@@ -140,8 +140,7 @@ void SILowerControlFlowPass::Skip(MachineInstr &From, MachineOperand &To) {
 
   DebugLoc DL = From.getDebugLoc();
   BuildMI(*From.getParent(), &From, DL, TII->get(AMDGPU::S_CBRANCH_EXECZ))
-          .addOperand(To)
-          .addReg(AMDGPU::EXEC);
+    .addOperand(To);
 }
 
 void SILowerControlFlowPass::SkipIfDead(MachineInstr &MI) {
@@ -159,8 +158,7 @@ void SILowerControlFlowPass::SkipIfDead(MachineInstr &MI) {
 
   // If the exec mask is non-zero, skip the next two instructions
   BuildMI(MBB, Insert, DL, TII->get(AMDGPU::S_CBRANCH_EXECNZ))
-          .addImm(3)
-          .addReg(AMDGPU::EXEC);
+    .addImm(3);
 
   // Exec mask is zero: Export to NULL target...
   BuildMI(MBB, Insert, DL, TII->get(AMDGPU::EXP))
@@ -269,8 +267,7 @@ void SILowerControlFlowPass::Loop(MachineInstr &MI) {
           .addReg(Src);
 
   BuildMI(MBB, &MI, DL, TII->get(AMDGPU::S_CBRANCH_EXECNZ))
-          .addOperand(MI.getOperand(1))
-          .addReg(AMDGPU::EXEC);
+    .addOperand(MI.getOperand(1));
 
   MI.eraseFromParent();
 }
@@ -316,7 +313,7 @@ void SILowerControlFlowPass::Kill(MachineInstr &MI) {
               .addImm(0);
     }
   } else {
-    BuildMI(MBB, &MI, DL, TII->get(AMDGPU::V_CMPX_LE_F32_e32), AMDGPU::VCC)
+    BuildMI(MBB, &MI, DL, TII->get(AMDGPU::V_CMPX_LE_F32_e32))
            .addImm(0)
            .addOperand(Op);
   }
@@ -362,9 +359,9 @@ void SILowerControlFlowPass::LoadM0(MachineInstr &MI, MachineInstr *MovRel, int 
             .addReg(AMDGPU::VCC_LO);
 
     // Compare the just read M0 value to all possible Idx values
-    BuildMI(MBB, &MI, DL, TII->get(AMDGPU::V_CMP_EQ_U32_e32), AMDGPU::VCC)
-            .addReg(AMDGPU::M0)
-            .addReg(Idx);
+    BuildMI(MBB, &MI, DL, TII->get(AMDGPU::V_CMP_EQ_U32_e32))
+      .addReg(AMDGPU::M0)
+      .addReg(Idx);
 
     // Update EXEC, save the original EXEC value to VCC
     BuildMI(MBB, &MI, DL, TII->get(AMDGPU::S_AND_SAVEEXEC_B64), AMDGPU::VCC)
@@ -385,8 +382,7 @@ void SILowerControlFlowPass::LoadM0(MachineInstr &MI, MachineInstr *MovRel, int 
 
     // Loop back to V_READFIRSTLANE_B32 if there are still variants to cover
     BuildMI(MBB, &MI, DL, TII->get(AMDGPU::S_CBRANCH_EXECNZ))
-            .addImm(-7)
-            .addReg(AMDGPU::EXEC);
+      .addImm(-7);
 
     // Restore EXEC
     BuildMI(MBB, &MI, DL, TII->get(AMDGPU::S_MOV_B64), AMDGPU::EXEC)

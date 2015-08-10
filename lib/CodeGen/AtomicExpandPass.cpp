@@ -8,7 +8,8 @@
 //===----------------------------------------------------------------------===//
 //
 // This file contains a pass (at IR level) to replace atomic instructions with
-// either (intrinsic-based) load-linked/store-conditional loops or AtomicCmpXchg.
+// either (intrinsic-based) load-linked/store-conditional loops or
+// AtomicCmpXchg.
 //
 //===----------------------------------------------------------------------===//
 
@@ -549,7 +550,7 @@ bool llvm::expandAtomicRMWToCmpXchg(AtomicRMWInst *AI,
   Builder.SetInsertPoint(BB);
   LoadInst *InitLoaded = Builder.CreateLoad(Addr);
   // Atomics require at least natural alignment.
-  InitLoaded->setAlignment(AI->getType()->getPrimitiveSizeInBits());
+  InitLoaded->setAlignment(AI->getType()->getPrimitiveSizeInBits() / 8);
   Builder.CreateBr(LoopBB);
 
   // Start the main loop block now that we've taken care of the preliminaries.

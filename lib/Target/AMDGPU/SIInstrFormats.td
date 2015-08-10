@@ -86,7 +86,6 @@ class Enc64 {
 }
 
 class VOPDstOperand <RegisterClass rc> : RegisterOperand <rc, "printVOPDst">;
-def VOPDstVCC : VOPDstOperand <VCCReg>;
 
 let Uses = [EXEC] in {
 
@@ -101,11 +100,11 @@ class VOPAnyCommon <dag outs, dag ins, string asm, list<dag> pattern> :
 }
 
 class VOPCCommon <dag ins, string asm, list<dag> pattern> :
-    VOPAnyCommon <(outs VOPDstVCC:$dst), ins, asm, pattern> {
+    VOPAnyCommon <(outs), ins, asm, pattern> {
 
-  let DisableEncoding = "$dst";
   let VOPC = 1;
   let Size = 4;
+  let Defs = [VCC];
 }
 
 class VOP1Common <dag outs, dag ins, string asm, list<dag> pattern> :
@@ -222,6 +221,20 @@ class SMRDe <bits<5> op, bits<1> imm> : Enc32 {
   let Inst{31-27} = 0x18; //encoding
 }
 
+class SMRD_IMMe_ci <bits<5> op> : Enc64 {
+  bits<7> sdst;
+  bits<7> sbase;
+  bits<32> offset;
+
+  let Inst{7-0}   = 0xff;
+  let Inst{8}     = 0;
+  let Inst{14-9}  = sbase{6-1};
+  let Inst{21-15} = sdst;
+  let Inst{26-22} = op;
+  let Inst{31-27} = 0x18; //encoding
+  let Inst{63-32} = offset;
+}
+
 let SchedRW = [WriteSALU] in {
 class SOP1 <dag outs, dag ins, string asm, list<dag> pattern> :
     InstSI<outs, ins, asm, pattern> {
@@ -249,13 +262,13 @@ class SOP2 <dag outs, dag ins, string asm, list<dag> pattern> :
 class SOPC <bits<7> op, dag outs, dag ins, string asm, list<dag> pattern> :
   InstSI<outs, ins, asm, pattern>, SOPCe <op> {
 
-  let DisableEncoding = "$dst";
   let mayLoad = 0;
   let mayStore = 0;
   let hasSideEffects = 0;
   let SALU = 1;
   let SOPC = 1;
   let isCodeGenOnly = 0;
+  let Defs = [SCC];
 
   let UseNamedOperandTable = 1;
 }

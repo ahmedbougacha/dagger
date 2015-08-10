@@ -104,7 +104,7 @@ void DyldELFObject<ELFT>::updateSymbolAddress(const SymbolRef &SymRef,
   sym->st_value = static_cast<addr_type>(Addr);
 }
 
-class LoadedELFObjectInfo
+class LoadedELFObjectInfo final
     : public RuntimeDyld::LoadedObjectInfoHelper<LoadedELFObjectInfo> {
 public:
   LoadedELFObjectInfo(RuntimeDyldImpl &RTDyld, ObjSectionToIDMap ObjSecToIDMap)
@@ -845,8 +845,9 @@ void RuntimeDyldELF::findOPDEntrySection(const ELFObjectFileBase &Obj,
       if (Rel.Addend != (int64_t)TargetSymbolOffset)
         continue;
 
-      section_iterator tsi(Obj.section_end());
-      check(TargetSymbol->getSection(tsi));
+      ErrorOr<section_iterator> TSIOrErr = TargetSymbol->getSection();
+      check(TSIOrErr.getError());
+      section_iterator tsi = *TSIOrErr;
       bool IsCode = tsi->isText();
       Rel.SectionID = findOrEmitSection(Obj, (*tsi), IsCode, LocalSections);
       Rel.Addend = (intptr_t)Addend;
@@ -1162,8 +1163,7 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
       // TODO: Now ELF SymbolRef::ST_Debug = STT_SECTION, it's not obviously
       // and can be changed by another developers. Maybe best way is add
       // a new symbol type ST_Section to SymbolRef and use it.
-      section_iterator si(Obj.section_end());
-      Symbol->getSection(si);
+      section_iterator si = *Symbol->getSection();
       if (si == Obj.section_end())
         llvm_unreachable("Symbol section not found, bad object file format!");
       DEBUG(dbgs() << "\t\tThis is section symbol\n");
@@ -1476,11 +1476,11 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
       // These relocations are supposed to subtract the TOC address from
       // the final value.  This does not fit cleanly into the RuntimeDyld
       // scheme, since there may be *two* sections involved in determining
-      // the relocation value (the section of the symbol refered to by the
+      // the relocation value (the section of the symbol referred to by the
       // relocation, and the TOC section associated with the current module).
       //
       // Fortunately, these relocations are currently only ever generated
-      // refering to symbols that themselves reside in the TOC, which means
+      // referring to symbols that themselves reside in the TOC, which means
       // that the two sections are actually the same.  Thus they cancel out
       // and we can immediately resolve the relocation right now.
       switch (RelType) {

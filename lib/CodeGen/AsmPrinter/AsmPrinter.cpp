@@ -233,22 +233,13 @@ bool AsmPrinter::doInitialization(Module &M) {
   }
 
   if (MAI->doesSupportDebugInformation()) {
-    bool skip_dwarf = false;
-    if (TM.getTargetTriple().isKnownWindowsMSVCEnvironment()) {
+    bool EmitCodeView = MMI->getModule()->getCodeViewFlag();
+    if (EmitCodeView && TM.getTargetTriple().isKnownWindowsMSVCEnvironment()) {
       Handlers.push_back(HandlerInfo(new WinCodeViewLineTables(this),
                                      DbgTimerName,
                                      CodeViewLineTablesGroupName));
-      // FIXME: Don't emit DWARF debug info if there's at least one function
-      // with AddressSanitizer instrumentation.
-      // This is a band-aid fix for PR22032.
-      for (auto &F : M.functions()) {
-        if (F.hasFnAttribute(Attribute::SanitizeAddress)) {
-          skip_dwarf = true;
-          break;
-        }
-      }
     }
-    if (!skip_dwarf) {
+    if (!EmitCodeView || MMI->getModule()->getDwarfVersion()) {
       DD = new DwarfDebug(this, &M);
       Handlers.push_back(HandlerInfo(DD, DbgTimerName, DWARFGroupName));
     }
@@ -1193,16 +1184,6 @@ bool AsmPrinter::doFinalization(Module &M) {
 
     // Emit the directives as assignments aka .set:
     OutStreamer->EmitAssignment(Name, lowerConstant(Alias.getAliasee()));
-
-    // Set the size of the alias symbol if we can, as otherwise the alias gets
-    // the size of the aliasee which may not be correct e.g. if the alias is of
-    // a member of a struct.
-    if (MAI->hasDotTypeDotSizeDirective() && Alias.getValueType()->isSized()) {
-      const DataLayout &DL = M.getDataLayout();
-      uint64_t Size = DL.getTypeAllocSize(Alias.getValueType());
-      OutStreamer->emitELFSize(cast<MCSymbolELF>(Name),
-                               MCConstantExpr::create(Size, OutContext));
-    }
   }
 
   GCModuleInfo *MI = getAnalysisIfAvailable<GCModuleInfo>();

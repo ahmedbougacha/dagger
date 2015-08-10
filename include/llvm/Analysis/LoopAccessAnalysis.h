@@ -327,6 +327,7 @@ public:
   void reset() {
     Need = false;
     Pointers.clear();
+    Checks.clear();
   }
 
   /// Insert a pointer and calculate the start and end SCEVs.
@@ -377,38 +378,25 @@ public:
   typedef std::pair<const CheckingPtrGroup *, const CheckingPtrGroup *>
       PointerCheck;
 
-  /// \brief Groups pointers such that a single memcheck is required
-  /// between two different groups. This will clear the CheckingGroups vector
-  /// and re-compute it. We will only group dependecies if \p UseDependencies
-  /// is true, otherwise we will create a separate group for each pointer.
-  void groupChecks(MemoryDepChecker::DepCandidates &DepCands,
-                   bool UseDependencies);
+  /// \brief Generate the checks and store it.  This also performs the grouping
+  /// of pointers to reduce the number of memchecks necessary.
+  void generateChecks(MemoryDepChecker::DepCandidates &DepCands,
+                      bool UseDependencies);
 
-  /// Generate the checks and return them.
-  ///
-  /// \p PtrToPartition contains the partition number for pointers.  If passed,
-  /// omit checks between pointers belonging to the same partition.  Partition
-  /// number -1 means that the pointer is used in multiple partitions.  In this
-  /// case we can't safely omit the check.
-  SmallVector<PointerCheck, 4>
-  generateChecks(const SmallVectorImpl<int> *PtrPartition = nullptr) const;
+  /// \brief Returns the checks that generateChecks created.
+  const SmallVectorImpl<PointerCheck> &getChecks() const { return Checks; }
 
   /// \brief Decide if we need to add a check between two groups of pointers,
   /// according to needsChecking.
-  bool needsChecking(const CheckingPtrGroup &M, const CheckingPtrGroup &N,
-                     const SmallVectorImpl<int> *PtrPartition) const;
+  bool needsChecking(const CheckingPtrGroup &M,
+                     const CheckingPtrGroup &N) const;
 
   /// \brief Returns the number of run-time checks required according to
   /// needsChecking.
-  unsigned getNumberOfChecks(const SmallVectorImpl<int> *PtrPartition) const;
+  unsigned getNumberOfChecks() const { return Checks.size(); }
 
   /// \brief Print the list run-time memory checks necessary.
-  ///
-  /// If \p PtrPartition is set, it contains the partition number for
-  /// pointers (-1 if the pointer belongs to multiple partitions).  In this
-  /// case omit checks between pointers belonging to the same partition.
-  void print(raw_ostream &OS, unsigned Depth = 0,
-             const SmallVectorImpl<int> *PtrPartition = nullptr) const;
+  void print(raw_ostream &OS, unsigned Depth = 0) const;
 
   /// Print \p Checks.
   void printChecks(raw_ostream &OS, const SmallVectorImpl<PointerCheck> &Checks,
@@ -433,16 +421,26 @@ public:
 
   /// \brief Decide whether we need to issue a run-time check for pointer at
   /// index \p I and \p J to prove their independence.
-  ///
-  /// If \p PtrPartition is set, it contains the partition number for
-  /// pointers (-1 if the pointer belongs to multiple partitions).  In this
-  /// case omit checks between pointers belonging to the same partition.
-  bool needsChecking(unsigned I, unsigned J,
-                     const SmallVectorImpl<int> *PtrPartition = nullptr) const;
+  bool needsChecking(unsigned I, unsigned J) const;
 
 private:
+  /// \brief Groups pointers such that a single memcheck is required
+  /// between two different groups. This will clear the CheckingGroups vector
+  /// and re-compute it. We will only group dependecies if \p UseDependencies
+  /// is true, otherwise we will create a separate group for each pointer.
+  void groupChecks(MemoryDepChecker::DepCandidates &DepCands,
+                   bool UseDependencies);
+
+  /// Generate the checks and return them.
+  SmallVector<PointerCheck, 4>
+  generateChecks() const;
+
   /// Holds a pointer to the ScalarEvolution analysis.
   ScalarEvolution *SE;
+
+  /// \brief Set of run-time checks required to establish independence of
+  /// otherwise may-aliasing pointers in the loop.
+  SmallVector<PointerCheck, 4> Checks;
 };
 
 /// \brief Drive the analysis of memory accesses in the loop
@@ -476,9 +474,8 @@ public:
 
   /// \brief Number of memchecks required to prove independence of otherwise
   /// may-alias pointers.
-  unsigned getNumRuntimePointerChecks(
-    const SmallVectorImpl<int> *PtrPartition = nullptr) const {
-    return PtrRtChecking.getNumberOfChecks(PtrPartition);
+  unsigned getNumRuntimePointerChecks() const {
+    return PtrRtChecking.getNumberOfChecks();
   }
 
   /// Return true if the block BB needs to be predicated in order for the loop

@@ -63,7 +63,7 @@ namespace {
 
     /// Iteratively perform simplification on a worklist of users of the
     /// specified induction variable. This is the top-level driver that applies
-    /// all simplicitions to users of an IV.
+    /// all simplifications to users of an IV.
     void simplifyUsers(PHINode *CurrIV, IVVisitor *V = nullptr);
 
     Value *foldIVUser(Instruction *UseInst, Instruction *IVOperand);
@@ -169,24 +169,22 @@ void SimplifyIndvar::eliminateIVComparison(ICmpInst *ICmp, Value *IVOperand) {
   ICmpInst::Predicate InvariantPredicate;
   const SCEV *InvariantLHS, *InvariantRHS;
 
-  const char *Verb = nullptr;
-
   // If the condition is always true or always false, replace it with
   // a constant value.
   if (SE->isKnownPredicate(Pred, S, X)) {
     ICmp->replaceAllUsesWith(ConstantInt::getTrue(ICmp->getContext()));
     DeadInsts.emplace_back(ICmp);
-    Verb = "Eliminated";
+    DEBUG(dbgs() << "INDVARS: Eliminated comparison: " << *ICmp << '\n');
   } else if (SE->isKnownPredicate(ICmpInst::getInversePredicate(Pred), S, X)) {
     ICmp->replaceAllUsesWith(ConstantInt::getFalse(ICmp->getContext()));
     DeadInsts.emplace_back(ICmp);
-    Verb = "Eliminated";
+    DEBUG(dbgs() << "INDVARS: Eliminated comparison: " << *ICmp << '\n');
   } else if (isa<PHINode>(IVOperand) &&
              SE->isLoopInvariantPredicate(Pred, S, X, ICmpLoop,
                                           InvariantPredicate, InvariantLHS,
                                           InvariantRHS)) {
 
-    // Rewrite the comparision to a loop invariant comparision if it can be done
+    // Rewrite the comparison to a loop invariant comparison if it can be done
     // cheaply, where cheaply means "we don't need to emit any new
     // instructions".
 
@@ -218,14 +216,13 @@ void SimplifyIndvar::eliminateIVComparison(ICmpInst *ICmp, Value *IVOperand) {
       // for now.
       return;
 
-    Verb = "Simplified";
+    DEBUG(dbgs() << "INDVARS: Simplified comparison: " << *ICmp << '\n');
     ICmp->setPredicate(InvariantPredicate);
     ICmp->setOperand(0, NewLHS);
     ICmp->setOperand(1, NewRHS);
   } else
     return;
 
-  DEBUG(dbgs() << "INDVARS: " << Verb << " comparison: " << *ICmp << '\n');
   ++NumElimCmp;
   Changed = true;
 }
@@ -485,8 +482,8 @@ static bool isSimpleIVUser(Instruction *I, const Loop *L, ScalarEvolution *SE) {
 /// This algorithm does not require IVUsers analysis. Instead, it simplifies
 /// instructions in-place during analysis. Rather than rewriting induction
 /// variables bottom-up from their users, it transforms a chain of IVUsers
-/// top-down, updating the IR only when it encouters a clear optimization
-/// opportunitiy.
+/// top-down, updating the IR only when it encounters a clear optimization
+/// opportunity.
 ///
 /// Once DisableIVRewrite is default, LSR will be the only client of IVUsers.
 ///

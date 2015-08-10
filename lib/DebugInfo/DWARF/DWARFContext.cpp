@@ -685,7 +685,7 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
           }
           SymAddr = *SymAddrOrErr;
           // Also remember what section this symbol is in for later
-          Sym->getSection(RSec);
+          RSec = *Sym->getSection();
         } else if (auto *MObj = dyn_cast<MachOObjectFile>(&Obj)) {
           // MachO also has relocations that point to sections and
           // scattered relocations.
@@ -705,8 +705,8 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
         //           (Address of Section in File) +
         //           (Load Address of Section)
         if (L != nullptr && RSec != Obj.section_end()) {
-          // RSec is now either the section being targetted or the section
-          // containing the symbol being targetted. In either case,
+          // RSec is now either the section being targeted or the section
+          // containing the symbol being targeted. In either case,
           // we need to perform the same computation.
           StringRef SecName;
           RSec->getName(SecName);
