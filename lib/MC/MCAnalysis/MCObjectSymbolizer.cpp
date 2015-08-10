@@ -17,6 +17,7 @@
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/SymbolSize.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 
@@ -398,4 +399,12 @@ void MCObjectSymbolizer::buildRelocationByAddrMap(
     SecInfo.Relocs.push_back(Reloc);
   std::stable_sort(SecInfo.Relocs.begin(), SecInfo.Relocs.end(),
                    RelocRelocOffsetComparator);
+}
+
+MCObjectSymbolizer *
+llvm::createMCObjectSymbolizer(MCContext &Ctx, const object::ObjectFile &Obj,
+                               std::unique_ptr<MCRelocationInfo> &&RelInfo) {
+  if (const MachOObjectFile *MOOF = dyn_cast<MachOObjectFile>(&Obj))
+    return new MCMachObjectSymbolizer(Ctx, std::move(RelInfo), *MOOF);
+  return new MCObjectSymbolizer(Ctx, std::move(RelInfo), Obj);
 }

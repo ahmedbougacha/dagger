@@ -245,6 +245,8 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   const Target *TheTarget = getTarget(Obj);
 
+  // FIXME: why are there unique_ptrs everywhere?
+
   std::unique_ptr<const MCRegisterInfo> MRI(
     TheTarget->createMCRegInfo(TripleName));
   if (!MRI) {
@@ -312,7 +314,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     exit(1);
   }
 
-  // FIXME: why are there unique_ptrs everywhere?
+  // Explicitly use a Mach-O-specific symbolizer to give it dyld info.
   std::unique_ptr<MCMachObjectSymbolizer> MOS(new MCMachObjectSymbolizer(
       Ctx, std::move(RelInfo), *MOOF, VMAddrSlide, HeaderLoadAddress));
 

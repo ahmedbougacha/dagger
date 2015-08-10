@@ -177,7 +177,11 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::unique_ptr<MCObjectSymbolizer> MOS(
-      new MCObjectSymbolizer(Ctx, std::move(RelInfo), *Obj));
+      TheTarget->createMCObjectSymbolizer(Ctx, *Obj, std::move(RelInfo)));
+  if (!MOS) {
+    errs() << "error: no object symbolizer for target " << TripleName << "\n";
+    return 1;
+  }
   // FIXME: should we set the symbolizer on OD? maybe under a CLI option.
 
   std::unique_ptr<const MCInstrAnalysis> MIA(
