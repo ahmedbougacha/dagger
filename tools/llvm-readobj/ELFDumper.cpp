@@ -77,6 +77,7 @@ private:
   typedef typename ELFO::Elf_Phdr Elf_Phdr;
   typedef typename ELFO::Elf_Hash Elf_Hash;
   typedef typename ELFO::Elf_Ehdr Elf_Ehdr;
+  typedef typename ELFO::Elf_Word Elf_Word;
   typedef typename ELFO::uintX_t uintX_t;
   typedef typename ELFO::Elf_Versym Elf_Versym;
   typedef typename ELFO::Elf_Verneed Elf_Verneed;
@@ -94,7 +95,8 @@ private:
     uintX_t EntSize;
   };
 
-  void printSymbol(const Elf_Sym *Symbol, StringRef StrTable, bool IsDynamic);
+  void printSymbol(const Elf_Sym *Symbol, const Elf_Shdr *SymTab,
+                   StringRef StrTable, bool IsDynamic);
 
   void printRelocations(const Elf_Shdr *Sec);
   void printRelocation(const Elf_Shdr *Sec, Elf_Rela Rel);
@@ -134,6 +136,8 @@ private:
   StringRef SOName;
   const Elf_Hash *HashTable = nullptr;
   const Elf_Shdr *DotDynSymSec = nullptr;
+  const Elf_Shdr *DotSymtabSec = nullptr;
+  ArrayRef<Elf_Word> ShndxTable;
 
   const Elf_Shdr *dot_gnu_version_sec = nullptr;   // .gnu.version
   const Elf_Shdr *dot_gnu_version_r_sec = nullptr; // .gnu.version_r
@@ -166,6 +170,8 @@ public:
   std::string getFullSymbolName(const Elf_Sym *Symbol, StringRef StrTable,
                                 bool IsDynamic);
   const Elf_Shdr *getDotDynSymSec() const { return DotDynSymSec; }
+  const Elf_Shdr *getDotSymtabSec() const { return DotSymtabSec; }
+  ArrayRef<Elf_Word> getShndxTable() { return ShndxTable; }
 };
 
 template <class T> T errorOrDefault(ErrorOr<T> Val, T Default = T()) {
@@ -367,6 +373,8 @@ std::string ELFDumper<ELFT>::getFullSymbolName(const Elf_Sym *Symbol,
 template <typename ELFO>
 static void
 getSectionNameIndex(const ELFO &Obj, const typename ELFO::Elf_Sym *Symbol,
+                    const typename ELFO::Elf_Shdr *SymTab,
+                    ArrayRef<typename ELFO::Elf_Word> ShndxTable,
                     StringRef &SectionName, unsigned &SectionIndex) {
   SectionIndex = Symbol->st_shndx;
   if (Symbol->isUndefined())
@@ -383,7 +391,8 @@ getSectionNameIndex(const ELFO &Obj, const typename ELFO::Elf_Sym *Symbol,
     SectionName = "Reserved";
   else {
     if (SectionIndex == SHN_XINDEX)
-      SectionIndex = Obj.getExtendedSymbolTableIndex(&*Symbol);
+      SectionIndex =
+          Obj.getExtendedSymbolTableIndex(Symbol, SymTab, ShndxTable);
     ErrorOr<const typename ELFO::Elf_Shdr *> Sec = Obj.getSection(SectionIndex);
     error(Sec.getError());
     SectionName = errorOrDefault(Obj.getSectionName(*Sec));
@@ -891,6 +900,17 @@ ELFDumper<ELFT>::ELFDumper(const ELFFile<ELFT> *Obj, StreamWriter &Writer)
         reportError("Multilpe SHT_DYNSYM");
       DotDynSymSec = &Sec;
       break;
+    case ELF::SHT_SYMTAB:
+      if (DotSymtabSec != nullptr)
+        reportError("Multilpe SHT_SYMTAB");
+      DotSymtabSec = &Sec;
+      break;
+    case ELF::SHT_SYMTAB_SHNDX: {
+      ErrorOr<ArrayRef<Elf_Word>> TableOrErr = Obj->getSHNDXTable(Sec);
+      error(TableOrErr.getError());
+      ShndxTable = *TableOrErr;
+      break;
+    }
     }
   }
 }
@@ -997,17 +1017,18 @@ void ELFDumper<ELFT>::printSections() {
 
     if (opts::SectionSymbols) {
       ListScope D(W, "Symbols");
-      const Elf_Shdr *Symtab = Obj->getDotSymtabSec();
+      const Elf_Shdr *Symtab = DotSymtabSec;
       ErrorOr<StringRef> StrTableOrErr = Obj->getStringTableForSymtab(*Symtab);
       error(StrTableOrErr.getError());
       StringRef StrTable = *StrTableOrErr;
 
       for (const Elf_Sym &Sym : Obj->symbols(Symtab)) {
-        ErrorOr<const Elf_Shdr *> SymSec = Obj->getSection(&Sym);
+        ErrorOr<const Elf_Shdr *> SymSec =
+            Obj->getSection(&Sym, Symtab, ShndxTable);
         if (!SymSec)
           continue;
         if (*SymSec == &Sec)
-          printSymbol(&Sym, StrTable, false);
+          printSymbol(&Sym, Symtab, StrTable, false);
       }
     }
 
@@ -1098,7 +1119,8 @@ void ELFDumper<ELFT>::printRelocation(const Elf_Shdr *Sec, Elf_Rela Rel) {
   std::pair<const Elf_Shdr *, const Elf_Sym *> Sym =
       Obj->getRelocationSymbol(Sec, &Rel);
   if (Sym.second && Sym.second->getType() == ELF::STT_SECTION) {
-    ErrorOr<const Elf_Shdr *> Sec = Obj->getSection(Sym.second);
+    ErrorOr<const Elf_Shdr *> Sec =
+        Obj->getSection(Sym.second, Sym.first, ShndxTable);
     error(Sec.getError());
     ErrorOr<StringRef> SecName = Obj->getSectionName(*Sec);
     if (SecName)
@@ -1129,12 +1151,12 @@ template<class ELFT>
 void ELFDumper<ELFT>::printSymbols() {
   ListScope Group(W, "Symbols");
 
-  const Elf_Shdr *Symtab = Obj->getDotSymtabSec();
+  const Elf_Shdr *Symtab = DotSymtabSec;
   ErrorOr<StringRef> StrTableOrErr = Obj->getStringTableForSymtab(*Symtab);
   error(StrTableOrErr.getError());
   StringRef StrTable = *StrTableOrErr;
   for (const Elf_Sym &Sym : Obj->symbols(Symtab))
-    printSymbol(&Sym, StrTable, false);
+    printSymbol(&Sym, Symtab, StrTable, false);
 }
 
 template<class ELFT>
@@ -1146,15 +1168,16 @@ void ELFDumper<ELFT>::printDynamicSymbols() {
   error(StrTableOrErr.getError());
   StringRef StrTable = *StrTableOrErr;
   for (const Elf_Sym &Sym : Obj->symbols(Symtab))
-    printSymbol(&Sym, StrTable, true);
+    printSymbol(&Sym, Symtab, StrTable, true);
 }
 
 template <class ELFT>
-void ELFDumper<ELFT>::printSymbol(const Elf_Sym *Symbol, StringRef StrTable,
-                                  bool IsDynamic) {
+void ELFDumper<ELFT>::printSymbol(const Elf_Sym *Symbol, const Elf_Shdr *SymTab,
+                                  StringRef StrTable, bool IsDynamic) {
   unsigned SectionIndex = 0;
   StringRef SectionName;
-  getSectionNameIndex(*Obj, Symbol, SectionName, SectionIndex);
+  getSectionNameIndex(*Obj, Symbol, SymTab, ShndxTable, SectionName,
+                      SectionIndex);
   std::string FullSymbolName = getFullSymbolName(Symbol, StrTable, IsDynamic);
   unsigned char SymbolType = Symbol->getType();
 
@@ -1412,7 +1435,8 @@ namespace {
 template <> void ELFDumper<ELFType<support::little, false>>::printUnwindInfo() {
   const unsigned Machine = Obj->getHeader()->e_machine;
   if (Machine == EM_ARM) {
-    ARM::EHABI::PrinterContext<ELFType<support::little, false>> Ctx(W, Obj);
+    ARM::EHABI::PrinterContext<ELFType<support::little, false>> Ctx(
+        W, Obj, DotSymtabSec);
     return Ctx.PrintUnwindInformation();
   }
   W.startLine() << "UnwindInfo not implemented.\n";
@@ -1817,7 +1841,8 @@ void MipsGOTParser<ELFT>::printGlobalGotEntry(
 
   unsigned SectionIndex = 0;
   StringRef SectionName;
-  getSectionNameIndex(*Obj, Sym, SectionName, SectionIndex);
+  getSectionNameIndex(*Obj, Sym, Dumper->getDotDynSymSec(),
+                      Dumper->getShndxTable(), SectionName, SectionIndex);
   W.printHex("Section", SectionName, SectionIndex);
 
   std::string FullSymbolName =
@@ -1850,7 +1875,8 @@ void MipsGOTParser<ELFT>::printPLTEntry(uint64_t PLTAddr,
 
   unsigned SectionIndex = 0;
   StringRef SectionName;
-  getSectionNameIndex(*Obj, Sym, SectionName, SectionIndex);
+  getSectionNameIndex(*Obj, Sym, Dumper->getDotDynSymSec(),
+                      Dumper->getShndxTable(), SectionName, SectionIndex);
   W.printHex("Section", SectionName, SectionIndex);
 
   std::string FullSymbolName = Dumper->getFullSymbolName(Sym, StrTable, true);

@@ -59,7 +59,7 @@ TailDupLimit("tail-dup-limit", cl::init(~0U), cl::Hidden);
 typedef std::vector<std::pair<MachineBasicBlock*,unsigned> > AvailableValsTy;
 
 namespace {
-  /// TailDuplicatePass - Perform tail duplication.
+  /// Perform tail duplication.
   class TailDuplicatePass : public MachineFunctionPass {
     const TargetInstrInfo *TII;
     const TargetRegisterInfo *TRI;
@@ -69,11 +69,11 @@ namespace {
     std::unique_ptr<RegScavenger> RS;
     bool PreRegAlloc;
 
-    // SSAUpdateVRs - A list of virtual registers for which to update SSA form.
+    // A list of virtual registers for which to update SSA form.
     SmallVector<unsigned, 16> SSAUpdateVRs;
 
-    // SSAUpdateVals - For each virtual register in SSAUpdateVals keep a list of
-    // source virtual registers.
+    // For each virtual register in SSAUpdateVals keep a list of source virtual
+    // registers.
     DenseMap<unsigned, AvailableValsTy> SSAUpdateVals;
 
   public:
@@ -207,7 +207,7 @@ static void VerifyPHIs(MachineFunction &MF, bool CheckExtra) {
   }
 }
 
-/// TailDuplicateAndUpdate - Tail duplicate the block and cleanup.
+/// Tail duplicate the block and cleanup.
 bool
 TailDuplicatePass::TailDuplicateAndUpdate(MachineBasicBlock *MBB,
                                           bool IsSimple,
@@ -310,9 +310,9 @@ TailDuplicatePass::TailDuplicateAndUpdate(MachineBasicBlock *MBB,
   return true;
 }
 
-/// TailDuplicateBlocks - Look for small blocks that are unconditionally
-/// branched to and do not fall through. Tail-duplicate their instructions
-/// into their predecessors to eliminate (dynamic) branches.
+/// Look for small blocks that are unconditionally branched to and do not fall
+/// through. Tail-duplicate their instructions into their predecessors to
+/// eliminate (dynamic) branches.
 bool TailDuplicatePass::TailDuplicateBlocks(MachineFunction &MF) {
   bool MadeChange = false;
 
@@ -375,8 +375,7 @@ static void getRegsUsedByPHIs(const MachineBasicBlock &BB,
   }
 }
 
-/// AddSSAUpdateEntry - Add a definition and source virtual registers pair for
-/// SSA update.
+/// Add a definition and source virtual registers pair for SSA update.
 void TailDuplicatePass::AddSSAUpdateEntry(unsigned OrigReg, unsigned NewReg,
                                           MachineBasicBlock *BB) {
   DenseMap<unsigned, AvailableValsTy>::iterator LI= SSAUpdateVals.find(OrigReg);
@@ -390,9 +389,8 @@ void TailDuplicatePass::AddSSAUpdateEntry(unsigned OrigReg, unsigned NewReg,
   }
 }
 
-/// ProcessPHI - Process PHI node in TailBB by turning it into a copy in PredBB.
-/// Remember the source register that's contributed by PredBB and update SSA
-/// update map.
+/// Process PHI node in TailBB by turning it into a copy in PredBB. Remember the
+/// source register that's contributed by PredBB and update SSA update map.
 void TailDuplicatePass::ProcessPHI(
     MachineInstr *MI, MachineBasicBlock *TailBB, MachineBasicBlock *PredBB,
     DenseMap<unsigned, unsigned> &LocalVRMap,
@@ -422,7 +420,7 @@ void TailDuplicatePass::ProcessPHI(
     MI->eraseFromParent();
 }
 
-/// DuplicateInstruction - Duplicate a TailBB instruction to PredBB and update
+/// Duplicate a TailBB instruction to PredBB and update
 /// the source operands due to earlier PHI translation.
 void TailDuplicatePass::DuplicateInstruction(MachineInstr *MI,
                                      MachineBasicBlock *TailBB,
@@ -459,9 +457,9 @@ void TailDuplicatePass::DuplicateInstruction(MachineInstr *MI,
   PredBB->insert(PredBB->instr_end(), NewMI);
 }
 
-/// UpdateSuccessorsPHIs - After FromBB is tail duplicated into its predecessor
-/// blocks, the successors have gained new predecessors. Update the PHI
-/// instructions in them accordingly.
+/// After FromBB is tail duplicated into its predecessor blocks, the successors
+/// have gained new predecessors. Update the PHI instructions in them
+/// accordingly.
 void
 TailDuplicatePass::UpdateSuccessorsPHIs(MachineBasicBlock *FromBB, bool isDead,
                                   SmallVectorImpl<MachineBasicBlock *> &TDBBs,
@@ -545,7 +543,7 @@ TailDuplicatePass::UpdateSuccessorsPHIs(MachineBasicBlock *FromBB, bool isDead,
   }
 }
 
-/// shouldTailDuplicate - Determine if it is profitable to duplicate this block.
+/// Determine if it is profitable to duplicate this block.
 bool
 TailDuplicatePass::shouldTailDuplicate(const MachineFunction &MF,
                                        bool IsSimple,
@@ -585,24 +583,24 @@ TailDuplicatePass::shouldTailDuplicate(const MachineFunction &MF,
   // Check the instructions in the block to determine whether tail-duplication
   // is invalid or unlikely to be profitable.
   unsigned InstrCount = 0;
-  for (MachineBasicBlock::iterator I = TailBB.begin(); I != TailBB.end(); ++I) {
+  for (MachineInstr &MI : TailBB) {
     // Non-duplicable things shouldn't be tail-duplicated.
-    if (I->isNotDuplicable())
+    if (MI.isNotDuplicable())
       return false;
 
     // Do not duplicate 'return' instructions if this is a pre-regalloc run.
     // A return may expand into a lot more instructions (e.g. reload of callee
     // saved registers) after PEI.
-    if (PreRegAlloc && I->isReturn())
+    if (PreRegAlloc && MI.isReturn())
       return false;
 
     // Avoid duplicating calls before register allocation. Calls presents a
     // barrier to register allocation so duplicating them may end up increasing
     // spills.
-    if (PreRegAlloc && I->isCall())
+    if (PreRegAlloc && MI.isCall())
       return false;
 
-    if (!I->isPHI() && !I->isDebugValue())
+    if (!MI.isPHI() && !MI.isDebugValue())
       InstrCount += 1;
 
     if (InstrCount > MaxDuplicateCount)
@@ -621,7 +619,7 @@ TailDuplicatePass::shouldTailDuplicate(const MachineFunction &MF,
   return canCompletelyDuplicateBB(TailBB);
 }
 
-/// isSimpleBB - True if this BB has only one unconditional jump.
+/// True if this BB has only one unconditional jump.
 bool
 TailDuplicatePass::isSimpleBB(MachineBasicBlock *TailBB) {
   if (TailBB->succ_size() != 1)
@@ -637,22 +635,16 @@ TailDuplicatePass::isSimpleBB(MachineBasicBlock *TailBB) {
 static bool
 bothUsedInPHI(const MachineBasicBlock &A,
               SmallPtrSet<MachineBasicBlock*, 8> SuccsB) {
-  for (MachineBasicBlock::const_succ_iterator SI = A.succ_begin(),
-         SE = A.succ_end(); SI != SE; ++SI) {
-    MachineBasicBlock *BB = *SI;
+  for (MachineBasicBlock *BB : A.successors())
     if (SuccsB.count(BB) && !BB->empty() && BB->begin()->isPHI())
       return true;
-  }
 
   return false;
 }
 
 bool
 TailDuplicatePass::canCompletelyDuplicateBB(MachineBasicBlock &BB) {
-  for (MachineBasicBlock::pred_iterator PI = BB.pred_begin(),
-       PE = BB.pred_end(); PI != PE; ++PI) {
-    MachineBasicBlock *PredBB = *PI;
-
+  for (MachineBasicBlock *PredBB : BB.predecessors()) {
     if (PredBB->succ_size() > 1)
       return false;
 
@@ -744,7 +736,7 @@ TailDuplicatePass::duplicateSimpleBB(MachineBasicBlock *TailBB,
   return Changed;
 }
 
-/// TailDuplicate - If it is profitable, duplicate TailBB's contents in each
+/// If it is profitable, duplicate TailBB's contents in each
 /// of its predecessors.
 bool
 TailDuplicatePass::TailDuplicate(MachineBasicBlock *TailBB,
@@ -961,8 +953,8 @@ TailDuplicatePass::TailDuplicate(MachineBasicBlock *TailBB,
   return Changed;
 }
 
-/// RemoveDeadBlock - Remove the specified dead machine basic block from the
-/// function, updating the CFG.
+/// Remove the specified dead machine basic block from the function, updating
+/// the CFG.
 void TailDuplicatePass::RemoveDeadBlock(MachineBasicBlock *MBB) {
   assert(MBB->pred_empty() && "MBB must be dead!");
   DEBUG(dbgs() << "\nRemoving MBB: " << *MBB);

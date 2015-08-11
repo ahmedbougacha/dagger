@@ -107,6 +107,9 @@ public:
                               const yaml::MachineFunction &YamlMF,
                               PerFunctionMIParsingState &PFS);
 
+  void inferRegisterInfo(MachineFunction &MF,
+                         const yaml::MachineFunction &YamlMF);
+
   bool initializeFrameInfo(MachineFunction &MF,
                            const yaml::MachineFunction &YamlMF,
                            PerFunctionMIParsingState &PFS);
@@ -339,6 +342,7 @@ bool MIRParserImpl::initializeMachineFunction(MachineFunction &MF) {
                                     PFS))
       return true;
   }
+  inferRegisterInfo(MF, YamlMF);
   // FIXME: This is a temporary workaround until the reserved registers can be
   // serialized.
   MF.getRegInfo().freezeReservedRegs(MF);
@@ -443,7 +447,35 @@ bool MIRParserImpl::initializeRegisterInfo(MachineFunction &MF,
     }
     RegInfo.addLiveIn(Reg, VReg);
   }
+
+  // Parse the callee saved register mask.
+  BitVector CalleeSavedRegisterMask(RegInfo.getUsedPhysRegsMask().size());
+  if (!YamlMF.CalleeSavedRegisters)
+    return false;
+  for (const auto &RegSource : YamlMF.CalleeSavedRegisters.getValue()) {
+    unsigned Reg = 0;
+    if (parseNamedRegisterReference(Reg, SM, MF, RegSource.Value, PFS, IRSlots,
+                                    Error))
+      return error(Error, RegSource.SourceRange);
+    CalleeSavedRegisterMask[Reg] = true;
+  }
+  RegInfo.setUsedPhysRegMask(CalleeSavedRegisterMask.flip());
   return false;
+}
+
+void MIRParserImpl::inferRegisterInfo(MachineFunction &MF,
+                                      const yaml::MachineFunction &YamlMF) {
+  if (YamlMF.CalleeSavedRegisters)
+    return;
+  for (const MachineBasicBlock &MBB : MF) {
+    for (const MachineInstr &MI : MBB) {
+      for (const MachineOperand &MO : MI.operands()) {
+        if (!MO.isRegMask())
+          continue;
+        MF.getRegInfo().addPhysRegsUsedFromRegMask(MO.getRegMask());
+      }
+    }
+  }
 }
 
 bool MIRParserImpl::initializeFrameInfo(MachineFunction &MF,
@@ -489,8 +521,12 @@ bool MIRParserImpl::initializeFrameInfo(MachineFunction &MF,
     else
       ObjectIdx = MFI.CreateFixedSpillStackObject(Object.Size, Object.Offset);
     MFI.setObjectAlignment(ObjectIdx, Object.Alignment);
-    // TODO: Report an error when objects are redefined.
-    PFS.FixedStackObjectSlots.insert(std::make_pair(Object.ID, ObjectIdx));
+    if (!PFS.FixedStackObjectSlots.insert(std::make_pair(Object.ID.Value,
+                                                         ObjectIdx))
+             .second)
+      return error(Object.ID.SourceRange.Start,
+                   Twine("redefinition of fixed stack object '%fixed-stack.") +
+                       Twine(Object.ID.Value) + "'");
     if (parseCalleeSavedRegister(MF, PFS, CSIInfo, Object.CalleeSavedRegister,
                                  ObjectIdx))
       return true;
@@ -517,8 +553,11 @@ bool MIRParserImpl::initializeFrameInfo(MachineFunction &MF,
           Object.Size, Object.Alignment,
           Object.Type == yaml::MachineStackObject::SpillSlot, Alloca);
     MFI.setObjectOffset(ObjectIdx, Object.Offset);
-    // TODO: Report an error when objects are redefined.
-    PFS.StackObjectSlots.insert(std::make_pair(Object.ID, ObjectIdx));
+    if (!PFS.StackObjectSlots.insert(std::make_pair(Object.ID.Value, ObjectIdx))
+             .second)
+      return error(Object.ID.SourceRange.Start,
+                   Twine("redefinition of stack object '%stack.") +
+                       Twine(Object.ID.Value) + "'");
     if (parseCalleeSavedRegister(MF, PFS, CSIInfo, Object.CalleeSavedRegister,
                                  ObjectIdx))
       return true;

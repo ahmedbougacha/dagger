@@ -69,6 +69,7 @@ The most important flags are::
   sync_command                       	0	Execute an external command "<sync_command> <test_corpus>" to synchronize the test corpus.
   sync_timeout                       	600	Minimum timeout between syncs.
   use_traces                            0       Experimental: use instruction traces
+  only_ascii                            0       If 1, generate only ASCII (isprint+isspace) inputs.
 
 
 For the full list of flags run the fuzzer binary with ``-help=1``.
@@ -420,6 +421,29 @@ This Fuzzer might be a good choice for testing libraries that have relatively
 small inputs, each input takes < 1ms to run, and the library code is not expected
 to crash on invalid inputs.
 Examples: regular expression matchers, text or binary format parsers.
+
+Trophies
+========
+* GLIBC: https://sourceware.org/glibc/wiki/FuzzingLibc
+
+* MUSL LIBC:
+
+  * http://git.musl-libc.org/cgit/musl/commit/?id=39dfd58417ef642307d90306e1c7e50aaec5a35c
+  * http://www.openwall.com/lists/oss-security/2015/03/30/3
+
+* pugixml: https://github.com/zeux/pugixml/issues/39
+
+* PCRE: Search for "LLVM fuzzer" in http://vcs.pcre.org/pcre2/code/trunk/ChangeLog?view=markup
+
+* LLVM:
+
+  * Clang: https://llvm.org/bugs/show_bug.cgi?id=23057
+
+  * Clang-format: https://llvm.org/bugs/show_bug.cgi?id=23052
+
+  * libc++: https://llvm.org/bugs/show_bug.cgi?id=24411
+
+
 
 .. _pcre2: http://www.pcre.org/
 

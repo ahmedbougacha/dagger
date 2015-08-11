@@ -4279,6 +4279,18 @@ operand which is the string ``llvm.loop.unroll.runtime.disable``. For example:
 
    !0 = !{!"llvm.loop.unroll.runtime.disable"}
 
+'``llvm.loop.unroll.enable``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This metadata suggests that the loop should be fully unrolled if the trip count
+is known at compile time and partially unrolled if the trip count is not known
+at compile time. The metadata has a single operand which is the string
+``llvm.loop.unroll.enable``.  For example:
+
+.. code-block:: llvm
+
+   !0 = !{!"llvm.loop.unroll.enable"}
+
 '``llvm.loop.unroll.full``' Metadata
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -6792,7 +6804,7 @@ Example:
 
       %ptr = alloca i32                               ; yields i32*:ptr
       store i32 3, i32* %ptr                          ; yields void
-      %val = load i32* %ptr                           ; yields i32:val = i32 3
+      %val = load i32, i32* %ptr                      ; yields i32:val = i32 3
 
 .. _i_fence:
 

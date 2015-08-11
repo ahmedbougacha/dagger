@@ -429,6 +429,9 @@ def : InstAlias<"wr $simm13, %tbr", (WRTBRri G0, i32imm:$simm13), 0>;
 def : InstAlias<"flush", (FLUSH), 0>;
 
 
+def : MnemonicAlias<"lduw", "ld">, Requires<[HasV9]>;
+def : MnemonicAlias<"lduwa", "lda">, Requires<[HasV9]>;
+
 def : MnemonicAlias<"return", "rett">, Requires<[HasV9]>;
 
 def : MnemonicAlias<"addc", "addx">, Requires<[HasV9]>;
@@ -450,3 +453,8 @@ def : InstAlias<"fcmpeq $rs1, $rs2", (V9FCMPEQ FCC0, QFPRegs:$rs1,
                                                      QFPRegs:$rs2)>,
                 Requires<[HasHardQuad]>;
 
+// signx rd -> sra rd, %g0, rd
+def : InstAlias<"signx $rd", (SRArr IntRegs:$rd, IntRegs:$rd, G0), 0>, Requires<[HasV9]>;
+
+// signx reg, rd -> sra reg, %g0, rd
+def : InstAlias<"signx $rs1, $rd", (SRArr IntRegs:$rd, IntRegs:$rs1, G0), 0>, Requires<[HasV9]>;

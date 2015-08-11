@@ -5188,9 +5188,7 @@ static SDValue LowerVectorBroadcast(SDValue Op, const X86Subtarget* Subtarget,
   // TODO: If multiple splats are generated to load the same constant,
   // it may be detrimental to overall size. There needs to be a way to detect
   // that condition to know if this is truly a size win.
-  const Function *F = DAG.getMachineFunction().getFunction();
-  // FIXME: Use Function::optForSize().
-  bool OptForSize = F->hasFnAttribute(Attribute::OptimizeForSize);
+  bool OptForSize = DAG.getMachineFunction().getFunction()->optForSize();
 
   // Handle broadcasting a single constant scalar from the constant pool
   // into a vector.
@@ -23466,50 +23464,6 @@ static SDValue PerformINTRINSIC_WO_CHAINCombine(SDNode *N, SelectionDAG &DAG,
 
     return SDValue();
   }
-
-  // Packed SSE2/AVX2 arithmetic shift immediate intrinsics.
-  case Intrinsic::x86_sse2_psrai_w:
-  case Intrinsic::x86_sse2_psrai_d:
-  case Intrinsic::x86_avx2_psrai_w:
-  case Intrinsic::x86_avx2_psrai_d:
-  case Intrinsic::x86_sse2_psra_w:
-  case Intrinsic::x86_sse2_psra_d:
-  case Intrinsic::x86_avx2_psra_w:
-  case Intrinsic::x86_avx2_psra_d: {
-    SDValue Op0 = N->getOperand(1);
-    SDValue Op1 = N->getOperand(2);
-    EVT VT = Op0.getValueType();
-    assert(VT.isVector() && "Expected a vector type!");
-
-    if (isa<BuildVectorSDNode>(Op1))
-      Op1 = Op1.getOperand(0);
-
-    if (!isa<ConstantSDNode>(Op1))
-      return SDValue();
-
-    EVT SVT = VT.getVectorElementType();
-    unsigned SVTBits = SVT.getSizeInBits();
-
-    ConstantSDNode *CND = cast<ConstantSDNode>(Op1);
-    const APInt &C = APInt(SVTBits, CND->getAPIntValue().getZExtValue());
-    uint64_t ShAmt = C.getZExtValue();
-
-    // Don't try to convert this shift into a ISD::SRA if the shift
-    // count is bigger than or equal to the element size.
-    if (ShAmt >= SVTBits)
-      return SDValue();
-
-    // Trivial case: if the shift count is zero, then fold this
-    // into the first operand.
-    if (ShAmt == 0)
-      return Op0;
-
-    // Replace this packed shift intrinsic with a target independent
-    // shift dag node.
-    SDLoc DL(N);
-    SDValue Splat = DAG.getConstant(C, DL, VT);
-    return DAG.getNode(ISD::SRA, DL, VT, Op0, Splat);
-  }
   }
 }
 
@@ -24129,10 +24083,7 @@ static SDValue PerformOrCombine(SDNode *N, SelectionDAG &DAG,
     return SDValue();
 
   // fold (or (x << c) | (y >> (64 - c))) ==> (shld64 x, y, c)
-  MachineFunction &MF = DAG.getMachineFunction();
-  // FIXME: Use Function::optForSize().
-  bool OptForSize =
-      MF.getFunction()->hasFnAttribute(Attribute::OptimizeForSize);
+  bool OptForSize = DAG.getMachineFunction().getFunction()->optForSize();
 
   // SHLD/SHRD instructions have lower register pressure, but on some
   // platforms they have higher latency than the equivalent

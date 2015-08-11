@@ -408,13 +408,16 @@ let DecoderMethod = "DecodeLoadInt" in {
   defm LD   : LoadA<"ld",   0b000000, 0b010000, load,        IntRegs, i32>;
 }
 
+let DecoderMethod = "DecodeLoadIntPair" in
+  defm LDD : LoadA<"ldd", 0b000011, 0b010011, load, IntPair, v2i32>;
+
 // Section B.2 - Load Floating-point Instructions, p. 92
 let DecoderMethod = "DecodeLoadFP" in
-  defm LDF   : Load<"ld",  0b100000, load, FPRegs,  f32>;
+  defm LDF   : LoadA<"ld",  0b100000, 0b110000, load, FPRegs,  f32>;
 let DecoderMethod = "DecodeLoadDFP" in
-  defm LDDF  : Load<"ldd", 0b100011, load, DFPRegs, f64>;
+  defm LDDF  : LoadA<"ldd", 0b100011, 0b110011, load, DFPRegs, f64>;
 let DecoderMethod = "DecodeLoadQFP" in
-  defm LDQF  : Load<"ldq", 0b100010, load, QFPRegs, f128>,
+  defm LDQF  : LoadA<"ldq", 0b100010, 0b110010, load, QFPRegs, f128>,
                Requires<[HasV9, HasHardQuad]>;
 
 // Section B.4 - Store Integer Instructions, p. 95
@@ -424,13 +427,16 @@ let DecoderMethod = "DecodeStoreInt" in {
   defm ST    : StoreA<"st",  0b000100, 0b010100, store,         IntRegs, i32>;
 }
 
+let DecoderMethod = "DecodeStoreIntPair" in
+  defm STD   : StoreA<"std", 0b000111, 0b010111, store, IntPair, v2i32>;
+
 // Section B.5 - Store Floating-point Instructions, p. 97
 let DecoderMethod = "DecodeStoreFP" in
-  defm STF   : Store<"st",  0b100100, store,         FPRegs,  f32>;
+  defm STF   : StoreA<"st",  0b100100, 0b110100, store,         FPRegs,  f32>;
 let DecoderMethod = "DecodeStoreDFP" in
-  defm STDF  : Store<"std", 0b100111, store,         DFPRegs, f64>;
+  defm STDF  : StoreA<"std", 0b100111, 0b110111, store,         DFPRegs, f64>;
 let DecoderMethod = "DecodeStoreQFP" in
-  defm STQF  : Store<"stq", 0b100110, store,         QFPRegs, f128>,
+  defm STQF  : StoreA<"stq", 0b100110, 0b110110, store,         QFPRegs, f128>,
                Requires<[HasV9, HasHardQuad]>;
 
 // Section B.8 - SWAP Register with Memory Instruction
@@ -1326,6 +1332,18 @@ def : Pat<(i32 (atomic_load ADDRri:$src)), (LDri ADDRri:$src)>;
 // atomic_store_32 val, addr -> store val, addr
 def : Pat<(atomic_store ADDRrr:$dst, i32:$val), (STrr ADDRrr:$dst, $val)>;
 def : Pat<(atomic_store ADDRri:$dst, i32:$val), (STri ADDRri:$dst, $val)>;
+
+// extract_vector
+def : Pat<(vector_extract (v2i32 IntPair:$Rn), 0),
+          (i32 (EXTRACT_SUBREG IntPair:$Rn, sub_even))>;
+def : Pat<(vector_extract (v2i32 IntPair:$Rn), 1),
+          (i32 (EXTRACT_SUBREG IntPair:$Rn, sub_odd))>;
+
+// build_vector
+def : Pat<(build_vector (i32 IntRegs:$a1), (i32 IntRegs:$a2)),
+          (INSERT_SUBREG
+	    (INSERT_SUBREG (v2i32 (IMPLICIT_DEF)), (i32 IntRegs:$a1), sub_even),
+            (i32 IntRegs:$a2), sub_odd)>;
 
 
 include "SparcInstr64Bit.td"
