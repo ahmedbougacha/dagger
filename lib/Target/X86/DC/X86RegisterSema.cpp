@@ -17,6 +17,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
+#include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
 #define DEBUG_TYPE "x86-dc-regsema"
@@ -380,75 +381,76 @@ void X86RegisterSema::insertFiniRegSetCode(Function *FiniFn) {
       Builder->getInt32Ty()));
 }
 
-// FIXME: we really need the regsets to be tablegen'd
-// generate a full C structure, with some code to create a StructType
-// FIXME: Maybe this could be done as inline assembly too.
-static void __extwrap(char *regset, void *fn) {
-  asm volatile (
-                "mov %0, %%r12          \n" // r12 <- regset
-                "mov %1, %%r13          \n" // r13 <- fn
-                "mov %%rsp, %%r14       \n" // r14 <- old_sp
-
-                "mov 80(%%r12), %%rsp   \n" // switch to regset sp
-
-                "pop %%rax              \n" // "pop" the return address
-                "mov %%rax, 64(%%r12)   \n"
-
-                "mov  48(%%r12), %%rdi  \n"
-                "mov  72(%%r12), %%rsi  \n"
-                "mov  56(%%r12), %%rdx  \n"
-                "mov  40(%%r12), %%rcx  \n"
-                "mov 448(%%r12), %%r8   \n"
-                "mov 456(%%r12), %%r9   \n"
-
-                "movaps  640(%%r12), %%xmm0 \n"
-                "movaps  704(%%r12), %%xmm1 \n"
-                "movaps  768(%%r12), %%xmm2 \n"
-                "movaps  832(%%r12), %%xmm3 \n"
-                "movaps  896(%%r12), %%xmm4 \n"
-                "movaps  960(%%r12), %%xmm5 \n"
-                "movaps 1024(%%r12), %%xmm6 \n"
-                "movaps 1088(%%r12), %%xmm7 \n"
-
-                "mov 16(%%r12), %%rax   \n" // used for vararg sse count
-                "mov 56(%%r12), %%rdx   \n"
-
-                "call *%%r13            \n"
-
-                "mov %%rax, 16(%%r12)   \n"
-                "mov %%rdx, 56(%%r12)   \n"
-
-                "movaps %%xmm0,  640(%%r12) \n"
-                "movaps %%xmm1,  704(%%r12) \n"
-                "movaps %%xmm2,  768(%%r12) \n"
-                "movaps %%xmm3,  832(%%r12) \n"
-                "movaps %%xmm4,  896(%%r12) \n"
-                "movaps %%xmm5,  960(%%r12) \n"
-                "movaps %%xmm6, 1024(%%r12) \n"
-                "movaps %%xmm7, 1088(%%r12) \n"
-
-                "mov %%rsp, 80(%%r12)   \n"
-
-                "mov %%r14, %%rsp       \n" // restore old_sp
-
-                :: "r"(regset), "r"(fn)
-                : "rax", "rdi", "rsi", "rdx", "rcx", "r8",
-                  "r9", "r10", "r11", "r12", "r13", "r14",
-                  "xmm0", "xmm1", "xmm2", "xmm3",
-                  "xmm4", "xmm5", "xmm6", "xmm7"
-                  );
-}
-
 void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
                                                Function *ExtFn) {
-
   DCIRBuilder WBuilder(WrapperBB);
 
-  Type *ArgTypes[2] = { RegSetType->getPointerTo(), ExtFn->getType() };
-  FunctionType *EWFnType =
-      FunctionType::get(Type::getVoidTy(*Ctx), ArgTypes, false);
+  SmallVector<Type *, 20> IAArgTypes;
+  IAArgTypes.push_back(RegSetType->getPointerTo());
+  IAArgTypes.push_back(ExtFn->getType());
 
-  Value *EWFn = getCallTargetForExtFn(EWFnType, &__extwrap);
-  WBuilder.CreateCall(
-      EWFn, {WrapperBB->getParent()->getArgumentList().begin(), ExtFn});
+  auto getRegOffset =
+      [this](unsigned Reg) { return getRegSizeOffsetInRegSet(Reg).second; };
+
+  std::string IAStr;
+  raw_string_ostream(IAStr)
+      << "mov $0, %r12  \n" // r12 <- regset
+      << "mov $1, %r13  \n" // r13 <- fn
+      << "mov %rsp, %r14\n" // r14 <- old_sp
+
+      // switch to regset sp
+      << "mov " << getRegOffset(X86::RSP) << "(%r12), %rsp  \n"
+
+      // "pop" the return address
+      << "pop %rax                                          \n"
+      << "mov %rax, " << getRegOffset(X86::RIP) << "(%r12)  \n"
+
+      << "mov " << getRegOffset(X86::RDI) << "(%r12), %rdi  \n"
+      << "mov " << getRegOffset(X86::RSI) << "(%r12), %rsi  \n"
+      << "mov " << getRegOffset(X86::RDX) << "(%r12), %rdx  \n"
+      << "mov " << getRegOffset(X86::RCX) << "(%r12), %rcx  \n"
+      << "mov " << getRegOffset(X86::R8) << "(%r12), %r8   \n"
+      << "mov " << getRegOffset(X86::R9) << "(%r12), %r9   \n"
+
+      << "movaps " << getRegOffset(X86::XMM0) << "(%r12), %xmm0 \n"
+      << "movaps " << getRegOffset(X86::XMM1) << "(%r12), %xmm1 \n"
+      << "movaps " << getRegOffset(X86::XMM2) << "(%r12), %xmm2 \n"
+      << "movaps " << getRegOffset(X86::XMM3) << "(%r12), %xmm3 \n"
+      << "movaps " << getRegOffset(X86::XMM4) << "(%r12), %xmm4 \n"
+      << "movaps " << getRegOffset(X86::XMM5) << "(%r12), %xmm5 \n"
+      << "movaps " << getRegOffset(X86::XMM6) << "(%r12), %xmm6 \n"
+      << "movaps " << getRegOffset(X86::XMM7) << "(%r12), %xmm7 \n"
+
+      // used for vararg sse count
+      << "mov " << getRegOffset(X86::RAX) << "(%r12), %rax   \n"
+
+      << "call *%r13\n"
+
+      << "mov %rax, " << getRegOffset(X86::RAX) << "(%r12)   \n"
+      << "mov %rdx, " << getRegOffset(X86::RDX) << "(%r12)   \n"
+
+      << "movaps %xmm0, " << getRegOffset(X86::XMM0) << "(%r12) \n"
+      << "movaps %xmm1, " << getRegOffset(X86::XMM1) << "(%r12) \n"
+      << "movaps %xmm2, " << getRegOffset(X86::XMM2) << "(%r12) \n"
+      << "movaps %xmm3, " << getRegOffset(X86::XMM3) << "(%r12) \n"
+      << "movaps %xmm4, " << getRegOffset(X86::XMM4) << "(%r12) \n"
+      << "movaps %xmm5, " << getRegOffset(X86::XMM5) << "(%r12) \n"
+      << "movaps %xmm6, " << getRegOffset(X86::XMM6) << "(%r12) \n"
+      << "movaps %xmm7, " << getRegOffset(X86::XMM7) << "(%r12) \n"
+
+      << "mov %rsp, " << getRegOffset(X86::RSP) << "(%r12)      \n"
+
+      // restore old_sp
+      << "mov %r14, %rsp\n";
+
+   InlineAsm *IA = InlineAsm::get(
+     FunctionType::get(Type::getVoidTy(*Ctx), IAArgTypes, false), IAStr,
+     "r,r,"
+     "~{rax},~{rdi},~{rsi},~{rdx},~{rcx},~{r8},"
+     "~{r9},~{r10},~{r11},~{r12},~{r13},~{r14},"
+     "~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{xmm6},~{xmm7}",
+     /*hasSideEffects=*/true, /*isAlignStack=*/false);
+
+   Value *RegSetPtr = WrapperBB->getParent()->getArgumentList().begin();
+   WBuilder.CreateCall(IA, {RegSetPtr, ExtFn});
 }
