@@ -24,8 +24,9 @@ using namespace llvm;
 
 DCRegisterSema::DCRegisterSema(const MCRegisterInfo &MRI,
                                const MCInstrInfo &MII,
+                               const DataLayout &DL,
                                InitSpecialRegSizesFnTy InitSpecialRegSizesFn)
-    : MRI(MRI), MII(MII), NumRegs(MRI.getNumRegs()), NumLargest(0),
+    : MRI(MRI), MII(MII), DL(DL), NumRegs(MRI.getNumRegs()), NumLargest(0),
       RegSizes(NumRegs), RegLargestSupers(NumRegs),
       RegOffsetsInSet(NumRegs, -1), LargestRegs(), TheModule(0), Ctx(0),
       RegSetType(0), Builder(), RegPtrs(NumRegs), RegAllocas(NumRegs),
@@ -319,8 +320,7 @@ Type *DCRegisterSema::getRegType(unsigned RegNo) {
 }
 
 std::pair<size_t, size_t>
-DCRegisterSema::getRegSizeOffsetInRegSet(const DataLayout &DL,
-                                         unsigned RegNo) const {
+DCRegisterSema::getRegSizeOffsetInRegSet(unsigned RegNo) const {
   size_t Size, Offset;
   Size = RegSizes[RegNo] / 8;
 

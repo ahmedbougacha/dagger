@@ -15,8 +15,9 @@ DCInstrSema *createX86DCInstrSema(StringRef TT,
 
 DCRegisterSema *createX86DCRegisterSema(StringRef TT,
                                         const MCRegisterInfo &MRI,
-                                        const MCInstrInfo &MII) {
-  return new X86RegisterSema(MRI, MII);
+                                        const MCInstrInfo &MII,
+                                        const DataLayout &DL) {
+  return new X86RegisterSema(MRI, MII, DL);
 }
 
 // Force static initialization.

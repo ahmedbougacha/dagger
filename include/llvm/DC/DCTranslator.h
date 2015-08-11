@@ -51,7 +51,7 @@ enum Level {
 
 class DCTranslator {
   LLVMContext &Ctx;
-  std::string DataLayoutStr;
+  const DataLayout DL;
 
   std::vector<std::unique_ptr<Module>> ModuleSet;
 
@@ -70,7 +70,7 @@ class DCTranslator {
   TransOpt::Level OptLevel;
 
 public:
-  DCTranslator(LLVMContext &Ctx, StringRef DataLayoutStr,
+  DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                TransOpt::Level OptLevel, DCInstrSema &DIS, DCRegisterSema &DRS,
                MCInstPrinter &IP, const MCSubtargetInfo &STI, MCModule &MCM,
                MCObjectDisassembler *MCOD = 0, bool EnableIRAnnotation = false);

@@ -29,6 +29,7 @@
 
 namespace llvm {
 class AsmPrinter;
+class DataLayout;
 class DCInstrSema;
 class DCRegisterSema;
 class MCAsmBackend;
@@ -171,7 +172,8 @@ public:
 
   typedef DCRegisterSema *(*DCRegisterSemaCtorTy)(StringRef TT,
                                                   const MCRegisterInfo &MRI,
-                                                  const MCInstrInfo &MII);
+                                                  const MCInstrInfo &MII,
+                                                  const DataLayout &DL);
   typedef DCInstrSema *(*DCInstrSemaCtorTy)(StringRef TT,
                                             DCRegisterSema &DRS,
                                             const MCRegisterInfo &MRI,
@@ -578,9 +580,10 @@ public:
   DCRegisterSema *
   createDCRegisterSema(StringRef TT,
                        const MCRegisterInfo &MRI,
-                       const MCInstrInfo &MII) const {
+                       const MCInstrInfo &MII,
+                       const DataLayout &DL) const {
     if (DCRegisterSemaCtorFn)
-      return DCRegisterSemaCtorFn(TT, MRI, MII);
+      return DCRegisterSemaCtorFn(TT, MRI, MII, DL);
     return nullptr;
   }
 

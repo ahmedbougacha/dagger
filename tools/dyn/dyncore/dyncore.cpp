@@ -337,8 +337,16 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   if (!MCM)
     exit(1);
 
+  EngineBuilder Builder;
+  Builder.setOptLevel(CodeGenOpt::Default);
+  TargetMachine *TM = Builder.selectTarget();
+  if (!TM)
+    llvm_unreachable("Unable to select target machine for JIT!");
+
+  const DataLayout DL = TM->createDataLayout();
+
   std::unique_ptr<DCRegisterSema> DRS(
-      TheTarget->createDCRegisterSema(TripleName, *MRI, *MII));
+      TheTarget->createDCRegisterSema(TripleName, *MRI, *MII, DL));
   if (!DRS) {
     errs() << "error: no dc register sema for target " << TripleName << "\n";
     exit(1);
@@ -353,14 +361,6 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   DIS->setDynTranslateAtCallback(
       reinterpret_cast<void *>(&__llvm_dc_translate_at));
 
-  EngineBuilder Builder;
-  Builder.setOptLevel(CodeGenOpt::Default);
-  TargetMachine *TM = Builder.selectTarget();
-  if (!TM)
-    llvm_unreachable("Unable to select target machine for JIT!");
-
-  const DataLayout DL = TM->createDataLayout();
-
   // Add the program's symbols into the JIT's search space.
   if (sys::DynamicLibrary::LoadLibraryPermanently(nullptr)) {
     errs() << "error: unable to load program symbols.\n";
@@ -370,7 +370,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   DYNJIT J(*TM);
 
   std::unique_ptr<DCTranslator> DT(
-    new DCTranslator(getGlobalContext(), DL.getStringRepresentation(),
+    new DCTranslator(getGlobalContext(), DL,
                      TransOpt::Default, *DIS, *DRS,
                      *MIP, *STI, *MCM, OD.get()));
 
@@ -393,7 +393,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   unsigned RegSetPCSize, RegSetPCOffset;
   std::tie(RegSetPCSize, RegSetPCOffset) =
-      DRS->getRegSizeOffsetInRegSet(DL, MRI->getProgramCounter());
+      DRS->getRegSizeOffsetInRegSet(MRI->getProgramCounter());
 
   auto InitRegSetFnFP =
       (void (*)(uint8_t *, uint8_t *, uint32_t, uint32_t, char **))

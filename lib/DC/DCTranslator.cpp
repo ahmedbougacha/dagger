@@ -27,12 +27,12 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dctranslator"
 
-DCTranslator::DCTranslator(LLVMContext &Ctx, StringRef DataLayoutStr,
+DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                            TransOpt::Level TransOptLevel, DCInstrSema &DIS,
                            DCRegisterSema &DRS, MCInstPrinter &IP,
                            const MCSubtargetInfo &STI, MCModule &MCM,
                            MCObjectDisassembler *MCOD, bool EnableIRAnnotation)
-    : Ctx(Ctx), DataLayoutStr(DataLayoutStr), ModuleSet(), MCOD(MCOD), MCM(MCM),
+    : Ctx(Ctx), DL(DL), ModuleSet(), MCOD(MCOD), MCM(MCM),
       CurrentModule(nullptr), CurrentFPM(), DTIT(), AnnotWriter(), DIS(DIS),
       OptLevel(TransOptLevel) {
 
@@ -49,7 +49,7 @@ Module *DCTranslator::finalizeTranslationModule() {
   ModuleSet.emplace_back(
       CurrentModule = new Module(
           (Twine("dct module #") + utohexstr(ModuleSet.size())).str(), Ctx));
-  CurrentModule->setDataLayout(DataLayoutStr);
+  CurrentModule->setDataLayout(DL);
 
   CurrentFPM.reset(new legacy::FunctionPassManager(CurrentModule));
   if (OptLevel >= TransOpt::Less)

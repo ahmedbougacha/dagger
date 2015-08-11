@@ -28,8 +28,9 @@ static void X86InitSpecialRegSizes(DCRegisterSema::RegSizeTy &RegSizes) {
 }
 
 X86RegisterSema::X86RegisterSema(const MCRegisterInfo &MRI,
-                                 const MCInstrInfo &MII)
-    : DCRegisterSema(MRI, MII, X86InitSpecialRegSizes),
+                                 const MCInstrInfo &MII,
+                                 const DataLayout &DL)
+    : DCRegisterSema(MRI, MII, DL, X86InitSpecialRegSizes),
       LastEFLAGSChangingDef(0), LastEFLAGSDef(0),
       LastEFLAGSDefWasPartialINCDEC(false), SFVals(X86::MAX_FLAGS + 1),
       SFAssignments(X86::MAX_FLAGS + 1), CCVals(X86::COND_INVALID),

@@ -57,11 +57,14 @@ public:
   typedef void (*InitSpecialRegSizesFnTy)(RegSizeTy &RegSizes);
 
   DCRegisterSema(const MCRegisterInfo &MRI, const MCInstrInfo &MII,
+                 const DataLayout &DL,
                  InitSpecialRegSizesFnTy InitSpecialRegSizesFn = 0);
   virtual ~DCRegisterSema();
 
   const MCRegisterInfo &MRI;
   const MCInstrInfo &MII;
+
+  const DataLayout &DL;
 
 private:
   // Reg* vectors contain all MRI.getNumRegs() registers.
@@ -123,8 +126,7 @@ public:
   StructType *getRegSetType() const { return RegSetType; }
   // Compute the register's offset in bytes from the start of the regset.
   // Also return it's size in bytes.
-  std::pair<size_t, size_t> getRegSizeOffsetInRegSet(const DataLayout &DL,
-                                                     unsigned RegNo) const;
+  std::pair<size_t, size_t> getRegSizeOffsetInRegSet(unsigned RegNo) const;
 
   // Returns the regset diff function, that prints to stderr:
   //     void @__llvm_dc_print_regset_diff(i8* fn, %regset* v1, %regset* v2)

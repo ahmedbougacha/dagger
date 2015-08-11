@@ -171,8 +171,11 @@ int main(int argc, char **argv) {
   case 3: TOLvl = TransOpt::Aggressive; break;
   }
 
+  // FIXME: should we have a non-default datalayout?
+  DataLayout DL("");
+
   std::unique_ptr<DCRegisterSema> DRS(
-      TheTarget->createDCRegisterSema(TripleName, *MRI, *MII));
+      TheTarget->createDCRegisterSema(TripleName, *MRI, *MII, DL));
   if (!DRS) {
     errs() << "error: no dc register sema for target " << TripleName << "\n";
     return 1;
@@ -185,7 +188,7 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<DCTranslator> DT(new DCTranslator(
-      getGlobalContext(), /*DataLayoutStr=*/"", TOLvl, *DIS, *DRS, *MIP, *STI,
+      getGlobalContext(), DL, TOLvl, *DIS, *DRS, *MIP, *STI,
       *MCM, /* MCOD= */ 0, AnnotateIROutput));
 
   DT->translateAllKnownFunctions();
