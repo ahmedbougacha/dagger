@@ -322,6 +322,7 @@ void MCObjectSymbolizer::buildAddrToFunctionSymbolMap() {
 
     uint64_t SymSize = SymbolSizes[SymI].second;
     assert(SymbolSizes[SymI].first == Symbol);
+    ++SymI;
 
     ErrorOr<StringRef> SymNameOrErr = Symbol.getName();
     if (auto ec = SymNameOrErr.getError())
@@ -334,8 +335,6 @@ void MCObjectSymbolizer::buildAddrToFunctionSymbolMap() {
 
     MCSymbol *Sym = Ctx.getOrCreateSymbol(SymName);
     AddrToFunctionSymbol.push_back(FunctionSymbol(SymAddr, SymSize, Sym));
-
-    ++SymI;
   }
   std::stable_sort(AddrToFunctionSymbol.begin(), AddrToFunctionSymbol.end());
 }

@@ -1,0 +1,23 @@
+RUN: llvm-objdump -d -symbolize %p/Inputs/macho-cstring.exe.macho-x86_64 | FileCheck %s
+
+CHECK: macho-cstring.exe.macho-x86_64:	file format Mach-O 64-bit x86-64
+CHECK: Disassembly of section __TEXT,__text:
+CHECK: _main:
+CHECK: 100000f20:	55 	pushq	%rbp
+CHECK: 100000f21:	48 89 e5 	movq	%rsp, %rbp
+CHECK: 100000f24:	53 	pushq	%rbx
+CHECK: 100000f25:	50 	pushq	%rax
+CHECK: 100000f26:	bf 90 01 00 00 	movl	$400, %edi
+CHECK: 100000f2b:	e8 28 00 00 00 	callq	malloc
+CHECK: 100000f30:	48 89 c3 	movq	%rax, %rbx
+CHECK: 100000f33:	c7 43 40 d2 04 00 00 	movl	$1234, 64(%rbx)
+CHECK: 100000f3a:	48 8d 3d 47 00 00 00 	leaq	71(%rip), %rdi ## literal pool for: "%p hello %n\n"
+CHECK: 100000f41:	31 c0 	xorl	%eax, %eax
+CHECK: 100000f43:	48 89 de 	movq	%rbx, %rsi
+CHECK: 100000f46:	48 89 da 	movq	%rbx, %rdx
+CHECK: 100000f49:	e8 10 00 00 00 	callq	printf
+CHECK: 100000f4e:	8b 03 	movl	(%rbx), %eax
+CHECK: 100000f50:	48 83 c4 08 	addq	$8, %rsp
+CHECK: 100000f54:	5b 	popq	%rbx
+CHECK: 100000f55:	5d 	popq	%rbp
+CHECK: 100000f56:	c3 	retq
