@@ -524,6 +524,7 @@ void X86InstrSema::translateCustomOperand(unsigned OperandType,
     break;
   }
 
+  case X86::OpTypes::u8imm:
   case X86::OpTypes::i1imm:
   case X86::OpTypes::i8imm:
   case X86::OpTypes::i16imm:
