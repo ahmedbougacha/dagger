@@ -552,7 +552,8 @@ static void propagateMetadata(Instruction *To, const Instruction *From) {
     if (Kind != LLVMContext::MD_tbaa &&
         Kind != LLVMContext::MD_alias_scope &&
         Kind != LLVMContext::MD_noalias &&
-        Kind != LLVMContext::MD_fpmath)
+        Kind != LLVMContext::MD_fpmath &&
+        Kind != LLVMContext::MD_nontemporal)
       continue;
 
     To->setMetadata(Kind, M.second);
@@ -1498,7 +1499,7 @@ public:
   bool doesNotMeet(Function *F, Loop *L, const LoopVectorizeHints &Hints) {
     // If a loop hint is provided the diagnostic is always produced.
     const char *Name = Hints.isForced() ? DiagnosticInfo::AlwaysPrint : LV_NAME;
-    bool failed = false;
+    bool Failed = false;
     if (UnsafeAlgebraInst &&
         Hints.getForce() == LoopVectorizeHints::FK_Undefined &&
         Hints.getWidth() == 0) {
@@ -1508,7 +1509,7 @@ public:
                                    "order of operations, however IEEE 754 "
                                    "floating-point operations are not "
                                    "commutative");
-      failed = true;
+      Failed = true;
     }
 
     if (NumRuntimePointerChecks >
@@ -1523,10 +1524,10 @@ public:
                  "would exceed the limit of "
               << VectorizerParams::RuntimeMemoryCheckThreshold << " checks");
       DEBUG(dbgs() << "LV: Too many memory checks needed.\n");
-      failed = true;
+      Failed = true;
     }
 
-    return failed;
+    return Failed;
   }
 
 private:
@@ -1569,7 +1570,7 @@ struct LoopVectorize : public FunctionPass {
   BlockFrequency ColdEntryFreq;
 
   bool runOnFunction(Function &F) override {
-    SE = &getAnalysis<ScalarEvolution>();
+    SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
     TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
     DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
@@ -1719,12 +1720,11 @@ struct LoopVectorize : public FunctionPass {
     // Check the function attributes to find out if this function should be
     // optimized for size.
     bool OptForSize = Hints.getForce() != LoopVectorizeHints::FK_Enabled &&
-                      // FIXME: Use Function::optForSize().
-                      F->hasFnAttribute(Attribute::OptimizeForSize);
+                      F->optForSize();
 
     // Compute the weighted frequency of this loop being executed and see if it
     // is less than 20% of the function entry baseline frequency. Note that we
-    // always have a canonical loop here because we think we *can* vectoriez.
+    // always have a canonical loop here because we think we *can* vectorize.
     // FIXME: This is hidden behind a flag due to pervasive problems with
     // exactly what block frequency models.
     if (LoopVectorizeWithBlockFrequency) {
@@ -1734,7 +1734,7 @@ struct LoopVectorize : public FunctionPass {
         OptForSize = true;
     }
 
-    // Check the function attributes to see if implicit floats are allowed.a
+    // Check the function attributes to see if implicit floats are allowed.
     // FIXME: This check doesn't seem possibly correct -- what if the loop is
     // an integer loop and the vector instructions selected are purely integer
     // vector instructions?
@@ -1864,7 +1864,7 @@ struct LoopVectorize : public FunctionPass {
     AU.addRequired<BlockFrequencyInfoWrapperPass>();
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
-    AU.addRequired<ScalarEvolution>();
+    AU.addRequired<ScalarEvolutionWrapperPass>();
     AU.addRequired<TargetTransformInfoWrapperPass>();
     AU.addRequired<AliasAnalysis>();
     AU.addRequired<LoopAccessAnalysis>();
@@ -2402,7 +2402,7 @@ void InnerLoopVectorizer::vectorizeMemoryInstruction(Instruction *Instr) {
           Builder.CreateGEP(nullptr, Ptr, Builder.getInt32(Part * VF));
 
       if (Reverse) {
-        // If we store to reverse consecutive memory locations then we need
+        // If we store to reverse consecutive memory locations, then we need
         // to reverse the order of elements in the stored value.
         StoredVal[Part] = reverseVector(StoredVal[Part]);
         // If the address is consecutive but reversed, then the
@@ -2476,7 +2476,7 @@ void InnerLoopVectorizer::scalarizeInstruction(Instruction *Instr, bool IfPredic
     // Try using previously calculated values.
     Instruction *SrcInst = dyn_cast<Instruction>(SrcOp);
 
-    // If the src is an instruction that appeared earlier in the basic block
+    // If the src is an instruction that appeared earlier in the basic block,
     // then it should already be vectorized.
     if (SrcInst && OrigLoop->contains(SrcInst)) {
       assert(WidenMap.has(SrcInst) && "Source operand is unavailable");
@@ -4614,8 +4614,9 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize) {
     emitAnalysis(VectorizationReport() <<
                  "runtime pointer checks needed. Enable vectorization of this "
                  "loop with '#pragma clang loop vectorize(enable)' when "
-                 "compiling with -Os");
-    DEBUG(dbgs() << "LV: Aborting. Runtime ptr check is required in Os.\n");
+                 "compiling with -Os/-Oz");
+    DEBUG(dbgs() <<
+          "LV: Aborting. Runtime ptr check is required with -Os/-Oz.\n");
     return Factor;
   }
 
@@ -4659,7 +4660,7 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize) {
       emitAnalysis
         (VectorizationReport() <<
          "unable to calculate the loop count due to complex control flow");
-      DEBUG(dbgs() << "LV: Aborting. A tail loop is required in Os.\n");
+      DEBUG(dbgs() << "LV: Aborting. A tail loop is required with -Os/-Oz.\n");
       return Factor;
     }
 
@@ -4675,8 +4676,8 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize) {
                    "cannot optimize for size and vectorize at the "
                    "same time. Enable vectorization of this loop "
                    "with '#pragma clang loop vectorize(enable)' "
-                   "when compiling with -Os");
-      DEBUG(dbgs() << "LV: Aborting. A tail loop is required in Os.\n");
+                   "when compiling with -Os/-Oz");
+      DEBUG(dbgs() << "LV: Aborting. A tail loop is required with -Os/-Oz.\n");
       return Factor;
     }
   }
@@ -5399,7 +5400,7 @@ INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(BlockFrequencyInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LCSSA)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)

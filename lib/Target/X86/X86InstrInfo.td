@@ -873,6 +873,40 @@ def i16immSExt8  : ImmLeaf<i16, [{ return Imm == (int8_t)Imm; }]>;
 def i32immSExt8  : ImmLeaf<i32, [{ return Imm == (int8_t)Imm; }]>;
 def i64immSExt8  : ImmLeaf<i64, [{ return Imm == (int8_t)Imm; }]>;
 
+// If we have multiple users of an immediate, it's much smaller to reuse
+// the register, rather than encode the immediate in every instruction.
+// This has the risk of increasing register pressure from stretched live
+// ranges, however, the immediates should be trivial to rematerialize by
+// the RA in the event of high register pressure.
+// TODO : This is currently enabled for stores and binary ops. There are more
+// cases for which this can be enabled, though this catches the bulk of the
+// issues.
+// TODO2 : This should really also be enabled under O2, but there's currently
+// an issue with RA where we don't pull the constants into their users
+// when we rematerialize them. I'll follow-up on enabling O2 after we fix that
+// issue.
+// TODO3 : This is currently limited to single basic blocks (DAG creation
+// pulls block immediates to the top and merges them if necessary).
+// Eventually, it would be nice to allow ConstantHoisting to merge constants
+// globally for potentially added savings.
+//
+def imm8_su : PatLeaf<(i8 imm), [{
+    return !shouldAvoidImmediateInstFormsForSize(N);
+}]>;
+def imm16_su : PatLeaf<(i16 imm), [{
+    return !shouldAvoidImmediateInstFormsForSize(N);
+}]>;
+def imm32_su : PatLeaf<(i32 imm), [{
+    return !shouldAvoidImmediateInstFormsForSize(N);
+}]>;
+
+def i16immSExt8_su : PatLeaf<(i16immSExt8), [{
+    return !shouldAvoidImmediateInstFormsForSize(N);
+}]>;
+def i32immSExt8_su : PatLeaf<(i32immSExt8), [{
+    return !shouldAvoidImmediateInstFormsForSize(N);
+}]>;
+
 
 def i64immSExt32 : ImmLeaf<i64, [{ return Imm == (int32_t)Imm; }]>;
 
@@ -1283,13 +1317,13 @@ def MOV32ri_alt : Ii32<0xC7, MRM0r, (outs GR32:$dst), (ins i32imm:$src),
 let SchedRW = [WriteStore] in {
 def MOV8mi  : Ii8 <0xC6, MRM0m, (outs), (ins i8mem :$dst, i8imm :$src),
                    "mov{b}\t{$src, $dst|$dst, $src}",
-                   [(store (i8 imm:$src), addr:$dst)], IIC_MOV_MEM>;
+                   [(store (i8 imm8_su:$src), addr:$dst)], IIC_MOV_MEM>;
 def MOV16mi : Ii16<0xC7, MRM0m, (outs), (ins i16mem:$dst, i16imm:$src),
                    "mov{w}\t{$src, $dst|$dst, $src}",
-                   [(store (i16 imm:$src), addr:$dst)], IIC_MOV_MEM>, OpSize16;
+                   [(store (i16 imm16_su:$src), addr:$dst)], IIC_MOV_MEM>, OpSize16;
 def MOV32mi : Ii32<0xC7, MRM0m, (outs), (ins i32mem:$dst, i32imm:$src),
                    "mov{l}\t{$src, $dst|$dst, $src}",
-                   [(store (i32 imm:$src), addr:$dst)], IIC_MOV_MEM>, OpSize32;
+                   [(store (i32 imm32_su:$src), addr:$dst)], IIC_MOV_MEM>, OpSize32;
 def MOV64mi32 : RIi32S<0xC7, MRM0m, (outs), (ins i64mem:$dst, i64i32imm:$src),
                        "mov{q}\t{$src, $dst|$dst, $src}",
                        [(store i64immSExt32:$src, addr:$dst)], IIC_MOV_MEM>;
@@ -2540,14 +2574,15 @@ def : MnemonicAlias<"pusha",  "pushaw", "att">, Requires<[In16BitMode]>;
 def : MnemonicAlias<"popa",   "popal",  "att">, Requires<[In32BitMode]>;
 def : MnemonicAlias<"pusha",  "pushal", "att">, Requires<[In32BitMode]>;
 
-def : MnemonicAlias<"repe",  "rep",   "att">;
-def : MnemonicAlias<"repz",  "rep",   "att">;
-def : MnemonicAlias<"repnz", "repne", "att">;
+def : MnemonicAlias<"repe",  "rep">;
+def : MnemonicAlias<"repz",  "rep">;
+def : MnemonicAlias<"repnz", "repne">;
 
 def : MnemonicAlias<"ret", "retw", "att">, Requires<[In16BitMode]>;
 def : MnemonicAlias<"ret", "retl", "att">, Requires<[In32BitMode]>;
 def : MnemonicAlias<"ret", "retq", "att">, Requires<[In64BitMode]>;
 
+def : MnemonicAlias<"sal", "shl", "intel">;
 def : MnemonicAlias<"salb", "shlb", "att">;
 def : MnemonicAlias<"salw", "shlw", "att">;
 def : MnemonicAlias<"sall", "shll", "att">;
@@ -2806,12 +2841,12 @@ def : InstAlias<"jmp {*}$dst",      (JMP16m  i16mem:$dst), 0>, Requires<[In16Bit
 
 
 // "imul <imm>, B" is an alias for "imul <imm>, B, B".
-def : InstAlias<"imulw {$imm, $r|$r, $imm}", (IMUL16rri  GR16:$r, GR16:$r, i16imm:$imm), 0>;
-def : InstAlias<"imulw {$imm, $r|$r, $imm}", (IMUL16rri8 GR16:$r, GR16:$r, i16i8imm:$imm), 0>;
-def : InstAlias<"imull {$imm, $r|$r, $imm}", (IMUL32rri  GR32:$r, GR32:$r, i32imm:$imm), 0>;
-def : InstAlias<"imull {$imm, $r|$r, $imm}", (IMUL32rri8 GR32:$r, GR32:$r, i32i8imm:$imm), 0>;
-def : InstAlias<"imulq {$imm, $r|$r, $imm}", (IMUL64rri32 GR64:$r, GR64:$r, i64i32imm:$imm), 0>;
-def : InstAlias<"imulq {$imm, $r|$r, $imm}", (IMUL64rri8 GR64:$r, GR64:$r, i64i8imm:$imm), 0>;
+def : InstAlias<"imul{w} {$imm, $r|$r, $imm}", (IMUL16rri  GR16:$r, GR16:$r, i16imm:$imm), 0>;
+def : InstAlias<"imul{w} {$imm, $r|$r, $imm}", (IMUL16rri8 GR16:$r, GR16:$r, i16i8imm:$imm), 0>;
+def : InstAlias<"imul{l} {$imm, $r|$r, $imm}", (IMUL32rri  GR32:$r, GR32:$r, i32imm:$imm), 0>;
+def : InstAlias<"imul{l} {$imm, $r|$r, $imm}", (IMUL32rri8 GR32:$r, GR32:$r, i32i8imm:$imm), 0>;
+def : InstAlias<"imul{q} {$imm, $r|$r, $imm}", (IMUL64rri32 GR64:$r, GR64:$r, i64i32imm:$imm), 0>;
+def : InstAlias<"imul{q} {$imm, $r|$r, $imm}", (IMUL64rri8 GR64:$r, GR64:$r, i64i8imm:$imm), 0>;
 
 // inb %dx -> inb %al, %dx
 def : InstAlias<"inb\t{%dx|dx}", (IN8rr), 0>;

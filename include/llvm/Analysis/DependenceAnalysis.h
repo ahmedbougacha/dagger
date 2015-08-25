@@ -71,6 +71,12 @@ namespace llvm {
   class Dependence {
   protected:
     Dependence(const Dependence &) = default;
+    
+    // FIXME: When we move to MSVC 2015 as the base compiler for Visual Studio
+    // support, uncomment this line to allow a defaulted move constructor for
+    // Dependence. Currently, FullDependence relies on the copy constructor, but
+    // that is acceptable given the triviality of the class.
+    // Dependence(Dependence &&) = default;
 
   public:
     Dependence(Instruction *Source,
@@ -225,7 +231,7 @@ namespace llvm {
                    unsigned Levels);
 
     FullDependence(FullDependence &&RHS)
-        : Dependence(RHS), Levels(RHS.Levels),
+        : Dependence(std::move(RHS)), Levels(RHS.Levels),
           LoopIndependent(RHS.LoopIndependent), Consistent(RHS.Consistent),
           DV(std::move(RHS.DV)) {}
 
@@ -920,9 +926,8 @@ namespace llvm {
     void updateDirection(Dependence::DVEntry &Level,
                          const Constraint &CurConstraint) const;
 
-    bool tryDelinearize(const SCEV *SrcSCEV, const SCEV *DstSCEV,
-                        SmallVectorImpl<Subscript> &Pair,
-                        const SCEV *ElementSize);
+    bool tryDelinearize(Instruction *Src, Instruction *Dst,
+                        SmallVectorImpl<Subscript> &Pair);
 
   public:
     static char ID; // Class identification, replacement for typeinfo

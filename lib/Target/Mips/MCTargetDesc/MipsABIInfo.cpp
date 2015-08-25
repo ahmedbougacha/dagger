@@ -107,12 +107,20 @@ unsigned MipsABIInfo::GetNullPtr() const {
   return ArePtrs64bit() ? Mips::ZERO_64 : Mips::ZERO;
 }
 
+unsigned MipsABIInfo::GetZeroReg() const {
+  return AreGprs64bit() ? Mips::ZERO_64 : Mips::ZERO;
+}
+
 unsigned MipsABIInfo::GetPtrAdduOp() const {
   return ArePtrs64bit() ? Mips::DADDu : Mips::ADDu;
 }
 
 unsigned MipsABIInfo::GetPtrAddiuOp() const {
   return ArePtrs64bit() ? Mips::DADDiu : Mips::ADDiu;
+}
+
+unsigned MipsABIInfo::GetGPRMoveOp() const {
+  return ArePtrs64bit() ? Mips::OR64 : Mips::OR;
 }
 
 unsigned MipsABIInfo::GetEhDataReg(unsigned I) const {

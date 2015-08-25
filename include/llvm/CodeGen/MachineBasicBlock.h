@@ -25,7 +25,7 @@ class Pass;
 class BasicBlock;
 class MachineFunction;
 class MCSymbol;
-class MIRPrinter;
+class MIPrinter;
 class SlotIndexes;
 class StringRef;
 class raw_ostream;
@@ -336,6 +336,9 @@ public:
   livein_iterator livein_begin() const { return LiveIns.begin(); }
   livein_iterator livein_end()   const { return LiveIns.end(); }
   bool            livein_empty() const { return LiveIns.empty(); }
+  iterator_range<livein_iterator> liveins() const {
+    return make_range(livein_begin(), livein_end());
+  }
 
   /// Return alignment of the basic block. The alignment is specified as
   /// log2(bytes).
@@ -660,7 +663,7 @@ private:
   const_weight_iterator getWeightIterator(const_succ_iterator I) const;
 
   friend class MachineBranchProbabilityInfo;
-  friend class MIRPrinter;
+  friend class MIPrinter;
 
   /// Return weight of the edge from this block to MBB. This method should NOT
   /// be called directly, but by using getEdgeWeight method from

@@ -93,7 +93,8 @@ static Value *getFCmpValue(bool isordered, unsigned code,
   case 5: Pred = isordered ? FCmpInst::FCMP_ONE : FCmpInst::FCMP_UNE; break;
   case 6: Pred = isordered ? FCmpInst::FCMP_OLE : FCmpInst::FCMP_ULE; break;
   case 7:
-    if (!isordered) return ConstantInt::getTrue(LHS->getContext());
+    if (!isordered)
+      return ConstantInt::get(CmpInst::makeCmpResultType(LHS->getType()), 1);
     Pred = FCmpInst::FCMP_ORD; break;
   }
   return Builder->CreateFCmp(Pred, LHS, RHS);
@@ -1271,6 +1272,10 @@ Instruction *InstCombiner::visitAnd(BinaryOperator &I) {
         // ((A ^ N) - B) & AndRHS -> (A - B) & AndRHS iff N&AndRHS == 0
         if (Value *V = FoldLogicalPlusAnd(Op0LHS, Op0RHS, AndRHS, true, I))
           return BinaryOperator::CreateAnd(V, AndRHS);
+
+        // -x & 1 -> x & 1
+        if (AndRHSMask == 1 && match(Op0LHS, m_Zero()))
+          return BinaryOperator::CreateAnd(Op0RHS, AndRHS);
 
         // (A - N) & AndRHS -> -N & AndRHS iff A&AndRHS==0 and AndRHS
         // has 1's for all bits that the subtraction with A might affect.

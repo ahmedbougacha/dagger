@@ -284,6 +284,11 @@ static DecodeStatus DecodeMemMMReglistImm4Lsl2(MCInst &Inst,
                                                uint64_t Address,
                                                const void *Decoder);
 
+static DecodeStatus DecodeMemMMImm9(MCInst &Inst,
+                                    unsigned Insn,
+                                    uint64_t Address,
+                                    const void *Decoder);
+
 static DecodeStatus DecodeMemMMImm12(MCInst &Inst,
                                      unsigned Insn,
                                      uint64_t Address,
@@ -847,7 +852,7 @@ DecodeStatus MipsDisassembler::getInstruction(MCInst &Instr, uint64_t &Size,
     if (hasMips32r6()) {
       DEBUG(dbgs() << "Trying MicroMips32r632 table (32-bit instructions):\n");
       // Calling the auto-generated decoder function.
-      Result = decodeInstruction(DecoderTableMicroMips32r632, Instr, Insn, Address,
+      Result = decodeInstruction(DecoderTableMicroMipsR632, Instr, Insn, Address,
                                  this, STI);
     } else {
       DEBUG(dbgs() << "Trying MicroMips32 table (32-bit instructions):\n");
@@ -855,6 +860,7 @@ DecodeStatus MipsDisassembler::getInstruction(MCInst &Instr, uint64_t &Size,
       Result = decodeInstruction(DecoderTableMicroMips32, Instr, Insn, Address,
                                  this, STI);
     }
+
     if (Result != MCDisassembler::Fail) {
       Size = 4;
       return Result;
@@ -1299,6 +1305,24 @@ static DecodeStatus DecodeMemMMReglistImm4Lsl2(MCInst &Inst,
 
   Inst.addOperand(MCOperand::createReg(Mips::SP));
   Inst.addOperand(MCOperand::createImm(Offset << 2));
+
+  return MCDisassembler::Success;
+}
+
+static DecodeStatus DecodeMemMMImm9(MCInst &Inst,
+                                    unsigned Insn,
+                                    uint64_t Address,
+                                    const void *Decoder) {
+  int Offset = SignExtend32<9>(Insn & 0x1ff);
+  unsigned Reg = fieldFromInstruction(Insn, 21, 5);
+  unsigned Base = fieldFromInstruction(Insn, 16, 5);
+
+  Reg = getReg(Decoder, Mips::GPR32RegClassID, Reg);
+  Base = getReg(Decoder, Mips::GPR32RegClassID, Base);
+
+  Inst.addOperand(MCOperand::createReg(Reg));
+  Inst.addOperand(MCOperand::createReg(Base));
+  Inst.addOperand(MCOperand::createImm(Offset));
 
   return MCDisassembler::Success;
 }

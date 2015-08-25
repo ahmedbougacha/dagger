@@ -20,17 +20,18 @@
 #include "llvm/Support/DataTypes.h"
 
 namespace llvm {
-  class Value;
-  class Instruction;
   class APInt;
-  class DataLayout;
-  class StringRef;
-  class MDNode;
+  class AddOperator;
   class AssumptionCache;
+  class DataLayout;
   class DominatorTree;
-  class TargetLibraryInfo;
-  class LoopInfo;
+  class Instruction;
   class Loop;
+  class LoopInfo;
+  class MDNode;
+  class StringRef;
+  class TargetLibraryInfo;
+  class Value;
 
   /// Determine which bits of V are known to be either zero or one and return
   /// them in the KnownZero/KnownOne bit sets.
@@ -82,6 +83,12 @@ namespace llvm {
                       AssumptionCache *AC = nullptr,
                       const Instruction *CxtI = nullptr,
                       const DominatorTree *DT = nullptr);
+
+  /// Returns true if the give value is known to be non-negative.
+  bool isKnownNonNegative(Value *V, const DataLayout &DL, unsigned Depth = 0,
+                          AssumptionCache *AC = nullptr,
+                          const Instruction *CxtI = nullptr,
+                          const DominatorTree *DT = nullptr);
 
   /// MaskedValueIsZero - Return true if 'V & Mask' is known to be zero.  We use
   /// this predicate to simplify operations downstream.  Mask is known to be
@@ -228,6 +235,16 @@ namespace llvm {
                                 const Instruction *CtxI = nullptr,
                                 const DominatorTree *DT = nullptr,
                                 const TargetLibraryInfo *TLI = nullptr);
+
+  /// Returns true if V is always a dereferenceable pointer with alignment
+  /// greater or equal than requested. If the context instruction is specified
+  /// performs context-sensitive analysis and returns true if the pointer is
+  /// dereferenceable at the specified instruction.
+  bool isDereferenceableAndAlignedPointer(const Value *V, unsigned Align,
+                                          const DataLayout &DL,
+                                          const Instruction *CtxI = nullptr,
+                                          const DominatorTree *DT = nullptr,
+                                          const TargetLibraryInfo *TLI = nullptr);
   
   /// isSafeToSpeculativelyExecute - Return true if the instruction does not
   /// have any effects besides calculating the result and does not have
@@ -299,6 +316,17 @@ namespace llvm {
                                                AssumptionCache *AC,
                                                const Instruction *CxtI,
                                                const DominatorTree *DT);
+  OverflowResult computeOverflowForSignedAdd(Value *LHS, Value *RHS,
+                                             const DataLayout &DL,
+                                             AssumptionCache *AC = nullptr,
+                                             const Instruction *CxtI = nullptr,
+                                             const DominatorTree *DT = nullptr);
+  /// This version also leverages the sign bit of Add if known.
+  OverflowResult computeOverflowForSignedAdd(AddOperator *Add,
+                                             const DataLayout &DL,
+                                             AssumptionCache *AC = nullptr,
+                                             const Instruction *CxtI = nullptr,
+                                             const DominatorTree *DT = nullptr);
 
   /// Return true if this function can prove that the instruction I will
   /// always transfer execution to one of its successors (including the next
@@ -349,12 +377,32 @@ namespace llvm {
   /// \brief Specific patterns of select instructions we can match.
   enum SelectPatternFlavor {
     SPF_UNKNOWN = 0,
-    SPF_SMIN,                   // Signed minimum
-    SPF_UMIN,                   // Unsigned minimum
-    SPF_SMAX,                   // Signed maximum
-    SPF_UMAX,                   // Unsigned maximum
-    SPF_ABS,                    // Absolute value
-    SPF_NABS                    // Negated absolute value
+    SPF_SMIN,                   /// Signed minimum
+    SPF_UMIN,                   /// Unsigned minimum
+    SPF_SMAX,                   /// Signed maximum
+    SPF_UMAX,                   /// Unsigned maximum
+    SPF_FMINNUM,                /// Floating point minnum
+    SPF_FMAXNUM,                /// Floating point maxnum
+    SPF_ABS,                    /// Absolute value
+    SPF_NABS                    /// Negated absolute value
+  };
+  /// \brief Behavior when a floating point min/max is given one NaN and one
+  /// non-NaN as input.
+  enum SelectPatternNaNBehavior {
+    SPNB_NA = 0,                /// NaN behavior not applicable.
+    SPNB_RETURNS_NAN,           /// Given one NaN input, returns the NaN.
+    SPNB_RETURNS_OTHER,         /// Given one NaN input, returns the non-NaN.
+    SPNB_RETURNS_ANY            /// Given one NaN input, can return either (or
+                                /// it has been determined that no operands can
+                                /// be NaN).
+  };
+  struct SelectPatternResult {
+    SelectPatternFlavor Flavor;
+    SelectPatternNaNBehavior NaNBehavior; /// Only applicable if Flavor is
+                                          /// SPF_FMINNUM or SPF_FMAXNUM.
+    bool Ordered;               /// When implementing this min/max pattern as
+                                /// fcmp; select, does the fcmp have to be
+                                /// ordered?
   };
   /// Pattern match integer [SU]MIN, [SU]MAX and ABS idioms, returning the kind
   /// and providing the out parameter results if we successfully match.
@@ -371,7 +419,7 @@ namespace llvm {
   ///
   /// -> LHS = %a, RHS = i32 4, *CastOp = Instruction::SExt
   ///
-  SelectPatternFlavor matchSelectPattern(Value *V, Value *&LHS, Value *&RHS,
+  SelectPatternResult matchSelectPattern(Value *V, Value *&LHS, Value *&RHS,
                                          Instruction::CastOps *CastOp = nullptr);
 
 } // end namespace llvm

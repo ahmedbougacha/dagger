@@ -46,8 +46,8 @@ WebAssemblyTargetMachine::WebAssemblyTargetMachine(
     const TargetOptions &Options, Reloc::Model RM, CodeModel::Model CM,
     CodeGenOpt::Level OL)
     : LLVMTargetMachine(T, TT.isArch64Bit()
-                               ? "e-p:64:64-i64:64-v128:8:128-n32:64-S128"
-                               : "e-p:32:32-i64:64-v128:8:128-n32:64-S128",
+                               ? "e-p:64:64-i64:64-n32:64-S128"
+                               : "e-p:32:32-i64:64-n32:64-S128",
                         TT, CPU, FS, Options, RM, CM, OL),
       TLOF(make_unique<WebAssemblyTargetObjectFile>()) {
   initAsmInfo();
@@ -77,7 +77,7 @@ WebAssemblyTargetMachine::getSubtargetImpl(const Function &F) const {
     // creation will depend on the TM and the code generation flags on the
     // function that reside in TargetOptions.
     resetTargetOptions(F);
-    I = make_unique<WebAssemblySubtarget>(TargetTriple, CPU, FS, *this);
+    I = llvm::make_unique<WebAssemblySubtarget>(TargetTriple, CPU, FS, *this);
   }
   return I.get();
 }

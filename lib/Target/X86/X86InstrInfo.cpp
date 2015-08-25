@@ -2456,7 +2456,7 @@ inline static unsigned getTruncatedShiftCount(MachineInstr *MI,
 inline static bool isTruncatedShiftCountForLEA(unsigned ShAmt) {
   // Left shift instructions can be transformed into load-effective-address
   // instructions if we can encode them appropriately.
-  // A LEA instruction utilizes a SIB byte to encode it's scale factor.
+  // A LEA instruction utilizes a SIB byte to encode its scale factor.
   // The SIB.scale field is two bits wide which means that we can encode any
   // shift amount less than 4.
   return ShAmt < 4 && ShAmt > 0;
@@ -4763,8 +4763,8 @@ static void expandLoadStackGuard(MachineInstrBuilder &MIB,
   const GlobalValue *GV =
       cast<GlobalValue>((*MIB->memoperands_begin())->getValue());
   unsigned Flag = MachineMemOperand::MOLoad | MachineMemOperand::MOInvariant;
-  MachineMemOperand *MMO = MBB.getParent()->
-      getMachineMemOperand(MachinePointerInfo::getGOT(), Flag, 8, 8);
+  MachineMemOperand *MMO = MBB.getParent()->getMachineMemOperand(
+      MachinePointerInfo::getGOT(*MBB.getParent()), Flag, 8, 8);
   MachineBasicBlock::iterator I = MIB.getInstr();
 
   BuildMI(MBB, I, DL, TII.get(X86::MOV64rm), Reg).addReg(X86::RIP).addImm(1)
@@ -5508,9 +5508,10 @@ bool X86InstrInfo::unfoldMemoryOperand(MachineFunction &MF, MachineInstr *MI,
 
   const MCInstrDesc &MCID = get(Opc);
   const TargetRegisterClass *RC = getRegClass(MCID, Index, &RI, MF);
+  // TODO: Check if 32-byte or greater accesses are slow too?
   if (!MI->hasOneMemOperand() &&
       RC == &X86::VR128RegClass &&
-      !Subtarget.isUnalignedMemAccessFast())
+      Subtarget.isUnalignedMemUnder32Slow())
     // Without memoperands, loadRegFromAddr and storeRegToStackSlot will
     // conservatively assume the address is unaligned. That's bad for
     // performance.
@@ -5658,9 +5659,11 @@ X86InstrInfo::unfoldMemoryOperand(SelectionDAG &DAG, SDNode *N,
                             cast<MachineSDNode>(N)->memoperands_end());
     if (!(*MMOs.first) &&
         RC == &X86::VR128RegClass &&
-        !Subtarget.isUnalignedMemAccessFast())
+        Subtarget.isUnalignedMemUnder32Slow())
       // Do not introduce a slow unaligned load.
       return false;
+    // FIXME: If a VR128 can have size 32, we should be checking if a 32-byte
+    // memory access is slow above.
     unsigned Alignment = RC->getSize() == 32 ? 32 : 16;
     bool isAligned = (*MMOs.first) &&
                      (*MMOs.first)->getAlignment() >= Alignment;
@@ -5701,9 +5704,11 @@ X86InstrInfo::unfoldMemoryOperand(SelectionDAG &DAG, SDNode *N,
                              cast<MachineSDNode>(N)->memoperands_end());
     if (!(*MMOs.first) &&
         RC == &X86::VR128RegClass &&
-        !Subtarget.isUnalignedMemAccessFast())
+        Subtarget.isUnalignedMemUnder32Slow())
       // Do not introduce a slow unaligned store.
       return false;
+    // FIXME: If a VR128 can have size 32, we should be checking if a 32-byte
+    // memory access is slow above.
     unsigned Alignment = RC->getSize() == 32 ? 32 : 16;
     bool isAligned = (*MMOs.first) &&
                      (*MMOs.first)->getAlignment() >= Alignment;
@@ -6385,22 +6390,54 @@ static bool hasReassociableSibling(const MachineInstr &Inst, bool &Commuted) {
 // TODO: There are many more machine instruction opcodes to match:
 //       1. Other data types (integer, vectors)
 //       2. Other math / logic operations (and, or)
+//       3. Other forms of the same operation (intrinsics and other variants)
 static bool isAssociativeAndCommutative(const MachineInstr &Inst) {
   switch (Inst.getOpcode()) {
   case X86::IMUL16rr:
   case X86::IMUL32rr:
   case X86::IMUL64rr:
+  // Normal min/max instructions are not commutative because of NaN and signed
+  // zero semantics, but these are. Thus, there's no need to check for global
+  // relaxed math; the instructions themselves have the properties we need.
+  case X86::MAXCPDrr:
+  case X86::MAXCPSrr:
+  case X86::MAXCSDrr:
+  case X86::MAXCSSrr:
+  case X86::MINCPDrr:
+  case X86::MINCPSrr:
+  case X86::MINCSDrr:
+  case X86::MINCSSrr:
+  case X86::VMAXCPDrr:
+  case X86::VMAXCPSrr:
+  case X86::VMAXCPDYrr:
+  case X86::VMAXCPSYrr:
+  case X86::VMAXCSDrr:
+  case X86::VMAXCSSrr:
+  case X86::VMINCPDrr:
+  case X86::VMINCPSrr:
+  case X86::VMINCPDYrr:
+  case X86::VMINCPSYrr:
+  case X86::VMINCSDrr:
+  case X86::VMINCSSrr:
     return true;
   case X86::ADDPDrr:
   case X86::ADDPSrr:
   case X86::ADDSDrr:
   case X86::ADDSSrr:
-  case X86::VADDPDrr:
-  case X86::VADDPSrr:
-  case X86::VADDSDrr:
-  case X86::VADDSSrr:
+  case X86::MULPDrr:
+  case X86::MULPSrr:
   case X86::MULSDrr:
   case X86::MULSSrr:
+  case X86::VADDPDrr:
+  case X86::VADDPSrr:
+  case X86::VADDPDYrr:
+  case X86::VADDPSYrr:
+  case X86::VADDSDrr:
+  case X86::VADDSSrr:
+  case X86::VMULPDrr:
+  case X86::VMULPSrr:
+  case X86::VMULPDYrr:
+  case X86::VMULPSYrr:
   case X86::VMULSDrr:
   case X86::VMULSSrr:
     return Inst.getParent()->getParent()->getTarget().Options.UnsafeFPMath;

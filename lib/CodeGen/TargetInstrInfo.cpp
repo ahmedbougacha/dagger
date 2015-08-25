@@ -484,10 +484,9 @@ MachineInstr *TargetInstrInfo::foldMemoryOperand(MachineBasicBlock::iterator MI,
            "Folded a use to a non-load!");
     const MachineFrameInfo &MFI = *MF.getFrameInfo();
     assert(MFI.getObjectOffset(FI) != -1);
-    MachineMemOperand *MMO =
-      MF.getMachineMemOperand(MachinePointerInfo::getFixedStack(FI),
-                              Flags, MFI.getObjectSize(FI),
-                              MFI.getObjectAlignment(FI));
+    MachineMemOperand *MMO = MF.getMachineMemOperand(
+        MachinePointerInfo::getFixedStack(MF, FI), Flags, MFI.getObjectSize(FI),
+        MFI.getObjectAlignment(FI));
     NewMI->addMemOperand(MF, MMO);
 
     return NewMI;
@@ -656,6 +655,7 @@ int TargetInstrInfo::getSPAdjust(const MachineInstr *MI) const {
     return 0;
  
   int SPAdj = MI->getOperand(0).getImm();
+  SPAdj = TFI->alignSPAdjust(SPAdj);
 
   if ((!StackGrowsDown && MI->getOpcode() == FrameSetupOpcode) ||
        (StackGrowsDown && MI->getOpcode() == FrameDestroyOpcode))

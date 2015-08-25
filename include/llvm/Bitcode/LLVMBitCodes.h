@@ -121,7 +121,9 @@ namespace bitc {
     TYPE_CODE_STRUCT_NAME = 19, // STRUCT_NAME: [strchr x N]
     TYPE_CODE_STRUCT_NAMED = 20,// STRUCT_NAMED: [ispacked, eltty x N]
 
-    TYPE_CODE_FUNCTION = 21     // FUNCTION: [vararg, retty, paramty x N]
+    TYPE_CODE_FUNCTION = 21,    // FUNCTION: [vararg, retty, paramty x N]
+
+    TYPE_CODE_TOKEN = 22        // TOKEN
   };
 
   // The type symbol table only has one code (TST_ENTRY_CODE).
@@ -354,9 +356,9 @@ namespace bitc {
     FUNC_CODE_INST_CMPXCHG     = 46, // CMPXCHG: [ptrty,ptr,valty,cmp,new, align,
                                      //           vol,ordering,synchscope]
     FUNC_CODE_INST_LANDINGPAD  = 47, // LANDINGPAD: [ty,val,num,id0,val0...]
-    FUNC_CODE_INST_CLEANUPRET  = 48, // CLEANUPRET: [] or [val] or [bb#] or [val,bb#]
-    FUNC_CODE_INST_CATCHRET    = 49, // CATCHRET: [bb#]
-    FUNC_CODE_INST_CATCHPAD  = 50, // CATCHPAD: [ty,val,val,num,args...]
+    FUNC_CODE_INST_CLEANUPRET  = 48, // CLEANUPRET: [val] or [val,bb#]
+    FUNC_CODE_INST_CATCHRET    = 49, // CATCHRET: [val,bb#]
+    FUNC_CODE_INST_CATCHPAD  = 50, // CATCHPAD: [bb#,bb#,num,args...]
     FUNC_CODE_INST_TERMINATEPAD = 51, // TERMINATEPAD: [bb#,num,args...]
     FUNC_CODE_INST_CLEANUPPAD = 52, // CLEANUPPAD: [num,args...]
     FUNC_CODE_INST_CATCHENDPAD = 53, // CATCHENDPAD: [] or [bb#]

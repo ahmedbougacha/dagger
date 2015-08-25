@@ -82,14 +82,15 @@ static bool processInstruction(Loop &L, Instruction &Inst, DominatorTree &DT,
 
   ++NumLCSSA; // We are applying the transformation
 
-  // Invoke instructions are special in that their result value is not available
-  // along their unwind edge. The code below tests to see whether DomBB
-  // dominates
-  // the value, so adjust DomBB to the normal destination block, which is
-  // effectively where the value is first usable.
+  // Invoke/CatchPad instructions are special in that their result value is not
+  // available along their unwind edge. The code below tests to see whether
+  // DomBB dominates the value, so adjust DomBB to the normal destination block,
+  // which is effectively where the value is first usable.
   BasicBlock *DomBB = Inst.getParent();
   if (InvokeInst *Inv = dyn_cast<InvokeInst>(&Inst))
     DomBB = Inv->getNormalDest();
+  if (auto *CPI = dyn_cast<CatchPadInst>(&Inst))
+    DomBB = CPI->getNormalDest();
 
   DomTreeNode *DomNode = DT.getNode(DomBB);
 
@@ -297,7 +298,7 @@ struct LCSSA : public FunctionPass {
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addPreservedID(LoopSimplifyID);
     AU.addPreserved<AliasAnalysis>();
-    AU.addPreserved<ScalarEvolution>();
+    AU.addPreserved<ScalarEvolutionWrapperPass>();
   }
 };
 }
@@ -317,7 +318,8 @@ bool LCSSA::runOnFunction(Function &F) {
   bool Changed = false;
   LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  SE = getAnalysisIfAvailable<ScalarEvolution>();
+  auto *SEWP = getAnalysisIfAvailable<ScalarEvolutionWrapperPass>();
+  SE = SEWP ? &SEWP->getSE() : nullptr;
 
   // Simplify each loop nest in the function.
   for (LoopInfo::iterator I = LI->begin(), E = LI->end(); I != E; ++I)

@@ -3,7 +3,7 @@
 ; Please update this file when making any IR changes. Information on the
 ; release process for this file is available here:
 ;
-;     http://llvm.org/docs/DeveloperPolicy.html#ir-backwards-compatibility
+;     http://llvm.org/docs/DeveloperPolicy.html#ir-backwards-compatibility 
 
 ; RUN: llvm-as < %s | llvm-dis | llvm-as | llvm-dis | FileCheck %s
 ; RUN: verify-uselistorder < %s
@@ -1024,7 +1024,7 @@ exit:
   ; CHECK: select <2 x i1> <i1 true, i1 false>, <2 x i8> <i8 2, i8 3>, <2 x i8> <i8 3, i8 2>
 
   call void @f.nobuiltin() builtin
-  ; CHECK: call void @f.nobuiltin() #34
+  ; CHECK: call void @f.nobuiltin() #36
 
   call fastcc noalias i32* @f.noalias() noinline
   ; CHECK: call fastcc noalias i32* @f.noalias() #12
@@ -1212,6 +1212,9 @@ define void @misc.metadata() {
   ret void
 }
 
+declare void @llvm.tokenfoo(token)
+; CHECK: declare void @llvm.tokenfoo(token)
+
 ; CHECK: attributes #0 = { alignstack=4 }
 ; CHECK: attributes #1 = { alignstack=8 }
 ; CHECK: attributes #2 = { alwaysinline }
@@ -1245,8 +1248,10 @@ define void @misc.metadata() {
 ; CHECK: attributes #30 = { uwtable }
 ; CHECK: attributes #31 = { "cpu"="cortex-a8" }
 ; CHECK: attributes #32 = { nounwind readnone }
-; CHECK: attributes #33 = { nounwind readonly }
-; CHECK: attributes #34 = { builtin }
+; CHECK: attributes #33 = { nounwind readonly argmemonly }
+; CHECK: attributes #34 = { nounwind argmemonly }
+; CHECK: attributes #35 = { nounwind readonly }
+; CHECK: attributes #36 = { builtin }
 
 ;; Metadata
 

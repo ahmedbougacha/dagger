@@ -1339,6 +1339,12 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
   }
 
   void visitBitCastInst(BitCastInst &I) {
+    // Special case: if this is the bitcast (there is exactly 1 allowed) between
+    // a musttail call and a ret, don't instrument. New instructions are not
+    // allowed after a musttail call.
+    if (auto *CI = dyn_cast<CallInst>(I.getOperand(0)))
+      if (CI->isMustTailCall())
+        return;
     IRBuilder<> IRB(&I);
     setShadow(&I, IRB.CreateBitCast(getShadow(&I, 0), getShadowTy(&I)));
     setOrigin(&I, getOrigin(&I, 0));
@@ -2493,6 +2499,8 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
 
     // Now, get the shadow for the RetVal.
     if (!I.getType()->isSized()) return;
+    // Don't emit the epilogue for musttail call returns.
+    if (CS.isCall() && cast<CallInst>(&I)->isMustTailCall()) return;
     IRBuilder<> IRBBefore(&I);
     // Until we have full dynamic coverage, make sure the retval shadow is 0.
     Value *Base = getShadowPtrForRetval(&I, IRBBefore);
@@ -2523,10 +2531,22 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
       setOrigin(&I, IRBAfter.CreateLoad(getOriginPtrForRetval(IRBAfter)));
   }
 
+  bool isAMustTailRetVal(Value *RetVal) {
+    if (auto *I = dyn_cast<BitCastInst>(RetVal)) {
+      RetVal = I->getOperand(0);
+    }
+    if (auto *I = dyn_cast<CallInst>(RetVal)) {
+      return I->isMustTailCall();
+    }
+    return false;
+  }
+
   void visitReturnInst(ReturnInst &I) {
     IRBuilder<> IRB(&I);
     Value *RetVal = I.getReturnValue();
     if (!RetVal) return;
+    // Don't emit the epilogue for musttail call returns.
+    if (isAMustTailRetVal(RetVal)) return;
     Value *ShadowPtr = getShadowPtrForRetval(RetVal, IRB);
     if (CheckReturnValue) {
       insertShadowCheck(RetVal, &I);
@@ -2654,17 +2674,13 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
   }
 
   void visitCleanupPadInst(CleanupPadInst &I) {
-    if (!I.getType()->isVoidTy()) {
-      setShadow(&I, getCleanShadow(&I));
-      setOrigin(&I, getCleanOrigin());
-    }
+    setShadow(&I, getCleanShadow(&I));
+    setOrigin(&I, getCleanOrigin());
   }
 
   void visitCatchPad(CatchPadInst &I) {
-    if (!I.getType()->isVoidTy()) {
-      setShadow(&I, getCleanShadow(&I));
-      setOrigin(&I, getCleanOrigin());
-    }
+    setShadow(&I, getCleanShadow(&I));
+    setOrigin(&I, getCleanOrigin());
   }
 
   void visitTerminatePad(TerminatePadInst &I) {

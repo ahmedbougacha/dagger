@@ -91,11 +91,9 @@ public:
   bool canSimplifyCallFramePseudos(const MachineFunction &MF) const override;
   bool needsFrameIndexResolution(const MachineFunction &MF) const override;
 
-  int getFrameIndexOffset(const MachineFunction &MF, int FI) const override;
   int getFrameIndexReference(const MachineFunction &MF, int FI,
                              unsigned &FrameReg) const override;
 
-  int getFrameIndexOffsetFromSP(const MachineFunction &MF, int FI) const;
   int getFrameIndexReferenceFromSP(const MachineFunction &MF, int FI,
                                    unsigned &FrameReg) const override;
 
@@ -145,6 +143,11 @@ private:
   void BuildStackAlignAND(MachineBasicBlock &MBB,
                           MachineBasicBlock::iterator MBBI, DebugLoc DL,
                           uint64_t MaxAlign) const;
+
+  /// Make small positive stack adjustments using POPs.
+  bool adjustStackWithPops(MachineBasicBlock &MBB,
+                           MachineBasicBlock::iterator MBBI, DebugLoc DL,
+                           int Offset) const;
 
   /// Adjusts the stack pointer using LEA, SUB, or ADD.
   MachineInstrBuilder BuildStackAdjustment(MachineBasicBlock &MBB,

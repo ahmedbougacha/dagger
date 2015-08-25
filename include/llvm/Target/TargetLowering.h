@@ -226,7 +226,11 @@ public:
 
   /// Return true if integer divide is usually cheaper than a sequence of
   /// several shifts, adds, and multiplies for this target.
-  bool isIntDivCheap() const { return IntDivIsCheap; }
+  /// The definition of "cheaper" may depend on whether we're optimizing
+  /// for speed or for size.
+  virtual bool isIntDivCheap(EVT VT, AttributeSet Attr) const {
+    return false;
+  }
 
   /// Return true if sqrt(x) is as cheap or cheaper than 1 / rsqrt(x)
   bool isFsqrtCheap() const {
@@ -241,9 +245,6 @@ public:
   const DenseMap<unsigned int, unsigned int> &getBypassSlowDivWidths() const {
     return BypassSlowDivWidths;
   }
-
-  /// Return true if pow2 sdiv is cheaper than a chain of sra/srl/add/sra.
-  bool isPow2SDivCheap() const { return Pow2SDivIsCheap; }
 
   /// Return true if Flow Control is an expensive operation that should be
   /// avoided.
@@ -1252,11 +1253,6 @@ protected:
   /// control.
   void setJumpIsExpensive(bool isExpensive = true);
 
-  /// Tells the code generator that integer divide is expensive, and if
-  /// possible, should be replaced by an alternate sequence of instructions not
-  /// containing an integer divide.
-  void setIntDivIsCheap(bool isCheap = true) { IntDivIsCheap = isCheap; }
-
   /// Tells the code generator that fsqrt is cheap, and should not be replaced
   /// with an alternative sequence of instructions.
   void setFsqrtIsCheap(bool isCheap = true) { FsqrtIsCheap = isCheap; }
@@ -1271,10 +1267,6 @@ protected:
   void addBypassSlowDiv(unsigned int SlowBitWidth, unsigned int FastBitWidth) {
     BypassSlowDivWidths[SlowBitWidth] = FastBitWidth;
   }
-
-  /// Tells the code generator that it shouldn't generate sra/srl/add/sra for a
-  /// signed divide by power of two; let the target handle it.
-  void setPow2SDivIsCheap(bool isCheap = true) { Pow2SDivIsCheap = isCheap; }
 
   /// Add the specified register class as an available regclass for the
   /// specified value type. This indicates the selector can handle values of
@@ -1512,23 +1504,24 @@ public:
     return false;
   }
 
-  /// Return true if it's free to truncate a value of type Ty1 to type
-  /// Ty2. e.g. On x86 it's free to truncate a i32 value in register EAX to i16
+  /// Return true if it's free to truncate a value of type FromTy to type
+  /// ToTy. e.g. On x86 it's free to truncate a i32 value in register EAX to i16
   /// by referencing its sub-register AX.
-  virtual bool isTruncateFree(Type * /*Ty1*/, Type * /*Ty2*/) const {
+  /// Targets must return false when FromTy <= ToTy.
+  virtual bool isTruncateFree(Type *FromTy, Type *ToTy) const {
     return false;
   }
 
-  /// Return true if a truncation from Ty1 to Ty2 is permitted when deciding
+  /// Return true if a truncation from FromTy to ToTy is permitted when deciding
   /// whether a call is in tail position. Typically this means that both results
   /// would be assigned to the same register or stack slot, but it could mean
   /// the target performs adequate checks of its own before proceeding with the
-  /// tail call.
-  virtual bool allowTruncateForTailCall(Type * /*Ty1*/, Type * /*Ty2*/) const {
+  /// tail call.  Targets must return false when FromTy <= ToTy.
+  virtual bool allowTruncateForTailCall(Type *FromTy, Type *ToTy) const {
     return false;
   }
 
-  virtual bool isTruncateFree(EVT /*VT1*/, EVT /*VT2*/) const {
+  virtual bool isTruncateFree(EVT FromVT, EVT ToVT) const {
     return false;
   }
 
@@ -1561,19 +1554,21 @@ public:
     return isExtFreeImpl(I);
   }
 
-  /// Return true if any actual instruction that defines a value of type Ty1
-  /// implicitly zero-extends the value to Ty2 in the result register.
+  /// Return true if any actual instruction that defines a value of type FromTy
+  /// implicitly zero-extends the value to ToTy in the result register.
   ///
-  /// This does not necessarily include registers defined in unknown ways, such
-  /// as incoming arguments, or copies from unknown virtual registers. Also, if
-  /// isTruncateFree(Ty2, Ty1) is true, this does not necessarily apply to
-  /// truncate instructions. e.g. on x86-64, all instructions that define 32-bit
-  /// values implicit zero-extend the result out to 64 bits.
-  virtual bool isZExtFree(Type * /*Ty1*/, Type * /*Ty2*/) const {
+  /// The function should return true when it is likely that the truncate can
+  /// be freely folded with an instruction defining a value of FromTy. If
+  /// the defining instruction is unknown (because you're looking at a
+  /// function argument, PHI, etc.) then the target may require an
+  /// explicit truncate, which is not necessarily free, but this function
+  /// does not deal with those cases.
+  /// Targets must return false when FromTy >= ToTy.
+  virtual bool isZExtFree(Type *FromTy, Type *ToTy) const {
     return false;
   }
 
-  virtual bool isZExtFree(EVT /*VT1*/, EVT /*VT2*/) const {
+  virtual bool isZExtFree(EVT FromTy, EVT ToTy) const {
     return false;
   }
 
@@ -1763,12 +1758,6 @@ private:
   /// combined with "shift" to BitExtract instructions.
   bool HasExtractBitsInsn;
 
-  /// Tells the code generator not to expand integer divides by constants into a
-  /// sequence of muls, adds, and shifts.  This is a hack until a real cost
-  /// model is in place.  If we ever optimize for size, this will be set to true
-  /// unconditionally.
-  bool IntDivIsCheap;
-
   // Don't expand fsqrt with an approximation based on the inverse sqrt.
   bool FsqrtIsCheap;
 
@@ -1777,10 +1766,6 @@ private:
   /// generator to bypass 32-bit integer div/rem with an 8-bit unsigned integer
   /// div/rem when the operands are positive and less than 256.
   DenseMap <unsigned int, unsigned int> BypassSlowDivWidths;
-
-  /// Tells the code generator that it shouldn't generate sra/srl/add/sra for a
-  /// signed divide by power of two; let the target handle it.
-  bool Pow2SDivIsCheap;
 
   /// Tells the code generator that it shouldn't generate extra flow control
   /// instructions and should attempt to combine flow control instructions via
@@ -2734,11 +2719,14 @@ public:
   SDValue BuildUDIV(SDNode *N, const APInt &Divisor, SelectionDAG &DAG,
                     bool IsAfterLegalization,
                     std::vector<SDNode *> *Created) const;
+
+  /// Targets may override this function to provide custom SDIV lowering for
+  /// power-of-2 denominators.  If the target returns an empty SDValue, LLVM
+  /// assumes SDIV is expensive and replaces it with a series of other integer
+  /// operations.
   virtual SDValue BuildSDIVPow2(SDNode *N, const APInt &Divisor,
                                 SelectionDAG &DAG,
-                                std::vector<SDNode *> *Created) const {
-    return SDValue();
-  }
+                                std::vector<SDNode *> *Created) const;
 
   /// Indicate whether this target prefers to combine FDIVs with the same
   /// divisor. If the transform should never be done, return zero. If the

@@ -687,6 +687,11 @@ private:
   /// Map every BB to the smallest region, that contains BB.
   BBtoRegionMap BBtoRegion;
 
+  // Check whether the entries of BBtoRegion for the BBs of region
+  // SR are correct. Triggers an assertion if not. Calls itself recursively for
+  // subregions.
+  void verifyBBMap(const RegionT *SR) const;
+
   // Returns true if BB is in the dominance frontier of
   // entry, because it was inherited from exit. In the other case there is an
   // edge going from entry to BB without passing exit.
@@ -794,12 +799,6 @@ public:
   RegionT *getCommonRegion(SmallVectorImpl<BlockT *> &BBs) const;
 
   RegionT *getTopLevelRegion() const { return TopLevelRegion; }
-
-  /// @brief Update RegionInfo after a basic block was split.
-  ///
-  /// @param NewBB The basic block that was created before OldBB.
-  /// @param OldBB The old basic block.
-  void splitBlock(BlockT *NewBB, BlockT *OldBB);
 
   /// @brief Clear the Node Cache for all Regions.
   ///

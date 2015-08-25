@@ -69,15 +69,15 @@ struct LTOCodeGenerator {
   bool addModule(struct LTOModule *);
 
   // Set the destination module.
-  void setModule(struct LTOModule *);
+  void setModule(std::unique_ptr<LTOModule> M);
 
   void setTargetOptions(TargetOptions options);
   void setDebugInfo(lto_debug_model);
-  void setCodePICModel(lto_codegen_model);
+  void setCodePICModel(Reloc::Model model) { RelocModel = model; }
 
   void setCpu(const char *mCpu) { MCpu = mCpu; }
   void setAttr(const char *mAttr) { MAttr = mAttr; }
-  void setOptLevel(unsigned optLevel) { OptLevel = optLevel; }
+  void setOptLevel(unsigned optLevel);
 
   void setShouldInternalize(bool Value) { ShouldInternalize = Value; }
   void setShouldEmbedUselists(bool Value) { ShouldEmbedUselists = Value; }
@@ -155,25 +155,26 @@ private:
 
   typedef StringMap<uint8_t> StringSet;
 
-  void destroyMergedModule();
   std::unique_ptr<LLVMContext> OwnedContext;
   LLVMContext &Context;
+  std::unique_ptr<Module> MergedModule;
   Linker IRLinker;
-  TargetMachine *TargetMach = nullptr;
+  std::unique_ptr<TargetMachine> TargetMach;
   bool EmitDwarfDebugInfo = false;
   bool ScopeRestrictionsDone = false;
-  lto_codegen_model CodeModel = LTO_CODEGEN_PIC_MODEL_DEFAULT;
+  Reloc::Model RelocModel = Reloc::Default;
   StringSet MustPreserveSymbols;
   StringSet AsmUndefinedRefs;
-  std::vector<char *> CodegenOptions;
+  std::vector<std::string> CodegenOptions;
+  std::string FeatureStr;
   std::string MCpu;
   std::string MAttr;
   std::string NativeObjectPath;
   TargetOptions Options;
+  CodeGenOpt::Level CGOptLevel = CodeGenOpt::Default;
   unsigned OptLevel = 2;
   lto_diagnostic_handler_t DiagHandler = nullptr;
   void *DiagContext = nullptr;
-  LTOModule *OwnedModule = nullptr;
   bool ShouldInternalize = true;
   bool ShouldEmbedUselists = false;
 };

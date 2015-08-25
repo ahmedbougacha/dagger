@@ -75,8 +75,8 @@ statement be our "main":
 
 .. code-block:: udiff
 
-  -    PrototypeAST *Proto = new PrototypeAST("", std::vector<std::string>());
-  +    PrototypeAST *Proto = new PrototypeAST("main", std::vector<std::string>());
+  -    auto Proto = llvm::make_unique<PrototypeAST>("", std::vector<std::string>());
+  +    auto Proto = llvm::make_unique<PrototypeAST>("main", std::vector<std::string>());
 
 just with the simple change of giving it a name.
 
@@ -108,12 +108,12 @@ code is that the llvm IR goes to standard error:
   @@ -1108,17 +1108,8 @@ static void HandleExtern() {
    static void HandleTopLevelExpression() {
      // Evaluate a top-level expression into an anonymous function.
-     if (FunctionAST *F = ParseTopLevelExpr()) {
-  -    if (Function *LF = F->Codegen()) {
+     if (auto FnAST = ParseTopLevelExpr()) {
+  -    if (auto *FnIR = FnAST->Codegen()) {
   -      // We're just doing this to make sure it executes.
   -      TheExecutionEngine->finalizeObject();
   -      // JIT the function, returning a function pointer.
-  -      void *FPtr = TheExecutionEngine->getPointerToFunction(LF);
+  -      void *FPtr = TheExecutionEngine->getPointerToFunction(FnIR);
   -
   -      // Cast it to the right type (takes no arguments, returns a double) so we
   -      // can call it as a native function.
@@ -307,10 +307,12 @@ and then we have added to all of our AST classes a source location:
      SourceLocation Loc;
 
      public:
+       ExprAST(SourceLocation Loc = CurLoc) : Loc(Loc) {}
+       virtual ~ExprAST() {}
+       virtual Value* Codegen() = 0;
        int getLine() const { return Loc.Line; }
        int getCol() const { return Loc.Col; }
-       ExprAST(SourceLocation Loc = CurLoc) : Loc(Loc) {}
-       virtual std::ostream &dump(std::ostream &out, int ind) {
+       virtual raw_ostream &dump(raw_ostream &out, int ind) {
          return out << ':' << getLine() << ':' << getCol() << '\n';
        }
 
@@ -318,7 +320,8 @@ that we pass down through when we create a new expression:
 
 .. code-block:: c++
 
-   LHS = new BinaryExprAST(BinLoc, BinOp, LHS, RHS);
+   LHS = llvm::make_unique<BinaryExprAST>(BinLoc, BinOp, std::move(LHS),
+                                          std::move(RHS));
 
 giving us locations for each of our expressions and variables.
 
@@ -398,9 +401,9 @@ argument allocas in ``PrototypeAST::CreateArgumentAllocas``.
   DILocalVariable D = DBuilder->createParameterVariable(
       Scope, Args[Idx], Idx + 1, Unit, Line, KSDbgInfo.getDoubleTy(), true);
 
-  Instruction *Call = DBuilder->insertDeclare(
-      Alloca, D, DBuilder->createExpression(), Builder.GetInsertBlock());
-  Call->setDebugLoc(DebugLoc::get(Line, 0, Scope));
+  DBuilder->insertDeclare(Alloca, D, DBuilder->createExpression(),
+                          DebugLoc::get(Line, 0, Scope),
+                          Builder.GetInsertBlock());
 
 Here we're doing a few things. First, we're grabbing our current scope
 for the variable so we can say what range of code our variable is valid
@@ -408,7 +411,7 @@ through. Second, we're creating the variable, giving it the scope,
 the name, source location, type, and since it's an argument, the argument
 index. Third, we create an ``lvm.dbg.declare`` call to indicate at the IR
 level that we've got a variable in an alloca (and it gives a starting
-location for the variable). Lastly, we set a source location for the
+location for the variable), and setting a source location for the
 beginning of the scope on the declare.
 
 One interesting thing to note at this point is that various debuggers have

@@ -1593,10 +1593,13 @@ static Instruction *getFirstInst(Instruction *FirstInst, Value *V,
   return nullptr;
 }
 
-/// \brief IR Values for the lower and upper bounds of a pointer evolution.
+/// \brief IR Values for the lower and upper bounds of a pointer evolution.  We
+/// need to use value-handles because SCEV expansion can invalidate previously
+/// expanded values.  Thus expansion of a pointer can invalidate the bounds for
+/// a previous one.
 struct PointerBounds {
-  Value *Start;
-  Value *End;
+  TrackingVH<Value> Start;
+  TrackingVH<Value> End;
 };
 
 /// \brief Expand code for the lower and upper bound of the pointer group \p CG
@@ -1668,6 +1671,8 @@ std::pair<Instruction *, Instruction *> LoopAccessInfo::addRuntimeChecks(
 
   for (const auto &Check : ExpandedChecks) {
     const PointerBounds &A = Check.first, &B = Check.second;
+    // Check if two pointers (A and B) conflict where conflict is computed as:
+    // start(A) <= end(B) && start(B) <= end(A)
     unsigned AS0 = A.Start->getType()->getPointerAddressSpace();
     unsigned AS1 = B.Start->getType()->getPointerAddressSpace();
 
@@ -1794,7 +1799,7 @@ void LoopAccessAnalysis::print(raw_ostream &OS, const Module *M) const {
 }
 
 bool LoopAccessAnalysis::runOnFunction(Function &F) {
-  SE = &getAnalysis<ScalarEvolution>();
+  SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto *TLIP = getAnalysisIfAvailable<TargetLibraryInfoWrapperPass>();
   TLI = TLIP ? &TLIP->getTLI() : nullptr;
   AA = &getAnalysis<AliasAnalysis>();
@@ -1805,7 +1810,7 @@ bool LoopAccessAnalysis::runOnFunction(Function &F) {
 }
 
 void LoopAccessAnalysis::getAnalysisUsage(AnalysisUsage &AU) const {
-    AU.addRequired<ScalarEvolution>();
+    AU.addRequired<ScalarEvolutionWrapperPass>();
     AU.addRequired<AliasAnalysis>();
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
@@ -1819,7 +1824,7 @@ static const char laa_name[] = "Loop Access Analysis";
 
 INITIALIZE_PASS_BEGIN(LoopAccessAnalysis, LAA_NAME, laa_name, false, true)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
-INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_END(LoopAccessAnalysis, LAA_NAME, laa_name, false, true)

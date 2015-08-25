@@ -174,19 +174,7 @@ int main(int argc, char **argv) {
   if (UseDiagnosticHandler)
     CodeGen.setDiagnosticHandler(handleDiagnostics, nullptr);
 
-  switch (RelocModel) {
-  case Reloc::Static:
-    CodeGen.setCodePICModel(LTO_CODEGEN_PIC_MODEL_STATIC);
-    break;
-  case Reloc::PIC_:
-    CodeGen.setCodePICModel(LTO_CODEGEN_PIC_MODEL_DYNAMIC);
-    break;
-  case Reloc::DynamicNoPIC:
-    CodeGen.setCodePICModel(LTO_CODEGEN_PIC_MODEL_DYNAMIC_NO_PIC);
-    break;
-  default:
-    CodeGen.setCodePICModel(LTO_CODEGEN_PIC_MODEL_DEFAULT);
-  }
+  CodeGen.setCodePICModel(RelocModel);
 
   CodeGen.setDebugInfo(LTO_DEBUG_MODEL_DWARF);
   CodeGen.setTargetOptions(Options);
@@ -207,26 +195,24 @@ int main(int argc, char **argv) {
       return 1;
     }
 
-    LTOModule *LTOMod = Module.get();
+    unsigned NumSyms = Module->getSymbolCount();
+    for (unsigned I = 0; I < NumSyms; ++I) {
+      StringRef Name = Module->getSymbolName(I);
+      if (!DSOSymbolsSet.count(Name))
+        continue;
+      lto_symbol_attributes Attrs = Module->getSymbolAttributes(I);
+      unsigned Scope = Attrs & LTO_SYMBOL_SCOPE_MASK;
+      if (Scope != LTO_SYMBOL_SCOPE_DEFAULT_CAN_BE_HIDDEN)
+        KeptDSOSyms.push_back(Name);
+    }
 
     // We use the first input module as the destination module when
     // SetMergedModule is true.
     if (SetMergedModule && i == BaseArg) {
       // Transfer ownership to the code generator.
-      CodeGen.setModule(Module.release());
+      CodeGen.setModule(std::move(Module));
     } else if (!CodeGen.addModule(Module.get()))
       return 1;
-
-    unsigned NumSyms = LTOMod->getSymbolCount();
-    for (unsigned I = 0; I < NumSyms; ++I) {
-      StringRef Name = LTOMod->getSymbolName(I);
-      if (!DSOSymbolsSet.count(Name))
-        continue;
-      lto_symbol_attributes Attrs = LTOMod->getSymbolAttributes(I);
-      unsigned Scope = Attrs & LTO_SYMBOL_SCOPE_MASK;
-      if (Scope != LTO_SYMBOL_SCOPE_DEFAULT_CAN_BE_HIDDEN)
-        KeptDSOSyms.push_back(Name);
-    }
   }
 
   // Add all the exported symbols to the table of symbols to preserve.

@@ -31,7 +31,17 @@ LoopVersioning::LoopVersioning(
   assert(L->getLoopPreheader() && "No preheader");
 }
 
-void LoopVersioning::versionLoop(Pass *P) {
+LoopVersioning::LoopVersioning(const LoopAccessInfo &LAInfo, Loop *L,
+                               LoopInfo *LI, DominatorTree *DT)
+    : VersionedLoop(L), NonVersionedLoop(nullptr),
+      Checks(LAInfo.getRuntimePointerChecking()->getChecks()), LAI(LAInfo),
+      LI(LI), DT(DT) {
+  assert(L->getExitBlock() && "No single exit block");
+  assert(L->getLoopPreheader() && "No preheader");
+}
+
+void LoopVersioning::versionLoop(
+    const SmallVectorImpl<Instruction *> &DefsUsedOutside) {
   Instruction *FirstCheckInst;
   Instruction *MemRuntimeCheck;
   // Add the memcheck in the original preheader (this is empty initially).
@@ -68,6 +78,10 @@ void LoopVersioning::versionLoop(Pass *P) {
   // The loops merge in the original exit block.  This is now dominated by the
   // memchecking block.
   DT->changeImmediateDominator(VersionedLoop->getExitBlock(), MemCheckBB);
+
+  // Adds the necessary PHI nodes for the versioned loops based on the
+  // loop-defined values used outside of the loop.
+  addPHINodes(DefsUsedOutside);
 }
 
 void LoopVersioning::addPHINodes(

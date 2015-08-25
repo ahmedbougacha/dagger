@@ -3929,9 +3929,26 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
 
   // If that fails, try against the alternate table containing long-form NEON:
   // "fadd v0.2s, v1.2s, v2.2s"
-  if (MatchResult != Match_Success)
+  if (MatchResult != Match_Success) {
+    // But first, save the short-form match result: we can use it in case the
+    // long-form match also fails.
+    auto ShortFormNEONErrorInfo = ErrorInfo;
+    auto ShortFormNEONMatchResult = MatchResult;
+
     MatchResult =
         MatchInstructionImpl(Operands, Inst, ErrorInfo, MatchingInlineAsm, 0);
+
+    // Now, both matches failed, and the long-form match failed on the mnemonic
+    // suffix token operand.  The short-form match failure is probably more
+    // relevant: use it instead.
+    if (MatchResult == Match_InvalidOperand && ErrorInfo == 1 &&
+        ((AArch64Operand &)*Operands[1]).isToken() &&
+        ((AArch64Operand &)*Operands[1]).isTokenSuffix()) {
+      MatchResult = ShortFormNEONMatchResult;
+      ErrorInfo = ShortFormNEONErrorInfo;
+    }
+  }
+
 
   switch (MatchResult) {
   case Match_Success: {
@@ -3966,6 +3983,7 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     return showMatchError(IDLoc, MatchResult);
   case Match_InvalidOperand: {
     SMLoc ErrorLoc = IDLoc;
+
     if (ErrorInfo != ~0ULL) {
       if (ErrorInfo >= Operands.size())
         return Error(IDLoc, "too few operands for instruction");

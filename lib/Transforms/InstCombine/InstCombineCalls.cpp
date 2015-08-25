@@ -198,8 +198,52 @@ Instruction *InstCombiner::SimplifyMemSet(MemSetInst *MI) {
 }
 
 static Value *SimplifyX86immshift(const IntrinsicInst &II,
-                                  InstCombiner::BuilderTy &Builder,
-                                  bool LogicalShift, bool ShiftLeft) {
+                                  InstCombiner::BuilderTy &Builder) {
+  bool LogicalShift = false;
+  bool ShiftLeft = false;
+
+  switch (II.getIntrinsicID()) {
+  default:
+    return nullptr;
+  case Intrinsic::x86_sse2_psra_d:
+  case Intrinsic::x86_sse2_psra_w:
+  case Intrinsic::x86_sse2_psrai_d:
+  case Intrinsic::x86_sse2_psrai_w:
+  case Intrinsic::x86_avx2_psra_d:
+  case Intrinsic::x86_avx2_psra_w:
+  case Intrinsic::x86_avx2_psrai_d:
+  case Intrinsic::x86_avx2_psrai_w:
+    LogicalShift = false; ShiftLeft = false;
+    break;
+  case Intrinsic::x86_sse2_psrl_d:
+  case Intrinsic::x86_sse2_psrl_q:
+  case Intrinsic::x86_sse2_psrl_w:
+  case Intrinsic::x86_sse2_psrli_d:
+  case Intrinsic::x86_sse2_psrli_q:
+  case Intrinsic::x86_sse2_psrli_w:
+  case Intrinsic::x86_avx2_psrl_d:
+  case Intrinsic::x86_avx2_psrl_q:
+  case Intrinsic::x86_avx2_psrl_w:
+  case Intrinsic::x86_avx2_psrli_d:
+  case Intrinsic::x86_avx2_psrli_q:
+  case Intrinsic::x86_avx2_psrli_w:
+    LogicalShift = true; ShiftLeft = false;
+    break;
+  case Intrinsic::x86_sse2_psll_d:
+  case Intrinsic::x86_sse2_psll_q:
+  case Intrinsic::x86_sse2_psll_w:
+  case Intrinsic::x86_sse2_pslli_d:
+  case Intrinsic::x86_sse2_pslli_q:
+  case Intrinsic::x86_sse2_pslli_w:
+  case Intrinsic::x86_avx2_psll_d:
+  case Intrinsic::x86_avx2_psll_q:
+  case Intrinsic::x86_avx2_psll_w:
+  case Intrinsic::x86_avx2_pslli_d:
+  case Intrinsic::x86_avx2_pslli_q:
+  case Intrinsic::x86_avx2_pslli_w:
+    LogicalShift = true; ShiftLeft = true;
+    break;
+  }
   assert((LogicalShift || !ShiftLeft) && "Only logical shifts can shift left");
 
   // Simplify if count is constant.
@@ -788,51 +832,64 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   }
 
   // Constant fold ashr( <A x Bi>, Ci ).
-  case Intrinsic::x86_sse2_psra_d:
-  case Intrinsic::x86_sse2_psra_w:
+  // Constant fold lshr( <A x Bi>, Ci ).
+  // Constant fold shl( <A x Bi>, Ci ).
   case Intrinsic::x86_sse2_psrai_d:
   case Intrinsic::x86_sse2_psrai_w:
-  case Intrinsic::x86_avx2_psra_d:
-  case Intrinsic::x86_avx2_psra_w:
   case Intrinsic::x86_avx2_psrai_d:
   case Intrinsic::x86_avx2_psrai_w:
-    if (Value *V = SimplifyX86immshift(*II, *Builder, false, false))
-      return ReplaceInstUsesWith(*II, V);
-    break;
-
-  // Constant fold lshr( <A x Bi>, Ci ).
-  case Intrinsic::x86_sse2_psrl_d:
-  case Intrinsic::x86_sse2_psrl_q:
-  case Intrinsic::x86_sse2_psrl_w:
   case Intrinsic::x86_sse2_psrli_d:
   case Intrinsic::x86_sse2_psrli_q:
   case Intrinsic::x86_sse2_psrli_w:
-  case Intrinsic::x86_avx2_psrl_d:
-  case Intrinsic::x86_avx2_psrl_q:
-  case Intrinsic::x86_avx2_psrl_w:
   case Intrinsic::x86_avx2_psrli_d:
   case Intrinsic::x86_avx2_psrli_q:
   case Intrinsic::x86_avx2_psrli_w:
-    if (Value *V = SimplifyX86immshift(*II, *Builder, true, false))
-      return ReplaceInstUsesWith(*II, V);
-    break;
-
-  // Constant fold shl( <A x Bi>, Ci ).
-  case Intrinsic::x86_sse2_psll_d:
-  case Intrinsic::x86_sse2_psll_q:
-  case Intrinsic::x86_sse2_psll_w:
   case Intrinsic::x86_sse2_pslli_d:
   case Intrinsic::x86_sse2_pslli_q:
   case Intrinsic::x86_sse2_pslli_w:
-  case Intrinsic::x86_avx2_psll_d:
-  case Intrinsic::x86_avx2_psll_q:
-  case Intrinsic::x86_avx2_psll_w:
   case Intrinsic::x86_avx2_pslli_d:
   case Intrinsic::x86_avx2_pslli_q:
   case Intrinsic::x86_avx2_pslli_w:
-    if (Value *V = SimplifyX86immshift(*II, *Builder, true, true))
+    if (Value *V = SimplifyX86immshift(*II, *Builder))
       return ReplaceInstUsesWith(*II, V);
     break;
+
+  case Intrinsic::x86_sse2_psra_d:
+  case Intrinsic::x86_sse2_psra_w:
+  case Intrinsic::x86_avx2_psra_d:
+  case Intrinsic::x86_avx2_psra_w:
+  case Intrinsic::x86_sse2_psrl_d:
+  case Intrinsic::x86_sse2_psrl_q:
+  case Intrinsic::x86_sse2_psrl_w:
+  case Intrinsic::x86_avx2_psrl_d:
+  case Intrinsic::x86_avx2_psrl_q:
+  case Intrinsic::x86_avx2_psrl_w:
+  case Intrinsic::x86_sse2_psll_d:
+  case Intrinsic::x86_sse2_psll_q:
+  case Intrinsic::x86_sse2_psll_w:
+  case Intrinsic::x86_avx2_psll_d:
+  case Intrinsic::x86_avx2_psll_q:
+  case Intrinsic::x86_avx2_psll_w: {
+    if (Value *V = SimplifyX86immshift(*II, *Builder))
+      return ReplaceInstUsesWith(*II, V);
+
+    // SSE2/AVX2 uses only the first 64-bits of the 128-bit vector
+    // operand to compute the shift amount.
+    auto ShiftAmt = II->getArgOperand(1);
+    auto ShiftType = cast<VectorType>(ShiftAmt->getType());
+    assert(ShiftType->getPrimitiveSizeInBits() == 128 &&
+           "Unexpected packed shift size");
+    unsigned VWidth = ShiftType->getNumElements();
+
+    APInt DemandedElts = APInt::getLowBitsSet(VWidth, VWidth / 2);
+    APInt UndefElts(VWidth, 0);
+    if (Value *V =
+            SimplifyDemandedVectorElts(ShiftAmt, DemandedElts, UndefElts)) {
+      II->setArgOperand(1, V);
+      return II;
+    }
+    break;
+  }
 
   case Intrinsic::x86_sse41_pmovsxbd:
   case Intrinsic::x86_sse41_pmovsxbq:
@@ -960,7 +1017,20 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     // This optimization is convoluted because the intrinsic is defined as
     // getting a vector of floats or doubles for the ps and pd versions.
     // FIXME: That should be changed.
+
+    Value *Op0 = II->getArgOperand(0);
+    Value *Op1 = II->getArgOperand(1);
     Value *Mask = II->getArgOperand(2);
+
+    // fold (blend A, A, Mask) -> A
+    if (Op0 == Op1)
+      return ReplaceInstUsesWith(CI, Op0);
+
+    // Zero Mask - select 1st argument.
+    if (isa<ConstantAggregateZero>(Mask))
+      return ReplaceInstUsesWith(CI, Op0);
+
+    // Constant Mask - select 1st/2nd argument lane based on top bit of mask.
     if (auto C = dyn_cast<ConstantDataVector>(Mask)) {
       auto Tyi1 = Builder->getInt1Ty();
       auto SelectorType = cast<VectorType>(Mask->getType());
@@ -983,11 +1053,9 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
         Selectors.push_back(ConstantInt::get(Tyi1, Selector >> (BitWidth - 1)));
       }
       auto NewSelector = ConstantVector::get(Selectors);
-      return SelectInst::Create(NewSelector, II->getArgOperand(1),
-                                II->getArgOperand(0), "blendv");
-    } else {
-      break;
+      return SelectInst::Create(NewSelector, Op1, Op0, "blendv");
     }
+    break;
   }
 
   case Intrinsic::x86_avx_vpermilvar_ps:

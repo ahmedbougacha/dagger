@@ -1447,6 +1447,23 @@ Instruction *InstCombiner::visitICmpInstWithInstAndIntCst(ICmpInst &ICI,
           ICI.getPredicate() == ICmpInst::ICMP_EQ ? ICmpInst::ICMP_UGT
                                                   : ICmpInst::ICMP_ULE,
           LHSI->getOperand(0), SubOne(RHS));
+
+    // (icmp eq (and %A, C), 0) -> (icmp sgt (trunc %A), -1)
+    //   iff C is a power of 2
+    if (ICI.isEquality() && LHSI->hasOneUse() && match(RHS, m_Zero())) {
+      if (auto *CI = dyn_cast<ConstantInt>(LHSI->getOperand(1))) {
+        const APInt &AI = CI->getValue();
+        int32_t ExactLogBase2 = AI.exactLogBase2();
+        if (ExactLogBase2 != -1 && DL.isLegalInteger(ExactLogBase2 + 1)) {
+          Type *NTy = IntegerType::get(ICI.getContext(), ExactLogBase2 + 1);
+          Value *Trunc = Builder->CreateTrunc(LHSI->getOperand(0), NTy);
+          return new ICmpInst(ICI.getPredicate() == ICmpInst::ICMP_EQ
+                                  ? ICmpInst::ICMP_SGE
+                                  : ICmpInst::ICMP_SLT,
+                              Trunc, Constant::getNullValue(NTy));
+        }
+      }
+    }
     break;
 
   case Instruction::Or: {
@@ -2112,9 +2129,8 @@ static Instruction *ProcessUGT_ADDCST_ADD(ICmpInst &I, Value *A, Value *B,
 bool InstCombiner::OptimizeOverflowCheck(OverflowCheckFlavor OCF, Value *LHS,
                                          Value *RHS, Instruction &OrigI,
                                          Value *&Result, Constant *&Overflow) {
-  assert((!OrigI.isCommutative() ||
-          !(isa<Constant>(LHS) && !isa<Constant>(RHS))) &&
-         "call with a constant RHS if possible!");
+  if (OrigI.isCommutative() && isa<Constant>(LHS) && !isa<Constant>(RHS))
+    std::swap(LHS, RHS);
 
   auto SetResult = [&](Value *OpResult, Constant *OverflowVal, bool ReuseName) {
     Result = OpResult;
@@ -3472,6 +3488,18 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
         return new ICmpInst(I.getPredicate(), BO0->getOperand(0),
                             BO1->getOperand(0));
       }
+      }
+    }
+
+    if (BO0) {
+      // Transform  A & (L - 1) `ult` L --> L != 0
+      auto LSubOne = m_Add(m_Specific(Op1), m_AllOnes());
+      auto BitwiseAnd =
+          m_CombineOr(m_And(m_Value(), LSubOne), m_And(LSubOne, m_Value()));
+
+      if (match(BO0, BitwiseAnd) && I.getPredicate() == ICmpInst::ICMP_ULT) {
+        auto *Zero = Constant::getNullValue(BO0->getType());
+        return new ICmpInst(ICmpInst::ICMP_NE, Op1, Zero);
       }
     }
   }

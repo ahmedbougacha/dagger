@@ -72,6 +72,12 @@ class sopk <bits<5> si, bits<5> vi = si> {
   field bits<5> VI = vi;
 }
 
+// Specify an SMRD opcode for SI and SMEM opcode for VI
+class smrd<bits<5> si, bits<5> vi = si> {
+  field bits<5> SI = si;
+  field bits<8> VI = { 0, 0, 0, vi };
+}
+
 // Execpt for the NONE field, this must be kept in sync with the SISubtarget enum
 // in AMDGPUInstrInfo.cpp
 def SISubtarget {
@@ -900,21 +906,21 @@ class SMRD_Real_vi <bits<8> op, string opName, bit imm, dag outs, dag ins,
   let AssemblerPredicates = [isVI];
 }
 
-multiclass SMRD_m <bits<5> op, string opName, bit imm, dag outs, dag ins,
+multiclass SMRD_m <smrd op, string opName, bit imm, dag outs, dag ins,
                    string asm, list<dag> pattern> {
 
   def "" : SMRD_Pseudo <opName, outs, ins, pattern>;
 
-  def _si : SMRD_Real_si <op, opName, imm, outs, ins, asm>;
+  def _si : SMRD_Real_si <op.SI, opName, imm, outs, ins, asm>;
 
   // glc is only applicable to scalar stores, which are not yet
   // implemented.
   let glc = 0 in {
-    def _vi : SMRD_Real_vi <{0, 0, 0, op}, opName, imm, outs, ins, asm>;
+    def _vi : SMRD_Real_vi <op.VI, opName, imm, outs, ins, asm>;
   }
 }
 
-multiclass SMRD_Helper <bits<5> op, string opName, RegisterClass baseClass,
+multiclass SMRD_Helper <smrd op, string opName, RegisterClass baseClass,
                         RegisterClass dstClass> {
   defm _IMM : SMRD_m <
     op, opName#"_IMM", 1, (outs dstClass:$dst),
@@ -924,7 +930,7 @@ multiclass SMRD_Helper <bits<5> op, string opName, RegisterClass baseClass,
 
   def _IMM_ci : SMRD <
     (outs dstClass:$dst), (ins baseClass:$sbase, smrd_literal_offset:$offset),
-    opName#" $dst, $sbase, $offset", []>, SMRD_IMMe_ci <op> {
+    opName#" $dst, $sbase, $offset", []>, SMRD_IMMe_ci <op.SI> {
     let AssemblerPredicates = [isCIOnly];
   }
 
@@ -965,28 +971,30 @@ class getNumSrcArgs<ValueType Src1, ValueType Src2> {
 class getVALUDstForVT<ValueType VT> {
   RegisterOperand ret = !if(!eq(VT.Size, 32), VOPDstOperand<VGPR_32>,
                           !if(!eq(VT.Size, 64), VOPDstOperand<VReg_64>,
-                            VOPDstOperand<SReg_64>)); // else VT == i1
+                            !if(!eq(VT.Size, 16), VOPDstOperand<VGPR_32>,
+                            VOPDstOperand<SReg_64>))); // else VT == i1
 }
 
 // Returns the register class to use for source 0 of VOP[12C]
 // instructions for the given VT.
 class getVOPSrc0ForVT<ValueType VT> {
-  RegisterOperand ret = !if(!eq(VT.Size, 32), VSrc_32, VSrc_64);
+  RegisterOperand ret = !if(!eq(VT.Size, 64), VSrc_64, VSrc_32);
 }
 
 // Returns the register class to use for source 1 of VOP[12C] for the
 // given VT.
 class getVOPSrc1ForVT<ValueType VT> {
-  RegisterClass ret = !if(!eq(VT.Size, 32), VGPR_32, VReg_64);
+  RegisterClass ret = !if(!eq(VT.Size, 64), VReg_64, VGPR_32);
 }
 
 // Returns the register class to use for sources of VOP3 instructions for the
 // given VT.
 class getVOP3SrcForVT<ValueType VT> {
-  RegisterOperand ret = !if(!eq(VT.Size, 32), VCSrc_32, VCSrc_64);
+  RegisterOperand ret = !if(!eq(VT.Size, 64), VCSrc_64, VCSrc_32);
 }
 
 // Returns 1 if the source arguments have modifiers, 0 if they do not.
+// XXX - do f16 instructions?
 class hasModifiers<ValueType SrcVT> {
   bit ret = !if(!eq(SrcVT.Value, f32.Value), 1,
             !if(!eq(SrcVT.Value, f64.Value), 1, 0));
@@ -1093,12 +1101,12 @@ class VOPProfile <list<ValueType> _ArgVT> {
 
 // FIXME: I think these F16/I16 profiles will need to use f16/i16 types in order
 //        for the instruction patterns to work.
-def VOP_F16_F16 : VOPProfile <[f32, f32, untyped, untyped]>;
-def VOP_F16_I16 : VOPProfile <[f32, i32, untyped, untyped]>;
-def VOP_I16_F16 : VOPProfile <[i32, f32, untyped, untyped]>;
+def VOP_F16_F16 : VOPProfile <[f16, f16, untyped, untyped]>;
+def VOP_F16_I16 : VOPProfile <[f16, i32, untyped, untyped]>;
+def VOP_I16_F16 : VOPProfile <[i32, f16, untyped, untyped]>;
 
-def VOP_F16_F16_F16 : VOPProfile <[f32, f32, f32, untyped]>;
-def VOP_F16_F16_I16 : VOPProfile <[f32, f32, i32, untyped]>;
+def VOP_F16_F16_F16 : VOPProfile <[f16, f16, f16, untyped]>;
+def VOP_F16_F16_I16 : VOPProfile <[f16, f16, i32, untyped]>;
 def VOP_I16_I16_I16 : VOPProfile <[i32, i32, i32, untyped]>;
 
 def VOP_F32_F32 : VOPProfile <[f32, f32, untyped, untyped]>;

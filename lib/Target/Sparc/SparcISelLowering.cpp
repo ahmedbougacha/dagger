@@ -658,7 +658,7 @@ LowerFormalArguments_64(SDValue Chain,
     InVals.push_back(DAG.getLoad(
         VA.getValVT(), DL, Chain,
         DAG.getFrameIndex(FI, getPointerTy(MF.getDataLayout())),
-        MachinePointerInfo::getFixedStack(FI), false, false, false, 0));
+        MachinePointerInfo::getFixedStack(MF, FI), false, false, false, 0));
   }
 
   if (!IsVarArg)
@@ -686,9 +686,9 @@ LowerFormalArguments_64(SDValue Chain,
     SDValue VArg = DAG.getCopyFromReg(Chain, DL, VReg, MVT::i64);
     int FI = MF.getFrameInfo()->CreateFixedObject(8, ArgOffset + ArgArea, true);
     auto PtrVT = getPointerTy(MF.getDataLayout());
-    OutChains.push_back(
-        DAG.getStore(Chain, DL, VArg, DAG.getFrameIndex(FI, PtrVT),
-                     MachinePointerInfo::getFixedStack(FI), false, false, 0));
+    OutChains.push_back(DAG.getStore(
+        Chain, DL, VArg, DAG.getFrameIndex(FI, PtrVT),
+        MachinePointerInfo::getFixedStack(MF, FI), false, false, 0));
   }
 
   if (!OutChains.empty())
@@ -1423,6 +1423,14 @@ SparcTargetLowering::SparcTargetLowering(TargetMachine &TM,
     : TargetLowering(TM), Subtarget(&STI) {
   MVT PtrVT = MVT::getIntegerVT(8 * TM.getPointerSize());
 
+  // Instructions which use registers as conditionals examine all the
+  // bits (as does the pseudo SELECT_CC expansion). I don't think it
+  // matters much whether it's ZeroOrOneBooleanContent, or
+  // ZeroOrNegativeOneBooleanContent, so, arbitrarily choose the
+  // former.
+  setBooleanContents(ZeroOrOneBooleanContent);
+  setBooleanVectorContents(ZeroOrOneBooleanContent);
+
   // Set up the register classes.
   addRegisterClass(MVT::i32, &SP::IntRegsRegClass);
   addRegisterClass(MVT::f32, &SP::FPRegsRegClass);
@@ -1909,7 +1917,8 @@ SDValue SparcTargetLowering::makeAddress(SDValue Op, SelectionDAG &DAG) const {
     MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
     MFI->setHasCalls(true);
     return DAG.getLoad(VT, DL, DAG.getEntryNode(), AbsAddr,
-                       MachinePointerInfo::getGOT(), false, false, false, 0);
+                       MachinePointerInfo::getGOT(DAG.getMachineFunction()),
+                       false, false, false, 0);
   }
 
   // This is one of the absolute code models.

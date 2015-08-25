@@ -542,6 +542,15 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
 
     if (Subtarget.hasVSX()) {
       setOperationAction(ISD::SCALAR_TO_VECTOR, MVT::v2f64, Legal);
+      if (Subtarget.hasP8Vector())
+        setOperationAction(ISD::SCALAR_TO_VECTOR, MVT::v4f32, Legal);
+      if (Subtarget.hasDirectMove()) {
+        setOperationAction(ISD::SCALAR_TO_VECTOR, MVT::v16i8, Legal);
+        setOperationAction(ISD::SCALAR_TO_VECTOR, MVT::v8i16, Legal);
+        setOperationAction(ISD::SCALAR_TO_VECTOR, MVT::v4i32, Legal);
+        // FIXME: this is causing bootstrap failures, disable temporarily
+        //setOperationAction(ISD::SCALAR_TO_VECTOR, MVT::v2i64, Legal);
+      }
       setOperationAction(ISD::EXTRACT_VECTOR_ELT, MVT::v2f64, Legal);
 
       setOperationAction(ISD::FFLOOR, MVT::v2f64, Legal);
@@ -1996,10 +2005,10 @@ static SDValue getTOCEntry(SelectionDAG &DAG, SDLoc dl, bool Is64Bit,
                 DAG.getNode(PPCISD::GlobalBaseReg, dl, VT);
 
   SDValue Ops[] = { GA, Reg };
-  return DAG.getMemIntrinsicNode(PPCISD::TOC_ENTRY, dl,
-                                 DAG.getVTList(VT, MVT::Other), Ops, VT,
-                                 MachinePointerInfo::getGOT(), 0, false, true,
-                                 false, 0);
+  return DAG.getMemIntrinsicNode(
+      PPCISD::TOC_ENTRY, dl, DAG.getVTList(VT, MVT::Other), Ops, VT,
+      MachinePointerInfo::getGOT(DAG.getMachineFunction()), 0, false, true,
+      false, 0);
 }
 
 SDValue PPCTargetLowering::LowerConstantPool(SDValue Op,
@@ -3896,9 +3905,10 @@ StoreTailCallArgumentsToStackSlot(SelectionDAG &DAG,
     SDValue FIN = TailCallArgs[i].FrameIdxOp;
     int FI = TailCallArgs[i].FrameIdx;
     // Store relative to framepointer.
-    MemOpChains.push_back(DAG.getStore(Chain, dl, Arg, FIN,
-                                       MachinePointerInfo::getFixedStack(FI),
-                                       false, false, 0));
+    MemOpChains.push_back(DAG.getStore(
+        Chain, dl, Arg, FIN,
+        MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI), false,
+        false, 0));
   }
 }
 
@@ -3923,9 +3933,10 @@ static SDValue EmitTailCallStoreFPAndRetAddr(SelectionDAG &DAG,
                                                           NewRetAddrLoc, true);
     EVT VT = isPPC64 ? MVT::i64 : MVT::i32;
     SDValue NewRetAddrFrIdx = DAG.getFrameIndex(NewRetAddr, VT);
-    Chain = DAG.getStore(Chain, dl, OldRetAddr, NewRetAddrFrIdx,
-                         MachinePointerInfo::getFixedStack(NewRetAddr),
-                         false, false, 0);
+    Chain = DAG.getStore(
+        Chain, dl, OldRetAddr, NewRetAddrFrIdx,
+        MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), NewRetAddr),
+        false, false, 0);
 
     // When using the 32/64-bit SVR4 ABI there is no need to move the FP stack
     // slot as the FP is never overwritten.
@@ -3934,9 +3945,10 @@ static SDValue EmitTailCallStoreFPAndRetAddr(SelectionDAG &DAG,
       int NewFPIdx = MF.getFrameInfo()->CreateFixedObject(SlotSize, NewFPLoc,
                                                           true);
       SDValue NewFramePtrIdx = DAG.getFrameIndex(NewFPIdx, VT);
-      Chain = DAG.getStore(Chain, dl, OldFP, NewFramePtrIdx,
-                           MachinePointerInfo::getFixedStack(NewFPIdx),
-                           false, false, 0);
+      Chain = DAG.getStore(
+          Chain, dl, OldFP, NewFramePtrIdx,
+          MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), NewFPIdx),
+          false, false, 0);
     }
   }
   return Chain;
@@ -5319,9 +5331,10 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
     unsigned TOCSaveOffset = Subtarget.getFrameLowering()->getTOCSaveOffset();
     SDValue PtrOff = DAG.getIntPtrConstant(TOCSaveOffset, dl);
     SDValue AddPtr = DAG.getNode(ISD::ADD, dl, PtrVT, StackPtr, PtrOff);
-    Chain = DAG.getStore(Val.getValue(1), dl, Val, AddPtr,
-                         MachinePointerInfo::getStack(TOCSaveOffset),
-                         false, false, 0);
+    Chain = DAG.getStore(
+        Val.getValue(1), dl, Val, AddPtr,
+        MachinePointerInfo::getStack(DAG.getMachineFunction(), TOCSaveOffset),
+        false, false, 0);
     // In the ELFv2 ABI, R12 must contain the address of an indirect callee.
     // This does not mean the MTCTR instruction must use R12; it's easier
     // to model this as an extra parameter, so do that.
@@ -6102,7 +6115,8 @@ void PPCTargetLowering::LowerFP_TO_INTForReuse(SDValue Op, ReuseLoadInfo &RLI,
     (Op.getOpcode() == ISD::FP_TO_SINT || Subtarget.hasFPCVT());
   SDValue FIPtr = DAG.CreateStackTemporary(i32Stack ? MVT::i32 : MVT::f64);
   int FI = cast<FrameIndexSDNode>(FIPtr)->getIndex();
-  MachinePointerInfo MPI = MachinePointerInfo::getFixedStack(FI);
+  MachinePointerInfo MPI =
+      MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI);
 
   // Emit a store to the stack slot.
   SDValue Chain;
@@ -6422,17 +6436,18 @@ SDValue PPCTargetLowering::LowerINT_TO_FP(SDValue Op,
       int FrameIdx = FrameInfo->CreateStackObject(4, 4, false);
       SDValue FIdx = DAG.getFrameIndex(FrameIdx, PtrVT);
 
-      SDValue Store =
-        DAG.getStore(DAG.getEntryNode(), dl, SINT.getOperand(0), FIdx,
-                     MachinePointerInfo::getFixedStack(FrameIdx),
-                     false, false, 0);
+      SDValue Store = DAG.getStore(
+          DAG.getEntryNode(), dl, SINT.getOperand(0), FIdx,
+          MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx),
+          false, false, 0);
 
       assert(cast<StoreSDNode>(Store)->getMemoryVT() == MVT::i32 &&
              "Expected an i32 store");
 
       RLI.Ptr = FIdx;
       RLI.Chain = Store;
-      RLI.MPI = MachinePointerInfo::getFixedStack(FrameIdx);
+      RLI.MPI =
+          MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx);
       RLI.Alignment = 4;
 
       MachineMemOperand *MMO =
@@ -6473,16 +6488,18 @@ SDValue PPCTargetLowering::LowerINT_TO_FP(SDValue Op,
       int FrameIdx = FrameInfo->CreateStackObject(4, 4, false);
       SDValue FIdx = DAG.getFrameIndex(FrameIdx, PtrVT);
 
-      SDValue Store = DAG.getStore(DAG.getEntryNode(), dl, Op.getOperand(0), FIdx,
-                                   MachinePointerInfo::getFixedStack(FrameIdx),
-                                   false, false, 0);
+      SDValue Store = DAG.getStore(
+          DAG.getEntryNode(), dl, Op.getOperand(0), FIdx,
+          MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx),
+          false, false, 0);
 
       assert(cast<StoreSDNode>(Store)->getMemoryVT() == MVT::i32 &&
              "Expected an i32 store");
 
       RLI.Ptr = FIdx;
       RLI.Chain = Store;
-      RLI.MPI = MachinePointerInfo::getFixedStack(FrameIdx);
+      RLI.MPI =
+          MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx);
       RLI.Alignment = 4;
     }
 
@@ -6507,14 +6524,16 @@ SDValue PPCTargetLowering::LowerINT_TO_FP(SDValue Op,
                                 Op.getOperand(0));
 
     // STD the extended value into the stack slot.
-    SDValue Store = DAG.getStore(DAG.getEntryNode(), dl, Ext64, FIdx,
-                                 MachinePointerInfo::getFixedStack(FrameIdx),
-                                 false, false, 0);
+    SDValue Store = DAG.getStore(
+        DAG.getEntryNode(), dl, Ext64, FIdx,
+        MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx),
+        false, false, 0);
 
     // Load the value as a double.
-    Ld = DAG.getLoad(MVT::f64, dl, Store, FIdx,
-                     MachinePointerInfo::getFixedStack(FrameIdx),
-                     false, false, false, 0);
+    Ld = DAG.getLoad(
+        MVT::f64, dl, Store, FIdx,
+        MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx),
+        false, false, false, 0);
   }
 
   // FCFID it and return it.
@@ -6769,7 +6788,8 @@ SDValue PPCTargetLowering::LowerBUILD_VECTOR(SDValue Op,
     // to a zero vector to get the boolean result.
     MachineFrameInfo *FrameInfo = DAG.getMachineFunction().getFrameInfo();
     int FrameIdx = FrameInfo->CreateStackObject(16, 16, false);
-    MachinePointerInfo PtrInfo = MachinePointerInfo::getFixedStack(FrameIdx);
+    MachinePointerInfo PtrInfo =
+        MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx);
     EVT PtrVT = getPointerTy(DAG.getDataLayout());
     SDValue FIdx = DAG.getFrameIndex(FrameIdx, PtrVT);
 
@@ -6815,9 +6835,9 @@ SDValue PPCTargetLowering::LowerBUILD_VECTOR(SDValue Op,
       ValueVTs.push_back(MVT::Other); // chain
       SDVTList VTs = DAG.getVTList(ValueVTs);
 
-      return DAG.getMemIntrinsicNode(PPCISD::QVLFSb,
-        dl, VTs, Ops, MVT::v4f32,
-        MachinePointerInfo::getConstantPool());
+      return DAG.getMemIntrinsicNode(
+          PPCISD::QVLFSb, dl, VTs, Ops, MVT::v4f32,
+          MachinePointerInfo::getConstantPool(DAG.getMachineFunction()));
     }
 
     SmallVector<SDValue, 4> Stores;
@@ -7544,7 +7564,8 @@ SDValue PPCTargetLowering::LowerEXTRACT_VECTOR_ELT(SDValue Op,
 
   MachineFrameInfo *FrameInfo = DAG.getMachineFunction().getFrameInfo();
   int FrameIdx = FrameInfo->CreateStackObject(16, 16, false);
-  MachinePointerInfo PtrInfo = MachinePointerInfo::getFixedStack(FrameIdx);
+  MachinePointerInfo PtrInfo =
+      MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx);
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
   SDValue FIdx = DAG.getFrameIndex(FrameIdx, PtrVT);
 
@@ -7760,7 +7781,8 @@ SDValue PPCTargetLowering::LowerVectorStore(SDValue Op,
 
   MachineFrameInfo *FrameInfo = DAG.getMachineFunction().getFrameInfo();
   int FrameIdx = FrameInfo->CreateStackObject(16, 16, false);
-  MachinePointerInfo PtrInfo = MachinePointerInfo::getFixedStack(FrameIdx);
+  MachinePointerInfo PtrInfo =
+      MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx);
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
   SDValue FIdx = DAG.getFrameIndex(FrameIdx, PtrVT);
 
@@ -9969,6 +9991,9 @@ SDValue PPCTargetLowering::combineFPToIntToFP(SDNode *N,
     if (Src.getValueType() == MVT::f32) {
       Src = DAG.getNode(ISD::FP_EXTEND, dl, MVT::f64, Src);
       DCI.AddToWorklist(Src.getNode());
+    } else if (Src.getValueType() != MVT::f64) {
+      // Make sure that we don't pick up a ppc_fp128 source value.
+      return SDValue();
     }
 
     unsigned FCTOp =
@@ -11477,7 +11502,7 @@ bool
 PPCTargetLowering::shouldExpandBuildVectorWithShuffles(
                      EVT VT , unsigned DefinedValues) const {
   if (VT == MVT::v2i64)
-    return false;
+    return Subtarget.hasDirectMove(); // Don't need stack ops with direct moves
 
   if (Subtarget.hasQPX()) {
     if (VT == MVT::v4f32 || VT == MVT::v4f64 || VT == MVT::v4i1)

@@ -534,10 +534,8 @@ void MachineLICM::HoistRegionPostRA() {
     // Conservatively treat live-in's as an external def.
     // FIXME: That means a reload that're reused in successor block(s) will not
     // be LICM'ed.
-    for (MachineBasicBlock::livein_iterator I = BB->livein_begin(),
-           E = BB->livein_end(); I != E; ++I) {
-      unsigned Reg = *I;
-      for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
+    for (unsigned LI : BB->liveins()) {
+      for (MCRegAliasIterator AI(LI, TRI, true); AI.isValid(); ++AI)
         PhysRegDefs.set(*AI);
     }
 
@@ -922,7 +920,7 @@ static bool isLoadFromGOTOrConstantPool(MachineInstr &MI) {
   for (MachineInstr::mmo_iterator I = MI.memoperands_begin(),
          E = MI.memoperands_end(); I != E; ++I) {
     if (const PseudoSourceValue *PSV = (*I)->getPseudoValue()) {
-      if (PSV == PSV->getGOT() || PSV == PSV->getConstantPool())
+      if (PSV->isGOT() || PSV->isConstantPool())
         return true;
     }
   }

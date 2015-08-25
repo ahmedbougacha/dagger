@@ -123,9 +123,9 @@ static bool ValueDominatesPHI(Value *V, PHINode *P, const DominatorTree *DT) {
   }
 
   // Otherwise, if the instruction is in the entry block, and is not an invoke,
-  // then it obviously dominates all phi nodes.
+  // and is not a catchpad, then it obviously dominates all phi nodes.
   if (I->getParent() == &I->getParent()->getParent()->getEntryBlock() &&
-      !isa<InvokeInst>(I))
+      !isa<InvokeInst>(I) && !isa<CatchPadInst>(I))
     return true;
 
   return false;
@@ -2360,6 +2360,9 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
     } else if (match(LHS, m_And(m_Value(), m_ConstantInt(CI2)))) {
       // 'and x, CI2' produces [0, CI2].
       Upper = CI2->getValue() + 1;
+    } else if (match(LHS, m_NUWAdd(m_Value(), m_ConstantInt(CI2)))) {
+      // 'add nuw x, CI2' produces [CI2, UINT_MAX].
+      Lower = CI2->getValue();
     }
     if (Lower != Upper) {
       ConstantRange LHS_CR = ConstantRange(Lower, Upper);
@@ -3574,18 +3577,9 @@ static Value *SimplifyExtractElementInst(Value *Vec, Value *Idx, const Query &,
 
   // If extracting a specified index from the vector, see if we can recursively
   // find a previously computed scalar that was inserted into the vector.
-  if (auto *IdxC = dyn_cast<ConstantInt>(Idx)) {
-    unsigned IndexVal = IdxC->getZExtValue();
-    unsigned VectorWidth = Vec->getType()->getVectorNumElements();
-
-    // If this is extracting an invalid index, turn this into undef, to avoid
-    // crashing the code below.
-    if (IndexVal >= VectorWidth)
-      return UndefValue::get(Vec->getType()->getVectorElementType());
-
-    if (Value *Elt = findScalarElement(Vec, IndexVal))
+  if (auto *IdxC = dyn_cast<ConstantInt>(Idx))
+    if (Value *Elt = findScalarElement(Vec, IdxC->getZExtValue()))
       return Elt;
-  }
 
   return nullptr;
 }

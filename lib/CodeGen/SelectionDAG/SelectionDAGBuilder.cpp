@@ -1810,10 +1810,10 @@ void SelectionDAGBuilder::visitSPDescriptorParent(StackProtectorDescriptor &SPD,
                         GuardPtr, MachinePointerInfo(IRGuard, 0),
                         true, false, false, Align);
 
-  SDValue StackSlot = DAG.getLoad(PtrTy, dl, DAG.getEntryNode(),
-                                  StackSlotPtr,
-                                  MachinePointerInfo::getFixedStack(FI),
-                                  true, false, false, Align);
+  SDValue StackSlot = DAG.getLoad(
+      PtrTy, dl, DAG.getEntryNode(), StackSlotPtr,
+      MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI), true,
+      false, false, Align);
 
   // Perform the comparison via a subtract/getsetcc.
   EVT VT = Guard.getValueType();
@@ -2297,22 +2297,44 @@ void SelectionDAGBuilder::visitSelect(const User &I) {
 
   // Min/max matching is only viable if all output VTs are the same.
   if (std::equal(ValueVTs.begin(), ValueVTs.end(), ValueVTs.begin())) {
-    Value *LHS, *RHS;
-    SelectPatternFlavor SPF = matchSelectPattern(const_cast<User*>(&I), LHS, RHS);
-    ISD::NodeType Opc = ISD::DELETED_NODE;
-    switch (SPF) {
-    case SPF_UMAX: Opc = ISD::UMAX; break;
-    case SPF_UMIN: Opc = ISD::UMIN; break;
-    case SPF_SMAX: Opc = ISD::SMAX; break;
-    case SPF_SMIN: Opc = ISD::SMIN; break;
-    default: break;
-    }
-
     EVT VT = ValueVTs[0];
     LLVMContext &Ctx = *DAG.getContext();
     auto &TLI = DAG.getTargetLoweringInfo();
     while (TLI.getTypeAction(Ctx, VT) == TargetLoweringBase::TypeSplitVector)
       VT = TLI.getTypeToTransformTo(Ctx, VT);
+
+    Value *LHS, *RHS;
+    auto SPR = matchSelectPattern(const_cast<User*>(&I), LHS, RHS);
+    ISD::NodeType Opc = ISD::DELETED_NODE;
+    switch (SPR.Flavor) {
+    case SPF_UMAX:    Opc = ISD::UMAX; break;
+    case SPF_UMIN:    Opc = ISD::UMIN; break;
+    case SPF_SMAX:    Opc = ISD::SMAX; break;
+    case SPF_SMIN:    Opc = ISD::SMIN; break;
+    case SPF_FMINNUM:
+      switch (SPR.NaNBehavior) {
+      case SPNB_NA: llvm_unreachable("No NaN behavior for FP op?");
+      case SPNB_RETURNS_NAN:   Opc = ISD::FMINNAN; break;
+      case SPNB_RETURNS_OTHER: Opc = ISD::FMINNUM; break;
+      case SPNB_RETURNS_ANY:
+        Opc = TLI.isOperationLegalOrCustom(ISD::FMINNUM, VT) ? ISD::FMINNUM
+          : ISD::FMINNAN;
+        break;
+      }
+      break;
+    case SPF_FMAXNUM:
+      switch (SPR.NaNBehavior) {
+      case SPNB_NA: llvm_unreachable("No NaN behavior for FP op?");
+      case SPNB_RETURNS_NAN:   Opc = ISD::FMAXNAN; break;
+      case SPNB_RETURNS_OTHER: Opc = ISD::FMAXNUM; break;
+      case SPNB_RETURNS_ANY:
+        Opc = TLI.isOperationLegalOrCustom(ISD::FMAXNUM, VT) ? ISD::FMAXNUM
+          : ISD::FMAXNAN;
+        break;
+      }
+      break;
+    default: break;
+    }
 
     if (Opc != ISD::DELETED_NODE && TLI.isOperationLegalOrCustom(Opc, VT) &&
         // If the underlying comparison instruction is used by any other instruction,
@@ -3970,10 +3992,9 @@ static SDValue ExpandPowI(SDLoc DL, SDValue LHS, SDValue RHS,
       return DAG.getConstantFP(1.0, DL, LHS.getValueType());
 
     const Function *F = DAG.getMachineFunction().getFunction();
-    // FIXME: Use Function::optForSize().
-    if (!F->hasFnAttribute(Attribute::OptimizeForSize) ||
-        // If optimizing for size, don't insert too many multiplies.  This
-        // inserts up to 5 multiplies.
+    if (!F->optForSize() ||
+        // If optimizing for size, don't insert too many multiplies.
+        // This inserts up to 5 multiplies.
         countPopulation(Val) + Log2_32(Val) < 7) {
       // We use the simple binary decomposition method to generate the multiply
       // sequence.  There are more optimal ways to do this (for example,
@@ -4775,8 +4796,8 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     SDValue FIN = DAG.getFrameIndex(FI, PtrTy);
 
     // Store the stack protector onto the stack.
-    Res = DAG.getStore(Chain, sdl, Src, FIN,
-                       MachinePointerInfo::getFixedStack(FI),
+    Res = DAG.getStore(Chain, sdl, Src, FIN, MachinePointerInfo::getFixedStack(
+                                                 DAG.getMachineFunction(), FI),
                        true, false, 0);
     setValue(&I, Res);
     DAG.setRoot(Res);
@@ -6069,10 +6090,10 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
         int SSFI = MF.getFrameInfo()->CreateStackObject(TySize, Align, false);
         SDValue StackSlot =
             DAG.getFrameIndex(SSFI, TLI.getPointerTy(DAG.getDataLayout()));
-        Chain = DAG.getStore(Chain, getCurSDLoc(),
-                             OpInfo.CallOperand, StackSlot,
-                             MachinePointerInfo::getFixedStack(SSFI),
-                             false, false, 0);
+        Chain = DAG.getStore(
+            Chain, getCurSDLoc(), OpInfo.CallOperand, StackSlot,
+            MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), SSFI),
+            false, false, 0);
         OpInfo.CallOperand = StackSlot;
       }
 
@@ -7018,8 +7039,9 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
                                                         PtrVT));
       SDValue L = CLI.DAG.getLoad(
           RetTys[i], CLI.DL, CLI.Chain, Add,
-          MachinePointerInfo::getFixedStack(DemoteStackIdx, Offsets[i]), false,
-          false, false, 1);
+          MachinePointerInfo::getFixedStack(CLI.DAG.getMachineFunction(),
+                                            DemoteStackIdx, Offsets[i]),
+          false, false, false, 1);
       ReturnValues[i] = L;
       Chains[i] = L.getValue(1);
     }

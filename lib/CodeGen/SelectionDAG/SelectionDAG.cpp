@@ -3010,6 +3010,8 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL,
             VT.getVectorNumElements() ==
             Operand.getValueType().getVectorNumElements()) &&
            "Vector element count mismatch!");
+    assert(Operand.getValueType().bitsLT(VT) &&
+           "Invalid fpext node, dst < src!");
     if (Operand.getOpcode() == ISD::UNDEF)
       return getUNDEF(VT);
     break;
@@ -3017,12 +3019,12 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL,
     assert(VT.isInteger() && Operand.getValueType().isInteger() &&
            "Invalid SIGN_EXTEND!");
     if (Operand.getValueType() == VT) return Operand;   // noop extension
-    assert(Operand.getValueType().getScalarType().bitsLT(VT.getScalarType()) &&
-           "Invalid sext node, dst < src!");
     assert((!VT.isVector() ||
             VT.getVectorNumElements() ==
             Operand.getValueType().getVectorNumElements()) &&
            "Vector element count mismatch!");
+    assert(Operand.getValueType().bitsLT(VT) &&
+           "Invalid sext node, dst < src!");
     if (OpOpcode == ISD::SIGN_EXTEND || OpOpcode == ISD::ZERO_EXTEND)
       return getNode(OpOpcode, DL, VT, Operand.getNode()->getOperand(0));
     else if (OpOpcode == ISD::UNDEF)
@@ -3033,12 +3035,12 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL,
     assert(VT.isInteger() && Operand.getValueType().isInteger() &&
            "Invalid ZERO_EXTEND!");
     if (Operand.getValueType() == VT) return Operand;   // noop extension
-    assert(Operand.getValueType().getScalarType().bitsLT(VT.getScalarType()) &&
-           "Invalid zext node, dst < src!");
     assert((!VT.isVector() ||
             VT.getVectorNumElements() ==
             Operand.getValueType().getVectorNumElements()) &&
            "Vector element count mismatch!");
+    assert(Operand.getValueType().bitsLT(VT) &&
+           "Invalid zext node, dst < src!");
     if (OpOpcode == ISD::ZERO_EXTEND)   // (zext (zext x)) -> (zext x)
       return getNode(ISD::ZERO_EXTEND, DL, VT,
                      Operand.getNode()->getOperand(0));
@@ -3050,12 +3052,12 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL,
     assert(VT.isInteger() && Operand.getValueType().isInteger() &&
            "Invalid ANY_EXTEND!");
     if (Operand.getValueType() == VT) return Operand;   // noop extension
-    assert(Operand.getValueType().getScalarType().bitsLT(VT.getScalarType()) &&
-           "Invalid anyext node, dst < src!");
     assert((!VT.isVector() ||
             VT.getVectorNumElements() ==
             Operand.getValueType().getVectorNumElements()) &&
            "Vector element count mismatch!");
+    assert(Operand.getValueType().bitsLT(VT) &&
+           "Invalid anyext node, dst < src!");
 
     if (OpOpcode == ISD::ZERO_EXTEND || OpOpcode == ISD::SIGN_EXTEND ||
         OpOpcode == ISD::ANY_EXTEND)
@@ -3075,12 +3077,12 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL,
     assert(VT.isInteger() && Operand.getValueType().isInteger() &&
            "Invalid TRUNCATE!");
     if (Operand.getValueType() == VT) return Operand;   // noop truncate
-    assert(Operand.getValueType().getScalarType().bitsGT(VT.getScalarType()) &&
-           "Invalid truncate node, src < dst!");
     assert((!VT.isVector() ||
             VT.getVectorNumElements() ==
             Operand.getValueType().getVectorNumElements()) &&
            "Vector element count mismatch!");
+    assert(Operand.getValueType().bitsGT(VT) &&
+           "Invalid truncate node, src < dst!");
     if (OpOpcode == ISD::TRUNCATE)
       return getNode(ISD::TRUNCATE, DL, VT, Operand.getNode()->getOperand(0));
     if (OpOpcode == ISD::ZERO_EXTEND || OpOpcode == ISD::SIGN_EXTEND ||
@@ -3180,6 +3182,10 @@ static std::pair<APInt, bool> FoldValue(unsigned Opcode, const APInt &C1,
   case ISD::SRA:  return std::make_pair(C1.ashr(C2), true);
   case ISD::ROTL: return std::make_pair(C1.rotl(C2), true);
   case ISD::ROTR: return std::make_pair(C1.rotr(C2), true);
+  case ISD::SMIN: return std::make_pair(C1.sle(C2) ? C1 : C2, true);
+  case ISD::SMAX: return std::make_pair(C1.sge(C2) ? C1 : C2, true);
+  case ISD::UMIN: return std::make_pair(C1.ule(C2) ? C1 : C2, true);
+  case ISD::UMAX: return std::make_pair(C1.uge(C2) ? C1 : C2, true);
   case ISD::UDIV:
     if (!C2.getBoolValue())
       break;
@@ -3354,6 +3360,10 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL, EVT VT, SDValue N1,
   case ISD::MUL:
   case ISD::SDIV:
   case ISD::SREM:
+  case ISD::SMIN:
+  case ISD::SMAX:
+  case ISD::UMIN:
+  case ISD::UMAX:
     assert(VT.isInteger() && "This operator does not apply to FP types!");
     assert(N1.getValueType() == N2.getValueType() &&
            N1.getValueType() == VT && "Binary operator types must match!");
@@ -4878,10 +4888,12 @@ SelectionDAG::getMemIntrinsicNode(unsigned Opcode, SDLoc dl, SDVTList VTList,
 /// MachinePointerInfo record from it.  This is particularly useful because the
 /// code generator has many cases where it doesn't bother passing in a
 /// MachinePointerInfo to getLoad or getStore when it has "FI+Cst".
-static MachinePointerInfo InferPointerInfo(SDValue Ptr, int64_t Offset = 0) {
+static MachinePointerInfo InferPointerInfo(SelectionDAG &DAG, SDValue Ptr,
+                                           int64_t Offset = 0) {
   // If this is FI+Offset, we can model it.
   if (const FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(Ptr))
-    return MachinePointerInfo::getFixedStack(FI->getIndex(), Offset);
+    return MachinePointerInfo::getFixedStack(DAG.getMachineFunction(),
+                                             FI->getIndex(), Offset);
 
   // If this is (FI+Offset1)+Offset2, we can model it.
   if (Ptr.getOpcode() != ISD::ADD ||
@@ -4890,20 +4902,22 @@ static MachinePointerInfo InferPointerInfo(SDValue Ptr, int64_t Offset = 0) {
     return MachinePointerInfo();
 
   int FI = cast<FrameIndexSDNode>(Ptr.getOperand(0))->getIndex();
-  return MachinePointerInfo::getFixedStack(FI, Offset+
-                       cast<ConstantSDNode>(Ptr.getOperand(1))->getSExtValue());
+  return MachinePointerInfo::getFixedStack(
+      DAG.getMachineFunction(), FI,
+      Offset + cast<ConstantSDNode>(Ptr.getOperand(1))->getSExtValue());
 }
 
 /// InferPointerInfo - If the specified ptr/offset is a frame index, infer a
 /// MachinePointerInfo record from it.  This is particularly useful because the
 /// code generator has many cases where it doesn't bother passing in a
 /// MachinePointerInfo to getLoad or getStore when it has "FI+Cst".
-static MachinePointerInfo InferPointerInfo(SDValue Ptr, SDValue OffsetOp) {
+static MachinePointerInfo InferPointerInfo(SelectionDAG &DAG, SDValue Ptr,
+                                           SDValue OffsetOp) {
   // If the 'Offset' value isn't a constant, we can't handle this.
   if (ConstantSDNode *OffsetNode = dyn_cast<ConstantSDNode>(OffsetOp))
-    return InferPointerInfo(Ptr, OffsetNode->getSExtValue());
+    return InferPointerInfo(DAG, Ptr, OffsetNode->getSExtValue());
   if (OffsetOp.getOpcode() == ISD::UNDEF)
-    return InferPointerInfo(Ptr);
+    return InferPointerInfo(DAG, Ptr);
   return MachinePointerInfo();
 }
 
@@ -4932,7 +4946,7 @@ SelectionDAG::getLoad(ISD::MemIndexedMode AM, ISD::LoadExtType ExtType,
   // If we don't have a PtrInfo, infer the trivial frame index case to simplify
   // clients.
   if (PtrInfo.V.isNull())
-    PtrInfo = InferPointerInfo(Ptr, Offset);
+    PtrInfo = InferPointerInfo(*this, Ptr, Offset);
 
   MachineFunction &MF = getMachineFunction();
   MachineMemOperand *MMO =
@@ -5060,7 +5074,7 @@ SDValue SelectionDAG::getStore(SDValue Chain, SDLoc dl, SDValue Val,
     Flags |= MachineMemOperand::MONonTemporal;
 
   if (PtrInfo.V.isNull())
-    PtrInfo = InferPointerInfo(Ptr);
+    PtrInfo = InferPointerInfo(*this, Ptr);
 
   MachineFunction &MF = getMachineFunction();
   MachineMemOperand *MMO =
@@ -5115,7 +5129,7 @@ SDValue SelectionDAG::getTruncStore(SDValue Chain, SDLoc dl, SDValue Val,
     Flags |= MachineMemOperand::MONonTemporal;
 
   if (PtrInfo.V.isNull())
-    PtrInfo = InferPointerInfo(Ptr);
+    PtrInfo = InferPointerInfo(*this, Ptr);
 
   MachineFunction &MF = getMachineFunction();
   MachineMemOperand *MMO =
@@ -5267,7 +5281,7 @@ SelectionDAG::getMaskedGather(SDVTList VTs, EVT VT, SDLoc dl,
     cast<MaskedGatherSDNode>(E)->refineAlignment(MMO);
     return SDValue(E, 0);
   }
-  MaskedGatherSDNode *N = 
+  MaskedGatherSDNode *N =
     new (NodeAllocator) MaskedGatherSDNode(dl.getIROrder(), dl.getDebugLoc(),
                                            Ops, VTs, VT, MMO);
   CSEMap.InsertNode(N, IP);
@@ -5662,7 +5676,7 @@ UpdateNodeOperands(SDNode *N, ArrayRef<SDValue> Ops) {
          "Update with wrong number of operands");
 
   // If no operands changed just return the input node.
-  if (Ops.empty() || std::equal(Ops.begin(), Ops.end(), N->op_begin()))
+  if (std::equal(Ops.begin(), Ops.end(), N->op_begin()))
     return N;
 
   // See if the modified node already exists.

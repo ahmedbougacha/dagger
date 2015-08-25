@@ -125,8 +125,8 @@ bool AMDGPUAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   const AMDGPUSubtarget &STM = MF.getSubtarget<AMDGPUSubtarget>();
   SIProgramInfo KernelInfo;
   if (STM.getGeneration() >= AMDGPUSubtarget::SOUTHERN_ISLANDS) {
+    getSIProgramInfo(KernelInfo, MF);
     if (!STM.isAmdHsaOS()) {
-      getSIProgramInfo(KernelInfo, MF);
       EmitProgramInfoSI(MF, KernelInfo);
     }
     // Emit directives
@@ -264,6 +264,12 @@ void AMDGPUAsmPrinter::getSIProgramInfo(SIProgramInfo &ProgInfo,
   for (const MachineBasicBlock &MBB : MF) {
     for (const MachineInstr &MI : MBB) {
       // TODO: CodeSize should account for multiple functions.
+
+      // TODO: Should we count size of debug info?
+      if (MI.isDebugValue())
+        continue;
+
+      // FIXME: This is reporting 0 for many instructions.
       CodeSize += MI.getDesc().Size;
 
       unsigned numOperands = MI.getNumOperands();

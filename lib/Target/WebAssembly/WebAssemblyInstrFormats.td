@@ -12,7 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-// WebAssembly Instruction Format
+// WebAssembly Instruction Format.
 class WebAssemblyInst<string cstr> : Instruction {
   field bits<0> Inst; // Instruction encoding.
   let Namespace   = "WebAssembly";
@@ -20,7 +20,7 @@ class WebAssemblyInst<string cstr> : Instruction {
   let Constraints = cstr;
 }
 
-// Normal instructions
+// Normal instructions.
 class I<dag oops, dag iops, list<dag> pattern, string cstr = "">
     : WebAssemblyInst<cstr> {
   dag OutOperandList = oops;
@@ -52,4 +52,16 @@ multiclass BinaryFP<SDNode node> {
                [(set Float32:$dst, (node Float32:$lhs, Float32:$rhs))]>;
   def _F64 : I<(outs Float64:$dst), (ins Float64:$lhs, Float64:$rhs),
                [(set Float64:$dst, (node Float64:$lhs, Float64:$rhs))]>;
+}
+multiclass ComparisonInt<CondCode cond> {
+  def _I32 : I<(outs Int32:$dst), (ins Int32:$lhs, Int32:$rhs),
+               [(set Int32:$dst, (setcc Int32:$lhs, Int32:$rhs, cond))]>;
+  def _I64 : I<(outs Int32:$dst), (ins Int64:$lhs, Int64:$rhs),
+               [(set Int32:$dst, (setcc Int64:$lhs, Int64:$rhs, cond))]>;
+}
+multiclass ComparisonFP<CondCode cond> {
+  def _F32 : I<(outs Int32:$dst), (ins Float32:$lhs, Float32:$rhs),
+               [(set Int32:$dst, (setcc Float32:$lhs, Float32:$rhs, cond))]>;
+  def _F64 : I<(outs Int32:$dst), (ins Float64:$lhs, Float64:$rhs),
+               [(set Int32:$dst, (setcc Float64:$lhs, Float64:$rhs, cond))]>;
 }
