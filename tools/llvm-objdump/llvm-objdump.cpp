@@ -22,6 +22,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/CodeGen/FaultMaps.h"
+#include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler.h"
@@ -61,6 +62,9 @@
 
 using namespace llvm;
 using namespace object;
+
+static cl::opt<bool>
+Symbolize("symbolize", cl::desc("Symbolically disassemble"));
 
 static cl::list<std::string>
 InputFilenames(cl::Positional, cl::desc("<input object files>"),cl::ZeroOrMore);
@@ -855,6 +859,22 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
   if (!DisAsm) {
     errs() << "error: no disassembler for target " << TripleName << "\n";
     return;
+  }
+
+  if (Symbolize) {
+    std::unique_ptr<MCRelocationInfo> RelInfo(
+        TheTarget->createMCRelocationInfo(TripleName, Ctx));
+    if (!RelInfo) {
+      errs() << "error: no relocation info for target " << TripleName << "\n";
+      return;
+    }
+    std::unique_ptr<MCObjectSymbolizer> MOS(
+        TheTarget->createMCObjectSymbolizer(Ctx, *Obj, std::move(RelInfo)));
+    if (!MOS) {
+      errs() << "error: no object symbolizer for target " << TripleName << "\n";
+      return;
+    }
+    DisAsm->setSymbolizer(std::move(MOS));
   }
 
   std::unique_ptr<const MCInstrAnalysis> MIA(
