@@ -485,7 +485,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
       Ptr = Builder->CreateIntToPtr(Ptr, ResType->getPointerTo());
     assert(Ptr->getType()->getPointerElementType() == ResType &&
            "Mismatch between a LOAD's address operand and return type!");
-    registerResult(Builder->CreateLoad(Ptr));
+    registerResult(Builder->CreateAlignedLoad(Ptr, 1));
     break;
   }
   case ISD::STORE: {
@@ -497,7 +497,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
       Ptr = Builder->CreateIntToPtr(Ptr, ValPtrTy);
     else if (PtrTy != ValPtrTy)
       Ptr = Builder->CreateBitCast(Ptr, ValPtrTy);
-    Builder->CreateStore(Val, Ptr);
+    Builder->CreateAlignedStore(Val, Ptr, 1);
     break;
   }
   case ISD::BRIND: {
