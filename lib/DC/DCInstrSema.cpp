@@ -89,14 +89,22 @@ Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
   IRBuilderBase::InsertPointGuard IPG(*Builder);
   Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", IRMain));
 
-  Value *Regset = Builder->CreateAlloca(DRS.getRegSetType());
+  AllocaInst *Regset = Builder->CreateAlloca(DRS.getRegSetType());
 
   // allocate a small local array to serve as a test stack.
-  Value *StackPtr =
+  AllocaInst *Stack =
       Builder->CreateAlloca(ArrayType::get(Builder->getInt8Ty(), 8192));
+
+  // 64byte alignment ought to be enough for anybody.
+  // FIXME: this should probably be the maximum natural alignment of the
+  // non-int-coerced register types. As it is, large integer types are only
+  // aligned to the size of the largest legal integer, which isn't enough.
+  Regset->setAlignment(64);
+  Stack->setAlignment(64);
+
   Value *StackSize = Builder->getInt32(8192);
   Value *Idx[2] = { Builder->getInt32(0), Builder->getInt32(0) };
-  StackPtr = Builder->CreateInBoundsGEP(StackPtr, Idx);
+  Value *StackPtr = Builder->CreateInBoundsGEP(Stack, Idx);
 
   Function::arg_iterator ArgI = IRMain->getArgumentList().begin();
   Value *ArgC = ArgI++;
