@@ -442,17 +442,11 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
 
-  case ISD::SCALAR_TO_VECTOR: {
-    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
-    Type *ResEltType = ResType->getVectorElementType();
-    Value *NullVect = Constant::getNullValue(ResType);
+  case ISD::INSERT_VECTOR_ELT: {
+    Value *Vec = getNextOperand();
     Value *Val = getNextOperand();
-    if (Val->getType()->isFloatingPointTy())
-      Val = Builder->CreateFPCast(Val, ResEltType);
-    else
-      Val = Builder->CreateZExtOrBitCast(Val, ResEltType);
-    registerResult(
-        Builder->CreateInsertElement(NullVect, Val, Builder->getInt32(0)));
+    Value *Idx = getNextOperand();
+    registerResult(Builder->CreateInsertElement(Vec, Val, Idx));
     break;
   }
 

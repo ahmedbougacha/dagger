@@ -176,3 +176,6 @@ defm : Sema_MOVDQ<"A", VR128, v2i64, "V">;
 defm : Sema_MOVDQ<"U", VR128, v2i64, "V">;
 defm : Sema_MOVDQ<"A", VR256, v4i64, "V", "Y">;
 defm : Sema_MOVDQ<"U", VR256, v4i64, "V", "Y">;
+
+def : Semantics<MOV64toPQIrr,
+        [(set VR128:$dst, (insertelt (v2i64 VR128:$dst), GR64:$src, (i32 0)))]>;

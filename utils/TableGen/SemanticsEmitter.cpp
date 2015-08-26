@@ -452,8 +452,8 @@ void SemanticsEmitter::ParseSemantics() {
     Record *InstDef = Instrs[i]->getValueAsDef("Inst");
 
     CodeGenInstruction &CGI = Target.getInstruction(InstDef);
-    const DAGInstruction &TheInst =
-        CGPatterns.parseInstructionPattern(CGI, LI, DAGInsts);
+    const DAGInstruction &TheInst = CGPatterns.parseInstructionPattern(
+        CGI, LI, DAGInsts, /*CanUseOutputOps=*/true);
 
     // FIXME: Instead of looking for the instruction *every* time, what about:
     // - iterating on InstructionsByEnumValue, and mapping CGI->Semantics before

@@ -2901,7 +2901,8 @@ static bool checkOperandClass(CGIOperandList::OperandInfo &OI,
 }
 
 const DAGInstruction &CodeGenDAGPatterns::parseInstructionPattern(
-    CodeGenInstruction &CGI, ListInit *Pat, DAGInstMap &DAGInsts) {
+    CodeGenInstruction &CGI, ListInit *Pat, DAGInstMap &DAGInsts,
+    bool CanUseOutputOps) {
 
   assert(!DAGInsts.count(CGI.TheDef) && "Instruction already parsed!");
 
@@ -3029,9 +3030,26 @@ const DAGInstruction &CodeGenDAGPatterns::parseInstructionPattern(
     ResultNodeOperands.push_back(OpNode);
   }
 
-  if (!InstInputsCheck.empty())
-    I->error("Input operand $" + InstInputsCheck.begin()->first +
-             " occurs in pattern but not in operands list!");
+  if (!InstInputsCheck.empty()) {
+    if (!CanUseOutputOps) {
+      I->error("Input operand $" + InstInputsCheck.begin()->first +
+               " occurs in pattern but not in operands list!");
+    } else {
+      // Sometimes we are fine with output operands; try to find one.
+      for (auto &InstInputCheckPair : InstInputsCheck) {
+        bool FoundOutputOp = false;
+        for (unsigned i = 0; i != NumResults; ++i) {
+          const std::string &OpName = CGI.Operands[i].Name;
+          FoundOutputOp |= (OpName == InstInputCheckPair.first);
+        }
+
+        // If we couldn't find a matching output operand, the name is wrong.
+        if (!FoundOutputOp)
+          I->error("Operand $" + InstInputsCheck.begin()->first +
+                   " occurs in pattern but not in operands list!");
+      }
+    }
+  }
 
   TreePatternNode *ResultPattern =
     new TreePatternNode(I->getRecord(), ResultNodeOperands,

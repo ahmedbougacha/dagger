@@ -812,9 +812,10 @@ public:
 
   /// Parse the Pattern for an instruction, and insert the result in DAGInsts.
   typedef std::map<Record*, DAGInstruction, LessRecordByID> DAGInstMap;
-  const DAGInstruction &parseInstructionPattern(
-      CodeGenInstruction &CGI, ListInit *Pattern,
-      DAGInstMap &DAGInsts);
+  const DAGInstruction &parseInstructionPattern(CodeGenInstruction &CGI,
+                                                ListInit *Pattern,
+                                                DAGInstMap &DAGInsts,
+                                                bool CanUseOutputOps = false);
 
   const DAGInstruction &getInstruction(Record *R) const {
     assert(Instructions.count(R) && "Unknown instruction!");
