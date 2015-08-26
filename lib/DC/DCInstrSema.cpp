@@ -450,6 +450,13 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
 
+  case ISD::EXTRACT_VECTOR_ELT: {
+    Value *Val = getNextOperand();
+    Value *Idx = getNextOperand();
+    registerResult(Builder->CreateExtractElement(Val, Idx));
+    break;
+  }
+
   case ISD::SMUL_LOHI: {
     EVT Re2EVT = NextVT();
     IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(*Ctx));
