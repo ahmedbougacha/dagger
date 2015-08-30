@@ -85,13 +85,16 @@ public:
 
   RecurrenceDescriptor()
       : StartValue(nullptr), LoopExitInstr(nullptr), Kind(RK_NoRecurrence),
-        MinMaxKind(MRK_Invalid), UnsafeAlgebraInst(nullptr) {}
+        MinMaxKind(MRK_Invalid), UnsafeAlgebraInst(nullptr),
+        RecurrenceType(nullptr), IsSigned(false) {}
 
   RecurrenceDescriptor(Value *Start, Instruction *Exit, RecurrenceKind K,
-                       MinMaxRecurrenceKind MK,
-                       Instruction *UAI /*Unsafe Algebra Inst*/)
+                       MinMaxRecurrenceKind MK, Instruction *UAI, Type *RT,
+                       bool Signed, SmallPtrSetImpl<Instruction *> &CI)
       : StartValue(Start), LoopExitInstr(Exit), Kind(K), MinMaxKind(MK),
-        UnsafeAlgebraInst(UAI) {}
+        UnsafeAlgebraInst(UAI), RecurrenceType(RT), IsSigned(Signed) {
+    CastInsts.insert(CI.begin(), CI.end());
+  }
 
   /// This POD struct holds information about a potential recurrence operation.
   class InstDesc {
@@ -184,6 +187,44 @@ public:
   /// Returns first unsafe algebra instruction in the PHI node's use-chain.
   Instruction *getUnsafeAlgebraInst() { return UnsafeAlgebraInst; }
 
+  /// Returns true if the recurrence kind is an integer kind.
+  static bool isIntegerRecurrenceKind(RecurrenceKind Kind);
+
+  /// Returns true if the recurrence kind is a floating point kind.
+  static bool isFloatingPointRecurrenceKind(RecurrenceKind Kind);
+
+  /// Returns true if the recurrence kind is an arithmetic kind.
+  static bool isArithmeticRecurrenceKind(RecurrenceKind Kind);
+
+  /// Determines if Phi may have been type-promoted. If Phi has a single user
+  /// that ANDs the Phi with a type mask, return the user. RT is updated to
+  /// account for the narrower bit width represented by the mask, and the AND
+  /// instruction is added to CI.
+  static Instruction *lookThroughAnd(PHINode *Phi, Type *&RT,
+                                     SmallPtrSetImpl<Instruction *> &Visited,
+                                     SmallPtrSetImpl<Instruction *> &CI);
+
+  /// Returns true if all the source operands of a recurrence are either
+  /// SExtInsts or ZExtInsts. This function is intended to be used with
+  /// lookThroughAnd to determine if the recurrence has been type-promoted. The
+  /// source operands are added to CI, and IsSigned is updated to indicate if
+  /// all source operands are SExtInsts.
+  static bool getSourceExtensionKind(Instruction *Start, Instruction *Exit,
+                                     Type *RT, bool &IsSigned,
+                                     SmallPtrSetImpl<Instruction *> &Visited,
+                                     SmallPtrSetImpl<Instruction *> &CI);
+
+  /// Returns the type of the recurrence. This type can be narrower than the
+  /// actual type of the Phi if the recurrence has been type-promoted.
+  Type *getRecurrenceType() { return RecurrenceType; }
+
+  /// Returns a reference to the instructions used for type-promoting the
+  /// recurrence.
+  SmallPtrSet<Instruction *, 8> &getCastInsts() { return CastInsts; }
+
+  /// Returns true if all source operands of the recurrence are SExtInsts.
+  bool isSigned() { return IsSigned; }
+
 private:
   // The starting value of the recurrence.
   // It does not have to be zero!
@@ -196,6 +237,60 @@ private:
   MinMaxRecurrenceKind MinMaxKind;
   // First occurance of unasfe algebra in the PHI's use-chain.
   Instruction *UnsafeAlgebraInst;
+  // The type of the recurrence.
+  Type *RecurrenceType;
+  // True if all source operands of the recurrence are SExtInsts.
+  bool IsSigned;
+  // Instructions used for type-promoting the recurrence.
+  SmallPtrSet<Instruction *, 8> CastInsts;
+};
+
+/// A struct for saving information about induction variables.
+class InductionDescriptor {
+public:
+  /// This enum represents the kinds of inductions that we support.
+  enum InductionKind {
+    IK_NoInduction,  ///< Not an induction variable.
+    IK_IntInduction, ///< Integer induction variable. Step = C.
+    IK_PtrInduction  ///< Pointer induction var. Step = C / sizeof(elem).
+  };
+
+public:
+  /// Default constructor - creates an invalid induction.
+  InductionDescriptor()
+    : StartValue(nullptr), IK(IK_NoInduction), StepValue(nullptr) {}
+
+  /// Get the consecutive direction. Returns:
+  ///   0 - unknown or non-consecutive.
+  ///   1 - consecutive and increasing.
+  ///  -1 - consecutive and decreasing.
+  int getConsecutiveDirection() const;
+
+  /// Compute the transformed value of Index at offset StartValue using step
+  /// StepValue.
+  /// For integer induction, returns StartValue + Index * StepValue.
+  /// For pointer induction, returns StartValue[Index * StepValue].
+  /// FIXME: The newly created binary instructions should contain nsw/nuw
+  /// flags, which can be found from the original scalar operations.
+  Value *transform(IRBuilder<> &B, Value *Index) const;
+
+  Value *getStartValue() const { return StartValue; }
+  InductionKind getKind() const { return IK; }
+  ConstantInt *getStepValue() const { return StepValue; }
+
+  static bool isInductionPHI(PHINode *Phi, ScalarEvolution *SE,
+                             InductionDescriptor &D);
+
+private:
+  /// Private constructor - used by \c isInductionPHI.
+  InductionDescriptor(Value *Start, InductionKind K, ConstantInt *Step);
+
+  /// Start value.
+  TrackingVH<Value> StartValue;
+  /// Induction kind.
+  InductionKind IK;
+  /// Step value.
+  ConstantInt *StepValue;
 };
 
 BasicBlock *InsertPreheaderForLoop(Loop *L, Pass *P);
@@ -260,10 +355,10 @@ bool hoistRegion(DomTreeNode *, AliasAnalysis *, LoopInfo *, DominatorTree *,
 
 /// \brief Try to promote memory values to scalars by sinking stores out of
 /// the loop and moving loads to before the loop.  We do this by looping over
-/// the stores in the loop, looking for stores to Must pointers which are 
+/// the stores in the loop, looking for stores to Must pointers which are
 /// loop invariant. It takes AliasSet, Loop exit blocks vector, loop exit blocks
 /// insertion point vector, PredIteratorCache, LoopInfo, DominatorTree, Loop,
-/// AliasSet information for all instructions of the loop and loop safety 
+/// AliasSet information for all instructions of the loop and loop safety
 /// information as arguments. It returns changed status.
 bool promoteLoopAccessesToScalars(AliasSet &, SmallVectorImpl<BasicBlock*> &,
                                   SmallVectorImpl<Instruction*> &,
@@ -276,11 +371,6 @@ bool promoteLoopAccessesToScalars(AliasSet &, SmallVectorImpl<BasicBlock*> &,
 /// exception, it takes LICMSafetyInfo and loop as argument.
 /// Updates safety information in LICMSafetyInfo argument.
 void computeLICMSafetyInfo(LICMSafetyInfo *, Loop *);
-
-/// \brief Checks if the given PHINode in a loop header is an induction
-/// variable. Returns true if this is an induction PHI along with the step
-/// value.
-bool isInductionPHI(PHINode *, ScalarEvolution *, ConstantInt *&);
 
 /// \brief Returns the instructions that use values defined in the loop.
 SmallVector<Instruction *, 8> findDefsUsedOutsideOfLoop(Loop *L);

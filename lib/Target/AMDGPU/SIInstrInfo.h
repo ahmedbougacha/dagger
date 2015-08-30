@@ -39,12 +39,6 @@ private:
                                          unsigned SubIdx,
                                          const TargetRegisterClass *SubRC) const;
 
-  unsigned split64BitImm(SmallVectorImpl<MachineInstr *> &Worklist,
-                         MachineBasicBlock::iterator MI,
-                         MachineRegisterInfo &MRI,
-                         const TargetRegisterClass *RC,
-                         const MachineOperand &Op) const;
-
   void swapOperands(MachineBasicBlock::iterator Inst) const;
 
   void splitScalar64BitUnaryOp(SmallVectorImpl<MachineInstr *> &Worklist,
@@ -57,6 +51,10 @@ private:
                             MachineInstr *Inst) const;
   void splitScalar64BitBFE(SmallVectorImpl<MachineInstr *> &Worklist,
                            MachineInstr *Inst) const;
+
+  void addUsersToMoveToVALUWorklist(
+    unsigned Reg, MachineRegisterInfo &MRI,
+    SmallVectorImpl<MachineInstr *> &Worklist) const;
 
   bool checkInstOffsetsDoNotOverlap(MachineInstr *MIa,
                                     MachineInstr *MIb) const;

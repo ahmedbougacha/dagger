@@ -1158,28 +1158,54 @@ SDValue SelectionDAGBuilder::getValueImpl(const Value *V) {
   llvm_unreachable("Can't get register for value!");
 }
 
+void SelectionDAGBuilder::visitCatchPad(const CatchPadInst &I) {
+  // Update machine-CFG edges.
+  MachineBasicBlock *PadMBB = FuncInfo.MBB;
+  MachineBasicBlock *CatchingMBB = FuncInfo.MBBMap[I.getNormalDest()];
+  MachineBasicBlock *UnwindMBB = FuncInfo.MBBMap[I.getUnwindDest()];
+  PadMBB->addSuccessor(CatchingMBB);
+  PadMBB->addSuccessor(UnwindMBB);
+
+  CatchingMBB->setIsEHFuncletEntry();
+  MachineModuleInfo &MMI = DAG.getMachineFunction().getMMI();
+  MMI.setHasEHFunclets(true);
+}
+
+void SelectionDAGBuilder::visitCatchRet(const CatchReturnInst &I) {
+  // Update machine-CFG edge.
+  MachineBasicBlock *PadMBB = FuncInfo.MBB;
+  MachineBasicBlock *TargetMBB = FuncInfo.MBBMap[I.getSuccessor()];
+  PadMBB->addSuccessor(TargetMBB);
+
+  // Create the terminator node.
+  SDValue Ret = DAG.getNode(ISD::CATCHRET, getCurSDLoc(), MVT::Other,
+                            getControlRoot(), DAG.getBasicBlock(TargetMBB));
+  DAG.setRoot(Ret);
+}
+
+void SelectionDAGBuilder::visitCatchEndPad(const CatchEndPadInst &I) {
+  // If this unwinds to caller, we don't need a DAG node hanging around.
+  if (!I.hasUnwindDest())
+    return;
+
+  // Update machine-CFG edge.
+  MachineBasicBlock *PadMBB = FuncInfo.MBB;
+  MachineBasicBlock *UnwindMBB = FuncInfo.MBBMap[I.getUnwindDest()];
+  PadMBB->addSuccessor(UnwindMBB);
+}
+
+void SelectionDAGBuilder::visitCleanupPad(const CleanupPadInst &CPI) {
+  MachineModuleInfo &MMI = DAG.getMachineFunction().getMMI();
+  MMI.setHasEHFunclets(true);
+  report_fatal_error("visitCleanupPad not yet implemented!");
+}
+
 void SelectionDAGBuilder::visitCleanupRet(const CleanupReturnInst &I) {
   report_fatal_error("visitCleanupRet not yet implemented!");
 }
 
-void SelectionDAGBuilder::visitCatchEndPad(const CatchEndPadInst &I) {
-  report_fatal_error("visitCatchEndPad not yet implemented!");
-}
-
-void SelectionDAGBuilder::visitCatchRet(const CatchReturnInst &I) {
-  report_fatal_error("visitCatchRet not yet implemented!");
-}
-
-void SelectionDAGBuilder::visitCatchPad(const CatchPadInst &I) {
-  report_fatal_error("visitCatchPad not yet implemented!");
-}
-
 void SelectionDAGBuilder::visitTerminatePad(const TerminatePadInst &TPI) {
   report_fatal_error("visitTerminatePad not yet implemented!");
-}
-
-void SelectionDAGBuilder::visitCleanupPad(const CleanupPadInst &CPI) {
-  report_fatal_error("visitCleanupPad not yet implemented!");
 }
 
 void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
@@ -1897,8 +1923,9 @@ void SelectionDAGBuilder::visitBitTestHeader(BitTestBlock &B,
 
   MachineBasicBlock* MBB = B.Cases[0].ThisBB;
 
-  addSuccessorWithWeight(SwitchBB, B.Default);
-  addSuccessorWithWeight(SwitchBB, MBB);
+  uint32_t DefaultWeight = getEdgeWeight(SwitchBB, B.Default);
+  addSuccessorWithWeight(SwitchBB, B.Default, DefaultWeight);
+  addSuccessorWithWeight(SwitchBB, MBB, B.Weight);
 
   SDValue BrRange = DAG.getNode(ISD::BRCOND, dl,
                                 MVT::Other, CopyTo, RangeCmp,
@@ -2020,7 +2047,7 @@ void SelectionDAGBuilder::visitResume(const ResumeInst &RI) {
 }
 
 void SelectionDAGBuilder::visitLandingPad(const LandingPadInst &LP) {
-  assert(FuncInfo.MBB->isLandingPad() &&
+  assert(FuncInfo.MBB->isEHPad() &&
          "Call to landingpad not in landing pad!");
 
   MachineBasicBlock *MBB = FuncInfo.MBB;
@@ -5093,7 +5120,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     assert(Reg && "cannot get exception code on this platform");
     MVT PtrVT = TLI.getPointerTy(DAG.getDataLayout());
     const TargetRegisterClass *PtrRC = TLI.getRegClassFor(PtrVT);
-    assert(FuncInfo.MBB->isLandingPad() && "eh.exceptioncode in non-lpad");
+    assert(FuncInfo.MBB->isEHPad() && "eh.exceptioncode in non-lpad");
     unsigned VReg = FuncInfo.MBB->addLiveIn(Reg, PtrRC);
     SDValue N =
         DAG.getCopyFromReg(DAG.getEntryNode(), getCurSDLoc(), VReg, PtrVT);
@@ -7761,12 +7788,22 @@ bool SelectionDAGBuilder::buildBitTests(CaseClusterVector &Clusters,
                            .getSizeInBits();
   assert(rangeFitsInWord(Low, High) && "Case range must fit in bit mask!");
 
-  if (Low.isNonNegative() && High.slt(BitWidth)) {
-    // Optimize the case where all the case values fit in a
-    // word without having to subtract minValue. In this case,
-    // we can optimize away the subtraction.
+  // Check if the clusters cover a contiguous range such that no value in the
+  // range will jump to the default statement.
+  bool ContiguousRange = true;
+  for (int64_t I = First + 1; I <= Last; ++I) {
+    if (Clusters[I].Low->getValue() != Clusters[I - 1].High->getValue() + 1) {
+      ContiguousRange = false;
+      break;
+    }
+  }
+
+  if (Low.isStrictlyPositive() && High.slt(BitWidth)) {
+    // Optimize the case where all the case values fit in a word without having
+    // to subtract minValue. In this case, we can optimize away the subtraction.
     LowBound = APInt::getNullValue(Low.getBitWidth());
     CmpRange = High;
+    ContiguousRange = false;
   } else {
     LowBound = Low;
     CmpRange = High - Low;
@@ -7809,8 +7846,9 @@ bool SelectionDAGBuilder::buildBitTests(CaseClusterVector &Clusters,
     BTI.push_back(BitTestCase(CB.Mask, BitTestBB, CB.BB, CB.ExtraWeight));
   }
   BitTestCases.emplace_back(std::move(LowBound), std::move(CmpRange),
-                            SI->getCondition(), -1U, MVT::Other, false, nullptr,
-                            nullptr, std::move(BTI));
+                            SI->getCondition(), -1U, MVT::Other, false,
+                            ContiguousRange, nullptr, nullptr, std::move(BTI),
+                            TotalWeight);
 
   BTCluster = CaseCluster::bitTests(Clusters[First].Low, Clusters[Last].High,
                                     BitTestCases.size() - 1, TotalWeight);
@@ -8021,6 +8059,7 @@ void SelectionDAGBuilder::lowerWorkItem(SwitchWorkListItem W, Value *Cond,
       // Put Cond in a virtual register to make it available from the new blocks.
       ExportFromCurrentBlock(Cond);
     }
+    UnhandledWeights -= I->Weight;
 
     switch (I->Kind) {
       case CC_JumpTable: {
@@ -8031,8 +8070,16 @@ void SelectionDAGBuilder::lowerWorkItem(SwitchWorkListItem W, Value *Cond,
         // The jump block hasn't been inserted yet; insert it here.
         MachineBasicBlock *JumpMBB = JT->MBB;
         CurMF->insert(BBI, JumpMBB);
-        addSuccessorWithWeight(CurMBB, Fallthrough);
-        addSuccessorWithWeight(CurMBB, JumpMBB);
+
+        // Collect the sum of weights of outgoing edges from JumpMBB, which will
+        // be the edge weight on CurMBB->JumpMBB.
+        uint32_t JumpWeight = 0;
+        for (auto Succ : JumpMBB->successors())
+          JumpWeight += getEdgeWeight(JumpMBB, Succ);
+        uint32_t FallthruWeight = getEdgeWeight(CurMBB, Fallthrough);
+
+        addSuccessorWithWeight(CurMBB, Fallthrough, FallthruWeight);
+        addSuccessorWithWeight(CurMBB, JumpMBB, JumpWeight);
 
         // The jump table header will be inserted in our current block, do the
         // range check, and fall through to our fallthrough block.
@@ -8083,7 +8130,6 @@ void SelectionDAGBuilder::lowerWorkItem(SwitchWorkListItem W, Value *Cond,
         }
 
         // The false weight is the sum of all unhandled cases.
-        UnhandledWeights -= I->Weight;
         CaseBlock CB(CC, LHS, RHS, MHS, I->MBB, Fallthrough, CurMBB, I->Weight,
                      UnhandledWeights);
 

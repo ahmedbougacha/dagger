@@ -16,8 +16,8 @@
 ; FIXME: The next address probably ought to be 0x0000000000000004 but there's
 ;        a constant initialization before the prologue's end.
 ; CHECK: 0x0000000000000008      2      0      1   0             0  is_stmt prologue_end
-; CHECK: 0x0000000000000028      3      0      1   0             0  is_stmt
-; CHECK: 0x0000000000000038      4      0      1   0             0  is_stmt
+; CHECK: 0x000000000000002c      3      0      1   0             0  is_stmt
+; CHECK: 0x000000000000003c      4      0      1   0             0  is_stmt
 ; CHECK: 0x0000000000000048      5      0      1   0             0  is_stmt
 ; CHECK: 0x0000000000000058      5      0      1   0             0  is_stmt end_sequence
 
@@ -60,7 +60,7 @@ attributes #1 = { nounwind readnone }
 !1 = !DIFile(filename: "test.c", directory: "/tmp")
 !2 = !{}
 !3 = !{!4}
-!4 = !DISubprogram(name: "foo", line: 1, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 1, file: !1, scope: !5, type: !6, function: i32 (i32)* @foo, variables: !2)
+!4 = distinct !DISubprogram(name: "foo", line: 1, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 1, file: !1, scope: !5, type: !6, function: i32 (i32)* @foo, variables: !2)
 !5 = !DIFile(filename: "test.c", directory: "/tmp")
 !6 = !DISubroutineType(types: !7)
 !7 = !{!8, !8}

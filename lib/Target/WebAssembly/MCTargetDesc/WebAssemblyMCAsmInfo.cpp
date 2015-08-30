@@ -28,7 +28,7 @@ WebAssemblyMCAsmInfo::WebAssemblyMCAsmInfo(const Triple &T) {
   // TODO: What should MaxInstLength be?
 
   // The s-expression format of WebAssembly uses LISP-style comments.
-  CommentString = ";";
+  CommentString = ";;";
 
   PrivateGlobalPrefix = "";
   PrivateLabelPrefix = "";
@@ -51,6 +51,10 @@ WebAssemblyMCAsmInfo::WebAssemblyMCAsmInfo(const Triple &T) {
 
   // For now, WebAssembly does not support exceptions.
   ExceptionsType = ExceptionHandling::None;
+
+  // FIXME: modify AsmPrinter to be more flexible, and fix other virtual ISAs.
+  WeakDirective = "\t;; .weak\t";
+  GlobalDirective = "\t;; .globl\t";
 
   // TODO: UseIntegratedAssembler?
 }

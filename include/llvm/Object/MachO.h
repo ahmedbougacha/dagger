@@ -422,6 +422,24 @@ public:
     return v->isMachO();
   }
 
+  static uint32_t
+  getVersionMinMajor(MachO::version_min_command &C, bool SDK) {
+    uint32_t VersionOrSDK = (SDK) ? C.sdk : C.version;
+    return (VersionOrSDK >> 16) & 0xffff;
+  }
+
+  static uint32_t
+  getVersionMinMinor(MachO::version_min_command &C, bool SDK) {
+    uint32_t VersionOrSDK = (SDK) ? C.sdk : C.version;
+    return (VersionOrSDK >> 8) & 0xff;
+  }
+
+  static uint32_t
+  getVersionMinUpdate(MachO::version_min_command &C, bool SDK) {
+    uint32_t VersionOrSDK = (SDK) ? C.sdk : C.version;
+    return VersionOrSDK & 0xff;
+  }
+
 private:
   uint64_t getSymbolValueImpl(DataRefImpl Symb) const override;
 

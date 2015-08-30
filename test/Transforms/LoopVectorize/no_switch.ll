@@ -1,8 +1,16 @@
-; RUN: opt < %s -loop-vectorize -force-vector-width=4 -S -pass-remarks-missed='loop-vectorize' 2>&1 | FileCheck %s
+; RUN: opt < %s -loop-vectorize -force-vector-width=4 -S 2>&1 | FileCheck %s
+; RUN: opt < %s -loop-vectorize -force-vector-width=1 -S 2>&1 | FileCheck %s -check-prefix=NOANALYSIS
+; RUN: opt < %s -loop-vectorize -force-vector-width=4 -pass-remarks-missed='loop-vectorize' -S 2>&1 | FileCheck %s -check-prefix=MOREINFO
 
 ; CHECK: remark: source.cpp:4:5: loop not vectorized: loop contains a switch statement
-; CHECK: remark: source.cpp:4:5: loop not vectorized: use -Rpass-analysis=loop-vectorize for more info (Force=true, Vector Width=4)
 ; CHECK: warning: source.cpp:4:5: loop not vectorized: failed explicitly specified loop vectorization
+
+; NOANALYSIS-NOT: remark: {{.*}}
+; NOANALYSIS: warning: source.cpp:4:5: loop not interleaved: failed explicitly specified loop interleaving
+
+; MOREINFO: remark: source.cpp:4:5: loop not vectorized: loop contains a switch statement
+; MOREINFO: remark: source.cpp:4:5: loop not vectorized: use -Rpass-analysis=loop-vectorize for more info (Force=true, Vector Width=4)
+; MOREINFO: warning: source.cpp:4:5: loop not vectorized: failed explicitly specified loop vectorization
 
 ; CHECK: _Z11test_switchPii
 ; CHECK-NOT: x i32>
@@ -63,7 +71,7 @@ attributes #0 = { nounwind }
 !1 = !DIFile(filename: "source.cpp", directory: ".")
 !2 = !{}
 !3 = !{!4}
-!4 = !DISubprogram(name: "test_switch", line: 1, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: true, scopeLine: 1, file: !1, scope: !5, type: !6, function: void (i32*, i32)* @_Z11test_switchPii, variables: !2)
+!4 = distinct !DISubprogram(name: "test_switch", line: 1, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: true, scopeLine: 1, file: !1, scope: !5, type: !6, function: void (i32*, i32)* @_Z11test_switchPii, variables: !2)
 !5 = !DIFile(filename: "source.cpp", directory: ".")
 !6 = !DISubroutineType(types: !2)
 !7 = !{i32 2, !"Dwarf Version", i32 2}

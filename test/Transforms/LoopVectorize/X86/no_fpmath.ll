@@ -1,6 +1,6 @@
 ; RUN: opt < %s -loop-vectorize -mtriple=x86_64-unknown-linux -S -pass-remarks='loop-vectorize' -pass-remarks-missed='loop-vectorize' -pass-remarks-analysis='loop-vectorize' 2>&1 | FileCheck %s
 
-; CHECK: remark: no_fpmath.c:6:11: loop not vectorized: vectorization requires changes in the order of operations, however IEEE 754 floating-point operations are not commutative
+; CHECK: remark: no_fpmath.c:6:11: loop not vectorized: cannot prove it is safe to reorder floating-point operations
 ; CHECK: remark: no_fpmath.c:6:14: loop not vectorized:
 ; CHECK: remark: no_fpmath.c:17:14: vectorized loop (vectorization width: 2, interleaved count: 2)
 
@@ -78,7 +78,7 @@ attributes #0 = { nounwind }
 !1 = !{i32 1, !"PIC Level", i32 2}
 !2 = !{!"clang version 3.7.0"}
 !3 = !DILocation(line: 5, column: 20, scope: !4)
-!4 = !DISubprogram(name: "cond_sum", scope: !5, file: !5, line: 1, type: !6, isLocal: false, isDefinition: true, scopeLine: 1, flags: DIFlagPrototyped, isOptimized: true, function: double (i32*, i32)* @cond_sum, variables: !7)
+!4 = distinct !DISubprogram(name: "cond_sum", scope: !5, file: !5, line: 1, type: !6, isLocal: false, isDefinition: true, scopeLine: 1, flags: DIFlagPrototyped, isOptimized: true, function: double (i32*, i32)* @cond_sum, variables: !7)
 !5 = !DIFile(filename: "no_fpmath.c", directory: "")
 !6 = !DISubroutineType(types: !7)
 !7 = !{}
@@ -94,7 +94,7 @@ attributes #0 = { nounwind }
 !17 = distinct !{!17, !18}
 !18 = !{!"llvm.loop.unroll.disable"}
 !19 = !DILocation(line: 16, column: 20, scope: !20)
-!20 = !DISubprogram(name: "cond_sum_loop_hint", scope: !5, file: !5, line: 12, type: !6, isLocal: false, isDefinition: true, scopeLine: 12, flags: DIFlagPrototyped, isOptimized: true, function: double (i32*, i32)* @cond_sum_loop_hint, variables: !7)
+!20 = distinct !DISubprogram(name: "cond_sum_loop_hint", scope: !5, file: !5, line: 12, type: !6, isLocal: false, isDefinition: true, scopeLine: 12, flags: DIFlagPrototyped, isOptimized: true, function: double (i32*, i32)* @cond_sum_loop_hint, variables: !7)
 !21 = !DILocation(line: 16, column: 3, scope: !20)
 !22 = !DILocation(line: 17, column: 14, scope: !20)
 !23 = !DILocation(line: 20, column: 3, scope: !20)

@@ -132,26 +132,6 @@ def SEG_ALLOCA_64 : I<0, Pseudo, (outs GR64:$dst), (ins GR64:$size),
                     Requires<[In64BitMode]>;
 }
 
-// The MSVC runtime contains an _ftol2 routine for converting floating-point
-// to integer values. It has a strange calling convention: the input is
-// popped from the x87 stack, and the return value is given in EDX:EAX. ECX is
-// used as a temporary register. No other registers (aside from flags) are
-// touched.
-// Microsoft toolchains do not support 80-bit precision, so a WIN_FTOL_80
-// variant is unnecessary.
-
-let Defs = [EAX, EDX, ECX, EFLAGS], FPForm = SpecialFP in {
-  def WIN_FTOL_32 : I<0, Pseudo, (outs), (ins RFP32:$src),
-                      "# win32 fptoui",
-                      [(X86WinFTOL RFP32:$src)]>,
-                    Requires<[Not64BitMode]>;
-
-  def WIN_FTOL_64 : I<0, Pseudo, (outs), (ins RFP64:$src),
-                      "# win32 fptoui",
-                      [(X86WinFTOL RFP64:$src)]>,
-                    Requires<[Not64BitMode]>;
-}
-
 //===----------------------------------------------------------------------===//
 // EH Pseudo Instructions
 //
@@ -170,6 +150,15 @@ def EH_RETURN64   : I<0xC3, RawFrm, (outs), (ins GR64:$addr),
                      "ret\t#eh_return, addr: $addr",
                      [(X86ehret GR64:$addr)], IIC_RET>, Sched<[WriteJumpLd]>;
 
+}
+
+let isTerminator = 1, isBarrier = 1, hasCtrlDep = 1, isCodeGenOnly = 1 in {
+def CATCHRET   : I<0xC3, RawFrm, (outs), (ins GR32:$addr),
+                   "ret{l}\t# CATCHRET",
+                   [(X86catchret GR32:$addr)], IIC_RET>, Sched<[WriteJumpLd]>;
+def CATCHRET64 : I<0xC3, RawFrm, (outs), (ins GR64:$addr),
+                   "ret{q}\t# CATCHRET",
+                   [(X86catchret GR64:$addr)], IIC_RET>, Sched<[WriteJumpLd]>;
 }
 
 let hasSideEffects = 1, isBarrier = 1, isCodeGenOnly = 1,

@@ -16,6 +16,7 @@
 
 #include "llvm/ADT/GraphTraits.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/DataTypes.h"
 #include <functional>
 
@@ -79,22 +80,26 @@ class MachineBasicBlock : public ilist_node<MachineBasicBlock> {
   typedef std::vector<uint32_t>::const_iterator const_weight_iterator;
 
   /// Keep track of the physical registers that are livein of the basicblock.
-  std::vector<unsigned> LiveIns;
+  typedef std::vector<MCPhysReg> LiveInVector;
+  LiveInVector LiveIns;
 
   /// Alignment of the basic block. Zero if the basic block does not need to be
   /// aligned. The alignment is specified as log2(bytes).
-  unsigned Alignment;
+  unsigned Alignment = 0;
 
   /// Indicate that this basic block is entered via an exception handler.
-  bool IsLandingPad;
+  bool IsEHPad = false;
 
   /// Indicate that this basic block is potentially the target of an indirect
   /// branch.
-  bool AddressTaken;
+  bool AddressTaken = false;
+
+  /// Indicate that this basic block is the entry block of an EH funclet.
+  bool IsEHFuncletEntry = false;
 
   /// \brief since getSymbol is a relatively heavy-weight operation, the symbol
   /// is only computed once and is cached.
-  mutable MCSymbol *CachedMCSymbol;
+  mutable MCSymbol *CachedMCSymbol = nullptr;
 
   // Intrusive list support
   MachineBasicBlock() {}
@@ -309,7 +314,7 @@ public:
   /// Adds the specified register as a live in. Note that it is an error to add
   /// the same register to the same set more than once unless the intention is
   /// to call sortUniqueLiveIns after all registers are added.
-  void addLiveIn(unsigned Reg) { LiveIns.push_back(Reg); }
+  void addLiveIn(MCPhysReg PhysReg) { LiveIns.push_back(PhysReg); }
 
   /// Sorts and uniques the LiveIns vector. It can be significantly faster to do
   /// this than repeatedly calling isLiveIn before calling addLiveIn for every
@@ -322,17 +327,17 @@ public:
   /// Add PhysReg as live in to this block, and ensure that there is a copy of
   /// PhysReg to a virtual register of class RC. Return the virtual register
   /// that is a copy of the live in PhysReg.
-  unsigned addLiveIn(unsigned PhysReg, const TargetRegisterClass *RC);
+  unsigned addLiveIn(MCPhysReg PhysReg, const TargetRegisterClass *RC);
 
   /// Remove the specified register from the live in set.
-  void removeLiveIn(unsigned Reg);
+  void removeLiveIn(MCPhysReg Reg);
 
   /// Return true if the specified register is in the live in set.
-  bool isLiveIn(unsigned Reg) const;
+  bool isLiveIn(MCPhysReg Reg) const;
 
   // Iteration support for live in sets.  These sets are kept in sorted
   // order by their register number.
-  typedef std::vector<unsigned>::const_iterator livein_iterator;
+  typedef LiveInVector::const_iterator livein_iterator;
   livein_iterator livein_begin() const { return LiveIns.begin(); }
   livein_iterator livein_end()   const { return LiveIns.end(); }
   bool            livein_empty() const { return LiveIns.empty(); }
@@ -350,15 +355,21 @@ public:
 
   /// Returns true if the block is a landing pad. That is this basic block is
   /// entered via an exception handler.
-  bool isLandingPad() const { return IsLandingPad; }
+  bool isEHPad() const { return IsEHPad; }
 
   /// Indicates the block is a landing pad.  That is this basic block is entered
   /// via an exception handler.
-  void setIsLandingPad(bool V = true) { IsLandingPad = V; }
+  void setIsEHPad(bool V = true) { IsEHPad = V; }
 
   /// If this block has a successor that is a landing pad, return it. Otherwise
   /// return NULL.
   const MachineBasicBlock *getLandingPadSuccessor() const;
+
+  /// Returns true if this is the entry block of an EH funclet.
+  bool isEHFuncletEntry() const { return IsEHFuncletEntry; }
+
+  /// Indicates if this is the entry block of an EH funclet.
+  void setIsEHFuncletEntry(bool V = true) { IsEHFuncletEntry = V; }
 
   // Code Layout methods.
 

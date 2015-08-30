@@ -15,7 +15,8 @@
 
 namespace llvm {
 namespace object {
-  class ObjectFile;
+class COFFImportFile;
+class ObjectFile;
 }
 
 class StreamWriter;
@@ -56,6 +57,7 @@ public:
 
   // Only implemented for MachO.
   virtual void printMachODataInCode() { }
+  virtual void printMachOVersionMin() { }
 
   virtual void printStackMap() const = 0;
 
@@ -74,6 +76,8 @@ std::error_code createELFDumper(const object::ObjectFile *Obj,
 std::error_code createMachODumper(const object::ObjectFile *Obj,
                                   StreamWriter &Writer,
                                   std::unique_ptr<ObjDumper> &Result);
+
+void dumpCOFFImportFile(const object::COFFImportFile *File);
 
 } // namespace llvm
 

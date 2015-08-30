@@ -257,6 +257,9 @@ def executeShCmd(cmd, shenv, results):
     exitCode = None
     for i,(out,err) in enumerate(procData):
         res = procs[i].wait()
+        # On Windows, manually close the process handles.
+        if kIsWindows:
+            procs[i]._handle.Close()
         # Detect Ctrl-C in subprocess.
         if res == -signal.SIGINT:
             raise KeyboardInterrupt
@@ -540,6 +543,13 @@ def parseIntegratedTestScript(test, normalize_slashes=False,
         msg = ', '.join(unsupported_features)
         return lit.Test.Result(Test.UNSUPPORTED,
                     "Test is unsupported with the following features: %s" % msg)
+
+    unsupported_targets = [f for f in unsupported
+                           if f in test.suite.config.target_triple]
+    if unsupported_targets:
+      return lit.Test.Result(Test.UNSUPPORTED,
+                  "Test is unsupported with the following triple: %s" % (
+                      test.suite.config.target_triple,))
 
     if test.config.limit_to_features:
         # Check that we have one of the limit_to_features features in requires.

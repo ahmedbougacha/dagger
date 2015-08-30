@@ -99,6 +99,7 @@ class DITypeRefArray {
   const MDTuple *N = nullptr;
 
 public:
+  DITypeRefArray() = default;
   DITypeRefArray(const MDTuple *N) : N(N) {}
 
   explicit operator bool() const { return get(); }
@@ -1429,12 +1430,14 @@ class DILexicalBlock : public DILexicalBlockBase {
   friend class MDNode;
 
   unsigned Line;
-  unsigned Column;
+  uint16_t Column;
 
   DILexicalBlock(LLVMContext &C, StorageType Storage, unsigned Line,
                  unsigned Column, ArrayRef<Metadata *> Ops)
       : DILexicalBlockBase(C, DILexicalBlockKind, Storage, Ops), Line(Line),
-        Column(Column) {}
+        Column(Column) {
+    assert(Column < (1u << 16) && "Expected 16-bit column");
+  }
   ~DILexicalBlock() = default;
 
   static DILexicalBlock *getImpl(LLVMContext &Context, DILocalScope *Scope,

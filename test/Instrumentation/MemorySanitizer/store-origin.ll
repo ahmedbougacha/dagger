@@ -31,7 +31,7 @@ attributes #1 = { nounwind readnone }
 !1 = !DIFile(filename: "../2.cc", directory: "/tmp/build0")
 !2 = !{}
 !3 = !{!4}
-!4 = !DISubprogram(name: "Store", line: 1, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: true, scopeLine: 1, file: !1, scope: !5, type: !6, function: void (i32*, i32)* @Store, variables: !10)
+!4 = distinct !DISubprogram(name: "Store", line: 1, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: true, scopeLine: 1, file: !1, scope: !5, type: !6, function: void (i32*, i32)* @Store, variables: !10)
 !5 = !DIFile(filename: "../2.cc", directory: "/tmp/build0")
 !6 = !DISubroutineType(types: !7)
 !7 = !{null, !8, !9}
@@ -52,7 +52,7 @@ attributes #1 = { nounwind readnone }
 !22 = !DILocation(line: 3, scope: !4)
 
 
-; CHECK: @Store
+; CHECK-LABEL: @Store
 ; CHECK: load {{.*}} @__msan_param_tls
 ; CHECK: [[ORIGIN:%[01-9a-z]+]] = load {{.*}} @__msan_param_origin_tls
 ; CHECK: store {{.*}}!dbg ![[DBG:[01-9]+]]

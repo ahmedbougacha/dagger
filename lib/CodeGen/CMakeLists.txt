@@ -1,3 +1,8 @@
+set(system_libs)
+if(CMAKE_HOST_UNIX AND LLVM_ENABLE_THREADS AND HAVE_LIBPTHREAD)
+  set(system_libs ${system_libs} pthread)
+endif()
+
 add_llvm_library(LLVMCodeGen
   AggressiveAntiDepBreaker.cpp
   AllocationOrder.cpp
@@ -80,6 +85,7 @@ add_llvm_library(LLVMCodeGen
   OptimizePHIs.cpp
   PHIElimination.cpp
   PHIEliminationUtils.cpp
+  ParallelCG.cpp
   Passes.cpp
   PeepholeOptimizer.cpp
   PostRASchedulerList.cpp
@@ -128,6 +134,8 @@ add_llvm_library(LLVMCodeGen
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/CodeGen
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/CodeGen/PBQP
+
+  LINK_LIBS ${system_libs}
   )
 
 add_dependencies(LLVMCodeGen intrinsics_gen)
