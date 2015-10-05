@@ -153,10 +153,9 @@ void PassManagerBuilder::addInitialAliasAnalysisPasses(
   // BasicAliasAnalysis wins if they disagree. This is intended to help
   // support "obvious" type-punning idioms.
   if (UseCFLAA)
-    PM.add(createCFLAliasAnalysisPass());
-  PM.add(createTypeBasedAliasAnalysisPass());
-  PM.add(createScopedNoAliasAAPass());
-  PM.add(createBasicAliasAnalysisPass());
+    PM.add(createCFLAAWrapperPass());
+  PM.add(createTypeBasedAAWrapperPass());
+  PM.add(createScopedNoAliasAAWrapperPass());
 }
 
 void PassManagerBuilder::populateFunctionPassManager(
@@ -227,7 +226,7 @@ void PassManagerBuilder::populateModulePassManager(
     // We add a module alias analysis pass here. In part due to bugs in the
     // analysis infrastructure this "works" in that the analysis stays alive
     // for the entire SCC pass run below.
-    MPM.add(createGlobalsModRefPass());
+    MPM.add(createGlobalsAAWrapperPass());
 
   // Start of CallGraph SCC passes.
   if (!DisableUnitAtATime)
@@ -261,6 +260,7 @@ void PassManagerBuilder::populateModulePassManager(
   MPM.add(createLoopRotatePass(SizeLevel == 2 ? 0 : -1));
   MPM.add(createLICMPass());                  // Hoist loop invariants
   MPM.add(createLoopUnswitchPass(SizeLevel || OptLevel < 3));
+  MPM.add(createCFGSimplificationPass());
   MPM.add(createInstructionCombiningPass());
   MPM.add(createIndVarSimplifyPass());        // Canonicalize indvars
   MPM.add(createLoopIdiomPass());             // Recognize idioms like memset.
@@ -331,6 +331,19 @@ void PassManagerBuilder::populateModulePassManager(
   // we must insert a no-op module pass to reset the pass manager.
   MPM.add(createBarrierNoopPass());
 
+  if (!DisableUnitAtATime && OptLevel > 1 && !PrepareForLTO) {
+    // Remove avail extern fns and globals definitions if we aren't
+    // compiling an object file for later LTO. For LTO we want to preserve
+    // these so they are eligible for inlining at link-time. Note if they
+    // are unreferenced they will be removed by GlobalDCE later, so
+    // this only impacts referenced available externally globals.
+    // Eventually they will be suppressed during codegen, but eliminating
+    // here enables more opportunity for GlobalDCE as it may make
+    // globals referenced by available external functions dead
+    // and saves running remaining passes on the eliminated functions.
+    MPM.add(createEliminateAvailableExternallyPass());
+  }
+
   if (EnableNonLTOGlobalsModRef)
     // We add a fresh GlobalsModRef run at this point. This is particularly
     // useful as the above will have inlined, DCE'ed, and function-attr
@@ -347,7 +360,7 @@ void PassManagerBuilder::populateModulePassManager(
     // this to work. Fortunately, it is trivial to preserve AliasAnalysis
     // (doing nothing preserves it as it is required to be conservatively
     // correct in the face of IR changes).
-    MPM.add(createGlobalsModRefPass());
+    MPM.add(createGlobalsAAWrapperPass());
 
   if (RunFloat2Int)
     MPM.add(createFloat2IntPass());
@@ -438,17 +451,6 @@ void PassManagerBuilder::populateModulePassManager(
     // GlobalOpt already deletes dead functions and globals, at -O2 try a
     // late pass of GlobalDCE.  It is capable of deleting dead cycles.
     if (OptLevel > 1) {
-      if (!PrepareForLTO) {
-        // Remove avail extern fns and globals definitions if we aren't
-        // compiling an object file for later LTO. For LTO we want to preserve
-        // these so they are eligible for inlining at link-time. Note if they
-        // are unreferenced they will be removed by GlobalDCE below, so
-        // this only impacts referenced available externally globals.
-        // Eventually they will be suppressed during codegen, but eliminating
-        // here enables more opportunity for GlobalDCE as it may make
-        // globals referenced by available external functions dead.
-        MPM.add(createEliminateAvailableExternallyPass());
-      }
       MPM.add(createGlobalDCEPass());         // Remove dead fns and globals.
       MPM.add(createConstantMergePass());     // Merge dup global constants
     }
@@ -517,7 +519,7 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
 
   // Run a few AA driven optimizations here and now, to cleanup the code.
   PM.add(createFunctionAttrsPass()); // Add nocapture.
-  PM.add(createGlobalsModRefPass()); // IP alias analysis.
+  PM.add(createGlobalsAAWrapperPass()); // IP alias analysis.
 
   PM.add(createLICMPass());                 // Hoist loop invariants.
   if (EnableMLSM)

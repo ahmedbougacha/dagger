@@ -239,6 +239,11 @@ bool PPCCTRLoops::mightUseCTR(const Triple &TT, BasicBlock *BB) {
         if (F->getIntrinsicID() != Intrinsic::not_intrinsic) {
           switch (F->getIntrinsicID()) {
           default: continue;
+          // If we have a call to ppc_is_decremented_ctr_nonzero, or ppc_mtctr
+          // we're definitely using CTR.
+          case Intrinsic::ppc_is_decremented_ctr_nonzero:
+          case Intrinsic::ppc_mtctr:
+            return true;
 
 // VisualStudio defines setjmp as _setjmp
 #if defined(_MSC_VER) && defined(setjmp) && \
@@ -356,7 +361,7 @@ bool PPCCTRLoops::mightUseCTR(const Triple &TT, BasicBlock *BB) {
                                             true);
           if (VTy == MVT::Other)
             return true;
-          
+
           if (TLI->isOperationLegalOrCustom(Opcode, VTy))
             continue;
           else if (VTy.isVector() &&
@@ -426,6 +431,7 @@ bool PPCCTRLoops::convertToCTRLoop(Loop *L) {
   // Process nested loops first.
   for (Loop::iterator I = L->begin(), E = L->end(); I != E; ++I) {
     MadeChange |= convertToCTRLoop(*I);
+    DEBUG(dbgs() << "Nested loop converted\n");
   }
 
   // If a nested loop has been converted, then we can't convert this loop.
@@ -540,10 +546,9 @@ bool PPCCTRLoops::convertToCTRLoop(Loop *L) {
   if (!ExitCount->getType()->isPointerTy() &&
       ExitCount->getType() != CountType)
     ExitCount = SE->getZeroExtendExpr(ExitCount, CountType);
-  ExitCount = SE->getAddExpr(ExitCount,
-                             SE->getConstant(CountType, 1)); 
-  Value *ECValue = SCEVE.expandCodeFor(ExitCount, CountType,
-                                       Preheader->getTerminator());
+  ExitCount = SE->getAddExpr(ExitCount, SE->getOne(CountType));
+  Value *ECValue =
+      SCEVE.expandCodeFor(ExitCount, CountType, Preheader->getTerminator());
 
   IRBuilder<> CountBuilder(Preheader->getTerminator());
   Module *M = Preheader->getParent()->getParent();
@@ -680,4 +685,3 @@ bool PPCCTRLoopsVerify::runOnMachineFunction(MachineFunction &MF) {
   return false;
 }
 #endif // NDEBUG
-

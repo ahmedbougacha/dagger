@@ -7,6 +7,7 @@ target datalayout = "e"
 
 declare zeroext i1 @return_i1()
 
+declare i32* @foo()
 @globalstr = global [6 x i8] c"hello\00"
 @globali32ptr = external global i32*
 
@@ -110,6 +111,24 @@ entry:
     %load20 = load i8, i8 addrspace(1)* %gep.align16.offset1, align 16
     %load21 = load i8, i8 addrspace(1)* %gep.align1.offset16, align 16
     %load22 = load i8, i8 addrspace(1)* %gep.align16.offset16, align 16
+
+; CHECK-NOT: %no_deref_return
+; CHECK: %deref_return{{.*}}(unaligned)
+; CHECK: %deref_and_aligned_return{{.*}}(aligned)
+    %no_deref_return = call i32* @foo()
+    %deref_return = call dereferenceable(32) i32* @foo()
+    %deref_and_aligned_return = call dereferenceable(32) align 16 i32* @foo()
+    %load23 = load i32, i32* %no_deref_return
+    %load24 = load i32, i32* %deref_return, align 16
+    %load25 = load i32, i32* %deref_and_aligned_return, align 16
+
+    ; Load from a dereferenceable and aligned load
+; CHECK: %d4_unaligned_load{{.*}}(unaligned)
+; CHECK: %d4_aligned_load{{.*}}(aligned)
+    %d4_unaligned_load = load i32*, i32** @globali32ptr, !dereferenceable !0
+    %d4_aligned_load = load i32*, i32** @globali32ptr, !dereferenceable !0, !align !{i64 16}
+    %load26 = load i32, i32* %d4_unaligned_load, align 16
+    %load27 = load i32, i32* %d4_aligned_load, align 16
 
     ret void
 }

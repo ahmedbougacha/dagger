@@ -114,6 +114,9 @@ static const char *GetBlockName(unsigned BlockID,
   case bitc::METADATA_BLOCK_ID:        return "METADATA_BLOCK";
   case bitc::METADATA_ATTACHMENT_ID:   return "METADATA_ATTACHMENT_BLOCK";
   case bitc::USELIST_BLOCK_ID:         return "USELIST_BLOCK_ID";
+  case bitc::FUNCTION_SUMMARY_BLOCK_ID:
+                                       return "FUNCTION_SUMMARY_BLOCK";
+  case bitc::MODULE_STRTAB_BLOCK_ID:   return "MODULE_STRTAB_BLOCK";
   }
 }
 
@@ -165,6 +168,7 @@ static const char *GetCodeName(unsigned CodeID, unsigned BlockID,
       STRINGIFY_CODE(MODULE_CODE, ALIAS)
       STRINGIFY_CODE(MODULE_CODE, PURGEVALS)
       STRINGIFY_CODE(MODULE_CODE, GCNAME)
+      STRINGIFY_CODE(MODULE_CODE, VSTOFFSET)
     }
   case bitc::PARAMATTR_BLOCK_ID:
     switch (CodeID) {
@@ -244,6 +248,7 @@ static const char *GetCodeName(unsigned CodeID, unsigned BlockID,
       STRINGIFY_CODE(FUNC_CODE, INST_CLEANUPRET)
       STRINGIFY_CODE(FUNC_CODE, INST_CATCHRET)
       STRINGIFY_CODE(FUNC_CODE, INST_CATCHPAD)
+      STRINGIFY_CODE(FUNC_CODE, INST_CLEANUPENDPAD)
       STRINGIFY_CODE(FUNC_CODE, INST_CATCHENDPAD)
       STRINGIFY_CODE(FUNC_CODE, INST_TERMINATEPAD)
       STRINGIFY_CODE(FUNC_CODE, INST_PHI)
@@ -265,6 +270,19 @@ static const char *GetCodeName(unsigned CodeID, unsigned BlockID,
     default: return nullptr;
     STRINGIFY_CODE(VST_CODE, ENTRY)
     STRINGIFY_CODE(VST_CODE, BBENTRY)
+    STRINGIFY_CODE(VST_CODE, FNENTRY)
+    STRINGIFY_CODE(VST_CODE, COMBINED_FNENTRY)
+    }
+  case bitc::MODULE_STRTAB_BLOCK_ID:
+    switch (CodeID) {
+    default: return nullptr;
+    STRINGIFY_CODE(MST_CODE, ENTRY)
+    }
+  case bitc::FUNCTION_SUMMARY_BLOCK_ID:
+    switch (CodeID) {
+    default: return nullptr;
+    STRINGIFY_CODE(FS_CODE, PERMODULE_ENTRY)
+    STRINGIFY_CODE(FS_CODE, COMBINED_ENTRY)
     }
   case bitc::METADATA_ATTACHMENT_ID:
     switch(CodeID) {

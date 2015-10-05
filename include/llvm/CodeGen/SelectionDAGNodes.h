@@ -44,6 +44,7 @@ class GlobalValue;
 class MachineBasicBlock;
 class MachineConstantPoolValue;
 class SDNode;
+class BinaryWithFlagsSDNode;
 class Value;
 class MCSymbol;
 template <typename T> struct DenseMapInfo;
@@ -167,6 +168,7 @@ public:
   inline bool isTargetMemoryOpcode() const;
   inline bool isTargetOpcode() const;
   inline bool isMachineOpcode() const;
+  inline bool isUndef() const;
   inline unsigned getMachineOpcode() const;
   inline const DebugLoc &getDebugLoc() const;
   inline void dump() const;
@@ -318,6 +320,61 @@ template<> struct simplify_type<SDUse> {
   }
 };
 
+/// These are IR-level optimization flags that may be propagated to SDNodes.
+/// TODO: This data structure should be shared by the IR optimizer and the
+/// the backend.
+struct SDNodeFlags {
+private:
+  bool NoUnsignedWrap : 1;
+  bool NoSignedWrap : 1;
+  bool Exact : 1;
+  bool UnsafeAlgebra : 1;
+  bool NoNaNs : 1;
+  bool NoInfs : 1;
+  bool NoSignedZeros : 1;
+  bool AllowReciprocal : 1;
+
+public:
+  /// Default constructor turns off all optimization flags.
+  SDNodeFlags() {
+    NoUnsignedWrap = false;
+    NoSignedWrap = false;
+    Exact = false;
+    UnsafeAlgebra = false;
+    NoNaNs = false;
+    NoInfs = false;
+    NoSignedZeros = false;
+    AllowReciprocal = false;
+  }
+
+  // These are mutators for each flag.
+  void setNoUnsignedWrap(bool b) { NoUnsignedWrap = b; }
+  void setNoSignedWrap(bool b) { NoSignedWrap = b; }
+  void setExact(bool b) { Exact = b; }
+  void setUnsafeAlgebra(bool b) { UnsafeAlgebra = b; }
+  void setNoNaNs(bool b) { NoNaNs = b; }
+  void setNoInfs(bool b) { NoInfs = b; }
+  void setNoSignedZeros(bool b) { NoSignedZeros = b; }
+  void setAllowReciprocal(bool b) { AllowReciprocal = b; }
+
+  // These are accessors for each flag.
+  bool hasNoUnsignedWrap() const { return NoUnsignedWrap; }
+  bool hasNoSignedWrap() const { return NoSignedWrap; }
+  bool hasExact() const { return Exact; }
+  bool hasUnsafeAlgebra() const { return UnsafeAlgebra; }
+  bool hasNoNaNs() const { return NoNaNs; }
+  bool hasNoInfs() const { return NoInfs; }
+  bool hasNoSignedZeros() const { return NoSignedZeros; }
+  bool hasAllowReciprocal() const { return AllowReciprocal; }
+
+  /// Return a raw encoding of the flags.
+  /// This function should only be used to add data to the NodeID value.
+  unsigned getRawFlags() const {
+    return (NoUnsignedWrap << 0) | (NoSignedWrap << 1) | (Exact << 2) |
+    (UnsafeAlgebra << 3) | (NoNaNs << 4) | (NoInfs << 5) |
+    (NoSignedZeros << 6) | (AllowReciprocal << 7);
+  }
+};
 
 /// Represents one node in the SelectionDAG.
 ///
@@ -374,6 +431,12 @@ private:
   friend struct ilist_traits<SDNode>;
 
 public:
+#ifndef NDEBUG
+  /// Unique and persistent id per SDNode in the DAG.
+  /// Used for debug printing.
+  uint16_t PersistentId;
+#endif
+
   //===--------------------------------------------------------------------===//
   //  Accessors
   //
@@ -394,6 +457,9 @@ public:
   bool isTargetMemoryOpcode() const {
     return NodeType >= ISD::FIRST_TARGET_MEMORY_OPCODE;
   }
+
+  /// Return true if the type of the node type undefined.
+  bool isUndef() const { return NodeType == ISD::UNDEF; }
 
   /// Test if this node is a memory intrinsic (with valid pointer information).
   /// INTRINSIC_W_CHAIN and INTRINSIC_VOID nodes are sometimes created for
@@ -634,6 +700,10 @@ public:
         return *UI;
     return nullptr;
   }
+
+  /// This could be defined as a virtual function and implemented more simply
+  /// and directly, but it is not to avoid creating a vtable for this class.
+  const SDNodeFlags *getFlags() const;
 
   /// Return the number of values defined/returned by this operator.
   unsigned getNumValues() const { return NumValues; }
@@ -909,6 +979,9 @@ inline bool SDValue::isMachineOpcode() const {
 inline unsigned SDValue::getMachineOpcode() const {
   return Node->getMachineOpcode();
 }
+inline bool SDValue::isUndef() const {
+  return Node->isUndef();
+}
 inline bool SDValue::use_empty() const {
   return !Node->hasAnyUseOfValue(ResNo);
 }
@@ -942,62 +1015,6 @@ inline void SDUse::setNode(SDNode *N) {
   Val.setNode(N);
   if (N) N->addUse(*this);
 }
-
-/// These are IR-level optimization flags that may be propagated to SDNodes.
-/// TODO: This data structure should be shared by the IR optimizer and the
-/// the backend.
-struct SDNodeFlags {
-private:
-  bool NoUnsignedWrap : 1;
-  bool NoSignedWrap : 1;
-  bool Exact : 1;
-  bool UnsafeAlgebra : 1;
-  bool NoNaNs : 1;
-  bool NoInfs : 1;
-  bool NoSignedZeros : 1;
-  bool AllowReciprocal : 1;
-
-public:
-  /// Default constructor turns off all optimization flags.
-  SDNodeFlags() {
-    NoUnsignedWrap = false;
-    NoSignedWrap = false;
-    Exact = false;
-    UnsafeAlgebra = false;
-    NoNaNs = false;
-    NoInfs = false;
-    NoSignedZeros = false;
-    AllowReciprocal = false;
-  }
-
-  // These are mutators for each flag.
-  void setNoUnsignedWrap(bool b) { NoUnsignedWrap = b; }
-  void setNoSignedWrap(bool b) { NoSignedWrap = b; }
-  void setExact(bool b) { Exact = b; }
-  void setUnsafeAlgebra(bool b) { UnsafeAlgebra = b; }
-  void setNoNaNs(bool b) { NoNaNs = b; }
-  void setNoInfs(bool b) { NoInfs = b; }
-  void setNoSignedZeros(bool b) { NoSignedZeros = b; }
-  void setAllowReciprocal(bool b) { AllowReciprocal = b; }
-
-  // These are accessors for each flag.
-  bool hasNoUnsignedWrap() const { return NoUnsignedWrap; }
-  bool hasNoSignedWrap() const { return NoSignedWrap; }
-  bool hasExact() const { return Exact; }
-  bool hasUnsafeAlgebra() const { return UnsafeAlgebra; }
-  bool hasNoNaNs() const { return NoNaNs; }
-  bool hasNoInfs() const { return NoInfs; }
-  bool hasNoSignedZeros() const { return NoSignedZeros; }
-  bool hasAllowReciprocal() const { return AllowReciprocal; }
-
-  /// Return a raw encoding of the flags.
-  /// This function should only be used to add data to the NodeID value.
-  unsigned getRawFlags() const {
-    return (NoUnsignedWrap << 0) | (NoSignedWrap << 1) | (Exact << 2) |
-           (UnsafeAlgebra << 3) | (NoNaNs << 4) | (NoInfs << 5) |
-           (NoSignedZeros << 6) | (AllowReciprocal << 7);
-  }
-};
 
 /// This class is used for single-operand SDNodes.  This is solely
 /// to allow co-allocation of node operands with the node itself.
@@ -2003,9 +2020,9 @@ class MaskedLoadStoreSDNode : public MemSDNode {
 public:
   friend class SelectionDAG;
   MaskedLoadStoreSDNode(ISD::NodeType NodeTy, unsigned Order, DebugLoc dl,
-                   SDValue *Operands, unsigned numOperands, 
-                   SDVTList VTs, EVT MemVT, MachineMemOperand *MMO)
-    : MemSDNode(NodeTy, Order, dl, VTs, MemVT, MMO) {
+                        SDValue *Operands, unsigned numOperands, SDVTList VTs,
+                        EVT MemVT, MachineMemOperand *MMO)
+      : MemSDNode(NodeTy, Order, dl, VTs, MemVT, MMO) {
     InitOperands(Ops, Operands, numOperands);
   }
 
@@ -2036,7 +2053,7 @@ public:
 
   ISD::LoadExtType getExtensionType() const {
     return ISD::LoadExtType(SubclassData & 3);
-  } 
+  }
   const SDValue &getSrc0() const { return getOperand(3); }
   static bool classof(const SDNode *N) {
     return N->getOpcode() == ISD::MLOAD;
@@ -2103,16 +2120,16 @@ public:
 class MaskedGatherSDNode : public MaskedGatherScatterSDNode {
 public:
   friend class SelectionDAG;
-  MaskedGatherSDNode(unsigned Order, DebugLoc dl, ArrayRef<SDValue> Operands, 
+  MaskedGatherSDNode(unsigned Order, DebugLoc dl, ArrayRef<SDValue> Operands,
                      SDVTList VTs, EVT MemVT, MachineMemOperand *MMO)
     : MaskedGatherScatterSDNode(ISD::MGATHER, Order, dl, Operands, VTs, MemVT,
                                 MMO) {
     assert(getValue().getValueType() == getValueType(0) &&
            "Incompatible type of the PathThru value in MaskedGatherSDNode");
-    assert(getMask().getValueType().getVectorNumElements() == 
-           getValueType(0).getVectorNumElements() && 
+    assert(getMask().getValueType().getVectorNumElements() ==
+               getValueType(0).getVectorNumElements() &&
            "Vector width mismatch between mask and data");
-    assert(getMask().getValueType().getScalarType() == MVT::i1 && 
+    assert(getMask().getValueType().getScalarType() == MVT::i1 &&
            "Vector width mismatch between mask and data");
   }
 
@@ -2129,12 +2146,12 @@ public:
   friend class SelectionDAG;
   MaskedScatterSDNode(unsigned Order, DebugLoc dl,ArrayRef<SDValue> Operands,
                       SDVTList VTs, EVT MemVT, MachineMemOperand *MMO)
-    : MaskedGatherScatterSDNode(ISD::MSCATTER, Order, dl, Operands, VTs, MemVT,
-                                MMO) {
-    assert(getMask().getValueType().getVectorNumElements() == 
-           getValue().getValueType().getVectorNumElements() && 
+      : MaskedGatherScatterSDNode(ISD::MSCATTER, Order, dl, Operands, VTs,
+                                  MemVT, MMO) {
+    assert(getMask().getValueType().getVectorNumElements() ==
+               getValue().getValueType().getVectorNumElements() &&
            "Vector width mismatch between mask and data");
-    assert(getMask().getValueType().getScalarType() == MVT::i1 && 
+    assert(getMask().getValueType().getScalarType() == MVT::i1 &&
            "Vector width mismatch between mask and data");
   }
 

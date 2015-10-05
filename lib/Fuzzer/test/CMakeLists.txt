@@ -21,6 +21,8 @@ set(Tests
   MemcmpTest
   NullDerefTest
   SimpleCmpTest
+  SimpleDictionaryTest
+  SimpleHashTest
   SimpleTest
   StrcmpTest
   StrncmpTest

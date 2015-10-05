@@ -205,9 +205,9 @@ void TargetLowering::softenSetCCOperands(SelectionDAG &DAG, EVT VT,
 
   // Use the target specific return value for comparions lib calls.
   EVT RetVT = getCmpLibcallReturnType();
-  SDValue Ops[2] = { NewLHS, NewRHS };
-  NewLHS = makeLibCall(DAG, LC1, RetVT, Ops, 2, false/*sign irrelevant*/,
-					   dl).first;
+  SDValue Ops[2] = {NewLHS, NewRHS};
+  NewLHS =
+      makeLibCall(DAG, LC1, RetVT, Ops, 2, false /*sign irrelevant*/, dl).first;
   NewRHS = DAG.getConstant(0, dl, RetVT);
 
   CCCode = getCmpLibcallCC(LC1);
@@ -2115,9 +2115,8 @@ bool TargetLowering::isGAPlusOffset(SDNode *N, const GlobalValue *&GA,
   return false;
 }
 
-
-SDValue TargetLowering::
-PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const {
+SDValue TargetLowering::PerformDAGCombine(SDNode *N,
+                                          DAGCombinerInfo &DCI) const {
   // Default implementation: no optimization.
   return SDValue();
 }
@@ -2306,7 +2305,6 @@ unsigned TargetLowering::AsmOperandInfo::getMatchedOperand() const {
   return atoi(ConstraintCode.c_str());
 }
 
-
 /// ParseConstraints - Split up the constraint string from the inline
 /// assembly value into the specific constraints and their prefixes,
 /// and also tie in the associated operand values.
@@ -2491,13 +2489,11 @@ TargetLowering::ParseConstraints(const DataLayout &DL,
                              " incompatible type!");
         }
       }
-
     }
   }
 
   return ConstraintOperands;
 }
-
 
 /// getConstraintGenerality - Return an integer indicating how general CT
 /// is.

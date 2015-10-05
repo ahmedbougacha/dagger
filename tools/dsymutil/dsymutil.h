@@ -28,6 +28,7 @@ struct LinkOptions {
   bool Verbose;  ///< Verbosity
   bool NoOutput; ///< Skip emitting output
   bool NoODR;    ///< Do not unique types according to ODR
+  std::string PrependPath; ///< -oso-prepend-path
 
   LinkOptions() : Verbose(false), NoOutput(false) {}
 };
@@ -38,6 +39,10 @@ struct LinkOptions {
 llvm::ErrorOr<std::vector<std::unique_ptr<DebugMap>>>
 parseDebugMap(StringRef InputFile, ArrayRef<std::string> Archs,
               StringRef PrependPath, bool Verbose, bool InputIsYAML);
+
+/// \brief Dump the symbol table
+bool dumpStab(StringRef InputFile, ArrayRef<std::string> Archs,
+              StringRef PrependPath = "");
 
 /// \brief Link the Dwarf debuginfo as directed by the passed DebugMap
 /// \p DM into a DwarfFile named \p OutputFilename.

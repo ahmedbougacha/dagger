@@ -61,8 +61,11 @@ template<> struct ilist_traits<GlobalVariable>
   static void destroySentinel(GlobalVariable*) {}
 
   GlobalVariable *provideInitialHead() const { return createSentinel(); }
-  GlobalVariable *ensureHead(GlobalVariable*) const { return createSentinel(); }
-  static void noteHead(GlobalVariable*, GlobalVariable*) {}
+  GlobalVariable *ensureHead(GlobalVariable *) const {
+    return createSentinel();
+  }
+  static void noteHead(GlobalVariable *, GlobalVariable *) {}
+
 private:
   mutable ilist_node<GlobalVariable> Sentinel;
 };
@@ -76,8 +79,9 @@ template<> struct ilist_traits<GlobalAlias>
   static void destroySentinel(GlobalAlias*) {}
 
   GlobalAlias *provideInitialHead() const { return createSentinel(); }
-  GlobalAlias *ensureHead(GlobalAlias*) const { return createSentinel(); }
-  static void noteHead(GlobalAlias*, GlobalAlias*) {}
+  GlobalAlias *ensureHead(GlobalAlias *) const { return createSentinel(); }
+  static void noteHead(GlobalAlias *, GlobalAlias *) {}
+
 private:
   mutable ilist_node<GlobalAlias> Sentinel;
 };
@@ -96,6 +100,7 @@ template<> struct ilist_traits<NamedMDNode>
   static void noteHead(NamedMDNode*, NamedMDNode*) {}
   void addNodeToList(NamedMDNode *) {}
   void removeNodeFromList(NamedMDNode *) {}
+
 private:
   mutable ilist_node<NamedMDNode> Sentinel;
 };
@@ -327,6 +332,11 @@ public:
   /// Populate client supplied SmallVector with the name for custom metadata IDs
   /// registered in this LLVMContext.
   void getMDKindNames(SmallVectorImpl<StringRef> &Result) const;
+
+  /// Populate client supplied SmallVector with the bundle tags registered in
+  /// this LLVMContext.  The bundle tags are ordered by increasing bundle IDs.
+  /// \see LLVMContext::getOperandBundleTagID
+  void getOperandBundleTags(SmallVectorImpl<StringRef> &Result) const;
 
   /// Return the type with the specified name, or null if there is none by that
   /// name.
@@ -646,11 +656,12 @@ public:
   /// uselistorder directives so that use-lists can be recreated when reading
   /// the assembly.
   void print(raw_ostream &OS, AssemblyAnnotationWriter *AAW,
-             bool ShouldPreserveUseListOrder = false) const;
+             bool ShouldPreserveUseListOrder = false,
+             bool IsForDebug = false) const;
 
   /// Dump the module to stderr (for debugging).
   void dump() const;
-  
+
   /// This function causes all the subinstructions to "let go" of all references
   /// that they are maintaining.  This allows one to 'delete' a whole class at
   /// a time, even though there may be circular references... first all
@@ -697,7 +708,7 @@ DEFINE_SIMPLE_CONVERSION_FUNCTIONS(Module, LLVMModuleRef)
 inline Module *unwrap(LLVMModuleProviderRef MP) {
   return reinterpret_cast<Module*>(MP);
 }
-  
+
 } // End llvm namespace
 
 #endif

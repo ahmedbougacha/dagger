@@ -26,19 +26,6 @@ namespace llvm {
   class X86RegisterInfo;
   class X86Subtarget;
 
-  namespace MachineCombinerPattern {
-    enum MC_PATTERN : int {
-      // These are commutative variants for reassociating a computation chain
-      // of the form:
-      //   B = A op X (Prev)
-      //   C = B op Y (Root)
-      MC_REASSOC_AX_BY = 0,
-      MC_REASSOC_AX_YB = 1,
-      MC_REASSOC_XA_BY = 2,
-      MC_REASSOC_XA_YB = 3,
-    };
-  } // end namespace MachineCombinerPattern
-
 namespace X86 {
   // X86 specific condition code. These correspond to X86_*_COND in
   // X86InstrInfo.td. They must be kept in synch.
@@ -259,11 +246,21 @@ public:
                                       MachineBasicBlock::iterator &MBBI,
                                       LiveVariables *LV) const override;
 
-  /// commuteInstruction - We have a few instructions that must be hacked on to
-  /// commute them.
+  /// Returns true iff the routine could find two commutable operands in the
+  /// given machine instruction.
+  /// The 'SrcOpIdx1' and 'SrcOpIdx2' are INPUT and OUTPUT arguments. Their
+  /// input values can be re-defined in this method only if the input values
+  /// are not pre-defined, which is designated by the special value
+  /// 'CommuteAnyOperandIndex' assigned to it.
+  /// If both of indices are pre-defined and refer to some operands, then the
+  /// method simply returns true if the corresponding operands are commutable
+  /// and returns false otherwise.
   ///
-  MachineInstr *commuteInstruction(MachineInstr *MI, bool NewMI) const override;
-
+  /// For example, calling this method this way:
+  ///     unsigned Op1 = 1, Op2 = CommuteAnyOperandIndex;
+  ///     findCommutedOpIndices(MI, Op1, Op2);
+  /// can be interpreted as a query asking to find an operand that would be
+  /// commutable with the operand#1.
   bool findCommutedOpIndices(MachineInstr *MI, unsigned &SrcOpIdx1,
                              unsigned &SrcOpIdx2) const override;
 
@@ -451,26 +448,19 @@ public:
                              const MachineInstr *DefMI, unsigned DefIdx,
                              const MachineInstr *UseMI,
                              unsigned UseIdx) const override;
-
   
   bool useMachineCombiner() const override {
     return true;
   }
-  
-  /// Return true when there is potentially a faster code sequence
-  /// for an instruction chain ending in <Root>. All potential patterns are
-  /// output in the <Pattern> array.
-  bool getMachineCombinerPatterns(
-      MachineInstr &Root,
-      SmallVectorImpl<MachineCombinerPattern::MC_PATTERN> &P) const override;
-  
-  /// When getMachineCombinerPatterns() finds a pattern, this function generates
-  /// the instructions that could replace the original code sequence.
-  void genAlternativeCodeSequence(
-          MachineInstr &Root, MachineCombinerPattern::MC_PATTERN P,
-          SmallVectorImpl<MachineInstr *> &InsInstrs,
-          SmallVectorImpl<MachineInstr *> &DelInstrs,
-          DenseMap<unsigned, unsigned> &InstrIdxForVirtReg) const override;
+
+  bool isAssociativeAndCommutative(const MachineInstr &Inst) const override;
+
+  bool hasReassociableOperands(const MachineInstr &Inst,
+                               const MachineBasicBlock *MBB) const override;
+
+  void setSpecialOperandAttr(MachineInstr &OldMI1, MachineInstr &OldMI2,
+                             MachineInstr &NewMI1,
+                             MachineInstr &NewMI2) const override;
 
   /// analyzeCompare - For a comparison instruction, return the source registers
   /// in SrcReg and SrcReg2 if having two register operands, and the value it
@@ -504,6 +494,22 @@ public:
 
   ArrayRef<std::pair<unsigned, const char *>>
   getSerializableDirectMachineOperandTargetFlags() const override;
+
+protected:
+  /// Commutes the operands in the given instruction by changing the operands
+  /// order and/or changing the instruction's opcode and/or the immediate value
+  /// operand.
+  ///
+  /// The arguments 'CommuteOpIdx1' and 'CommuteOpIdx2' specify the operands
+  /// to be commuted.
+  ///
+  /// Do not call this method for a non-commutable instruction or
+  /// non-commutable operands.
+  /// Even though the instruction is commutable, the method may still
+  /// fail to commute the operands, null pointer is returned in such cases.
+  MachineInstr *commuteInstructionImpl(MachineInstr *MI, bool NewMI,
+                                       unsigned CommuteOpIdx1,
+                                       unsigned CommuteOpIdx2) const override;
 
 private:
   MachineInstr * convertToThreeAddressWithLEA(unsigned MIOpc,

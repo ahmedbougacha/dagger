@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-
 #include "SIRegisterInfo.h"
 #include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
@@ -87,7 +86,7 @@ unsigned SIRegisterInfo::getRegPressureSetLimit(const MachineFunction &MF,
     const int *Sets = getRegClassPressureSets(*I);
     assert(Sets);
     for (unsigned i = 0; Sets[i] != -1; ++i) {
-	    if (Sets[i] == (int)Idx)
+      if (Sets[i] == (int)Idx)
         return Limit;
     }
   }
@@ -323,18 +322,12 @@ void SIRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
   }
 }
 
-const TargetRegisterClass * SIRegisterInfo::getCFGStructurizerRegClass(
-                                                                   MVT VT) const {
-  switch(VT.SimpleTy) {
-    default:
-    case MVT::i32: return &AMDGPU::VGPR_32RegClass;
-  }
-}
-
 unsigned SIRegisterInfo::getHWRegIndex(unsigned Reg) const {
   return getEncodingValue(Reg) & 0xff;
 }
 
+// FIXME: This is very slow. It might be worth creating a map from physreg to
+// register class.
 const TargetRegisterClass *SIRegisterInfo::getPhysRegClass(unsigned Reg) const {
   assert(!TargetRegisterInfo::isVirtualRegister(Reg));
 
@@ -360,31 +353,45 @@ const TargetRegisterClass *SIRegisterInfo::getPhysRegClass(unsigned Reg) const {
   return nullptr;
 }
 
+// TODO: It might be helpful to have some target specific flags in
+// TargetRegisterClass to mark which classes are VGPRs to make this trivial.
 bool SIRegisterInfo::hasVGPRs(const TargetRegisterClass *RC) const {
-  return getCommonSubClass(&AMDGPU::VGPR_32RegClass, RC) ||
-         getCommonSubClass(&AMDGPU::VReg_64RegClass, RC) ||
-         getCommonSubClass(&AMDGPU::VReg_96RegClass, RC) ||
-         getCommonSubClass(&AMDGPU::VReg_128RegClass, RC) ||
-         getCommonSubClass(&AMDGPU::VReg_256RegClass, RC) ||
-         getCommonSubClass(&AMDGPU::VReg_512RegClass, RC);
+  switch (RC->getSize()) {
+  case 4:
+    return getCommonSubClass(&AMDGPU::VGPR_32RegClass, RC) != nullptr;
+  case 8:
+    return getCommonSubClass(&AMDGPU::VReg_64RegClass, RC) != nullptr;
+  case 12:
+    return getCommonSubClass(&AMDGPU::VReg_96RegClass, RC) != nullptr;
+  case 16:
+    return getCommonSubClass(&AMDGPU::VReg_128RegClass, RC) != nullptr;
+  case 32:
+    return getCommonSubClass(&AMDGPU::VReg_256RegClass, RC) != nullptr;
+  case 64:
+    return getCommonSubClass(&AMDGPU::VReg_512RegClass, RC) != nullptr;
+  default:
+    llvm_unreachable("Invalid register class size");
+  }
 }
 
 const TargetRegisterClass *SIRegisterInfo::getEquivalentVGPRClass(
                                          const TargetRegisterClass *SRC) const {
-    if (hasVGPRs(SRC)) {
-      return SRC;
-    } else if (getCommonSubClass(SRC, &AMDGPU::SGPR_32RegClass)) {
-      return &AMDGPU::VGPR_32RegClass;
-    } else if (getCommonSubClass(SRC, &AMDGPU::SGPR_64RegClass)) {
-      return &AMDGPU::VReg_64RegClass;
-    } else if (getCommonSubClass(SRC, &AMDGPU::SReg_128RegClass)) {
-      return &AMDGPU::VReg_128RegClass;
-    } else if (getCommonSubClass(SRC, &AMDGPU::SReg_256RegClass)) {
-      return &AMDGPU::VReg_256RegClass;
-    } else if (getCommonSubClass(SRC, &AMDGPU::SReg_512RegClass)) {
-      return &AMDGPU::VReg_512RegClass;
-    }
-    return nullptr;
+  switch (SRC->getSize()) {
+  case 4:
+    return &AMDGPU::VGPR_32RegClass;
+  case 8:
+    return &AMDGPU::VReg_64RegClass;
+  case 12:
+    return &AMDGPU::VReg_96RegClass;
+  case 16:
+    return &AMDGPU::VReg_128RegClass;
+  case 32:
+    return &AMDGPU::VReg_256RegClass;
+  case 64:
+    return &AMDGPU::VReg_512RegClass;
+  default:
+    llvm_unreachable("Invalid register class size");
+  }
 }
 
 const TargetRegisterClass *SIRegisterInfo::getSubRegClass(
@@ -399,6 +406,30 @@ const TargetRegisterClass *SIRegisterInfo::getSubRegClass(
   } else {
     return &AMDGPU::VGPR_32RegClass;
   }
+}
+
+bool SIRegisterInfo::shouldRewriteCopySrc(
+  const TargetRegisterClass *DefRC,
+  unsigned DefSubReg,
+  const TargetRegisterClass *SrcRC,
+  unsigned SrcSubReg) const {
+  // We want to prefer the smallest register class possible, so we don't want to
+  // stop and rewrite on anything that looks like a subregister
+  // extract. Operations mostly don't care about the super register class, so we
+  // only want to stop on the most basic of copies between the smae register
+  // class.
+  //
+  // e.g. if we have something like
+  // vreg0 = ...
+  // vreg1 = ...
+  // vreg2 = REG_SEQUENCE vreg0, sub0, vreg1, sub1, vreg2, sub2
+  // vreg3 = COPY vreg2, sub0
+  //
+  // We want to look through the COPY to find:
+  //  => vreg3 = COPY vreg0
+
+  // Plain copy.
+  return getCommonSubClass(DefRC, SrcRC) != nullptr;
 }
 
 unsigned SIRegisterInfo::getPhysRegSubReg(unsigned Reg,

@@ -73,6 +73,14 @@ static cl::opt<int>
 MaxVectorRegSizeOption("slp-max-reg-size", cl::init(128), cl::Hidden,
     cl::desc("Attempt to vectorize for this register size in bits"));
 
+/// Limits the size of scheduling regions in a block.
+/// It avoid long compile times for _very_ large blocks where vector
+/// instructions are spread over a wide range.
+/// This limit is way higher than needed by real-world functions.
+static cl::opt<int>
+ScheduleRegionSizeBudget("slp-schedule-budget", cl::init(100000), cl::Hidden,
+    cl::desc("Limit the size of the SLP scheduling region per block"));
+
 namespace {
 
 // FIXME: Set this via cl::opt to allow overriding.
@@ -88,6 +96,10 @@ static const unsigned AliasedCheckLimit = 10;
 // instructions where alias checks are done.
 // This limit is useful for very large basic blocks.
 static const unsigned MaxMemDepDistance = 160;
+
+/// If the ScheduleRegionSizeBudget is exhausted, we allow small scheduling
+/// regions to be handled.
+static const int MinScheduleRegionSize = 16;
 
 /// \brief Predicate for the element types that the SLP vectorizer supports.
 ///
@@ -720,6 +732,8 @@ private:
         : BB(BB), ChunkSize(BB->size()), ChunkPos(ChunkSize),
           ScheduleStart(nullptr), ScheduleEnd(nullptr),
           FirstLoadStoreInRegion(nullptr), LastLoadStoreInRegion(nullptr),
+          ScheduleRegionSize(0),
+          ScheduleRegionSizeLimit(ScheduleRegionSizeBudget),
           // Make sure that the initial SchedulingRegionID is greater than the
           // initial SchedulingRegionID in ScheduleData (which is 0).
           SchedulingRegionID(1) {}
@@ -730,6 +744,13 @@ private:
       ScheduleEnd = nullptr;
       FirstLoadStoreInRegion = nullptr;
       LastLoadStoreInRegion = nullptr;
+
+      // Reduce the maximum schedule region size by the size of the
+      // previous scheduling run.
+      ScheduleRegionSizeLimit -= ScheduleRegionSize;
+      if (ScheduleRegionSizeLimit < MinScheduleRegionSize)
+        ScheduleRegionSizeLimit = MinScheduleRegionSize;
+      ScheduleRegionSize = 0;
 
       // Make a new scheduling region, i.e. all existing ScheduleData is not
       // in the new region yet.
@@ -807,7 +828,8 @@ private:
     void cancelScheduling(ArrayRef<Value *> VL);
 
     /// Extends the scheduling region so that V is inside the region.
-    void extendSchedulingRegion(Value *V);
+    /// \returns true if the region size is within the limit.
+    bool extendSchedulingRegion(Value *V);
 
     /// Initialize the ScheduleData structures for new instructions in the
     /// scheduling region.
@@ -860,6 +882,12 @@ private:
     /// The last memory accessing instruction in the scheduling region
     /// (can be null).
     ScheduleData *LastLoadStoreInRegion;
+
+    /// The current size of the scheduling region.
+    int ScheduleRegionSize;
+    
+    /// The maximum size allowed for the scheduling region.
+    int ScheduleRegionSizeLimit;
 
     /// The ID of the scheduling region. For a new vectorization iteration this
     /// is incremented which "removes" all ScheduleData from the region.
@@ -1080,7 +1108,9 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth) {
 
   if (!BS.tryScheduleBundle(VL, this)) {
     DEBUG(dbgs() << "SLP: We are not able to schedule this bundle!\n");
-    BS.cancelScheduling(VL);
+    assert((!BS.getScheduleData(VL[0]) ||
+            !BS.getScheduleData(VL[0])->isPartOfBundle()) &&
+           "tryScheduleBundle should cancelScheduling on failure");
     newTreeEntry(VL, false);
     return;
   }
@@ -1128,6 +1158,23 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth) {
       return;
     }
     case Instruction::Load: {
+      // Check that a vectorized load would load the same memory as a scalar
+      // load.
+      // For example we don't want vectorize loads that are smaller than 8 bit.
+      // Even though we have a packed struct {<i2, i2, i2, i2>} LLVM treats
+      // loading/storing it as an i8 struct. If we vectorize loads/stores from
+      // such a struct we read/write packed bits disagreeing with the
+      // unvectorized version.
+      const DataLayout &DL = F->getParent()->getDataLayout();
+      Type *ScalarTy = VL[0]->getType();
+
+      if (DL.getTypeSizeInBits(ScalarTy) !=
+          DL.getTypeAllocSizeInBits(ScalarTy)) {
+        BS.cancelScheduling(VL);
+        newTreeEntry(VL, false);
+        DEBUG(dbgs() << "SLP: Gathering loads of non-packed type.\n");
+        return;
+      }
       // Check if the loads are consecutive or of we need to swizzle them.
       for (unsigned i = 0, e = VL.size() - 1; i < e; ++i) {
         LoadInst *L = cast<LoadInst>(VL[i]);
@@ -1137,7 +1184,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth) {
           DEBUG(dbgs() << "SLP: Gathering non-simple loads.\n");
           return;
         }
-        const DataLayout &DL = F->getParent()->getDataLayout();
+
         if (!isConsecutiveAccess(VL[i], VL[i + 1], DL)) {
           if (VL.size() == 2 && isConsecutiveAccess(VL[1], VL[0], DL)) {
             ++NumLoadsWantToChangeOrder;
@@ -2686,8 +2733,15 @@ bool BoUpSLP::BlockScheduling::tryScheduleBundle(ArrayRef<Value *> VL,
   ScheduleData *Bundle = nullptr;
   bool ReSchedule = false;
   DEBUG(dbgs() << "SLP:  bundle: " << *VL[0] << "\n");
+
+  // Make sure that the scheduling region contains all
+  // instructions of the bundle.
   for (Value *V : VL) {
-    extendSchedulingRegion(V);
+    if (!extendSchedulingRegion(V))
+      return false;
+  }
+
+  for (Value *V : VL) {
     ScheduleData *BundleMember = getScheduleData(V);
     assert(BundleMember &&
            "no ScheduleData for bundle member (maybe not in same basic block)");
@@ -2748,7 +2802,11 @@ bool BoUpSLP::BlockScheduling::tryScheduleBundle(ArrayRef<Value *> VL,
       schedule(pickedSD, ReadyInsts);
     }
   }
-  return Bundle->isReady();
+  if (!Bundle->isReady()) {
+    cancelScheduling(VL);
+    return false;
+  }
+  return true;
 }
 
 void BoUpSLP::BlockScheduling::cancelScheduling(ArrayRef<Value *> VL) {
@@ -2777,9 +2835,9 @@ void BoUpSLP::BlockScheduling::cancelScheduling(ArrayRef<Value *> VL) {
   }
 }
 
-void BoUpSLP::BlockScheduling::extendSchedulingRegion(Value *V) {
+bool BoUpSLP::BlockScheduling::extendSchedulingRegion(Value *V) {
   if (getScheduleData(V))
-    return;
+    return true;
   Instruction *I = dyn_cast<Instruction>(V);
   assert(I && "bundle member must be an instruction");
   assert(!isa<PHINode>(I) && "phi nodes don't need to be scheduled");
@@ -2790,7 +2848,7 @@ void BoUpSLP::BlockScheduling::extendSchedulingRegion(Value *V) {
     ScheduleEnd = I->getNextNode();
     assert(ScheduleEnd && "tried to vectorize a TerminatorInst?");
     DEBUG(dbgs() << "SLP:  initialize schedule region to " << *I << "\n");
-    return;
+    return true;
   }
   // Search up and down at the same time, because we don't know if the new
   // instruction is above or below the existing scheduling region.
@@ -2799,12 +2857,17 @@ void BoUpSLP::BlockScheduling::extendSchedulingRegion(Value *V) {
   BasicBlock::iterator DownIter(ScheduleEnd);
   BasicBlock::iterator LowerEnd = BB->end();
   for (;;) {
+    if (++ScheduleRegionSize > ScheduleRegionSizeLimit) {
+      DEBUG(dbgs() << "SLP:  exceeded schedule region size limit\n");
+      return false;
+    }
+
     if (UpIter != UpperEnd) {
       if (&*UpIter == I) {
         initScheduleData(I, ScheduleStart, nullptr, FirstLoadStoreInRegion);
         ScheduleStart = I;
         DEBUG(dbgs() << "SLP:  extend schedule region start to " << *I << "\n");
-        return;
+        return true;
       }
       UpIter++;
     }
@@ -2815,13 +2878,14 @@ void BoUpSLP::BlockScheduling::extendSchedulingRegion(Value *V) {
         ScheduleEnd = I->getNextNode();
         assert(ScheduleEnd && "tried to vectorize a TerminatorInst?");
         DEBUG(dbgs() << "SLP:  extend schedule region end to " << *I << "\n");
-        return;
+        return true;
       }
       DownIter++;
     }
     assert((UpIter != UpperEnd || DownIter != LowerEnd) &&
            "instruction not found in block");
   }
+  return true;
 }
 
 void BoUpSLP::BlockScheduling::initScheduleData(Instruction *FromI,
@@ -3083,7 +3147,7 @@ struct SLPVectorizer : public FunctionPass {
     TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
     auto *TLIP = getAnalysisIfAvailable<TargetLibraryInfoWrapperPass>();
     TLI = TLIP ? &TLIP->getTLI() : nullptr;
-    AA = &getAnalysis<AliasAnalysis>();
+    AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
     LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
     DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
     AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
@@ -3145,7 +3209,7 @@ struct SLPVectorizer : public FunctionPass {
     FunctionPass::getAnalysisUsage(AU);
     AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<ScalarEvolutionWrapperPass>();
-    AU.addRequired<AliasAnalysis>();
+    AU.addRequired<AAResultsWrapperPass>();
     AU.addRequired<TargetTransformInfoWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<DominatorTreeWrapperPass>();
@@ -4053,7 +4117,7 @@ bool SLPVectorizer::vectorizeStoreChains(BoUpSLP &R) {
 char SLPVectorizer::ID = 0;
 static const char lv_name[] = "SLP Vectorizer";
 INITIALIZE_PASS_BEGIN(SLPVectorizer, SV_NAME, lv_name, false, false)
-INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)

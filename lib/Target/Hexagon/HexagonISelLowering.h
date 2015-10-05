@@ -209,18 +209,15 @@ bool isPositiveHalfWord(SDNode *N);
     bool isLegalICmpImmediate(int64_t Imm) const override;
 
     // Handling of atomic RMW instructions.
-    bool hasLoadLinkedStoreConditional() const override {
-      return true;
-    }
     Value *emitLoadLinked(IRBuilder<> &Builder, Value *Addr,
         AtomicOrdering Ord) const override;
     Value *emitStoreConditional(IRBuilder<> &Builder, Value *Val,
         Value *Addr, AtomicOrdering Ord) const override;
-    bool shouldExpandAtomicLoadInIR(LoadInst *LI) const override;
+    AtomicExpansionKind shouldExpandAtomicLoadInIR(LoadInst *LI) const override;
     bool shouldExpandAtomicStoreInIR(StoreInst *SI) const override;
-    AtomicRMWExpansionKind shouldExpandAtomicRMWInIR(AtomicRMWInst *AI)
-        const override {
-      return AtomicRMWExpansionKind::LLSC;
+    AtomicExpansionKind
+    shouldExpandAtomicRMWInIR(AtomicRMWInst *AI) const override {
+      return AtomicExpansionKind::LLSC;
     }
   };
 } // end namespace llvm

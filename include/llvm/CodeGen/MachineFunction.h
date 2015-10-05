@@ -103,7 +103,7 @@ class MachineFunction {
 
   // Keep track of constants which are spilled to memory
   MachineConstantPool *ConstantPool;
-  
+
   // Keep track of jump tables for switch instructions
   MachineJumpTableInfo *JumpTableInfo;
 
@@ -132,7 +132,7 @@ class MachineFunction {
   /// this translation unit.
   ///
   unsigned FunctionNumber;
-  
+
   /// Alignment - The alignment of the function.
   unsigned Alignment;
 
@@ -204,7 +204,7 @@ public:
   MachineFrameInfo *getFrameInfo() { return FrameInfo; }
   const MachineFrameInfo *getFrameInfo() const { return FrameInfo; }
 
-  /// getJumpTableInfo - Return the jump table info object for the current 
+  /// getJumpTableInfo - Return the jump table info object for the current
   /// function.  This object contains information about jump tables in the
   /// current function.  If the current function has no jump tables, this will
   /// return null.
@@ -215,7 +215,6 @@ public:
   /// does already exist, allocate one.
   MachineJumpTableInfo *getOrCreateJumpTableInfo(unsigned JTEntryKind);
 
-  
   /// getConstantPool - Return the constant pool object for the current
   /// function.
   ///
@@ -290,14 +289,14 @@ public:
   /// getNumBlockIDs - Return the number of MBB ID's allocated.
   ///
   unsigned getNumBlockIDs() const { return (unsigned)MBBNumbering.size(); }
-  
+
   /// RenumberBlocks - This discards all of the MachineBasicBlock numbers and
   /// recomputes them.  This guarantees that the MBB numbers are sequential,
   /// dense, and match the ordering of the blocks within the function.  If a
   /// specific MachineBasicBlock is specified, only that block and those after
   /// it are renumbered.
   void RenumberBlocks(MachineBasicBlock *MBBFrom = nullptr);
-  
+
   /// print - Print out the MachineFunction in a format suitable for debugging
   /// to the specified stream.
   ///
@@ -375,6 +374,11 @@ public:
     BasicBlocks.erase(MBBI);
   }
 
+  template <typename Comp>
+  void sort(Comp comp) {
+    BasicBlocks.sort(comp);
+  }
+
   //===--------------------------------------------------------------------===//
   // Internal functions used to automatically number MachineBasicBlocks
   //
@@ -431,7 +435,7 @@ public:
                                           unsigned base_alignment,
                                           const AAMDNodes &AAInfo = AAMDNodes(),
                                           const MDNode *Ranges = nullptr);
-  
+
   /// getMachineMemOperand - Allocate a new MachineMemOperand by copying
   /// an existing one, adjusting by an offset and using the given size.
   /// MachineMemOperands are owned by the MachineFunction and need not be
@@ -487,13 +491,13 @@ public:
   //===--------------------------------------------------------------------===//
   // Label Manipulation.
   //
-  
+
   /// getJTISymbol - Return the MCSymbol for the specified non-empty jump table.
   /// If isLinkerPrivate is specified, an 'l' label is returned, otherwise a
   /// normal 'L' label is returned.
-  MCSymbol *getJTISymbol(unsigned JTI, MCContext &Ctx, 
+  MCSymbol *getJTISymbol(unsigned JTI, MCContext &Ctx,
                          bool isLinkerPrivate = false) const;
-  
+
   /// getPICBaseSymbol - Return a function-local symbol to represent the PIC
   /// base.
   MCSymbol *getPICBaseSymbol() const;

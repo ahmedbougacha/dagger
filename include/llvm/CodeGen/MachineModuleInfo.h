@@ -79,12 +79,11 @@ struct LandingPadInfo {
   SmallVector<MCSymbol *, 1> EndLabels;    // Labels after invoke.
   SmallVector<SEHHandler, 1> SEHHandlers;  // SEH handlers active at this lpad.
   MCSymbol *LandingPadLabel;               // Label at beginning of landing pad.
-  const Function *Personality;             // Personality function.
   std::vector<int> TypeIds;               // List of type ids (filters negative).
   int WinEHState;                         // WinEH specific state number.
 
   explicit LandingPadInfo(MachineBasicBlock *MBB)
-      : LandingPadBlock(MBB), LandingPadLabel(nullptr), Personality(nullptr),
+      : LandingPadBlock(MBB), LandingPadLabel(nullptr),
         WinEHState(-1) {}
 };
 
@@ -253,6 +252,9 @@ public:
   bool callsUnwindInit() const { return CallsUnwindInit; }
   void setCallsUnwindInit(bool b) { CallsUnwindInit = b; }
 
+  bool hasEHFunclets() const { return HasEHFunclets; }
+  void setHasEHFunclets(bool V) { HasEHFunclets = V; }
+
   bool usesVAFloatArgument() const {
     return UsesVAFloatArgument;
   }
@@ -319,15 +321,9 @@ public:
 
   /// addPersonality - Provide the personality function for the exception
   /// information.
-  void addPersonality(MachineBasicBlock *LandingPad,
-                      const Function *Personality);
   void addPersonality(const Function *Personality);
 
   void addWinEHState(MachineBasicBlock *LandingPad, int State);
-
-  /// getPersonalityIndex - Get index of the current personality function inside
-  /// Personalitites array
-  unsigned getPersonalityIndex() const;
 
   /// getPersonalities - Return array of personality functions ever seen.
   const std::vector<const Function *>& getPersonalities() const {
@@ -371,12 +367,6 @@ public:
   const std::vector<LandingPadInfo> &getLandingPads() const {
     return LandingPads;
   }
-
-  bool hasEHFunclets() const {
-    return HasEHFunclets;
-  }
-
-  void setHasEHFunclets(bool V) { HasEHFunclets = true; }
 
   /// setCallSiteLandingPad - Map the landing pad's EH symbol to the call
   /// site indexes.
@@ -432,13 +422,6 @@ public:
   const std::vector<unsigned> &getFilterIds() const {
     return FilterIds;
   }
-
-  /// getPersonality - Return a personality function if available.  The presence
-  /// of one is required to emit exception handling info.
-  const Function *getPersonality() const;
-
-  /// Classify the personality function amongst known EH styles.
-  EHPersonality getPersonalityType();
 
   /// setVariableDbgInfo - Collect information used to emit debugging
   /// information of a variable.

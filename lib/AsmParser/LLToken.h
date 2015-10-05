@@ -97,6 +97,7 @@ namespace lltok {
     kw_webkit_jscc, kw_anyregcc,
     kw_preserve_mostcc, kw_preserve_allcc,
     kw_ghccc,
+    kw_hhvmcc, kw_hhvm_ccc,
 
     // Attributes:
     kw_attributes,
@@ -179,7 +180,7 @@ namespace lltok {
 
     kw_ret, kw_br, kw_switch, kw_indirectbr, kw_invoke, kw_resume,
     kw_unreachable, kw_cleanupret, kw_catchret, kw_catchpad,
-    kw_terminatepad, kw_cleanuppad, kw_catchendpad,
+    kw_terminatepad, kw_cleanuppad, kw_catchendpad, kw_cleanupendpad,
 
     kw_alloca, kw_load, kw_store, kw_fence, kw_cmpxchg, kw_atomicrmw,
     kw_getelementptr,

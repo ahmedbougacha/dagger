@@ -514,7 +514,7 @@ bool SystemZInstrInfo::isPredicable(MachineInstr *MI) const {
 bool SystemZInstrInfo::
 isProfitableToIfCvt(MachineBasicBlock &MBB,
                     unsigned NumCycles, unsigned ExtraPredCycles,
-                    const BranchProbability &Probability) const {
+                    BranchProbability Probability) const {
   // For now only convert single instructions.
   return NumCycles == 1;
 }
@@ -524,7 +524,7 @@ isProfitableToIfCvt(MachineBasicBlock &TMBB,
                     unsigned NumCyclesT, unsigned ExtraPredCyclesT,
                     MachineBasicBlock &FMBB,
                     unsigned NumCyclesF, unsigned ExtraPredCyclesF,
-                    const BranchProbability &Probability) const {
+                    BranchProbability Probability) const {
   // For now avoid converting mutually-exclusive cases.
   return false;
 }
@@ -548,11 +548,10 @@ PredicateInstruction(MachineInstr *MI, ArrayRef<MachineOperand> Pred) const {
   return false;
 }
 
-void
-SystemZInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
-			      MachineBasicBlock::iterator MBBI, DebugLoc DL,
-			      unsigned DestReg, unsigned SrcReg,
-			      bool KillSrc) const {
+void SystemZInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MBBI,
+                                   DebugLoc DL, unsigned DestReg,
+                                   unsigned SrcReg, bool KillSrc) const {
   // Split 128-bit GPR moves into two 64-bit moves.  This handles ADDR128 too.
   if (SystemZ::GR128BitRegClass.contains(DestReg, SrcReg)) {
     copyPhysReg(MBB, MBBI, DL, RI.getSubReg(DestReg, SystemZ::subreg_h64),
@@ -590,13 +589,10 @@ SystemZInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     .addReg(SrcReg, getKillRegState(KillSrc));
 }
 
-void
-SystemZInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
-				      MachineBasicBlock::iterator MBBI,
-				      unsigned SrcReg, bool isKill,
-				      int FrameIdx,
-				      const TargetRegisterClass *RC,
-				      const TargetRegisterInfo *TRI) const {
+void SystemZInstrInfo::storeRegToStackSlot(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI, unsigned SrcReg,
+    bool isKill, int FrameIdx, const TargetRegisterClass *RC,
+    const TargetRegisterInfo *TRI) const {
   DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
 
   // Callers may expect a single instruction, so keep 128-bit moves
@@ -604,15 +600,14 @@ SystemZInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
   unsigned LoadOpcode, StoreOpcode;
   getLoadStoreOpcodes(RC, LoadOpcode, StoreOpcode);
   addFrameReference(BuildMI(MBB, MBBI, DL, get(StoreOpcode))
-		    .addReg(SrcReg, getKillRegState(isKill)), FrameIdx);
+                        .addReg(SrcReg, getKillRegState(isKill)),
+                    FrameIdx);
 }
 
-void
-SystemZInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
-				       MachineBasicBlock::iterator MBBI,
-				       unsigned DestReg, int FrameIdx,
-				       const TargetRegisterClass *RC,
-				       const TargetRegisterInfo *TRI) const {
+void SystemZInstrInfo::loadRegFromStackSlot(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI, unsigned DestReg,
+    int FrameIdx, const TargetRegisterClass *RC,
+    const TargetRegisterInfo *TRI) const {
   DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
 
   // Callers may expect a single instruction, so keep 128-bit moves
@@ -1191,6 +1186,12 @@ unsigned SystemZInstrInfo::getLoadAndTest(unsigned Opcode) const {
   case SystemZ::LER:    return SystemZ::LTEBR;
   case SystemZ::LDR:    return SystemZ::LTDBR;
   case SystemZ::LXR:    return SystemZ::LTXBR;
+  case SystemZ::LCDFR:  return SystemZ::LCDBR;
+  case SystemZ::LPDFR:  return SystemZ::LPDBR;
+  case SystemZ::LNDFR:  return SystemZ::LNDBR;
+  case SystemZ::LCDFR_32:  return SystemZ::LCEBR;
+  case SystemZ::LPDFR_32:  return SystemZ::LPEBR;
+  case SystemZ::LNDFR_32:  return SystemZ::LNEBR;
   // On zEC12 we prefer to use RISBGN.  But if there is a chance to
   // actually use the condition code, we may turn it back into RISGB.
   // Note that RISBG is not really a "load-and-test" instruction,

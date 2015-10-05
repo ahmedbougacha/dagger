@@ -91,7 +91,8 @@ private:
   bool isOpRelevant(MachineOperand &Op);
 
   /// \brief Get register interval an operand affects.
-  RegInterval getRegInterval(MachineOperand &Op);
+  RegInterval getRegInterval(const TargetRegisterClass *RC,
+                             const MachineOperand &Reg) const;
 
   /// \brief Handle instructions async components
   void pushInstruction(MachineBasicBlock &MBB,
@@ -121,9 +122,13 @@ public:
   bool runOnMachineFunction(MachineFunction &MF) override;
 
   const char *getPassName() const override {
-    return "SI insert wait  instructions";
+    return "SI insert wait instructions";
   }
 
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.setPreservesCFG();
+    MachineFunctionPass::getAnalysisUsage(AU);
+  }
 };
 
 } // End anonymous namespace
@@ -138,9 +143,8 @@ FunctionPass *llvm::createSIInsertWaits(TargetMachine &tm) {
 }
 
 Counters SIInsertWaits::getHwCounts(MachineInstr &MI) {
-
-  uint64_t TSFlags = TII->get(MI.getOpcode()).TSFlags;
-  Counters Result;
+  uint64_t TSFlags = MI.getDesc().TSFlags;
+  Counters Result = { { 0, 0, 0 } };
 
   Result.Named.VM = !!(TSFlags & SIInstrFlags::VM_CNT);
 
@@ -153,13 +157,20 @@ Counters SIInsertWaits::getHwCounts(MachineInstr &MI) {
 
     if (TII->isSMRD(MI.getOpcode())) {
 
-      MachineOperand &Op = MI.getOperand(0);
-      assert(Op.isReg() && "First LGKM operand must be a register!");
+      if (MI.getNumOperands() != 0) {
+        assert(MI.getOperand(0).isReg() &&
+               "First LGKM operand must be a register!");
 
-      unsigned Reg = Op.getReg();
-      unsigned Size = TRI->getMinimalPhysRegClass(Reg)->getSize();
-      Result.Named.LGKM = Size > 4 ? 2 : 1;
-
+        // XXX - What if this is a write into a super register?
+        const TargetRegisterClass *RC = TII->getOpRegClass(MI, 0);
+        unsigned Size = RC->getSize();
+        Result.Named.LGKM = Size > 4 ? 2 : 1;
+      } else {
+        // s_dcache_inv etc. do not have a a destination register. Assume we
+        // want a wait on these.
+        // XXX - What is the right value?
+        Result.Named.LGKM = 1;
+      }
     } else {
       // DS
       Result.Named.LGKM = 1;
@@ -173,9 +184,8 @@ Counters SIInsertWaits::getHwCounts(MachineInstr &MI) {
 }
 
 bool SIInsertWaits::isOpRelevant(MachineOperand &Op) {
-
   // Constants are always irrelevant
-  if (!Op.isReg())
+  if (!Op.isReg() || !TRI->isInAllocatableClass(Op.getReg()))
     return false;
 
   // Defines are always relevant
@@ -224,18 +234,13 @@ bool SIInsertWaits::isOpRelevant(MachineOperand &Op) {
   return false;
 }
 
-RegInterval SIInsertWaits::getRegInterval(MachineOperand &Op) {
-
-  if (!Op.isReg() || !TRI->isInAllocatableClass(Op.getReg()))
-    return std::make_pair(0, 0);
-
-  unsigned Reg = Op.getReg();
-  unsigned Size = TRI->getMinimalPhysRegClass(Reg)->getSize();
-
+RegInterval SIInsertWaits::getRegInterval(const TargetRegisterClass *RC,
+                                          const MachineOperand &Reg) const {
+  unsigned Size = RC->getSize();
   assert(Size >= 4);
 
   RegInterval Result;
-  Result.first = TRI->getEncodingValue(Reg);
+  Result.first = TRI->getEncodingValue(Reg.getReg());
   Result.second = Result.first + Size / 4;
 
   return Result;
@@ -293,12 +298,12 @@ void SIInsertWaits::pushInstruction(MachineBasicBlock &MBB,
   }
 
   for (unsigned i = 0, e = I->getNumOperands(); i != e; ++i) {
-
     MachineOperand &Op = I->getOperand(i);
     if (!isOpRelevant(Op))
       continue;
 
-    RegInterval Interval = getRegInterval(Op);
+    const TargetRegisterClass *RC = TII->getOpRegClass(*I, i);
+    RegInterval Interval = getRegInterval(RC, Op);
     for (unsigned j = Interval.first; j < Interval.second; ++j) {
 
       // Remember which registers we define
@@ -393,12 +398,18 @@ Counters SIInsertWaits::handleOperands(MachineInstr &MI) {
   if (MI.getOpcode() == AMDGPU::S_SENDMSG)
     return LastIssued;
 
-  // For each register affected by this
-  // instruction increase the result sequence
+  // For each register affected by this instruction increase the result
+  // sequence.
+  //
+  // TODO: We could probably just look at explicit operands if we removed VCC /
+  // EXEC from SMRD dest reg classes.
   for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
-
     MachineOperand &Op = MI.getOperand(i);
-    RegInterval Interval = getRegInterval(Op);
+    if (!Op.isReg() || !TRI->isInAllocatableClass(Op.getReg()))
+      continue;
+
+    const TargetRegisterClass *RC = TII->getOpRegClass(MI, i);
+    RegInterval Interval = getRegInterval(RC, Op);
     for (unsigned j = Interval.first; j < Interval.second; ++j) {
 
       if (Op.isDef()) {

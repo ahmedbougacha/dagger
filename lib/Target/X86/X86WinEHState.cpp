@@ -68,9 +68,10 @@ private:
   void unlinkExceptionRegistration(IRBuilder<> &Builder);
   void addCXXStateStores(Function &F, WinEHFuncInfo &FuncInfo);
   void addSEHStateStores(Function &F, WinEHFuncInfo &FuncInfo);
-  void addCXXStateStoresToFunclet(Value *ParentRegNode, WinEHFuncInfo &FuncInfo,
-                                  Function &F, int BaseState);
+  void addStateStoresToFunclet(Value *ParentRegNode, WinEHFuncInfo &FuncInfo,
+                               Function &F, int BaseState);
   void insertStateNumberStore(Value *ParentRegNode, Instruction *IP, int State);
+  void insertRestoreFrame(BasicBlock *BB);
 
   Value *emitEHLSDA(IRBuilder<> &Builder, Function *F);
 
@@ -91,6 +92,7 @@ private:
   Function *FrameRecover = nullptr;
   Function *FrameAddress = nullptr;
   Function *FrameEscape = nullptr;
+  Function *RestoreFrame = nullptr;
 
   // Per-function state
   EHPersonality Personality = EHPersonality::Unknown;
@@ -123,6 +125,8 @@ bool WinEHStatePass::doInitialization(Module &M) {
   FrameEscape = Intrinsic::getDeclaration(TheModule, Intrinsic::localescape);
   FrameRecover = Intrinsic::getDeclaration(TheModule, Intrinsic::localrecover);
   FrameAddress = Intrinsic::getDeclaration(TheModule, Intrinsic::frameaddress);
+  RestoreFrame =
+      Intrinsic::getDeclaration(TheModule, Intrinsic::x86_seh_restoreframe);
   return false;
 }
 
@@ -163,6 +167,20 @@ bool WinEHStatePass::runOnFunction(Function &F) {
   if (!isMSVCEHPersonality(Personality))
     return false;
 
+  // Skip this function if there are no EH pads and we aren't using IR-level
+  // outlining.
+  if (WinEHParentName.empty()) {
+    bool HasPads = false;
+    for (BasicBlock &BB : F) {
+      if (BB.isEHPad()) {
+        HasPads = true;
+        break;
+      }
+    }
+    if (!HasPads)
+      return false;
+  }
+
   // Disable frame pointer elimination in this function.
   // FIXME: Do the nested handlers need to keep the parent ebp in ebp, or can we
   // use an arbitrary register?
@@ -178,6 +196,8 @@ bool WinEHStatePass::runOnFunction(Function &F) {
     FuncInfoPtr.reset(new WinEHFuncInfo());
   WinEHFuncInfo &FuncInfo =
       *(MMI ? &MMI->getWinEHFuncInfo(&F) : FuncInfoPtr.get());
+
+  FuncInfo.EHRegNode = RegNode;
 
   switch (Personality) {
   default: llvm_unreachable("unexpected personality function");
@@ -412,28 +432,11 @@ void WinEHStatePass::addCXXStateStores(Function &F, WinEHFuncInfo &FuncInfo) {
   calculateWinCXXEHStateNumbers(&F, FuncInfo);
 
   // The base state for the parent is -1.
-  addCXXStateStoresToFunclet(RegNode, FuncInfo, F, -1);
+  addStateStoresToFunclet(RegNode, FuncInfo, F, -1);
 
   // Set up RegNodeEscapeIndex
   int RegNodeEscapeIndex = escapeRegNode(F);
   FuncInfo.EHRegNodeEscapeIndex = RegNodeEscapeIndex;
-
-  // Only insert stores in catch handlers.
-  Constant *FI8 =
-      ConstantExpr::getBitCast(&F, Type::getInt8PtrTy(TheModule->getContext()));
-  for (auto P : FuncInfo.HandlerBaseState) {
-    Function *Handler = const_cast<Function *>(P.first);
-    int BaseState = P.second;
-    IRBuilder<> Builder(&Handler->getEntryBlock(),
-                        Handler->getEntryBlock().begin());
-    // FIXME: Find and reuse such a call if present.
-    Value *ParentFP = Builder.CreateCall(FrameAddress, {Builder.getInt32(1)});
-    Value *RecoveredRegNode = Builder.CreateCall(
-        FrameRecover, {FI8, ParentFP, Builder.getInt32(RegNodeEscapeIndex)});
-    RecoveredRegNode =
-        Builder.CreateBitCast(RecoveredRegNode, RegNodeTy->getPointerTo(0));
-    addCXXStateStoresToFunclet(RecoveredRegNode, FuncInfo, *Handler, BaseState);
-  }
 }
 
 /// Escape RegNode so that we can access it from child handlers. Find the call
@@ -468,11 +471,17 @@ int WinEHStatePass::escapeRegNode(Function &F) {
   return Args.size() - 1;
 }
 
-void WinEHStatePass::addCXXStateStoresToFunclet(Value *ParentRegNode,
-                                                WinEHFuncInfo &FuncInfo,
-                                                Function &F, int BaseState) {
-  Function *RestoreFrame =
-      Intrinsic::getDeclaration(TheModule, Intrinsic::x86_seh_restoreframe);
+void WinEHStatePass::insertRestoreFrame(BasicBlock *BB) {
+  Instruction *Start = BB->getFirstInsertionPt();
+  if (match(Start, m_Intrinsic<Intrinsic::x86_seh_restoreframe>()))
+    return;
+  IRBuilder<> Builder(Start);
+  Builder.CreateCall(RestoreFrame, {});
+}
+
+void WinEHStatePass::addStateStoresToFunclet(Value *ParentRegNode,
+                                             WinEHFuncInfo &FuncInfo,
+                                             Function &F, int BaseState) {
   // Iterate all the instructions and emit state number stores.
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
@@ -491,14 +500,6 @@ void WinEHStatePass::addCXXStateStoresToFunclet(Value *ParentRegNode,
         insertStateNumberStore(ParentRegNode, II, State);
       }
     }
-
-    // Insert calls to llvm.x86.seh.restoreframe at catchret destinations.
-    if (auto *CR = dyn_cast<CatchReturnInst>(BB.getTerminator())) {
-      //llvm::errs() << "BB: " << BB << '\n';
-      //llvm::errs() << "CR->getSuccessor(): " << *CR->getSuccessor() << '\n';
-      IRBuilder<> Builder(CR->getSuccessor()->begin());
-      Builder.CreateCall(RestoreFrame, {});
-    }
   }
 }
 
@@ -513,6 +514,23 @@ void WinEHStatePass::addSEHStateStores(Function &F, WinEHFuncInfo &FuncInfo) {
   // too much trouble.
   int RegNodeEscapeIndex = escapeRegNode(F);
   FuncInfo.EHRegNodeEscapeIndex = RegNodeEscapeIndex;
+
+  // If this funciton uses the new EH IR, use the explicit state numbering
+  // algorithm and return early.
+  bool UsesLPads = false;
+  for (BasicBlock &BB : F) {
+    if (BB.isLandingPad()) {
+      UsesLPads = true;
+      break;
+    }
+  }
+  if (!UsesLPads) {
+    calculateSEHStateNumbers(&F, FuncInfo);
+    addStateStoresToFunclet(RegNode, FuncInfo, F, -1);
+    return;
+  }
+  // FIXME: Delete the rest of this code and clean things up when new EH is
+  // done.
 
   // Iterate all the instructions and emit state number stores.
   int CurState = 0;

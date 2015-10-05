@@ -94,8 +94,9 @@ Module *llvm::CloneModule(
       // correctness.
       continue;
     }
-    auto *PTy = cast<PointerType>(I->getType());
-    auto *GA = GlobalAlias::create(PTy, I->getLinkage(), I->getName(), New);
+    auto *GA = GlobalAlias::create(I->getValueType(),
+                                   I->getType()->getPointerAddressSpace(),
+                                   I->getLinkage(), I->getName(), New);
     GA->copyAttributesFrom(I);
     VMap[I] = GA;
   }

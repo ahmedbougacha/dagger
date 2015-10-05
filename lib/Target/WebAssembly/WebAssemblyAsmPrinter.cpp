@@ -60,7 +60,8 @@ private:
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    TII = MF.getSubtarget<WebAssemblySubtarget>().getInstrInfo();
+    const auto &Subtarget = MF.getSubtarget<WebAssemblySubtarget>();
+    TII = Subtarget.getInstrInfo();
     return AsmPrinter::runOnMachineFunction(MF);
   }
 
@@ -70,12 +71,16 @@ private:
 
   void EmitGlobalVariable(const GlobalVariable *GV) override;
 
+  void EmitJumpTableInfo() override;
   void EmitConstantPool() override;
   void EmitFunctionEntryLabel() override;
   void EmitFunctionBodyStart() override;
   void EmitFunctionBodyEnd() override;
 
   void EmitInstruction(const MachineInstr *MI) override;
+
+  static std::string toString(const APFloat &APF);
+  const char *toString(Type *Ty) const;
 };
 
 } // end anonymous namespace
@@ -97,24 +102,7 @@ static SmallString<32> OpcodeName(const WebAssemblyInstrInfo *TII,
 
 static std::string toSymbol(StringRef S) { return ("$" + S).str(); }
 
-static const char *toString(const Type *Ty) {
-  switch (Ty->getTypeID()) {
-  default: break;
-  case Type::FloatTyID:  return "f32";
-  case Type::DoubleTyID: return "f64";
-  case Type::IntegerTyID:
-    switch (Ty->getIntegerBitWidth()) {
-    case 32: return "i32";
-    case 64: return "i64";
-    default: break;
-    }
-  }
-  DEBUG(dbgs() << "Invalid type "; Ty->print(dbgs()); dbgs() << '\n');
-  llvm_unreachable("invalid type");
-  return "<invalid>";
-}
-
-static std::string toString(const APFloat &FP) {
+std::string WebAssemblyAsmPrinter::toString(const APFloat &FP) {
   static const size_t BufBytes = 128;
   char buf[BufBytes];
   if (FP.isNaN())
@@ -129,6 +117,44 @@ static std::string toString(const APFloat &FP) {
   assert(Written != 0);
   assert(Written < BufBytes);
   return buf;
+}
+
+const char *WebAssemblyAsmPrinter::toString(Type *Ty) const {
+  switch (Ty->getTypeID()) {
+  default:
+    break;
+  // Treat all pointers as the underlying integer into linear memory.
+  case Type::PointerTyID:
+    switch (getPointerSize()) {
+    case 4:
+      return "i32";
+    case 8:
+      return "i64";
+    default:
+      llvm_unreachable("unsupported pointer size");
+    }
+    break;
+  case Type::FloatTyID:
+    return "f32";
+  case Type::DoubleTyID:
+    return "f64";
+  case Type::IntegerTyID:
+    switch (Ty->getIntegerBitWidth()) {
+    case 8:
+      return "i8";
+    case 16:
+      return "i16";
+    case 32:
+      return "i32";
+    case 64:
+      return "i64";
+    default:
+      break;
+    }
+  }
+  DEBUG(dbgs() << "Invalid type "; Ty->print(dbgs()); dbgs() << '\n');
+  llvm_unreachable("invalid type");
+  return "<invalid>";
 }
 
 //===----------------------------------------------------------------------===//
@@ -195,13 +221,17 @@ void WebAssemblyAsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
   } else {
     assert(false && "Only integer and floating-point constants are supported");
   }
-  OS << ") ;; align " << Align << "\n";
+  OS << ") ;; align " << Align;
   OutStreamer->EmitRawText(OS.str());
 }
 
 void WebAssemblyAsmPrinter::EmitConstantPool() {
   assert(MF->getConstantPool()->getConstants().empty() &&
          "WebAssembly disables constant pools");
+}
+
+void WebAssemblyAsmPrinter::EmitJumpTableInfo() {
+  // Nothing to do; jump tables are incorporated into the instruction stream.
 }
 
 void WebAssemblyAsmPrinter::EmitFunctionEntryLabel() {
@@ -227,19 +257,20 @@ void WebAssemblyAsmPrinter::EmitFunctionBodyStart() {
   SmallString<128> Str;
   raw_svector_ostream OS(Str);
   const Function *F = MF->getFunction();
-  for (const Argument &A : F->args())
-    OS << " (param " << toString(A.getType()) << ')';
-  const Type *Rt = F->getReturnType();
-  if (!Rt->isVoidTy())
-    OS << " (result " << toString(Rt) << ')';
-  OS << '\n';
-  OutStreamer->EmitRawText(OS.str());
+  Type *Rt = F->getReturnType();
+  if (!Rt->isVoidTy() || !F->arg_empty()) {
+    for (const Argument &A : F->args())
+      OS << " (param " << toString(A.getType()) << ')';
+    if (!Rt->isVoidTy())
+      OS << " (result " << toString(Rt) << ')';
+    OutStreamer->EmitRawText(OS.str());
+  }
 }
 
 void WebAssemblyAsmPrinter::EmitFunctionBodyEnd() {
   SmallString<128> Str;
   raw_svector_ostream OS(Str);
-  OS << ") ;; end func " << toSymbol(CurrentFnSym->getName()) << '\n';
+  OS << ") ;; end func " << toSymbol(CurrentFnSym->getName());
   OutStreamer->EmitRawText(OS.str());
 }
 
@@ -257,36 +288,41 @@ void WebAssemblyAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   if (NumDefs != 0) {
     const MachineOperand &MO = MI->getOperand(0);
     unsigned Reg = MO.getReg();
-    OS << "(setlocal @" << TargetRegisterInfo::virtReg2Index(Reg) << ' ';
+    OS << "(set_local @" << TargetRegisterInfo::virtReg2Index(Reg) << ' ';
   }
 
-  OS << '(' << OpcodeName(TII, MI);
-  for (const MachineOperand &MO : MI->uses())
-    switch (MO.getType()) {
-    default:
-      llvm_unreachable("unexpected machine operand type");
-    case MachineOperand::MO_Register: {
-      if (MO.isImplicit())
-        continue;
-      unsigned Reg = MO.getReg();
-      OS << " @" << TargetRegisterInfo::virtReg2Index(Reg);
-    } break;
-    case MachineOperand::MO_Immediate: {
-      OS << ' ' << MO.getImm();
-    } break;
-    case MachineOperand::MO_FPImmediate: {
-      OS << ' ' << toString(MO.getFPImm()->getValueAPF());
-    } break;
-    case MachineOperand::MO_GlobalAddress: {
-      OS << ' ' << toSymbol(MO.getGlobal()->getName());
-    } break;
-    }
-  OS << ')';
+  if (MI->getOpcode() == WebAssembly::COPY) {
+    OS << '@' << TargetRegisterInfo::virtReg2Index(MI->getOperand(1).getReg());
+  } else {
+    OS << '(' << OpcodeName(TII, MI);
+    for (const MachineOperand &MO : MI->uses())
+      switch (MO.getType()) {
+      default:
+        llvm_unreachable("unexpected machine operand type");
+      case MachineOperand::MO_Register: {
+        if (MO.isImplicit())
+          continue;
+        unsigned Reg = MO.getReg();
+        OS << " @" << TargetRegisterInfo::virtReg2Index(Reg);
+      } break;
+      case MachineOperand::MO_Immediate: {
+        OS << ' ' << MO.getImm();
+      } break;
+      case MachineOperand::MO_FPImmediate: {
+        OS << ' ' << toString(MO.getFPImm()->getValueAPF());
+      } break;
+      case MachineOperand::MO_GlobalAddress: {
+        OS << ' ' << toSymbol(MO.getGlobal()->getName());
+      } break;
+      case MachineOperand::MO_MachineBasicBlock: {
+        OS << ' ' << toSymbol(MO.getMBB()->getSymbol()->getName());
+      } break;
+      }
+    OS << ')';
+  }
 
   if (NumDefs != 0)
     OS << ')';
-
-  OS << '\n';
 
   OutStreamer->EmitRawText(OS.str());
 }

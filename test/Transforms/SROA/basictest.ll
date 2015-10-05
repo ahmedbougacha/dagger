@@ -1,4 +1,5 @@
 ; RUN: opt < %s -sroa -S | FileCheck %s
+; RUN: opt < %s -passes=sroa -S | FileCheck %s
 
 target datalayout = "e-p:64:64:64-p1:16:16:16-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:32:64-f32:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-n8:16:32:64"
 
@@ -1616,7 +1617,7 @@ define i16 @PR24463() {
 ; a sub-integer that requires extraction *and* extends past the end of the
 ; alloca. In this case, we should extract the i8 and then zext it to i16.
 ;
-; CHECK-LABEL @PR24463(
+; CHECK-LABEL: @PR24463(
 ; CHECK-NOT: alloca
 ; CHECK: %[[SHIFT:.*]] = lshr i16 0, 8
 ; CHECK: %[[TRUNC:.*]] = trunc i16 %[[SHIFT]] to i8

@@ -162,11 +162,11 @@ pad to the back end. For C++, the ``landingpad`` instruction returns a pointer
 and integer pair corresponding to the pointer to the *exception structure* and
 the *selector value* respectively.
 
-The ``landingpad`` instruction takes a reference to the personality function to
-be used for this ``try``/``catch`` sequence. The remainder of the instruction is
-a list of *cleanup*, *catch*, and *filter* clauses. The exception is tested
-against the clauses sequentially from first to last. The clauses have the
-following meanings:
+The ``landingpad`` instruction looks for a reference to the personality
+function to be used for this ``try``/``catch`` sequence in the parent
+function's attribute list. The instruction contains a list of *cleanup*,
+*catch*, and *filter* clauses. The exception is tested against the clauses
+sequentially from first to last. The clauses have the following meanings:
 
 -  ``catch <type> @ExcType``
 
@@ -401,6 +401,20 @@ intrinsic serves as a placeholder to delimit code before a catch handler is
 outlined.  After the handler is outlined, this intrinsic is simply removed.
 
 
+.. _llvm.eh.exceptionpointer:
+
+``llvm.eh.exceptionpointer``
+----------------------------
+
+.. code-block:: llvm
+
+  i8 addrspace(N)* @llvm.eh.padparam.pNi8(token %catchpad)
+
+
+This intrinsic retrieves a pointer to the exception caught by the given
+``catchpad``.
+
+
 SJLJ Intrinsics
 ---------------
 
@@ -614,19 +628,32 @@ specifications with one combined instruction. All potentially throwing calls in
 a ``noexcept`` function should transitively unwind to a terminateblock. Throw
 specifications are not implemented by MSVC, and are not yet supported.
 
+New instructions are also used to mark the points where control is transferred
+out of a catch/cleanup handler (which will correspond to exits from the
+generated funclet).  A catch handler which reaches its end by normal execution
+executes a ``catchret`` instruction, which is a terminator indicating where in
+the function control is returned to.  A cleanup handler which reaches its end
+by normal execution executes a ``cleanupret`` instruction, which is a terminator
+indicating where the active exception will unwind to next.  A catch or cleanup
+handler which is exited by another exception being raised during its execution will
+unwind through a ``catchendpad`` or ``cleanuupendpad`` (respectively).  The
+``catchendpad`` and ``cleanupendpad`` instructions are considered "exception
+handling pads" in the same sense that ``catchpad``, ``cleanuppad``, and
+``terminatepad`` are.
+
 Each of these new EH pad instructions has a way to identify which
 action should be considered after this action. The ``catchpad`` and
 ``terminatepad`` instructions are terminators, and have a label operand considered
 to be an unwind destination analogous to the unwind destination of an invoke. The
 ``cleanuppad`` instruction is different from the other two in that it is not a
 terminator. The code inside a cleanuppad runs before transferring control to the
-next action, so the ``cleanupret`` instruction is the instruction that holds a
-label operand and unwinds to the next EH pad. All of these "unwind edges" may
-refer to a basic block that contains an EH pad instruction, or they may simply
-unwind to the caller. Unwinding to the caller has roughly the same semantics as
-the ``resume`` instruction in the ``landingpad`` model. When inlining through an
-invoke, instructions that unwind to the caller are hooked up to unwind to the
-unwind destination of the call site.
+next action, so the ``cleanupret`` and ``cleanupendpad`` instructions are the
+instructions that hold a label operand and unwind to the next EH pad. All of
+these "unwind edges" may refer to a basic block that contains an EH pad instruction,
+or they may simply unwind to the caller. Unwinding to the caller has roughly the
+same semantics as the ``resume`` instruction in the ``landingpad`` model. When
+inlining through an invoke, instructions that unwind to the caller are hooked
+up to unwind to the unwind destination of the call site.
 
 Putting things together, here is a hypothetical lowering of some C++ that uses
 all of the new IR instructions:
@@ -644,6 +671,7 @@ all of the new IR instructions:
       Cleanup obj;
       may_throw();
     } catch (int e) {
+      may_throw();
       return e;
     }
     return 0;
@@ -666,7 +694,7 @@ all of the new IR instructions:
     call void @"\01??_DCleanup@@QEAA@XZ"(%struct.Cleanup* nonnull %obj) nounwind
     br label %return
 
-  return:                                           ; preds = %invoke.cont.2, %catch
+  return:                                           ; preds = %invoke.cont.2, %invoke.cont.3
     %retval.0 = phi i32 [ 0, %invoke.cont.2 ], [ %9, %catch ]
     ret i32 %retval.0
 
@@ -679,13 +707,20 @@ all of the new IR instructions:
 
   lpad.catch:                                       ; preds = %entry, %lpad.cleanup
     %catch = catchpad [%rtti.TypeDescriptor2* @"\01??_R0H@8", i32 0, i32* %e]
-            to label %catch unwind label %lpad.terminate
+            to label %catch.body unwind label %catchend
 
-  catch:                                            ; preds = %lpad.catch
+  catch.body:                                       ; preds = %lpad.catch
+    invoke void @"\01?may_throw@@YAXXZ"()
+            to label %invoke.cont.3 unwind label %catchend
+
+  invoke.cont.3:                                    ; preds = %catch.body
     %9 = load i32, i32* %e, align 4
-    catchret %catch label %return
+    catchret %catch to label %return
 
-  lpad.terminate:
+  catchend:                                         ; preds = %lpad.catch, %catch.body
+    catchendpad unwind label %lpad.terminate
+
+  lpad.terminate:                                   ; preds = %catchend
     terminatepad [void ()* @"\01?terminate@@YAXXZ"]
             unwind to caller
   }

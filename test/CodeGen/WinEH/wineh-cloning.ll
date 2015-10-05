@@ -27,13 +27,14 @@ endcatch:
 ; Need two copies of the call to @h, one under entry and one under catch.
 ; Currently we generate a load for each, though we shouldn't need one
 ; for the use in entry's copy.
-; CHECK-LABEL: @test1(
+; CHECK-LABEL: define void @test1(
 ; CHECK: entry:
 ; CHECK:   store i32 %x, i32* [[Slot:%[^ ]+]]
 ; CHECK:   invoke void @f()
 ; CHECK:     to label %[[EntryCopy:[^ ]+]] unwind label %catch
 ; CHECK: catch:
-; CHECK:   catchpad [] to label %[[CatchCopy:[^ ]+]] unwind
+; CHECK:   catchpad []
+; CHECK-NEXT: to label %[[CatchCopy:[^ ]+]] unwind
 ; CHECK: [[CatchCopy]]:
 ; CHECK:   [[LoadX2:%[^ ]+]] = load i32, i32* [[Slot]]
 ; CHECK:   call void @h(i32 [[LoadX2]]
@@ -56,7 +57,7 @@ exit:
 ; Need two copies of %exit's call to @f -- the subsequent ret is only
 ; valid when coming from %entry, but on the path from %cleanup, this
 ; might be a valid call to @f which might dynamically not return.
-; CHECK-LABEL: @test2(
+; CHECK-LABEL: define void @test2(
 ; CHECK: entry:
 ; CHECK:   invoke void @f()
 ; CHECK:     to label %[[exit:[^ ]+]] unwind label %cleanup
@@ -91,12 +92,13 @@ exit:
 }
 ; Need two copies of %shared's call to @f (similar to @test2 but
 ; the two regions here are siblings, not parent-child).
-; CHECK-LABEL: @test3(
+; CHECK-LABEL: define void @test3(
 ; CHECK:   invoke void @f()
 ; CHECK:   invoke void @f()
 ; CHECK:     to label %[[exit:[^ ]+]] unwind
 ; CHECK: catch:
-; CHECK:   catchpad [] to label %[[shared:[^ ]+]] unwind
+; CHECK:   catchpad []
+; CHECK-NEXT: to label %[[shared:[^ ]+]] unwind
 ; CHECK: cleanup:
 ; CHECK:   cleanuppad []
 ; CHECK:   call void @f()
@@ -143,7 +145,7 @@ exit:
 ; Make sure we can clone regions that have internal control
 ; flow and SSA values.  Here we need two copies of everything
 ; from %shared to %exit.
-; CHECK-LABEL: @test4(
+; CHECK-LABEL: define void @test4(
 ; CHECK:  entry:
 ; CHECK:    to label %[[shared_E:[^ ]+]] unwind label %catch
 ; CHECK:  catch:
@@ -168,10 +170,10 @@ exit:
 ; CHECK:    br i1 [[b_E]], label %[[left_E:[^ ]+]], label %[[right_E:[^ ]+]]
 ; CHECK:  [[left_C]]:
 ; CHECK:    [[y_C:%[^ ]+]] = call i32 @g()
-; CHECK     br label %[[looptail_C]]
+; CHECK:    br label %[[looptail_C]]
 ; CHECK:  [[left_E]]:
 ; CHECK:    [[y_E:%[^ ]+]] = call i32 @g()
-; CHECK     br label %[[looptail_E]]
+; CHECK:    br label %[[looptail_E]]
 ; CHECK:  [[right_C]]:
 ; CHECK:    call void @h(i32 [[x_C]])
 ; CHECK:    br label %[[looptail_C]]
@@ -221,7 +223,7 @@ exit:
 ; Simple nested case (catch-inside-cleanup).  Nothing needs
 ; to be cloned.  The def and use of %x are both in %outer
 ; and so don't need to be spilled.
-; CHECK-LABEL: @test5(
+; CHECK-LABEL: define void @test5(
 ; CHECK:      outer:
 ; CHECK:        %x = call i32 @g()
 ; CHECK-NEXT:   invoke void @f()
@@ -277,7 +279,7 @@ exit:
 ; %left still needs to be created because it's possible
 ; the dynamic path enters %left, then enters %inner,
 ; then calls @h, and that the call to @h doesn't return.
-; CHECK-LABEL: @test6(
+; CHECK-LABEL: define void @test6(
 ; TODO: CHECKs
 
 
@@ -309,7 +311,7 @@ unreachable:
 ; Another case of a two-parent child (like @test6), this time
 ; with the join at the entry itself instead of following a
 ; non-pad join.
-; CHECK-LABEL: @test7(
+; CHECK-LABEL: define void @test7(
 ; TODO: CHECKs
 
 
@@ -347,7 +349,7 @@ unreachable:
 }
 ; %inner is a two-parent child which itself has a child; need
 ; to make two copies of both the %inner and %inner.child.
-; CHECK-LABEL: @test8(
+; CHECK-LABEL: define void @test8(
 ; TODO: CHECKs
 
 
@@ -380,5 +382,73 @@ unreachable:
 ; the parent of the other, but that we'd somehow lost track in the CFG
 ; of which was which along the way; generating each possibility lets
 ; whichever case was correct execute correctly.
-; CHECK-LABEL: @test9(
+; CHECK-LABEL: define void @test9(
 ; TODO: CHECKs
+
+define void @test10() personality i32 (...)* @__CxxFrameHandler3 {
+entry:
+  invoke void @f()
+    to label %unreachable unwind label %inner
+inner:
+  %cleanup = cleanuppad []
+  ; make sure we don't overlook this cleanupret and try to process
+  ; successor %outer as a child of inner.
+  cleanupret %cleanup unwind label %outer
+outer:
+  %catch = catchpad [] to label %catch.body unwind label %endpad
+catch.body:
+  catchret %catch to label %exit
+endpad:
+  catchendpad unwind to caller
+exit:
+  ret void
+unreachable:
+  unreachable
+}
+; CHECK-LABEL: define void @test10(
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   invoke
+; CHECK-NEXT:     to label %unreachable unwind label %inner
+; CHECK:      inner:
+; CHECK-NEXT:   %cleanup = cleanuppad
+; CHECK-NEXT:   cleanupret %cleanup unwind label %outer
+; CHECK:      outer:
+; CHECK-NEXT:   %catch = catchpad []
+; CHECK-NEXT:	      to label %catch.body unwind label %endpad
+; CHECK:      catch.body:
+; CHECK-NEXT:   catchret %catch to label %exit
+; CHECK:      endpad:
+; CHECK-NEXT:   catchendpad unwind to caller
+; CHECK:      exit:
+; CHECK-NEXT:   ret void
+
+define void @test11() personality i32 (...)* @__CxxFrameHandler3 {
+entry:
+  invoke void @f()
+    to label %exit unwind label %cleanup.outer
+cleanup.outer:
+  %outer = cleanuppad []
+  invoke void @f()
+    to label %outer.cont unwind label %cleanup.inner
+outer.cont:
+  br label %merge
+cleanup.inner:
+  %inner = cleanuppad []
+  br label %merge
+merge:
+  invoke void @f()
+    to label %unreachable unwind label %merge.end
+unreachable:
+  unreachable
+merge.end:
+  cleanupendpad %outer unwind to caller
+exit:
+  ret void
+}
+; merge.end will get cloned for outer and inner, but is implausible
+; from inner, so the invoke @f() in inner's copy of merge should be
+; rewritten to call @f()
+; CHECK-LABEL: define void @test11()
+; CHECK:      %inner = cleanuppad []
+; CHECK-NEXT: call void @f()
+; CHECK-NEXT: unreachable

@@ -43,8 +43,10 @@
 #include "llvm/ProfileData/SampleProfReader.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #include <cctype>
 
 using namespace llvm;
@@ -63,11 +65,12 @@ static cl::opt<unsigned> SampleProfileMaxPropagateIterations(
              "sample block/edge weights through the CFG."));
 
 namespace {
-typedef DenseMap<BasicBlock *, unsigned> BlockWeightMap;
-typedef DenseMap<BasicBlock *, BasicBlock *> EquivalenceClassMap;
-typedef std::pair<BasicBlock *, BasicBlock *> Edge;
+typedef DenseMap<const BasicBlock *, unsigned> BlockWeightMap;
+typedef DenseMap<const BasicBlock *, const BasicBlock *> EquivalenceClassMap;
+typedef std::pair<const BasicBlock *, const BasicBlock *> Edge;
 typedef DenseMap<Edge, unsigned> EdgeWeightMap;
-typedef DenseMap<BasicBlock *, SmallVector<BasicBlock *, 8>> BlockEdgeMap;
+typedef DenseMap<const BasicBlock *, SmallVector<const BasicBlock *, 8>>
+    BlockEdgeMap;
 
 /// \brief Sample profile pass.
 ///
@@ -101,11 +104,14 @@ protected:
   bool runOnFunction(Function &F);
   unsigned getFunctionLoc(Function &F);
   bool emitAnnotations(Function &F);
-  unsigned getInstWeight(Instruction &I);
-  unsigned getBlockWeight(BasicBlock *BB);
+  ErrorOr<unsigned> getInstWeight(const Instruction &I) const;
+  ErrorOr<unsigned> getBlockWeight(const BasicBlock *BB) const;
+  const FunctionSamples *findCalleeFunctionSamples(const CallInst &I) const;
+  const FunctionSamples *findFunctionSamples(const Instruction &I) const;
+  bool inlineHotFunctions(Function &F);
   void printEdgeWeight(raw_ostream &OS, Edge E);
-  void printBlockWeight(raw_ostream &OS, BasicBlock *BB);
-  void printBlockEquivalence(raw_ostream &OS, BasicBlock *BB);
+  void printBlockWeight(raw_ostream &OS, const BasicBlock *BB) const;
+  void printBlockEquivalence(raw_ostream &OS, const BasicBlock *BB);
   bool computeBlockWeights(Function &F);
   void findEquivalenceClasses(Function &F);
   void findEquivalencesFor(BasicBlock *BB1,
@@ -134,7 +140,7 @@ protected:
   EdgeWeightMap EdgeWeights;
 
   /// \brief Set of visited blocks during propagation.
-  SmallPtrSet<BasicBlock *, 128> VisitedBlocks;
+  SmallPtrSet<const BasicBlock *, 128> VisitedBlocks;
 
   /// \brief Set of visited edges during propagation.
   SmallSet<Edge, 128> VisitedEdges;
@@ -186,8 +192,8 @@ void SampleProfileLoader::printEdgeWeight(raw_ostream &OS, Edge E) {
 /// \param OS  Stream to emit the output to.
 /// \param BB  Block to print.
 void SampleProfileLoader::printBlockEquivalence(raw_ostream &OS,
-                                                BasicBlock *BB) {
-  BasicBlock *Equiv = EquivalenceClass[BB];
+                                                const BasicBlock *BB) {
+  const BasicBlock *Equiv = EquivalenceClass[BB];
   OS << "equivalence[" << BB->getName()
      << "]: " << ((Equiv) ? EquivalenceClass[BB]->getName() : "NONE") << "\n";
 }
@@ -196,8 +202,11 @@ void SampleProfileLoader::printBlockEquivalence(raw_ostream &OS,
 ///
 /// \param OS  Stream to emit the output to.
 /// \param BB  Block to print.
-void SampleProfileLoader::printBlockWeight(raw_ostream &OS, BasicBlock *BB) {
-  OS << "weight[" << BB->getName() << "]: " << BlockWeights[BB] << "\n";
+void SampleProfileLoader::printBlockWeight(raw_ostream &OS,
+                                           const BasicBlock *BB) const {
+  const auto &I = BlockWeights.find(BB);
+  unsigned W = (I == BlockWeights.end() ? 0 : I->second);
+  OS << "weight[" << BB->getName() << "]: " << W << "\n";
 }
 
 /// \brief Get the weight for an instruction.
@@ -210,51 +219,54 @@ void SampleProfileLoader::printBlockWeight(raw_ostream &OS, BasicBlock *BB) {
 ///
 /// \param Inst Instruction to query.
 ///
-/// \returns The profiled weight of I.
-unsigned SampleProfileLoader::getInstWeight(Instruction &Inst) {
+/// \returns the weight of \p Inst.
+ErrorOr<unsigned>
+SampleProfileLoader::getInstWeight(const Instruction &Inst) const {
   DebugLoc DLoc = Inst.getDebugLoc();
   if (!DLoc)
-    return 0;
+    return std::error_code();
 
   unsigned Lineno = DLoc.getLine();
   if (Lineno < HeaderLineno)
-    return 0;
+    return std::error_code();
 
   const DILocation *DIL = DLoc;
-  int LOffset = Lineno - HeaderLineno;
-  unsigned Discriminator = DIL->getDiscriminator();
-  unsigned Weight = Samples->samplesAt(LOffset, Discriminator);
-  DEBUG(dbgs() << "    " << Lineno << "." << Discriminator << ":" << Inst
-               << " (line offset: " << LOffset << "." << Discriminator
-               << " - weight: " << Weight << ")\n");
-  return Weight;
+  const FunctionSamples *FS = findFunctionSamples(Inst);
+  if (!FS)
+    return std::error_code();
+  ErrorOr<unsigned> R =
+      FS->findSamplesAt(Lineno - HeaderLineno, DIL->getDiscriminator());
+  if (R)
+    DEBUG(dbgs() << "    " << Lineno << "." << DIL->getDiscriminator() << ":"
+                 << Inst << " (line offset: " << Lineno - HeaderLineno << "."
+                 << DIL->getDiscriminator() << " - weight: " << R.get()
+                 << ")\n");
+  return R;
 }
 
 /// \brief Compute the weight of a basic block.
 ///
 /// The weight of basic block \p BB is the maximum weight of all the
-/// instructions in BB. The weight of \p BB is computed and cached in
-/// the BlockWeights map.
+/// instructions in BB.
 ///
 /// \param BB The basic block to query.
 ///
-/// \returns The computed weight of BB.
-unsigned SampleProfileLoader::getBlockWeight(BasicBlock *BB) {
-  // If we've computed BB's weight before, return it.
-  std::pair<BlockWeightMap::iterator, bool> Entry =
-      BlockWeights.insert(std::make_pair(BB, 0));
-  if (!Entry.second)
-    return Entry.first->second;
-
-  // Otherwise, compute and cache BB's weight.
+/// \returns the weight for \p BB.
+ErrorOr<unsigned>
+SampleProfileLoader::getBlockWeight(const BasicBlock *BB) const {
+  bool Found = false;
   unsigned Weight = 0;
   for (auto &I : BB->getInstList()) {
-    unsigned InstWeight = getInstWeight(I);
-    if (InstWeight > Weight)
-      Weight = InstWeight;
+    const ErrorOr<unsigned> &R = getInstWeight(I);
+    if (R && R.get() >= Weight) {
+      Weight = R.get();
+      Found = true;
+    }
   }
-  Entry.first->second = Weight;
-  return Weight;
+  if (Found)
+    return Weight;
+  else
+    return std::error_code();
 }
 
 /// \brief Compute and store the weights of every basic block.
@@ -266,12 +278,131 @@ unsigned SampleProfileLoader::getBlockWeight(BasicBlock *BB) {
 bool SampleProfileLoader::computeBlockWeights(Function &F) {
   bool Changed = false;
   DEBUG(dbgs() << "Block weights\n");
-  for (auto &BB : F) {
-    unsigned Weight = getBlockWeight(&BB);
-    Changed |= (Weight > 0);
+  for (const auto &BB : F) {
+    ErrorOr<unsigned> Weight = getBlockWeight(&BB);
+    if (Weight) {
+      BlockWeights[&BB] = Weight.get();
+      VisitedBlocks.insert(&BB);
+      Changed = true;
+    }
     DEBUG(printBlockWeight(dbgs(), &BB));
   }
 
+  return Changed;
+}
+
+/// \brief Get the FunctionSamples for a call instruction.
+///
+/// The FunctionSamples of a call instruction \p Inst is the inlined
+/// instance in which that call instruction is calling to. It contains
+/// all samples that resides in the inlined instance. We first find the
+/// inlined instance in which the call instruction is from, then we
+/// traverse its children to find the callsite with the matching
+/// location and callee function name.
+///
+/// \param Inst Call instruction to query.
+///
+/// \returns The FunctionSamples pointer to the inlined instance.
+const FunctionSamples *
+SampleProfileLoader::findCalleeFunctionSamples(const CallInst &Inst) const {
+  const DILocation *DIL = Inst.getDebugLoc();
+  if (!DIL) {
+    return nullptr;
+  }
+  DISubprogram *SP = DIL->getScope()->getSubprogram();
+  if (!SP || DIL->getLine() < SP->getLine())
+    return nullptr;
+
+  Function *CalleeFunc = Inst.getCalledFunction();
+  if (!CalleeFunc) {
+    return nullptr;
+  }
+
+  StringRef CalleeName = CalleeFunc->getName();
+  const FunctionSamples *FS = findFunctionSamples(Inst);
+  if (FS == nullptr)
+    return nullptr;
+
+  return FS->findFunctionSamplesAt(CallsiteLocation(
+      DIL->getLine() - SP->getLine(), DIL->getDiscriminator(), CalleeName));
+}
+
+/// \brief Get the FunctionSamples for an instruction.
+///
+/// The FunctionSamples of an instruction \p Inst is the inlined instance
+/// in which that instruction is coming from. We traverse the inline stack
+/// of that instruction, and match it with the tree nodes in the profile.
+///
+/// \param Inst Instruction to query.
+///
+/// \returns the FunctionSamples pointer to the inlined instance.
+const FunctionSamples *
+SampleProfileLoader::findFunctionSamples(const Instruction &Inst) const {
+  SmallVector<CallsiteLocation, 10> S;
+  const DILocation *DIL = Inst.getDebugLoc();
+  if (!DIL) {
+    return Samples;
+  }
+  StringRef CalleeName;
+  for (const DILocation *DIL = Inst.getDebugLoc(); DIL;
+       DIL = DIL->getInlinedAt()) {
+    DISubprogram *SP = DIL->getScope()->getSubprogram();
+    if (!SP || DIL->getLine() < SP->getLine())
+      return nullptr;
+    if (!CalleeName.empty()) {
+      S.push_back(CallsiteLocation(DIL->getLine() - SP->getLine(),
+                                   DIL->getDiscriminator(), CalleeName));
+    }
+    CalleeName = SP->getLinkageName();
+  }
+  if (S.size() == 0)
+    return Samples;
+  const FunctionSamples *FS = Samples;
+  for (int i = S.size() - 1; i >= 0 && FS != nullptr; i--) {
+    FS = FS->findFunctionSamplesAt(S[i]);
+  }
+  return FS;
+}
+
+/// \brief Iteratively inline hot callsites of a function.
+///
+/// Iteratively traverse all callsites of the function \p F, and find if
+/// the corresponding inlined instance exists and is hot in profile. If
+/// it is hot enough, inline the callsites and adds new callsites of the
+/// callee into the caller.
+///
+/// TODO: investigate the possibility of not invoking InlineFunction directly.
+///
+/// \param F function to perform iterative inlining.
+///
+/// \returns True if there is any inline happened.
+bool SampleProfileLoader::inlineHotFunctions(Function &F) {
+  bool Changed = false;
+  while (true) {
+    bool LocalChanged = false;
+    SmallVector<CallInst *, 10> CIS;
+    for (auto &BB : F) {
+      for (auto &I : BB.getInstList()) {
+        CallInst *CI = dyn_cast<CallInst>(&I);
+        if (CI) {
+          const FunctionSamples *FS = findCalleeFunctionSamples(*CI);
+          if (FS && FS->getTotalSamples() > 0) {
+            CIS.push_back(CI);
+          }
+        }
+      }
+    }
+    for (auto CI : CIS) {
+      InlineFunctionInfo IFI;
+      if (InlineFunction(CI, IFI))
+        LocalChanged = true;
+    }
+    if (LocalChanged) {
+      Changed = true;
+    } else {
+      break;
+    }
+  }
   return Changed;
 }
 
@@ -301,12 +432,13 @@ bool SampleProfileLoader::computeBlockWeights(Function &F) {
 void SampleProfileLoader::findEquivalencesFor(
     BasicBlock *BB1, SmallVector<BasicBlock *, 8> Descendants,
     DominatorTreeBase<BasicBlock> *DomTree) {
-  for (auto *BB2 : Descendants) {
+  const BasicBlock *EC = EquivalenceClass[BB1];
+  unsigned Weight = BlockWeights[EC];
+  for (const auto *BB2 : Descendants) {
     bool IsDomParent = DomTree->dominates(BB2, BB1);
     bool IsInSameLoop = LI->getLoopFor(BB1) == LI->getLoopFor(BB2);
-    if (BB1 != BB2 && VisitedBlocks.insert(BB2).second && IsDomParent &&
-        IsInSameLoop) {
-      EquivalenceClass[BB2] = BB1;
+    if (BB1 != BB2 && IsDomParent && IsInSameLoop) {
+      EquivalenceClass[BB2] = EC;
 
       // If BB2 is heavier than BB1, make BB2 have the same weight
       // as BB1.
@@ -316,11 +448,10 @@ void SampleProfileLoader::findEquivalencesFor(
       // during the propagation phase. Right now, we just want to
       // make sure that BB1 has the largest weight of all the
       // members of its equivalence set.
-      unsigned &BB1Weight = BlockWeights[BB1];
-      unsigned &BB2Weight = BlockWeights[BB2];
-      BB1Weight = std::max(BB1Weight, BB2Weight);
+      Weight = std::max(Weight, BlockWeights[BB2]);
     }
   }
+  BlockWeights[EC] = Weight;
 }
 
 /// \brief Find equivalence classes.
@@ -362,18 +493,6 @@ void SampleProfileLoader::findEquivalenceClasses(Function &F) {
     DT->getDescendants(BB1, DominatedBBs);
     findEquivalencesFor(BB1, DominatedBBs, PDT.get());
 
-    // Repeat the same logic for all the blocks post-dominated by BB1.
-    // We are looking for every basic block BB2 such that:
-    //
-    // 1- BB1 post-dominates BB2.
-    // 2- BB2 dominates BB1.
-    // 3- BB1 and BB2 are in the same loop nest.
-    //
-    // If all those conditions hold, BB2's equivalence class is BB1.
-    DominatedBBs.clear();
-    PDT->getDescendants(BB1, DominatedBBs);
-    findEquivalencesFor(BB1, DominatedBBs, DT.get());
-
     DEBUG(printBlockEquivalence(dbgs(), BB1));
   }
 
@@ -385,8 +504,8 @@ void SampleProfileLoader::findEquivalenceClasses(Function &F) {
   // to all the blocks in that equivalence class.
   DEBUG(dbgs() << "\nAssign the same weight to all blocks in the same class\n");
   for (auto &BI : F) {
-    BasicBlock *BB = &BI;
-    BasicBlock *EquivBB = EquivalenceClass[BB];
+    const BasicBlock *BB = &BI;
+    const BasicBlock *EquivBB = EquivalenceClass[BB];
     if (BB != EquivBB)
       BlockWeights[BB] = BlockWeights[EquivBB];
     DEBUG(printBlockWeight(dbgs(), BB));
@@ -428,8 +547,9 @@ unsigned SampleProfileLoader::visitEdge(Edge E, unsigned *NumUnknownEdges,
 bool SampleProfileLoader::propagateThroughEdges(Function &F) {
   bool Changed = false;
   DEBUG(dbgs() << "\nPropagation through edges\n");
-  for (auto &BI : F) {
-    BasicBlock *BB = &BI;
+  for (const auto &BI : F) {
+    const BasicBlock *BB = &BI;
+    const BasicBlock *EC = EquivalenceClass[BB];
 
     // Visit all the predecessor and successor edges to determine
     // which ones have a weight assigned already. Note that it doesn't
@@ -481,7 +601,7 @@ bool SampleProfileLoader::propagateThroughEdges(Function &F) {
       // all edges will get a weight, or iteration will stop when
       // it reaches SampleProfileMaxPropagateIterations.
       if (NumUnknownEdges <= 1) {
-        unsigned &BBWeight = BlockWeights[BB];
+        unsigned &BBWeight = BlockWeights[EC];
         if (NumUnknownEdges == 0) {
           // If we already know the weight of all edges, the weight of the
           // basic block can be computed. It should be no larger than the sum
@@ -493,9 +613,9 @@ bool SampleProfileLoader::propagateThroughEdges(Function &F) {
                          << " known. Set weight for block: ";
                   printBlockWeight(dbgs(), BB););
           }
-          if (VisitedBlocks.insert(BB).second)
+          if (VisitedBlocks.insert(EC).second)
             Changed = true;
-        } else if (NumUnknownEdges == 1 && VisitedBlocks.count(BB)) {
+        } else if (NumUnknownEdges == 1 && VisitedBlocks.count(EC)) {
           // If there is a single unknown edge and the block has been
           // visited, then we can compute E's weight.
           if (BBWeight >= TotalWeight)
@@ -507,7 +627,7 @@ bool SampleProfileLoader::propagateThroughEdges(Function &F) {
           DEBUG(dbgs() << "Set weight for edge: ";
                 printEdgeWeight(dbgs(), UnknownEdge));
         }
-      } else if (SelfReferentialEdge.first && VisitedBlocks.count(BB)) {
+      } else if (SelfReferentialEdge.first && VisitedBlocks.count(EC)) {
         unsigned &BBWeight = BlockWeights[BB];
         // We have a self-referential edge and the weight of BB is known.
         if (BBWeight >= TotalWeight)
@@ -724,6 +844,8 @@ bool SampleProfileLoader::emitAnnotations(Function &F) {
 
   DEBUG(dbgs() << "Line number for the first instruction in " << F.getName()
                << ": " << HeaderLineno << "\n");
+
+  Changed |= inlineHotFunctions(F);
 
   // Compute basic block weights.
   Changed |= computeBlockWeights(F);

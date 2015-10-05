@@ -321,7 +321,7 @@ public:
     return reg_bundle_nodbg_iterator(nullptr);
   }
 
-  inline iterator_range<reg_bundle_nodbg_iterator> 
+  inline iterator_range<reg_bundle_nodbg_iterator>
   reg_nodbg_bundles(unsigned Reg) const {
     return iterator_range<reg_bundle_nodbg_iterator>(reg_bundle_nodbg_begin(Reg),
                                                      reg_bundle_nodbg_end());
@@ -528,7 +528,7 @@ public:
   /// apply sub registers to ToReg in order to obtain a final/proper physical
   /// register.
   void replaceRegWith(unsigned FromReg, unsigned ToReg);
-  
+
   /// getVRegDef - Return the machine instr that defines the specified virtual
   /// register or null if none is found.  This assumes that the code is in SSA
   /// form, so there should only be one definition.
@@ -759,7 +759,7 @@ public:
 
   /// Returns a mask covering all bits that can appear in lane masks of
   /// subregisters of the virtual register @p Reg.
-  unsigned getMaxLaneMaskForVReg(unsigned Reg) const;
+  LaneBitmask getMaxLaneMaskForVReg(unsigned Reg) const;
 
   /// defusechain_iterator - This class provides iterator support for machine
   /// operands in the function that use or define a specific register.  If

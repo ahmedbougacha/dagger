@@ -42,7 +42,6 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetMachine.h"
@@ -213,9 +212,9 @@ namespace {
     void report(const char *msg, const MachineBasicBlock *MBB,
                 const LiveInterval &LI);
     void report(const char *msg, const MachineFunction *MF,
-                const LiveRange &LR, unsigned Reg, unsigned LaneMask);
+                const LiveRange &LR, unsigned Reg, LaneBitmask LaneMask);
     void report(const char *msg, const MachineBasicBlock *MBB,
-                const LiveRange &LR, unsigned Reg, unsigned LaneMask);
+                const LiveRange &LR, unsigned Reg, LaneBitmask LaneMask);
 
     void verifyInlineAsm(const MachineInstr *MI);
 
@@ -233,9 +232,11 @@ namespace {
     void verifyLiveRangeSegment(const LiveRange&,
                                 const LiveRange::const_iterator I, unsigned,
                                 unsigned);
-    void verifyLiveRange(const LiveRange&, unsigned, unsigned LaneMask = 0);
+    void verifyLiveRange(const LiveRange&, unsigned, LaneBitmask LaneMask = 0);
 
     void verifyStackFrame();
+
+    void verifySlotIndexes() const;
   };
 
   struct MachineVerifierPass : public MachineFunctionPass {
@@ -273,6 +274,19 @@ void MachineFunction::verify(Pass *p, const char *Banner) const {
     .runOnMachineFunction(const_cast<MachineFunction&>(*this));
 }
 
+void MachineVerifier::verifySlotIndexes() const {
+  if (Indexes == nullptr)
+    return;
+
+  // Ensure the IdxMBB list is sorted by slot indexes.
+  SlotIndex Last;
+  for (SlotIndexes::MBBIndexIterator I = Indexes->MBBIndexBegin(),
+       E = Indexes->MBBIndexEnd(); I != E; ++I) {
+    assert(!Last.isValid() || I->first > Last);
+    Last = I->first;
+  }
+}
+
 bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
   foundErrors = 0;
 
@@ -294,6 +308,8 @@ bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
     LiveStks = PASS->getAnalysisIfAvailable<LiveStacks>();
     Indexes = PASS->getAnalysisIfAvailable<SlotIndexes>();
   }
+
+  verifySlotIndexes();
 
   visitMachineFunctionBefore();
   for (MachineFunction::const_iterator MFI = MF.begin(), MFE = MF.end();
@@ -425,22 +441,22 @@ void MachineVerifier::report(const char *msg, const MachineBasicBlock *MBB,
 
 void MachineVerifier::report(const char *msg, const MachineBasicBlock *MBB,
                              const LiveRange &LR, unsigned Reg,
-                             unsigned LaneMask) {
+                             LaneBitmask LaneMask) {
   report(msg, MBB);
   errs() << "- liverange:   " << LR << '\n';
   errs() << "- register:    " << PrintReg(Reg, TRI) << '\n';
   if (LaneMask != 0)
-    errs() << "- lanemask:    " << format("%04X\n", LaneMask);
+    errs() << "- lanemask:    " << PrintLaneMask(LaneMask) << '\n';
 }
 
 void MachineVerifier::report(const char *msg, const MachineFunction *MF,
                              const LiveRange &LR, unsigned Reg,
-                             unsigned LaneMask) {
+                             LaneBitmask LaneMask) {
   report(msg, MF);
   errs() << "- liverange:   " << LR << '\n';
   errs() << "- register:    " << PrintReg(Reg, TRI) << '\n';
   if (LaneMask != 0)
-    errs() << "- lanemask:    " << format("%04X\n", LaneMask);
+    errs() << "- lanemask:    " << PrintLaneMask(LaneMask) << '\n';
 }
 
 void MachineVerifier::markReachable(const MachineBasicBlock *MBB) {
@@ -507,8 +523,8 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
   if (MRI->isSSA()) {
     // If this block has allocatable physical registers live-in, check that
     // it is an entry block or landing pad.
-    for (unsigned LI : MBB->liveins()) {
-      if (isAllocatable(LI) && !MBB->isEHPad() &&
+    for (const auto &LI : MBB->liveins()) {
+      if (isAllocatable(LI.PhysReg) && !MBB->isEHPad() &&
           MBB != MBB->getParent()->begin()) {
         report("MBB has allocable live-in, but isn't entry or landing-pad.", MBB);
       }
@@ -677,12 +693,12 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
   }
 
   regsLive.clear();
-  for (unsigned LI : MBB->liveins()) {
-    if (!TargetRegisterInfo::isPhysicalRegister(LI)) {
+  for (const auto &LI : MBB->liveins()) {
+    if (!TargetRegisterInfo::isPhysicalRegister(LI.PhysReg)) {
       report("MBB live-in list contains non-physical register", MBB);
       continue;
     }
-    for (MCSubRegIterator SubRegs(LI, TRI, /*IncludeSelf=*/true);
+    for (MCSubRegIterator SubRegs(LI.PhysReg, TRI, /*IncludeSelf=*/true);
          SubRegs.isValid(); ++SubRegs)
       regsLive.insert(*SubRegs);
   }
@@ -1386,7 +1402,7 @@ void MachineVerifier::verifyLiveIntervals() {
 
 void MachineVerifier::verifyLiveRangeValue(const LiveRange &LR,
                                            const VNInfo *VNI, unsigned Reg,
-                                           unsigned LaneMask) {
+                                           LaneBitmask LaneMask) {
   if (VNI->isUnused())
     return;
 
@@ -1477,7 +1493,8 @@ void MachineVerifier::verifyLiveRangeValue(const LiveRange &LR,
 
 void MachineVerifier::verifyLiveRangeSegment(const LiveRange &LR,
                                              const LiveRange::const_iterator I,
-                                             unsigned Reg, unsigned LaneMask) {
+                                             unsigned Reg, LaneBitmask LaneMask)
+{
   const LiveRange::Segment &S = *I;
   const VNInfo *VNI = S.valno;
   assert(VNI && "Live segment has no valno");
@@ -1650,7 +1667,7 @@ void MachineVerifier::verifyLiveRangeSegment(const LiveRange &LR,
 }
 
 void MachineVerifier::verifyLiveRange(const LiveRange &LR, unsigned Reg,
-                                      unsigned LaneMask) {
+                                      LaneBitmask LaneMask) {
   for (const VNInfo *VNI : LR.valnos)
     verifyLiveRangeValue(LR, VNI, Reg, LaneMask);
 
@@ -1663,8 +1680,8 @@ void MachineVerifier::verifyLiveInterval(const LiveInterval &LI) {
   assert(TargetRegisterInfo::isVirtualRegister(Reg));
   verifyLiveRange(LI, Reg);
 
-  unsigned Mask = 0;
-  unsigned MaxMask = MRI->getMaxLaneMaskForVReg(Reg);
+  LaneBitmask Mask = 0;
+  LaneBitmask MaxMask = MRI->getMaxLaneMaskForVReg(Reg);
   for (const LiveInterval::SubRange &SR : LI.subranges()) {
     if ((Mask & SR.LaneMask) != 0)
       report("Lane masks of sub ranges overlap in live interval", MF, LI);

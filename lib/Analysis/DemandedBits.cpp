@@ -1,4 +1,4 @@
-//===---- DemandedBits.cpp - Determine demanded bits -----------------------===//
+//===---- DemandedBits.cpp - Determine demanded bits ----------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -49,14 +49,13 @@ INITIALIZE_PASS_BEGIN(DemandedBits, "demanded-bits", "Demanded bits analysis",
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_END(DemandedBits, "demanded-bits", "Demanded bits analysis",
-			false, false)
+                    false, false)
 
 DemandedBits::DemandedBits() : FunctionPass(ID) {
   initializeDemandedBitsPass(*PassRegistry::getPassRegistry());
 }
 
-
-void DemandedBits::getAnalysisUsage(AnalysisUsage& AU) const {
+void DemandedBits::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesCFG();
   AU.addRequired<AssumptionCacheTracker>();
   AU.addRequired<DominatorTreeWrapperPass>();
@@ -68,12 +67,10 @@ static bool isAlwaysLive(Instruction *I) {
       I->isEHPad() || I->mayHaveSideEffects();
 }
 
-void
-DemandedBits::determineLiveOperandBits(const Instruction *UserI,
-				       const Instruction *I, unsigned OperandNo,
-				       const APInt &AOut, APInt &AB,
-				       APInt &KnownZero, APInt &KnownOne,
-				       APInt &KnownZero2, APInt &KnownOne2) {
+void DemandedBits::determineLiveOperandBits(
+    const Instruction *UserI, const Instruction *I, unsigned OperandNo,
+    const APInt &AOut, APInt &AB, APInt &KnownZero, APInt &KnownOne,
+    APInt &KnownZero2, APInt &KnownOne2) {
   unsigned BitWidth = AB.getBitWidth();
 
   // We're called once per operand, but for some instructions, we need to
@@ -316,7 +313,7 @@ bool DemandedBits::runOnFunction(Function& F) {
               !isAlwaysLive(UserI)) {
             AB = APInt(BitWidth, 0);
           } else {
-            // If all bits of the output are dead, then all bits of the input 
+            // If all bits of the output are dead, then all bits of the input
             // Bits of each operand that are used to compute alive bits of the
             // output are alive, all others are dead.
             determineLiveOperandBits(UserI, I, OI.getOperandNo(), AOut, AB,

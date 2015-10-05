@@ -341,6 +341,7 @@ public:
                                  const unsigned SIOpd);
 
 private:
+  bool ShouldChangeType(unsigned FromBitWidth, unsigned ToBitWidth) const;
   bool ShouldChangeType(Type *From, Type *To) const;
   Value *dyn_castNegVal(Value *V) const;
   Value *dyn_castFNegVal(Value *V, bool NoSignedZero = false) const;
@@ -544,6 +545,7 @@ private:
   Instruction *FoldPHIArgBinOpIntoPHI(PHINode &PN);
   Instruction *FoldPHIArgGEPIntoPHI(PHINode &PN);
   Instruction *FoldPHIArgLoadIntoPHI(PHINode &PN);
+  Instruction *FoldPHIArgZextsIntoPHI(PHINode &PN);
 
   Instruction *OptAndOp(Instruction *Op, ConstantInt *OpRHS,
                         ConstantInt *AndRHS, BinaryOperator &TheAnd);

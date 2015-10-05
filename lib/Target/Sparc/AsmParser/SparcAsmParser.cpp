@@ -69,6 +69,10 @@ class SparcAsmParser : public MCTargetAsmParser {
 
   OperandMatchResultTy parseBranchModifiers(OperandVector &Operands);
 
+  // Helper function for dealing with %lo / %hi in PIC mode.
+  const SparcMCExpr *adjustPICRelocation(SparcMCExpr::VariantKind VK,
+                                         const MCExpr *subExpr);
+
   // returns true if Tok is matched to a register and returns register in RegNo.
   bool matchRegisterName(const AsmToken &Tok, unsigned &RegNo,
                          unsigned &RegKind);
@@ -466,8 +470,7 @@ void SparcAsmParser::expandSET(MCInst &Inst, SMLoc IDLoc,
   // In either case, start with the 'sethi'.
   if (!IsEffectivelyImm13) {
     MCInst TmpInst;
-    const MCExpr *Expr =
-        SparcMCExpr::create(SparcMCExpr::VK_Sparc_HI, ValExpr, getContext());
+    const MCExpr *Expr = adjustPICRelocation(SparcMCExpr::VK_Sparc_HI, ValExpr);
     TmpInst.setLoc(IDLoc);
     TmpInst.setOpcode(SP::SETHIi);
     TmpInst.addOperand(MCRegOp);
@@ -492,8 +495,7 @@ void SparcAsmParser::expandSET(MCInst &Inst, SMLoc IDLoc,
     if (IsEffectivelyImm13)
       Expr = ValExpr;
     else
-      Expr =
-          SparcMCExpr::create(SparcMCExpr::VK_Sparc_LO, ValExpr, getContext());
+      Expr = adjustPICRelocation(SparcMCExpr::VK_Sparc_LO, ValExpr);
     TmpInst.setLoc(IDLoc);
     TmpInst.setOpcode(SP::ORri);
     TmpInst.addOperand(MCRegOp);
@@ -1022,6 +1024,82 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
       RegKind = SparcOperand::rk_IntReg;
       return true;
     }
+
+    if (name.equals("tpc")) {
+      RegNo = Sparc::TPC;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("tnpc")) {
+      RegNo = Sparc::TNPC;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("tstate")) {
+      RegNo = Sparc::TSTATE;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("tt")) {
+      RegNo = Sparc::TT;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("tick")) {
+      RegNo = Sparc::TICK;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("tba")) {
+      RegNo = Sparc::TBA;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("pstate")) {
+      RegNo = Sparc::PSTATE;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("tl")) {
+      RegNo = Sparc::TL;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("pil")) {
+      RegNo = Sparc::PIL;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("cwp")) {
+      RegNo = Sparc::CWP;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("cansave")) {
+      RegNo = Sparc::CANSAVE;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("canrestore")) {
+      RegNo = Sparc::CANRESTORE;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("cleanwin")) {
+      RegNo = Sparc::CLEANWIN;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("otherwin")) {
+      RegNo = Sparc::OTHERWIN;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+    if (name.equals("wstate")) {
+      RegNo = Sparc::WSTATE;
+      RegKind = SparcOperand::rk_Special;
+      return true;
+    }
   }
   return false;
 }
@@ -1054,6 +1132,32 @@ static bool hasGOTReference(const MCExpr *Expr) {
   return false;
 }
 
+const SparcMCExpr *
+SparcAsmParser::adjustPICRelocation(SparcMCExpr::VariantKind VK,
+                                    const MCExpr *subExpr)
+{
+  // When in PIC mode, "%lo(...)" and "%hi(...)" behave differently.
+  // If the expression refers contains _GLOBAL_OFFSETE_TABLE, it is
+  // actually a %pc10 or %pc22 relocation. Otherwise, they are interpreted
+  // as %got10 or %got22 relocation.
+
+  if (getContext().getObjectFileInfo()->getRelocM() == Reloc::PIC_) {
+    switch(VK) {
+    default: break;
+    case SparcMCExpr::VK_Sparc_LO:
+      VK = (hasGOTReference(subExpr) ? SparcMCExpr::VK_Sparc_PC10
+                                     : SparcMCExpr::VK_Sparc_GOT10);
+      break;
+    case SparcMCExpr::VK_Sparc_HI:
+      VK = (hasGOTReference(subExpr) ? SparcMCExpr::VK_Sparc_PC22
+                                     : SparcMCExpr::VK_Sparc_GOT22);
+      break;
+    }
+  }
+
+  return SparcMCExpr::create(VK, subExpr, getContext());
+}
+
 bool SparcAsmParser::matchSparcAsmModifiers(const MCExpr *&EVal,
                                             SMLoc &EndLoc)
 {
@@ -1077,30 +1181,7 @@ bool SparcAsmParser::matchSparcAsmModifiers(const MCExpr *&EVal,
   if (Parser.parseParenExpression(subExpr, EndLoc))
     return false;
 
-  bool isPIC = getContext().getObjectFileInfo()->getRelocM() == Reloc::PIC_;
-
-  // Ugly: if a sparc assembly expression says "%hi(...)" but the
-  // expression within contains _GLOBAL_OFFSET_TABLE_, it REALLY means
-  // %pc22. Same with %lo -> %pc10. Worse, if it doesn't contain that,
-  // the meaning depends on whether the assembler was invoked with
-  // -KPIC or not: if so, it really means %got22/%got10; if not, it
-  // actually means what it said! Sigh, historical mistakes...
-
-  switch(VK) {
-  default: break;
-  case SparcMCExpr::VK_Sparc_LO:
-    VK =  (hasGOTReference(subExpr)
-           ? SparcMCExpr::VK_Sparc_PC10
-           : (isPIC ? SparcMCExpr::VK_Sparc_GOT10 : VK));
-    break;
-  case SparcMCExpr::VK_Sparc_HI:
-    VK =  (hasGOTReference(subExpr)
-           ? SparcMCExpr::VK_Sparc_PC22
-           : (isPIC ? SparcMCExpr::VK_Sparc_GOT22 : VK));
-    break;
-  }
-
-  EVal = SparcMCExpr::create(VK, subExpr, getContext());
+  EVal = adjustPICRelocation(VK, subExpr);
   return true;
 }
 

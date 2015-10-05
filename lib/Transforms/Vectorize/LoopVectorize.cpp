@@ -58,10 +58,12 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/CodeMetrics.h"
+#include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/LoopAccessAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopIterator.h"
@@ -274,7 +276,8 @@ public:
       : OrigLoop(OrigLoop), SE(SE), LI(LI), DT(DT), TLI(TLI), TTI(TTI),
         VF(VecWidth), UF(UnrollFactor), Builder(SE->getContext()),
         Induction(nullptr), OldInduction(nullptr), WidenMap(UnrollFactor),
-        Legal(nullptr), AddedSafetyChecks(false) {}
+        TripCount(nullptr), VectorTripCount(nullptr), Legal(nullptr),
+        AddedSafetyChecks(false) {}
 
   // Perform the actual loop widening (vectorization).
   void vectorize(LoopVectorizationLegality *L) {
@@ -284,8 +287,6 @@ public:
     // Widen each instruction in the old loop to a new one in the new loop.
     // Use the Legality module to find the induction and reduction variables.
     vectorizeLoop();
-    // Register the new loop and update the analysis passes.
-    updateAnalysis();
   }
 
   // Return true if any runtime check is added.
@@ -316,6 +317,9 @@ protected:
 
   /// Create an empty loop, based on the loop ranges of the old loop.
   void createEmptyLoop();
+  /// Create a new induction variable inside L.
+  PHINode *createInductionVariable(Loop *L, Value *Start, Value *End,
+                                   Value *Step, Instruction *DL);
   /// Copy and widen the instructions from the old loop.
   virtual void vectorizeLoop();
 
@@ -380,6 +384,22 @@ protected:
   /// Generate a shuffle sequence that will reverse the vector Vec.
   virtual Value *reverseVector(Value *Vec);
 
+  /// Returns (and creates if needed) the original loop trip count.
+  Value *getOrCreateTripCount(Loop *NewLoop);
+
+  /// Returns (and creates if needed) the trip count of the widened loop.
+  Value *getOrCreateVectorTripCount(Loop *NewLoop);
+
+  /// Emit a bypass check to see if the trip count would overflow, or we
+  /// wouldn't have enough iterations to execute one vector loop.
+  void emitMinimumIterationCountCheck(Loop *L, BasicBlock *Bypass);
+  /// Emit a bypass check to see if the vector trip count is nonzero.
+  void emitVectorLoopEnteredCheck(Loop *L, BasicBlock *Bypass);
+  /// Emit bypass checks to check if strides we've assumed to be one really are.
+  void emitStrideChecks(Loop *L, BasicBlock *Bypass);
+  /// Emit bypass checks to check any memory assumptions we may have made.
+  void emitMemRuntimeChecks(Loop *L, BasicBlock *Bypass);
+  
   /// This is a helper class that holds the vectorizer state. It maps scalar
   /// instructions to vector instructions. When the code is 'unrolled' then
   /// then a single scalar value is mapped to multiple vector parts. The parts
@@ -468,11 +488,16 @@ protected:
   PHINode *Induction;
   /// The induction variable of the old basic block.
   PHINode *OldInduction;
-  /// Holds the extended (to the widest induction type) start index.
-  Value *ExtendedIdx;
   /// Maps scalars to widened vectors.
   ValueMap WidenMap;
+  /// Store instructions that should be predicated, as a pair
+  ///   <StoreInst, Predicate>
+  SmallVector<std::pair<StoreInst*,Value*>, 4> PredicatedStores;
   EdgeMaskCache MaskCache;
+  /// Trip count of the original loop.
+  Value *TripCount;
+  /// Trip count of the widened loop (TripCount - TripCount % (VF*UF))
+  Value *VectorTripCount;
 
   LoopVectorizationLegality *Legal;
 
@@ -1514,7 +1539,7 @@ struct LoopVectorize : public FunctionPass {
     BFI = &getAnalysis<BlockFrequencyInfoWrapperPass>().getBFI();
     auto *TLIP = getAnalysisIfAvailable<TargetLibraryInfoWrapperPass>();
     TLI = TLIP ? &TLIP->getTLI() : nullptr;
-    AA = &getAnalysis<AliasAnalysis>();
+    AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
     AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
     LAA = &getAnalysis<LoopAccessAnalysis>();
 
@@ -1815,11 +1840,13 @@ struct LoopVectorize : public FunctionPass {
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<ScalarEvolutionWrapperPass>();
     AU.addRequired<TargetTransformInfoWrapperPass>();
-    AU.addRequired<AliasAnalysis>();
+    AU.addRequired<AAResultsWrapperPass>();
     AU.addRequired<LoopAccessAnalysis>();
     AU.addPreserved<LoopInfoWrapperPass>();
     AU.addPreserved<DominatorTreeWrapperPass>();
-    AU.addPreserved<AliasAnalysis>();
+    AU.addPreserved<BasicAAWrapperPass>();
+    AU.addPreserved<AAResultsWrapperPass>();
+    AU.addPreserved<GlobalsAAWrapperPass>();
   }
 
 };
@@ -2450,19 +2477,12 @@ void InnerLoopVectorizer::scalarizeInstruction(Instruction *Instr, bool IfPredic
   // Create a new entry in the WidenMap and initialize it to Undef or Null.
   VectorParts &VecResults = WidenMap.splat(Instr, UndefVec);
 
-  Instruction *InsertPt = Builder.GetInsertPoint();
-  BasicBlock *IfBlock = Builder.GetInsertBlock();
-  BasicBlock *CondBlock = nullptr;
-
   VectorParts Cond;
-  Loop *VectorLp = nullptr;
   if (IfPredicateStore) {
     assert(Instr->getParent()->getSinglePredecessor() &&
            "Only support single predecessor blocks");
     Cond = createEdgeMask(Instr->getParent()->getSinglePredecessor(),
                           Instr->getParent());
-    VectorLp = LI->getLoopFor(IfBlock);
-    assert(VectorLp && "Must have a loop for this block");
   }
 
   // For each vector unroll 'part':
@@ -2475,11 +2495,6 @@ void InnerLoopVectorizer::scalarizeInstruction(Instruction *Instr, bool IfPredic
       if (IfPredicateStore) {
         Cmp = Builder.CreateExtractElement(Cond[Part], Builder.getInt32(Width));
         Cmp = Builder.CreateICmp(ICmpInst::ICMP_EQ, Cmp, ConstantInt::get(Cmp->getType(), 1));
-        CondBlock = IfBlock->splitBasicBlock(InsertPt, "cond.store");
-        LoopVectorBody.push_back(CondBlock);
-        VectorLp->addBasicBlockToLoop(CondBlock, *LI);
-        // Update Builder with newly created basic block.
-        Builder.SetInsertPoint(InsertPt);
       }
 
       Instruction *Cloned = Instr->clone();
@@ -2503,15 +2518,9 @@ void InnerLoopVectorizer::scalarizeInstruction(Instruction *Instr, bool IfPredic
         VecResults[Part] = Builder.CreateInsertElement(VecResults[Part], Cloned,
                                                        Builder.getInt32(Width));
       // End if-block.
-      if (IfPredicateStore) {
-         BasicBlock *NewIfBlock = CondBlock->splitBasicBlock(InsertPt, "else");
-         LoopVectorBody.push_back(NewIfBlock);
-         VectorLp->addBasicBlockToLoop(NewIfBlock, *LI);
-         Builder.SetInsertPoint(InsertPt);
-         ReplaceInstWithInst(IfBlock->getTerminator(),
-                             BranchInst::Create(CondBlock, NewIfBlock, Cmp));
-         IfBlock = NewIfBlock;
-      }
+      if (IfPredicateStore)
+        PredicatedStores.push_back(std::make_pair(cast<StoreInst>(Cloned),
+                                                  Cmp));
     }
   }
 }
@@ -2562,6 +2571,194 @@ InnerLoopVectorizer::addStrideCheck(Instruction *Loc) {
   return std::make_pair(FirstInst, TheCheck);
 }
 
+PHINode *InnerLoopVectorizer::createInductionVariable(Loop *L,
+                                                      Value *Start,
+                                                      Value *End,
+                                                      Value *Step,
+                                                      Instruction *DL) {
+  BasicBlock *Header = L->getHeader();
+  BasicBlock *Latch = L->getLoopLatch();
+  // As we're just creating this loop, it's possible no latch exists
+  // yet. If so, use the header as this will be a single block loop.
+  if (!Latch)
+    Latch = Header;
+    
+  IRBuilder<> Builder(Header->getFirstInsertionPt());
+  setDebugLocFromInst(Builder, getDebugLocFromInstOrOperands(OldInduction));
+  auto *Induction = Builder.CreatePHI(Start->getType(), 2, "index");
+
+  Builder.SetInsertPoint(Latch->getTerminator());
+  
+  // Create i+1 and fill the PHINode.
+  Value *Next = Builder.CreateAdd(Induction, Step, "index.next");
+  Induction->addIncoming(Start, L->getLoopPreheader());
+  Induction->addIncoming(Next, Latch);
+  // Create the compare.
+  Value *ICmp = Builder.CreateICmpEQ(Next, End);
+  Builder.CreateCondBr(ICmp, L->getExitBlock(), Header);
+  
+  // Now we have two terminators. Remove the old one from the block.
+  Latch->getTerminator()->eraseFromParent();
+
+  return Induction;
+}
+
+Value *InnerLoopVectorizer::getOrCreateTripCount(Loop *L) {
+  if (TripCount)
+    return TripCount;
+
+  IRBuilder<> Builder(L->getLoopPreheader()->getTerminator());
+  // Find the loop boundaries.
+  const SCEV *BackedgeTakenCount = SE->getBackedgeTakenCount(OrigLoop);
+  assert(BackedgeTakenCount != SE->getCouldNotCompute() && "Invalid loop count");
+
+  Type *IdxTy = Legal->getWidestInductionType();
+  
+  // The exit count might have the type of i64 while the phi is i32. This can
+  // happen if we have an induction variable that is sign extended before the
+  // compare. The only way that we get a backedge taken count is that the
+  // induction variable was signed and as such will not overflow. In such a case
+  // truncation is legal.
+  if (BackedgeTakenCount->getType()->getPrimitiveSizeInBits() >
+      IdxTy->getPrimitiveSizeInBits())
+    BackedgeTakenCount = SE->getTruncateOrNoop(BackedgeTakenCount, IdxTy);
+  BackedgeTakenCount = SE->getNoopOrZeroExtend(BackedgeTakenCount, IdxTy);
+  
+  // Get the total trip count from the count by adding 1.
+  const SCEV *ExitCount = SE->getAddExpr(
+      BackedgeTakenCount, SE->getOne(BackedgeTakenCount->getType()));
+
+  const DataLayout &DL = L->getHeader()->getModule()->getDataLayout();
+
+  // Expand the trip count and place the new instructions in the preheader.
+  // Notice that the pre-header does not change, only the loop body.
+  SCEVExpander Exp(*SE, DL, "induction");
+
+  // Count holds the overall loop count (N).
+  TripCount = Exp.expandCodeFor(ExitCount, ExitCount->getType(),
+                                L->getLoopPreheader()->getTerminator());
+
+  if (TripCount->getType()->isPointerTy())
+    TripCount =
+      CastInst::CreatePointerCast(TripCount, IdxTy,
+                                  "exitcount.ptrcnt.to.int",
+                                  L->getLoopPreheader()->getTerminator());
+
+  return TripCount;
+}
+
+Value *InnerLoopVectorizer::getOrCreateVectorTripCount(Loop *L) {
+  if (VectorTripCount)
+    return VectorTripCount;
+  
+  Value *TC = getOrCreateTripCount(L);
+  IRBuilder<> Builder(L->getLoopPreheader()->getTerminator());
+  
+  // Now we need to generate the expression for N - (N % VF), which is
+  // the part that the vectorized body will execute.
+  // The loop step is equal to the vectorization factor (num of SIMD elements)
+  // times the unroll factor (num of SIMD instructions).
+  Constant *Step = ConstantInt::get(TC->getType(), VF * UF);
+  Value *R = Builder.CreateURem(TC, Step, "n.mod.vf");
+  VectorTripCount = Builder.CreateSub(TC, R, "n.vec");
+
+  return VectorTripCount;
+}
+
+void InnerLoopVectorizer::emitMinimumIterationCountCheck(Loop *L,
+                                                         BasicBlock *Bypass) {
+  Value *Count = getOrCreateTripCount(L);
+  BasicBlock *BB = L->getLoopPreheader();
+  IRBuilder<> Builder(BB->getTerminator());
+
+  // Generate code to check that the loop's trip count that we computed by
+  // adding one to the backedge-taken count will not overflow.
+  Value *CheckMinIters =
+    Builder.CreateICmpULT(Count,
+                          ConstantInt::get(Count->getType(), VF * UF),
+                          "min.iters.check");
+  
+  BasicBlock *NewBB = BB->splitBasicBlock(BB->getTerminator(),
+                                          "min.iters.checked");
+  if (L->getParentLoop())
+    L->getParentLoop()->addBasicBlockToLoop(NewBB, *LI);
+  ReplaceInstWithInst(BB->getTerminator(),
+                      BranchInst::Create(Bypass, NewBB, CheckMinIters));
+  LoopBypassBlocks.push_back(BB);
+}
+
+void InnerLoopVectorizer::emitVectorLoopEnteredCheck(Loop *L,
+                                                     BasicBlock *Bypass) {
+  Value *TC = getOrCreateVectorTripCount(L);
+  BasicBlock *BB = L->getLoopPreheader();
+  IRBuilder<> Builder(BB->getTerminator());
+  
+  // Now, compare the new count to zero. If it is zero skip the vector loop and
+  // jump to the scalar loop.
+  Value *Cmp = Builder.CreateICmpEQ(TC, Constant::getNullValue(TC->getType()),
+                                    "cmp.zero");
+
+  // Generate code to check that the loop's trip count that we computed by
+  // adding one to the backedge-taken count will not overflow.
+  BasicBlock *NewBB = BB->splitBasicBlock(BB->getTerminator(),
+                                          "vector.ph");
+  if (L->getParentLoop())
+    L->getParentLoop()->addBasicBlockToLoop(NewBB, *LI);
+  ReplaceInstWithInst(BB->getTerminator(),
+                      BranchInst::Create(Bypass, NewBB, Cmp));
+  LoopBypassBlocks.push_back(BB);
+}
+
+void InnerLoopVectorizer::emitStrideChecks(Loop *L,
+                                           BasicBlock *Bypass) {
+  BasicBlock *BB = L->getLoopPreheader();
+  
+  // Generate the code to check that the strides we assumed to be one are really
+  // one. We want the new basic block to start at the first instruction in a
+  // sequence of instructions that form a check.
+  Instruction *StrideCheck;
+  Instruction *FirstCheckInst;
+  std::tie(FirstCheckInst, StrideCheck) = addStrideCheck(BB->getTerminator());
+  if (!StrideCheck)
+    return;
+
+  // Create a new block containing the stride check.
+  BB->setName("vector.stridecheck");
+  auto *NewBB = BB->splitBasicBlock(BB->getTerminator(), "vector.ph");
+  if (L->getParentLoop())
+    L->getParentLoop()->addBasicBlockToLoop(NewBB, *LI);
+  ReplaceInstWithInst(BB->getTerminator(),
+                      BranchInst::Create(Bypass, NewBB, StrideCheck));
+  LoopBypassBlocks.push_back(BB);
+  AddedSafetyChecks = true;
+}
+
+void InnerLoopVectorizer::emitMemRuntimeChecks(Loop *L,
+                                               BasicBlock *Bypass) {
+  BasicBlock *BB = L->getLoopPreheader();
+
+  // Generate the code that checks in runtime if arrays overlap. We put the
+  // checks into a separate block to make the more common case of few elements
+  // faster.
+  Instruction *FirstCheckInst;
+  Instruction *MemRuntimeCheck;
+  std::tie(FirstCheckInst, MemRuntimeCheck) =
+      Legal->getLAI()->addRuntimeChecks(BB->getTerminator());
+  if (!MemRuntimeCheck)
+    return;
+
+  // Create a new block containing the memory check.
+  BB->setName("vector.memcheck");
+  auto *NewBB = BB->splitBasicBlock(BB->getTerminator(), "vector.ph");
+  if (L->getParentLoop())
+    L->getParentLoop()->addBasicBlockToLoop(NewBB, *LI);
+  ReplaceInstWithInst(BB->getTerminator(),
+                      BranchInst::Create(Bypass, NewBB, MemRuntimeCheck));
+  LoopBypassBlocks.push_back(BB);
+  AddedSafetyChecks = true;
+}
+
+
 void InnerLoopVectorizer::createEmptyLoop() {
   /*
    In this function we generate a new loop. The new loop will contain
@@ -2575,13 +2772,13 @@ void InnerLoopVectorizer::createEmptyLoop() {
   |  /  |
   | /   v
   ||   [ ]     <-- vector pre header.
-  ||    |
-  ||    v
-  ||   [  ] \
-  ||   [  ]_|   <-- vector loop.
-  ||    |
-  | \   v
-  |   >[ ]   <--- middle-block.
+  |/    |
+  |     v
+  |    [  ] \
+  |    [  ]_|   <-- vector loop.
+  |     |
+  |     v
+  |   -[ ]   <--- middle-block.
   |  /  |
   | /   v
   -|- >[ ]     <--- new preheader.
@@ -2605,68 +2802,15 @@ void InnerLoopVectorizer::createEmptyLoop() {
   // don't. One example is c++ iterators that often have multiple pointer
   // induction variables. In the code below we also support a case where we
   // don't have a single induction variable.
+  //
+  // We try to obtain an induction variable from the original loop as hard
+  // as possible. However if we don't find one that:
+  //   - is an integer
+  //   - counts from zero, stepping by one
+  //   - is the size of the widest induction variable type
+  // then we create a new one.
   OldInduction = Legal->getInduction();
   Type *IdxTy = Legal->getWidestInductionType();
-
-  // Find the loop boundaries.
-  const SCEV *ExitCount = SE->getBackedgeTakenCount(OrigLoop);
-  assert(ExitCount != SE->getCouldNotCompute() && "Invalid loop count");
-
-  // The exit count might have the type of i64 while the phi is i32. This can
-  // happen if we have an induction variable that is sign extended before the
-  // compare. The only way that we get a backedge taken count is that the
-  // induction variable was signed and as such will not overflow. In such a case
-  // truncation is legal.
-  if (ExitCount->getType()->getPrimitiveSizeInBits() >
-      IdxTy->getPrimitiveSizeInBits())
-    ExitCount = SE->getTruncateOrNoop(ExitCount, IdxTy);
-
-  const SCEV *BackedgeTakeCount = SE->getNoopOrZeroExtend(ExitCount, IdxTy);
-  // Get the total trip count from the count by adding 1.
-  ExitCount = SE->getAddExpr(BackedgeTakeCount,
-                             SE->getConstant(BackedgeTakeCount->getType(), 1));
-
-  const DataLayout &DL = OldBasicBlock->getModule()->getDataLayout();
-
-  // Expand the trip count and place the new instructions in the preheader.
-  // Notice that the pre-header does not change, only the loop body.
-  SCEVExpander Exp(*SE, DL, "induction");
-
-  // The loop minimum iterations check below is to ensure the loop has enough
-  // trip count so the generated vector loop will likely be executed and the
-  // preparation and rounding-off costs will likely be worthy.
-  //
-  // The minimum iteration check also covers case where the backedge-taken
-  // count is uint##_max.  Adding one to it will cause overflow and an
-  // incorrect loop trip count being generated in the vector body. In this
-  // case we also want to directly jump to the scalar remainder loop.
-  Value *ExitCountValue = Exp.expandCodeFor(ExitCount, ExitCount->getType(),
-                                            VectorPH->getTerminator());
-  if (ExitCountValue->getType()->isPointerTy())
-    ExitCountValue = CastInst::CreatePointerCast(ExitCountValue, IdxTy,
-                                                 "exitcount.ptrcnt.to.int",
-                                                 VectorPH->getTerminator());
-
-  Instruction *CheckMinIters =
-      CmpInst::Create(Instruction::ICmp, CmpInst::ICMP_ULT, ExitCountValue,
-                      ConstantInt::get(ExitCountValue->getType(), VF * UF),
-                      "min.iters.check", VectorPH->getTerminator());
-
-  // The loop index does not have to start at Zero. Find the original start
-  // value from the induction PHI node. If we don't have an induction variable
-  // then we know that it starts at zero.
-  Builder.SetInsertPoint(VectorPH->getTerminator());
-  Value *StartIdx = ExtendedIdx =
-      OldInduction
-          ? Builder.CreateZExt(OldInduction->getIncomingValueForBlock(VectorPH),
-                               IdxTy)
-          : ConstantInt::get(IdxTy, 0);
-
-  // Count holds the overall loop count (N).
-  Value *Count = Exp.expandCodeFor(ExitCount, ExitCount->getType(),
-                                   VectorPH->getTerminator());
-
-  LoopBypassBlocks.push_back(VectorPH);
 
   // Split the single block loop into the two loop structure described above.
   BasicBlock *VecBody =
@@ -2691,117 +2835,36 @@ void InnerLoopVectorizer::createEmptyLoop() {
   }
   Lp->addBasicBlockToLoop(VecBody, *LI);
 
-  // Use this IR builder to create the loop instructions (Phi, Br, Cmp)
-  // inside the loop.
-  Builder.SetInsertPoint(VecBody->getFirstNonPHI());
+  // Find the loop boundaries.
+  Value *Count = getOrCreateTripCount(Lp);
 
-  // Generate the induction variable.
-  setDebugLocFromInst(Builder, getDebugLocFromInstOrOperands(OldInduction));
-  Induction = Builder.CreatePHI(IdxTy, 2, "index");
-  // The loop step is equal to the vectorization factor (num of SIMD elements)
-  // times the unroll factor (num of SIMD instructions).
-  Constant *Step = ConstantInt::get(IdxTy, VF * UF);
+  Value *StartIdx = ConstantInt::get(IdxTy, 0);
 
-  // Generate code to check that the loop's trip count is not less than the
-  // minimum loop iteration number threshold.
-  BasicBlock *NewVectorPH =
-      VectorPH->splitBasicBlock(VectorPH->getTerminator(), "min.iters.checked");
-  if (ParentLoop)
-    ParentLoop->addBasicBlockToLoop(NewVectorPH, *LI);
-  ReplaceInstWithInst(VectorPH->getTerminator(),
-                      BranchInst::Create(ScalarPH, NewVectorPH, CheckMinIters));
-  VectorPH = NewVectorPH;
-
-  // This is the IR builder that we use to add all of the logic for bypassing
-  // the new vector loop.
-  IRBuilder<> BypassBuilder(VectorPH->getTerminator());
-  setDebugLocFromInst(BypassBuilder,
-                      getDebugLocFromInstOrOperands(OldInduction));
-
-  // We may need to extend the index in case there is a type mismatch.
-  // We know that the count starts at zero and does not overflow.
-  if (Count->getType() != IdxTy) {
-    // The exit count can be of pointer type. Convert it to the correct
-    // integer type.
-    if (ExitCount->getType()->isPointerTy())
-      Count = BypassBuilder.CreatePointerCast(Count, IdxTy, "ptrcnt.to.int");
-    else
-      Count = BypassBuilder.CreateZExtOrTrunc(Count, IdxTy, "cnt.cast");
-  }
-
-  // Add the start index to the loop count to get the new end index.
-  Value *IdxEnd = BypassBuilder.CreateAdd(Count, StartIdx, "end.idx");
-
-  // Now we need to generate the expression for N - (N % VF), which is
-  // the part that the vectorized body will execute.
-  Value *R = BypassBuilder.CreateURem(Count, Step, "n.mod.vf");
-  Value *CountRoundDown = BypassBuilder.CreateSub(Count, R, "n.vec");
-  Value *IdxEndRoundDown = BypassBuilder.CreateAdd(CountRoundDown, StartIdx,
-                                                     "end.idx.rnd.down");
-
+  // We need to test whether the backedge-taken count is uint##_max. Adding one
+  // to it will cause overflow and an incorrect loop trip count in the vector
+  // body. In case of overflow we want to directly jump to the scalar remainder
+  // loop.
+  emitMinimumIterationCountCheck(Lp, ScalarPH);
   // Now, compare the new count to zero. If it is zero skip the vector loop and
   // jump to the scalar loop.
-  Value *Cmp =
-      BypassBuilder.CreateICmpEQ(IdxEndRoundDown, StartIdx, "cmp.zero");
-  NewVectorPH =
-      VectorPH->splitBasicBlock(VectorPH->getTerminator(), "vector.ph");
-  if (ParentLoop)
-    ParentLoop->addBasicBlockToLoop(NewVectorPH, *LI);
-  LoopBypassBlocks.push_back(VectorPH);
-  ReplaceInstWithInst(VectorPH->getTerminator(),
-                      BranchInst::Create(MiddleBlock, NewVectorPH, Cmp));
-  VectorPH = NewVectorPH;
-
+  emitVectorLoopEnteredCheck(Lp, ScalarPH);
   // Generate the code to check that the strides we assumed to be one are really
   // one. We want the new basic block to start at the first instruction in a
   // sequence of instructions that form a check.
-  Instruction *StrideCheck;
-  Instruction *FirstCheckInst;
-  std::tie(FirstCheckInst, StrideCheck) =
-      addStrideCheck(VectorPH->getTerminator());
-  if (StrideCheck) {
-    AddedSafetyChecks = true;
-    // Create a new block containing the stride check.
-    VectorPH->setName("vector.stridecheck");
-    NewVectorPH =
-        VectorPH->splitBasicBlock(VectorPH->getTerminator(), "vector.ph");
-    if (ParentLoop)
-      ParentLoop->addBasicBlockToLoop(NewVectorPH, *LI);
-    LoopBypassBlocks.push_back(VectorPH);
-
-    // Replace the branch into the memory check block with a conditional branch
-    // for the "few elements case".
-    ReplaceInstWithInst(
-        VectorPH->getTerminator(),
-        BranchInst::Create(MiddleBlock, NewVectorPH, StrideCheck));
-
-    VectorPH = NewVectorPH;
-  }
-
+  emitStrideChecks(Lp, ScalarPH);
   // Generate the code that checks in runtime if arrays overlap. We put the
   // checks into a separate block to make the more common case of few elements
   // faster.
-  Instruction *MemRuntimeCheck;
-  std::tie(FirstCheckInst, MemRuntimeCheck) =
-      Legal->getLAI()->addRuntimeChecks(VectorPH->getTerminator());
-  if (MemRuntimeCheck) {
-    AddedSafetyChecks = true;
-    // Create a new block containing the memory check.
-    VectorPH->setName("vector.memcheck");
-    NewVectorPH =
-        VectorPH->splitBasicBlock(VectorPH->getTerminator(), "vector.ph");
-    if (ParentLoop)
-      ParentLoop->addBasicBlockToLoop(NewVectorPH, *LI);
-    LoopBypassBlocks.push_back(VectorPH);
-
-    // Replace the branch into the memory check block with a conditional branch
-    // for the "few elements case".
-    ReplaceInstWithInst(
-        VectorPH->getTerminator(),
-        BranchInst::Create(MiddleBlock, NewVectorPH, MemRuntimeCheck));
-
-    VectorPH = NewVectorPH;
-  }
+  emitMemRuntimeChecks(Lp, ScalarPH);
+  
+  // Generate the induction variable.
+  // The loop step is equal to the vectorization factor (num of SIMD elements)
+  // times the unroll factor (num of SIMD instructions).
+  Value *CountRoundDown = getOrCreateVectorTripCount(Lp);
+  Constant *Step = ConstantInt::get(IdxTy, VF * UF);
+  Induction =
+    createInductionVariable(Lp, StartIdx, CountRoundDown, Step,
+                            getDebugLocFromInstOrOperands(OldInduction));
 
   // We are going to resume the execution of the scalar loop.
   // Go over all of the induction variables that we found and fix the
@@ -2811,152 +2874,60 @@ void InnerLoopVectorizer::createEmptyLoop() {
   // If we come from a bypass edge then we need to start from the original
   // start value.
 
-  // This variable saves the new starting index for the scalar loop.
-  PHINode *ResumeIndex = nullptr;
+  // This variable saves the new starting index for the scalar loop. It is used
+  // to test if there are any tail iterations left once the vector loop has
+  // completed.
   LoopVectorizationLegality::InductionList::iterator I, E;
   LoopVectorizationLegality::InductionList *List = Legal->getInductionVars();
-  // Set builder to point to last bypass block.
-  BypassBuilder.SetInsertPoint(LoopBypassBlocks.back()->getTerminator());
   for (I = List->begin(), E = List->end(); I != E; ++I) {
     PHINode *OrigPhi = I->first;
     InductionDescriptor II = I->second;
 
-    Type *ResumeValTy = (OrigPhi == OldInduction) ? IdxTy : OrigPhi->getType();
-    PHINode *ResumeVal = PHINode::Create(ResumeValTy, 2, "resume.val",
-                                         MiddleBlock->getTerminator());
-    // We might have extended the type of the induction variable but we need a
-    // truncated version for the scalar loop.
-    PHINode *TruncResumeVal = (OrigPhi == OldInduction) ?
-      PHINode::Create(OrigPhi->getType(), 2, "trunc.resume.val",
-                      MiddleBlock->getTerminator()) : nullptr;
-
     // Create phi nodes to merge from the  backedge-taken check block.
-    PHINode *BCResumeVal = PHINode::Create(ResumeValTy, 3, "bc.resume.val",
+    PHINode *BCResumeVal = PHINode::Create(OrigPhi->getType(), 3,
+                                           "bc.resume.val",
                                            ScalarPH->getTerminator());
-    BCResumeVal->addIncoming(ResumeVal, MiddleBlock);
-
-    PHINode *BCTruncResumeVal = nullptr;
+    Value *EndValue;
     if (OrigPhi == OldInduction) {
-      BCTruncResumeVal =
-          PHINode::Create(OrigPhi->getType(), 2, "bc.trunc.resume.val",
-                          ScalarPH->getTerminator());
-      BCTruncResumeVal->addIncoming(TruncResumeVal, MiddleBlock);
-    }
-
-    Value *EndValue = nullptr;
-    switch (II.getKind()) {
-    case InductionDescriptor::IK_NoInduction:
-      llvm_unreachable("Unknown induction");
-    case InductionDescriptor::IK_IntInduction: {
-      // Handle the integer induction counter.
-      assert(OrigPhi->getType()->isIntegerTy() && "Invalid type");
-
-      // We have the canonical induction variable.
-      if (OrigPhi == OldInduction) {
-        // Create a truncated version of the resume value for the scalar loop,
-        // we might have promoted the type to a larger width.
-        EndValue =
-          BypassBuilder.CreateTrunc(IdxEndRoundDown, OrigPhi->getType());
-        // The new PHI merges the original incoming value, in case of a bypass,
-        // or the value at the end of the vectorized loop.
-        for (unsigned I = 1, E = LoopBypassBlocks.size(); I != E; ++I)
-          TruncResumeVal->addIncoming(II.getStartValue(), LoopBypassBlocks[I]);
-        TruncResumeVal->addIncoming(EndValue, VecBody);
-
-        BCTruncResumeVal->addIncoming(II.getStartValue(), LoopBypassBlocks[0]);
-
-        // We know what the end value is.
-        EndValue = IdxEndRoundDown;
-        // We also know which PHI node holds it.
-        ResumeIndex = ResumeVal;
-        break;
-      }
-
-      // Not the canonical induction variable - add the vector loop count to the
-      // start value.
-      Value *CRD = BypassBuilder.CreateSExtOrTrunc(CountRoundDown,
-                                                   II.getStartValue()->getType(),
-                                                   "cast.crd");
-      EndValue = II.transform(BypassBuilder, CRD);
+      // We know what the end value is.
+      EndValue = CountRoundDown;
+    } else {
+      IRBuilder<> B(LoopBypassBlocks.back()->getTerminator());
+      Value *CRD = B.CreateSExtOrTrunc(CountRoundDown,
+                                       II.getStepValue()->getType(),
+                                       "cast.crd");
+      EndValue = II.transform(B, CRD);
       EndValue->setName("ind.end");
-      break;
     }
-    case InductionDescriptor::IK_PtrInduction: {
-      Value *CRD = BypassBuilder.CreateSExtOrTrunc(CountRoundDown,
-                                                   II.getStepValue()->getType(),
-                                                   "cast.crd");
-      EndValue = II.transform(BypassBuilder, CRD);
-      EndValue->setName("ptr.ind.end");
-      break;
-    }
-    }// end of case
 
     // The new PHI merges the original incoming value, in case of a bypass,
     // or the value at the end of the vectorized loop.
-    for (unsigned I = 1, E = LoopBypassBlocks.size(); I != E; ++I) {
-      if (OrigPhi == OldInduction)
-        ResumeVal->addIncoming(StartIdx, LoopBypassBlocks[I]);
-      else
-        ResumeVal->addIncoming(II.getStartValue(), LoopBypassBlocks[I]);
-    }
-    ResumeVal->addIncoming(EndValue, VecBody);
+    BCResumeVal->addIncoming(EndValue, MiddleBlock);
 
     // Fix the scalar body counter (PHI node).
     unsigned BlockIdx = OrigPhi->getBasicBlockIndex(ScalarPH);
 
     // The old induction's phi node in the scalar body needs the truncated
     // value.
-    if (OrigPhi == OldInduction) {
-      BCResumeVal->addIncoming(StartIdx, LoopBypassBlocks[0]);
-      OrigPhi->setIncomingValue(BlockIdx, BCTruncResumeVal);
-    } else {
-      BCResumeVal->addIncoming(II.getStartValue(), LoopBypassBlocks[0]);
-      OrigPhi->setIncomingValue(BlockIdx, BCResumeVal);
-    }
+    for (unsigned I = 0, E = LoopBypassBlocks.size(); I != E; ++I)
+      BCResumeVal->addIncoming(II.getStartValue(), LoopBypassBlocks[I]);
+    OrigPhi->setIncomingValue(BlockIdx, BCResumeVal);
   }
-
-  // If we are generating a new induction variable then we also need to
-  // generate the code that calculates the exit value. This value is not
-  // simply the end of the counter because we may skip the vectorized body
-  // in case of a runtime check.
-  if (!OldInduction){
-    assert(!ResumeIndex && "Unexpected resume value found");
-    ResumeIndex = PHINode::Create(IdxTy, 2, "new.indc.resume.val",
-                                  MiddleBlock->getTerminator());
-    for (unsigned I = 1, E = LoopBypassBlocks.size(); I != E; ++I)
-      ResumeIndex->addIncoming(StartIdx, LoopBypassBlocks[I]);
-    ResumeIndex->addIncoming(IdxEndRoundDown, VecBody);
-  }
-
-  // Make sure that we found the index where scalar loop needs to continue.
-  assert(ResumeIndex && ResumeIndex->getType()->isIntegerTy() &&
-         "Invalid resume Index");
 
   // Add a check in the middle block to see if we have completed
   // all of the iterations in the first vector loop.
   // If (N - N%VF) == N, then we *don't* need to run the remainder.
-  Value *CmpN = CmpInst::Create(Instruction::ICmp, CmpInst::ICMP_EQ, IdxEnd,
-                                ResumeIndex, "cmp.n",
+  Value *CmpN = CmpInst::Create(Instruction::ICmp, CmpInst::ICMP_EQ, Count,
+                                CountRoundDown, "cmp.n",
                                 MiddleBlock->getTerminator());
   ReplaceInstWithInst(MiddleBlock->getTerminator(),
                       BranchInst::Create(ExitBlock, ScalarPH, CmpN));
-
-  // Create i+1 and fill the PHINode.
-  Value *NextIdx = Builder.CreateAdd(Induction, Step, "index.next");
-  Induction->addIncoming(StartIdx, VectorPH);
-  Induction->addIncoming(NextIdx, VecBody);
-  // Create the compare.
-  Value *ICmp = Builder.CreateICmpEQ(NextIdx, IdxEndRoundDown);
-  Builder.CreateCondBr(ICmp, MiddleBlock, VecBody);
-
-  // Now we have two terminators. Remove the old one from the block.
-  VecBody->getTerminator()->eraseFromParent();
 
   // Get ready to start creating new instructions into the vectorized body.
   Builder.SetInsertPoint(VecBody->getFirstInsertionPt());
 
   // Save the state.
-  LoopVectorPreHeader = VectorPH;
+  LoopVectorPreHeader = Lp->getLoopPreheader();
   LoopScalarPreHeader = ScalarPH;
   LoopMiddleBlock = MiddleBlock;
   LoopExitBlock = ExitBlock;
@@ -3253,19 +3224,8 @@ void InnerLoopVectorizer::vectorizeLoop() {
     // instructions.
     Builder.SetInsertPoint(LoopMiddleBlock->getFirstInsertionPt());
 
-    VectorParts RdxParts, &RdxExitVal = getVectorValue(LoopExitInst);
+    VectorParts RdxParts = getVectorValue(LoopExitInst);
     setDebugLocFromInst(Builder, LoopExitInst);
-    for (unsigned part = 0; part < UF; ++part) {
-      // This PHINode contains the vectorized reduction variable, or
-      // the initial value vector, if we bypass the vector loop.
-      PHINode *NewPhi = Builder.CreatePHI(VecTy, 2, "rdx.vec.exit.phi");
-      Value *StartVal = (part == 0) ? VectorStart : Identity;
-      for (unsigned I = 1, E = LoopBypassBlocks.size(); I != E; ++I)
-        NewPhi->addIncoming(StartVal, LoopBypassBlocks[I]);
-      NewPhi->addIncoming(RdxExitVal[part],
-                          LoopVectorBody.back());
-      RdxParts.push_back(NewPhi);
-    }
 
     // If the vector reduction can be performed in a smaller type, we truncate
     // then extend the loop exit value to enable InstCombine to evaluate the
@@ -3274,15 +3234,17 @@ void InnerLoopVectorizer::vectorizeLoop() {
       Type *RdxVecTy = VectorType::get(RdxDesc.getRecurrenceType(), VF);
       Builder.SetInsertPoint(LoopVectorBody.back()->getTerminator());
       for (unsigned part = 0; part < UF; ++part) {
-        Value *Trunc = Builder.CreateTrunc(RdxExitVal[part], RdxVecTy);
+        Value *Trunc = Builder.CreateTrunc(RdxParts[part], RdxVecTy);
         Value *Extnd = RdxDesc.isSigned() ? Builder.CreateSExt(Trunc, VecTy)
                                           : Builder.CreateZExt(Trunc, VecTy);
-        for (Value::user_iterator UI = RdxExitVal[part]->user_begin();
-             UI != RdxExitVal[part]->user_end();)
-          if (*UI != Trunc)
-            (*UI++)->replaceUsesOfWith(RdxExitVal[part], Extnd);
-          else
+        for (Value::user_iterator UI = RdxParts[part]->user_begin();
+             UI != RdxParts[part]->user_end();)
+          if (*UI != Trunc) {
+            (*UI++)->replaceUsesOfWith(RdxParts[part], Extnd);
+            RdxParts[part] = Extnd;
+          } else {
             ++UI;
+          }
       }
       Builder.SetInsertPoint(LoopMiddleBlock->getFirstInsertionPt());
       for (unsigned part = 0; part < UF; ++part)
@@ -3353,7 +3315,8 @@ void InnerLoopVectorizer::vectorizeLoop() {
     // block and the middle block.
     PHINode *BCBlockPhi = PHINode::Create(RdxPhi->getType(), 2, "bc.merge.rdx",
                                           LoopScalarPreHeader->getTerminator());
-    BCBlockPhi->addIncoming(ReductionStartValue, LoopBypassBlocks[0]);
+    for (unsigned I = 0, E = LoopBypassBlocks.size(); I != E; ++I)
+      BCBlockPhi->addIncoming(ReductionStartValue, LoopBypassBlocks[I]);
     BCBlockPhi->addIncoming(ReducedPartRdx, LoopMiddleBlock);
 
     // Now, we need to fix the users of the reduction variable
@@ -3391,6 +3354,20 @@ void InnerLoopVectorizer::vectorizeLoop() {
 
   fixLCSSAPHIs();
 
+  // Make sure DomTree is updated.
+  updateAnalysis();
+  
+  // Predicate any stores.
+  for (auto KV : PredicatedStores) {
+    BasicBlock::iterator I(KV.first);
+    auto *BB = SplitBlock(I->getParent(), std::next(I), DT, LI);
+    auto *T = SplitBlockAndInsertIfThen(KV.second, I, /*Unreachable=*/false,
+                                        /*BranchWeights=*/nullptr, DT);
+    I->moveBefore(T);
+    I->getParent()->setName("pred.store.if");
+    BB->setName("pred.store.continue");
+  }
+  DEBUG(DT->verifyDomTree());
   // Remove redundant induction instructions.
   cse(LoopVectorBody);
 }
@@ -3533,22 +3510,15 @@ void InnerLoopVectorizer::widenPHIInstruction(Instruction *PN,
       llvm_unreachable("Unknown induction");
     case InductionDescriptor::IK_IntInduction: {
       assert(P->getType() == II.getStartValue()->getType() && "Types must match");
-      Type *PhiTy = P->getType();
-      Value *Broadcasted;
-      if (P == OldInduction) {
-        // Handle the canonical induction variable. We might have had to
-        // extend the type.
-        Broadcasted = Builder.CreateTrunc(Induction, PhiTy);
-      } else {
-        // Handle other induction variables that are now based on the
-        // canonical one.
-        Value *NormalizedIdx = Builder.CreateSub(Induction, ExtendedIdx,
-                                                 "normalized.idx");
-        NormalizedIdx = Builder.CreateSExtOrTrunc(NormalizedIdx, PhiTy);
-        Broadcasted = II.transform(Builder, NormalizedIdx);
-        Broadcasted->setName("offset.idx");
+      // Handle other induction variables that are now based on the
+      // canonical one.
+      Value *V = Induction;
+      if (P != OldInduction) {
+        V = Builder.CreateSExtOrTrunc(Induction, P->getType());
+        V = II.transform(Builder, V);
+        V->setName("offset.idx");
       }
-      Broadcasted = getBroadcastInstrs(Broadcasted);
+      Value *Broadcasted = getBroadcastInstrs(V);
       // After broadcasting the induction variable we need to make the vector
       // consecutive by adding 0, 1, 2, etc.
       for (unsigned part = 0; part < UF; ++part)
@@ -3559,17 +3529,15 @@ void InnerLoopVectorizer::widenPHIInstruction(Instruction *PN,
       // Handle the pointer induction variable case.
       assert(P->getType()->isPointerTy() && "Unexpected type.");
       // This is the normalized GEP that starts counting at zero.
-      Value *NormalizedIdx =
-          Builder.CreateSub(Induction, ExtendedIdx, "normalized.idx");
-      NormalizedIdx =
-          Builder.CreateSExtOrTrunc(NormalizedIdx, II.getStepValue()->getType());
+      Value *PtrInd = Induction;
+      PtrInd = Builder.CreateSExtOrTrunc(PtrInd, II.getStepValue()->getType());
       // This is the vector of results. Notice that we don't generate
       // vector geps because scalar geps result in better code.
       for (unsigned part = 0; part < UF; ++part) {
         if (VF == 1) {
           int EltIndex = part;
-          Constant *Idx = ConstantInt::get(NormalizedIdx->getType(), EltIndex);
-          Value *GlobalIdx = Builder.CreateAdd(NormalizedIdx, Idx);
+          Constant *Idx = ConstantInt::get(PtrInd->getType(), EltIndex);
+          Value *GlobalIdx = Builder.CreateAdd(PtrInd, Idx);
           Value *SclrGep = II.transform(Builder, GlobalIdx);
           SclrGep->setName("next.gep");
           Entry[part] = SclrGep;
@@ -3579,8 +3547,8 @@ void InnerLoopVectorizer::widenPHIInstruction(Instruction *PN,
         Value *VecVal = UndefValue::get(VectorType::get(P->getType(), VF));
         for (unsigned int i = 0; i < VF; ++i) {
           int EltIndex = i + part * VF;
-          Constant *Idx = ConstantInt::get(NormalizedIdx->getType(), EltIndex);
-          Value *GlobalIdx = Builder.CreateAdd(NormalizedIdx, Idx);
+          Constant *Idx = ConstantInt::get(PtrInd->getType(), EltIndex);
+          Value *GlobalIdx = Builder.CreateAdd(PtrInd, Idx);
           Value *SclrGep = II.transform(Builder, GlobalIdx);
           SclrGep->setName("next.gep");
           VecVal = Builder.CreateInsertElement(VecVal, SclrGep,
@@ -3685,10 +3653,12 @@ void InnerLoopVectorizer::vectorizeBlockInLoop(BasicBlock *BB, PhiVector *PV) {
       VectorParts &B = getVectorValue(it->getOperand(1));
       for (unsigned Part = 0; Part < UF; ++Part) {
         Value *C = nullptr;
-        if (FCmp)
+        if (FCmp) {
           C = Builder.CreateFCmp(Cmp->getPredicate(), A[Part], B[Part]);
-        else
+          cast<FCmpInst>(C)->copyFastMathFlags(it);
+        } else {
           C = Builder.CreateICmp(Cmp->getPredicate(), A[Part], B[Part]);
+        }
         Entry[Part] = C;
       }
 
@@ -3838,19 +3808,12 @@ void InnerLoopVectorizer::updateAnalysis() {
     DT->addNewBlock(LoopBypassBlocks[I], LoopBypassBlocks[I-1]);
   DT->addNewBlock(LoopVectorPreHeader, LoopBypassBlocks.back());
 
-  // Due to if predication of stores we might create a sequence of "if(pred)
-  // a[i] = ...;  " blocks.
-  for (unsigned i = 0, e = LoopVectorBody.size(); i != e; ++i) {
-    if (i == 0)
-      DT->addNewBlock(LoopVectorBody[0], LoopVectorPreHeader);
-    else if (isPredicatedBlock(i)) {
-      DT->addNewBlock(LoopVectorBody[i], LoopVectorBody[i-1]);
-    } else {
-      DT->addNewBlock(LoopVectorBody[i], LoopVectorBody[i-2]);
-    }
-  }
+  // We don't predicate stores by this point, so the vector body should be a
+  // single loop.
+  assert(LoopVectorBody.size() == 1 && "Expected single block loop!");
+  DT->addNewBlock(LoopVectorBody[0], LoopVectorPreHeader);
 
-  DT->addNewBlock(LoopMiddleBlock, LoopBypassBlocks[1]);
+  DT->addNewBlock(LoopMiddleBlock, LoopVectorBody.back());
   DT->addNewBlock(LoopScalarPreHeader, LoopBypassBlocks[0]);
   DT->changeImmediateDominator(LoopScalarBody, LoopScalarPreHeader);
   DT->changeImmediateDominator(LoopExitBlock, LoopBypassBlocks[0]);
@@ -4134,10 +4097,13 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
 
           // Int inductions are special because we only allow one IV.
           if (ID.getKind() == InductionDescriptor::IK_IntInduction &&
-              ID.getStepValue()->isOne()) {
+              ID.getStepValue()->isOne() &&
+              isa<Constant>(ID.getStartValue()) &&
+                cast<Constant>(ID.getStartValue())->isNullValue()) {
             // Use the phi node with the widest type as induction. Use the last
             // one if there are multiple (no good reason for doing this other
-            // than it is expedient).
+            // than it is expedient). We've checked that it begins at zero and
+            // steps by one, so this is a canonical induction variable.
             if (!Induction || PhiTy == WidestIndTy)
               Induction = Phi;
           }
@@ -4244,6 +4210,12 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
       return false;
     }
   }
+
+  // Now we know the widest induction type, check if our found induction
+  // is the same size. If it's not, unset it here and InnerLoopVectorizer
+  // will create another.
+  if (Induction && WidestIndTy != Induction->getType())
+    Induction = nullptr;
 
   return true;
 }
@@ -5360,7 +5332,9 @@ char LoopVectorize::ID = 0;
 static const char lv_name[] = "Loop Vectorization";
 INITIALIZE_PASS_BEGIN(LoopVectorize, LV_NAME, lv_name, false, false)
 INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
-INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
+INITIALIZE_PASS_DEPENDENCY(BasicAAWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(BlockFrequencyInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
@@ -5436,19 +5410,12 @@ void InnerLoopUnroller::scalarizeInstruction(Instruction *Instr,
   // Create a new entry in the WidenMap and initialize it to Undef or Null.
   VectorParts &VecResults = WidenMap.splat(Instr, UndefVec);
 
-  Instruction *InsertPt = Builder.GetInsertPoint();
-  BasicBlock *IfBlock = Builder.GetInsertBlock();
-  BasicBlock *CondBlock = nullptr;
-
   VectorParts Cond;
-  Loop *VectorLp = nullptr;
   if (IfPredicateStore) {
     assert(Instr->getParent()->getSinglePredecessor() &&
            "Only support single predecessor blocks");
     Cond = createEdgeMask(Instr->getParent()->getSinglePredecessor(),
                           Instr->getParent());
-    VectorLp = LI->getLoopFor(IfBlock);
-    assert(VectorLp && "Must have a loop for this block");
   }
 
   // For each vector unroll 'part':
@@ -5463,11 +5430,6 @@ void InnerLoopUnroller::scalarizeInstruction(Instruction *Instr,
             Builder.CreateExtractElement(Cond[Part], Builder.getInt32(0));
       Cmp = Builder.CreateICmp(ICmpInst::ICMP_EQ, Cond[Part],
                                ConstantInt::get(Cond[Part]->getType(), 1));
-      CondBlock = IfBlock->splitBasicBlock(InsertPt, "cond.store");
-      LoopVectorBody.push_back(CondBlock);
-      VectorLp->addBasicBlockToLoop(CondBlock, *LI);
-      // Update Builder with newly created basic block.
-      Builder.SetInsertPoint(InsertPt);
     }
 
     Instruction *Cloned = Instr->clone();
@@ -5487,16 +5449,10 @@ void InnerLoopUnroller::scalarizeInstruction(Instruction *Instr,
       if (!IsVoidRetTy)
         VecResults[Part] = Cloned;
 
-    // End if-block.
-      if (IfPredicateStore) {
-        BasicBlock *NewIfBlock = CondBlock->splitBasicBlock(InsertPt, "else");
-        LoopVectorBody.push_back(NewIfBlock);
-        VectorLp->addBasicBlockToLoop(NewIfBlock, *LI);
-        Builder.SetInsertPoint(InsertPt);
-        ReplaceInstWithInst(IfBlock->getTerminator(),
-                            BranchInst::Create(CondBlock, NewIfBlock, Cmp));
-        IfBlock = NewIfBlock;
-      }
+      // End if-block.
+      if (IfPredicateStore)
+        PredicatedStores.push_back(std::make_pair(cast<StoreInst>(Cloned),
+                                                  Cmp));
   }
 }
 

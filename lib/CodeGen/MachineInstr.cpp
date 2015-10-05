@@ -1644,7 +1644,6 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
     FirstOp = false;
   }
 
-
   for (unsigned i = StartOp, e = getNumOperands(); i != e; ++i) {
     const MachineOperand &MO = getOperand(i);
 
@@ -1735,13 +1734,16 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
   }
 
   bool HaveSemi = false;
-  const unsigned PrintableFlags = FrameSetup;
+  const unsigned PrintableFlags = FrameSetup | FrameDestroy;
   if (Flags & PrintableFlags) {
     if (!HaveSemi) OS << ";"; HaveSemi = true;
     OS << " flags: ";
 
     if (Flags & FrameSetup)
       OS << "FrameSetup";
+
+    if (Flags & FrameDestroy)
+      OS << "FrameDestroy";
   }
 
   if (!memoperands_empty()) {
@@ -1784,7 +1786,7 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
       DebugLoc InlinedAtDL(InlinedAt);
       if (InlinedAtDL && MF) {
         OS << " inlined @[ ";
-	InlinedAtDL.print(OS);
+        InlinedAtDL.print(OS);
         OS << " ]";
       }
     }

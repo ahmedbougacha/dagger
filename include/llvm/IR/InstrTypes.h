@@ -51,8 +51,8 @@ protected:
   virtual BasicBlock *getSuccessorV(unsigned idx) const = 0;
   virtual unsigned getNumSuccessorsV() const = 0;
   virtual void setSuccessorV(unsigned idx, BasicBlock *B) = 0;
-public:
 
+public:
   /// Return the number of successors that this terminator has.
   unsigned getNumSuccessors() const {
     return getNumSuccessorsV();
@@ -82,6 +82,7 @@ public:
     case Instruction::CatchPad:
     case Instruction::CatchEndPad:
     case Instruction::CatchRet:
+    case Instruction::CleanupEndPad:
     case Instruction::CleanupRet:
     case Instruction::Invoke:
     case Instruction::Resume:
@@ -270,7 +271,6 @@ public:
   }
 };
 
-
 //===----------------------------------------------------------------------===//
 //                          UnaryInstruction Class
 //===----------------------------------------------------------------------===//
@@ -288,6 +288,7 @@ protected:
     : Instruction(Ty, iType, &Op<0>(), 1, IAE) {
     Op<0>() = V;
   }
+
 public:
   // allocate space for exactly one operand
   void *operator new(size_t s) {
@@ -326,6 +327,7 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(UnaryInstruction, Value)
 
 class BinaryOperator : public Instruction {
   void *operator new(size_t, unsigned) = delete;
+
 protected:
   void init(BinaryOps iType);
   BinaryOperator(BinaryOps iType, Value *S1, Value *S2, Type *Ty,
@@ -402,7 +404,7 @@ public:
     BO->setHasNoSignedWrap(true);
     return BO;
   }
-  
+
   static BinaryOperator *CreateNUW(BinaryOps Opc, Value *V1, Value *V2,
                                    const Twine &Name = "") {
     BinaryOperator *BO = Create(Opc, V1, V2, Name);
@@ -421,7 +423,7 @@ public:
     BO->setHasNoUnsignedWrap(true);
     return BO;
   }
-  
+
   static BinaryOperator *CreateExact(BinaryOps Opc, Value *V1, Value *V2,
                                      const Twine &Name = "") {
     BinaryOperator *BO = Create(Opc, V1, V2, Name);
@@ -440,29 +442,29 @@ public:
     BO->setIsExact(true);
     return BO;
   }
-  
-#define DEFINE_HELPERS(OPC, NUWNSWEXACT)                                     \
-  static BinaryOperator *Create ## NUWNSWEXACT ## OPC                        \
-           (Value *V1, Value *V2, const Twine &Name = "") {                  \
-    return Create ## NUWNSWEXACT(Instruction::OPC, V1, V2, Name);            \
-  }                                                                          \
-  static BinaryOperator *Create ## NUWNSWEXACT ## OPC                        \
-           (Value *V1, Value *V2, const Twine &Name, BasicBlock *BB) {       \
-    return Create ## NUWNSWEXACT(Instruction::OPC, V1, V2, Name, BB);        \
-  }                                                                          \
-  static BinaryOperator *Create ## NUWNSWEXACT ## OPC                        \
-           (Value *V1, Value *V2, const Twine &Name, Instruction *I) {       \
-    return Create ## NUWNSWEXACT(Instruction::OPC, V1, V2, Name, I);         \
+
+#define DEFINE_HELPERS(OPC, NUWNSWEXACT)                                       \
+  static BinaryOperator *Create##NUWNSWEXACT##OPC(Value *V1, Value *V2,        \
+                                                  const Twine &Name = "") {    \
+    return Create##NUWNSWEXACT(Instruction::OPC, V1, V2, Name);                \
+  }                                                                            \
+  static BinaryOperator *Create##NUWNSWEXACT##OPC(                             \
+      Value *V1, Value *V2, const Twine &Name, BasicBlock *BB) {               \
+    return Create##NUWNSWEXACT(Instruction::OPC, V1, V2, Name, BB);            \
+  }                                                                            \
+  static BinaryOperator *Create##NUWNSWEXACT##OPC(                             \
+      Value *V1, Value *V2, const Twine &Name, Instruction *I) {               \
+    return Create##NUWNSWEXACT(Instruction::OPC, V1, V2, Name, I);             \
   }
-  
-  DEFINE_HELPERS(Add, NSW)  // CreateNSWAdd
-  DEFINE_HELPERS(Add, NUW)  // CreateNUWAdd
-  DEFINE_HELPERS(Sub, NSW)  // CreateNSWSub
-  DEFINE_HELPERS(Sub, NUW)  // CreateNUWSub
-  DEFINE_HELPERS(Mul, NSW)  // CreateNSWMul
-  DEFINE_HELPERS(Mul, NUW)  // CreateNUWMul
-  DEFINE_HELPERS(Shl, NSW)  // CreateNSWShl
-  DEFINE_HELPERS(Shl, NUW)  // CreateNUWShl
+
+  DEFINE_HELPERS(Add, NSW) // CreateNSWAdd
+  DEFINE_HELPERS(Add, NUW) // CreateNUWAdd
+  DEFINE_HELPERS(Sub, NSW) // CreateNSWSub
+  DEFINE_HELPERS(Sub, NUW) // CreateNUWSub
+  DEFINE_HELPERS(Mul, NSW) // CreateNSWMul
+  DEFINE_HELPERS(Mul, NUW) // CreateNUWMul
+  DEFINE_HELPERS(Shl, NSW) // CreateNSWShl
+  DEFINE_HELPERS(Shl, NUW) // CreateNUWShl
 
   DEFINE_HELPERS(SDiv, Exact)  // CreateExactSDiv
   DEFINE_HELPERS(UDiv, Exact)  // CreateExactUDiv
@@ -470,7 +472,7 @@ public:
   DEFINE_HELPERS(LShr, Exact)  // CreateExactLShr
 
 #undef DEFINE_HELPERS
-  
+
   /// Helper functions to construct and inspect unary operations (NEG and NOT)
   /// via binary operators SUB and XOR:
   ///
@@ -548,7 +550,7 @@ public:
   /// Convenience method to copy supported wrapping, exact, and fast-math flags
   /// from V to this instruction.
   void copyIRFlags(const Value *V);
-  
+
   /// Logical 'and' of any supported wrapping, exact, and fast-math flags of
   /// V and this instruction.
   void andIRFlags(const Value *V);
@@ -581,6 +583,7 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(BinaryOperator, Value)
 /// @brief Base class of casting instructions.
 class CastInst : public UnaryInstruction {
   void anchor() override;
+
 protected:
   /// @brief Constructor with insert-before-instruction semantics for subclasses
   CastInst(Type *Ty, unsigned iType, Value *S,
@@ -594,6 +597,7 @@ protected:
     : UnaryInstruction(Ty, iType, S, InsertAtEnd) {
     setName(NameStr);
   }
+
 public:
   /// Provides a way to construct any of the CastInst subclasses using an
   /// opcode instead of the subclass's constructor. The opcode must be in the
@@ -683,7 +687,7 @@ public:
     Value *S,                ///< The pointer value to be casted (operand 0)
     Type *Ty,          ///< The type to which cast should be made
     const Twine &Name = "", ///< Name for the instruction
-    Instruction *InsertBefore = 0 ///< Place to insert the instruction
+    Instruction *InsertBefore = nullptr ///< Place to insert the instruction
   );
 
   /// @brief Create a BitCast, a PtrToInt, or an IntToPTr cast instruction.
@@ -696,7 +700,7 @@ public:
     Value *S,                ///< The pointer value to be casted (operand 0)
     Type *Ty,          ///< The type to which cast should be made
     const Twine &Name = "", ///< Name for the instruction
-    Instruction *InsertBefore = 0 ///< Place to insert the instruction
+    Instruction *InsertBefore = nullptr ///< Place to insert the instruction
   );
 
   /// @brief Create a ZExt, BitCast, or Trunc for int -> int casts.
@@ -872,6 +876,7 @@ public:
 class CmpInst : public Instruction {
   void *operator new(size_t, unsigned) = delete;
   CmpInst() = delete;
+
 protected:
   CmpInst(Type *ty, Instruction::OtherOps op, unsigned short pred,
           Value *LHS, Value *RHS, const Twine &Name = "",
@@ -882,6 +887,7 @@ protected:
           BasicBlock *InsertAtEnd);
 
   void anchor() override; // Out of line virtual method.
+
 public:
   /// This enumeration lists the possible predicates for CmpInst subclasses.
   /// Values in the range 0-31 are reserved for FCmpInst, while values in the
@@ -967,7 +973,6 @@ public:
 
   bool isFPPredicate() const { return isFPPredicate(getPredicate()); }
   bool isIntPredicate() const { return isIntPredicate(getPredicate()); }
-
 
   /// For example, EQ -> NE, UGT -> ULE, SLT -> SGE,
   ///              OEQ -> UNE, UGT -> OLE, OLT -> UGE, etc.
@@ -1075,6 +1080,7 @@ public:
     }
     return Type::getInt1Ty(opnd_type->getContext());
   }
+
 private:
   // Shadow Value::setValueSubclassData with a private forwarding method so that
   // subclasses cannot accidentally use it.
@@ -1083,7 +1089,6 @@ private:
   }
 };
 
-
 // FIXME: these are redundant if CmpInst < BinaryOperator
 template <>
 struct OperandTraits<CmpInst> : public FixedNumOperandTraits<CmpInst, 2> {
@@ -1091,6 +1096,231 @@ struct OperandTraits<CmpInst> : public FixedNumOperandTraits<CmpInst, 2> {
 
 DEFINE_TRANSPARENT_OPERAND_ACCESSORS(CmpInst, Value)
 
-} // End llvm namespace
+/// \brief A lightweight accessor for an operand bundle meant to be passed
+/// around by value.
+struct OperandBundleUse {
+  StringRef Tag;
+  ArrayRef<Use> Inputs;
 
-#endif
+  OperandBundleUse() {}
+  explicit OperandBundleUse(StringRef Tag, ArrayRef<Use> Inputs)
+      : Tag(Tag), Inputs(Inputs) {}
+};
+
+/// \brief A container for an operand bundle being viewed as a set of values
+/// rather than a set of uses.
+///
+/// Unlike OperandBundleUse, OperandBundleDefT owns the memory it carries, and
+/// so it is possible to create and pass around "self-contained" instances of
+/// OperandBundleDef and ConstOperandBundleDef.
+template <typename InputTy> struct OperandBundleDefT {
+  std::string Tag;
+  std::vector<InputTy> Inputs;
+
+  OperandBundleDefT() {}
+  explicit OperandBundleDefT(StringRef Tag, const std::vector<InputTy> &Inputs)
+      : Tag(Tag), Inputs(Inputs) {}
+};
+
+typedef OperandBundleDefT<Value *> OperandBundleDef;
+typedef OperandBundleDefT<const Value *> ConstOperandBundleDef;
+
+/// \brief A mixin to add operand bundle functionality to llvm instruction
+/// classes.
+///
+/// OperandBundleUser uses the descriptor area co-allocated with the host User
+/// to store some meta information about which operands are "normal" operands,
+/// and which ones belong to some operand bundle.
+///
+/// The layout of an operand bundle user is
+///
+///          +-----------uint32_t End-------------------------------------+
+///          |                                                            |
+///          |  +--------uint32_t Begin--------------------+              |
+///          |  |                                          |              |
+///          ^  ^                                          v              v
+///  |------|------|----|----|----|----|----|---------|----|---------|----|-----
+///  | BOI0 | BOI1 | .. | DU | U0 | U1 | .. | BOI0_U0 | .. | BOI1_U0 | .. | Un
+///  |------|------|----|----|----|----|----|---------|----|---------|----|-----
+///   v  v                                  ^              ^
+///   |  |                                  |              |
+///   |  +--------uint32_t Begin------------+              |
+///   |                                                    |
+///   +-----------uint32_t End-----------------------------+
+///
+///
+/// BOI0, BOI1 ... are descriptions of operand bundles in this User's use list.
+/// These descriptions are installed and managed by this class, and they're all
+/// instances of OperandBundleUser<T>::BundleOpInfo.
+///
+/// DU is an additional descriptor installed by User's 'operator new' to keep
+/// track of the 'BOI0 ... BOIN' co-allocation.  OperandBundleUser does not
+/// access or modify DU in any way, it's an implementation detail private to
+/// User.
+///
+/// The regular Use& vector for the User starts at U0.  The operand bundle uses
+/// are part of the Use& vector, just like normal uses.  In the diagram above,
+/// the operand bundle uses start at BOI0_U0.  Each instance of BundleOpInfo has
+/// information about a contiguous set of uses constituting an operand bundle,
+/// and the total set of operand bundle uses themselves form a contiguous set of
+/// uses (i.e. there are no gaps between uses corresponding to individual
+/// operand bundles).
+///
+/// This class does not know the location of the set of operand bundle uses
+/// within the use list -- that is decided by the User using this class via the
+/// BeginIdx argument in populateBundleOperandInfos.
+///
+/// Currently operand bundle users with hung-off operands are not supported.
+template <typename InstrTy, typename OpIteratorTy> class OperandBundleUser {
+public:
+  /// \brief Return the number of operand bundles associated with this User.
+  unsigned getNumOperandBundles() const {
+    return std::distance(bundle_op_info_begin(), bundle_op_info_end());
+  }
+
+  /// \brief Return true if this User has any operand bundles.
+  bool hasOperandBundles() const { return getNumOperandBundles() != 0; }
+
+  /// \brief Return the total number operands (not operand bundles) used by
+  /// every operand bundle in this OperandBundleUser.
+  unsigned getNumTotalBundleOperands() const {
+    if (!hasOperandBundles())
+      return 0;
+
+    auto *Begin = bundle_op_info_begin();
+    auto *Back = bundle_op_info_end() - 1;
+
+    assert(Begin <= Back && "hasOperandBundles() returned true!");
+
+    return Back->End - Begin->Begin;
+  }
+
+  /// \brief Return the operand bundle at a specific index.
+  OperandBundleUse getOperandBundle(unsigned Index) const {
+    assert(Index < getNumOperandBundles() && "Index out of bounds!");
+    auto *BOI = bundle_op_info_begin() + Index;
+    auto op_begin = static_cast<const InstrTy *>(this)->op_begin();
+    ArrayRef<Use> Inputs(op_begin + BOI->Begin, op_begin + BOI->End);
+    return OperandBundleUse(BOI->Tag->getKey(), Inputs);
+  }
+
+  /// \brief Return the operand bundle at a specific index.
+  OperandBundleUse getOperandBundle(unsigned Index) {
+    assert(Index < getNumOperandBundles() && "Index out of bounds!");
+    auto *BOI = bundle_op_info_begin() + Index;
+    auto op_begin = static_cast<InstrTy *>(this)->op_begin();
+    ArrayRef<Use> Inputs(op_begin + BOI->Begin, op_begin + BOI->End);
+    return OperandBundleUse(BOI->Tag->getKey(), Inputs);
+  }
+
+protected:
+  /// \brief Used to keep track of an operand bundle.  See the main comment on
+  /// OperandBundleUser above.
+  struct BundleOpInfo {
+    /// \brief The operand bundle tag, interned by
+    /// LLVMContextImpl::getOrInsertBundleTag.
+    StringMapEntry<uint32_t> *Tag;
+
+    /// \brief The index in the Use& vector where operands for this operand
+    /// bundle starts.
+    uint32_t Begin;
+
+    /// \brief The index in the Use& vector where operands for this operand
+    /// bundle ends.
+    uint32_t End;
+  };
+
+  typedef BundleOpInfo *bundle_op_iterator;
+  typedef const BundleOpInfo *const_bundle_op_iterator;
+
+  /// \brief Return the start of the list of BundleOpInfo instances associated
+  /// with this OperandBundleUser.
+  bundle_op_iterator bundle_op_info_begin() {
+    if (!static_cast<InstrTy *>(this)->hasDescriptor())
+      return nullptr;
+
+    uint8_t *BytesBegin = static_cast<InstrTy *>(this)->getDescriptor().begin();
+    return reinterpret_cast<bundle_op_iterator>(BytesBegin);
+  }
+
+  /// \brief Return the start of the list of BundleOpInfo instances associated
+  /// with this OperandBundleUser.
+  const_bundle_op_iterator bundle_op_info_begin() const {
+    auto *NonConstThis =
+        const_cast<OperandBundleUser<InstrTy, OpIteratorTy> *>(this);
+    return NonConstThis->bundle_op_info_begin();
+  }
+
+  /// \brief Return the end of the list of BundleOpInfo instances associated
+  /// with this OperandBundleUser.
+  bundle_op_iterator bundle_op_info_end() {
+    if (!static_cast<InstrTy *>(this)->hasDescriptor())
+      return nullptr;
+
+    uint8_t *BytesEnd = static_cast<InstrTy *>(this)->getDescriptor().end();
+    return reinterpret_cast<bundle_op_iterator>(BytesEnd);
+  }
+
+  /// \brief Return the end of the list of BundleOpInfo instances associated
+  /// with this OperandBundleUser.
+  const_bundle_op_iterator bundle_op_info_end() const {
+    auto *NonConstThis =
+        const_cast<OperandBundleUser<InstrTy, OpIteratorTy> *>(this);
+    return NonConstThis->bundle_op_info_end();
+  }
+
+  /// \brief Return the range [\p bundle_op_info_begin, \p bundle_op_info_end).
+  iterator_range<bundle_op_iterator> bundle_op_infos() {
+    return iterator_range<bundle_op_iterator>(bundle_op_info_begin(),
+                                              bundle_op_info_end());
+  }
+
+  /// \brief Return the range [\p bundle_op_info_begin, \p bundle_op_info_end).
+  iterator_range<const_bundle_op_iterator> bundle_op_infos() const {
+    return iterator_range<const_bundle_op_iterator>(bundle_op_info_begin(),
+                                                    bundle_op_info_end());
+  }
+
+  /// \brief Populate the BundleOpInfo instances and the Use& vector from \p
+  /// Bundles.  Return the op_iterator pointing to the Use& one past the last
+  /// last bundle operand use.
+  ///
+  /// Each \p OperandBundleDef instance is tracked by a OperandBundleInfo
+  /// instance allocated in this User's descriptor.
+  OpIteratorTy populateBundleOperandInfos(ArrayRef<OperandBundleDef> Bundles,
+                                          const unsigned BeginIndex) {
+    auto It = static_cast<InstrTy *>(this)->op_begin() + BeginIndex;
+    for (auto &B : Bundles)
+      It = std::copy(B.Inputs.begin(), B.Inputs.end(), It);
+
+    auto *ContextImpl = static_cast<InstrTy *>(this)->getContext().pImpl;
+    auto BI = Bundles.begin();
+    unsigned CurrentIndex = BeginIndex;
+
+    for (auto &BOI : bundle_op_infos()) {
+      assert(BI != Bundles.end() && "Incorrect allocation?");
+
+      BOI.Tag = ContextImpl->getOrInsertBundleTag(BI->Tag);
+      BOI.Begin = CurrentIndex;
+      BOI.End = CurrentIndex + BI->Inputs.size();
+      CurrentIndex = BOI.End;
+      BI++;
+    }
+
+    assert(BI == Bundles.end() && "Incorrect allocation?");
+
+    return It;
+  }
+
+  /// \brief Return the total number of values used in \p Bundles.
+  static unsigned CountBundleInputs(ArrayRef<OperandBundleDef> Bundles) {
+    unsigned Total = 0;
+    for (auto &B : Bundles)
+      Total += B.Inputs.size();
+    return Total;
+  }
+};
+
+} // end llvm namespace
+
+#endif // LLVM_IR_INSTRTYPES_H

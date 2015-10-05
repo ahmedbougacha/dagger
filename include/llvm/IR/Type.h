@@ -38,10 +38,10 @@ template<class GraphType> struct GraphTraits;
 /// they are never changed.  Also note that only one instance of a particular
 /// type is ever created.  Thus seeing if two types are equal is a matter of
 /// doing a trivial pointer comparison. To enforce that no two equal instances
-/// are created, Type instances can only be created via static factory methods 
+/// are created, Type instances can only be created via static factory methods
 /// in class Type and in derived classes.  Once allocated, Types are never
 /// free'd.
-/// 
+///
 class Type {
 public:
   //===--------------------------------------------------------------------===//
@@ -109,7 +109,7 @@ protected:
   Type * const *ContainedTys;
 
 public:
-  void print(raw_ostream &O) const;
+  void print(raw_ostream &O, bool IsForDebug = false) const;
   void dump() const;
 
   /// getContext - Return the LLVMContext in which this type was uniqued.
@@ -132,7 +132,7 @@ public:
 
   /// isFloatTy - Return true if this is 'float', a 32-bit IEEE fp type.
   bool isFloatTy() const { return getTypeID() == FloatTyID; }
-  
+
   /// isDoubleTy - Return true if this is 'double', a 64-bit IEEE fp type.
   bool isDoubleTy() const { return getTypeID() == DoubleTyID; }
 
@@ -172,7 +172,7 @@ public:
   /// isFPOrFPVectorTy - Return true if this is a FP type or a vector of FP.
   ///
   bool isFPOrFPVectorTy() const { return getScalarType()->isFloatingPointTy(); }
- 
+
   /// isLabelTy - Return true if this is 'label'.
   bool isLabelTy() const { return getTypeID() == LabelTyID; }
 
@@ -184,7 +184,7 @@ public:
 
   /// isIntegerTy - True if this is an instance of IntegerType.
   ///
-  bool isIntegerTy() const { return getTypeID() == IntegerTyID; } 
+  bool isIntegerTy() const { return getTypeID() == IntegerTyID; }
 
   /// isIntegerTy - Return true if this is an IntegerType of the given width.
   bool isIntegerTy(unsigned Bitwidth) const;
@@ -193,7 +193,7 @@ public:
   /// integer types.
   ///
   bool isIntOrIntVectorTy() const { return getScalarType()->isIntegerTy(); }
-  
+
   /// isFunctionTy - True if this is an instance of FunctionType.
   ///
   bool isFunctionTy() const { return getTypeID() == FunctionTyID; }
@@ -214,14 +214,14 @@ public:
   /// pointer types.
   ///
   bool isPtrOrPtrVectorTy() const { return getScalarType()->isPointerTy(); }
- 
+
   /// isVectorTy - True if this is an instance of VectorType.
   ///
   bool isVectorTy() const { return getTypeID() == VectorTyID; }
 
-  /// canLosslesslyBitCastTo - Return true if this type could be converted 
-  /// with a lossless BitCast to type 'Ty'. For example, i8* to i32*. BitCasts 
-  /// are valid for types of the same size only where no re-interpretation of 
+  /// canLosslesslyBitCastTo - Return true if this type could be converted
+  /// with a lossless BitCast to type 'Ty'. For example, i8* to i32*. BitCasts
+  /// are valid for types of the same size only where no re-interpretation of
   /// the bits is done.
   /// @brief Determine if this type could be losslessly bitcast to Ty
   bool canLosslesslyBitCastTo(Type *Ty) const;
@@ -337,19 +337,19 @@ public:
   // example) is shorthand for cast<VectorType>(Ty)->getNumElements().  This is
   // only intended to cover the core methods that are frequently used, helper
   // methods should not be added here.
-  
+
   unsigned getIntegerBitWidth() const;
 
   Type *getFunctionParamType(unsigned i) const;
   unsigned getFunctionNumParams() const;
   bool isFunctionVarArg() const;
-  
+
   StringRef getStructName() const;
   unsigned getStructNumElements() const;
   Type *getStructElementType(unsigned N) const;
-  
+
   Type *getSequentialElementType() const;
-  
+
   uint64_t getArrayNumElements() const;
   Type *getArrayElementType() const { return getSequentialElementType(); }
 
@@ -360,7 +360,7 @@ public:
 
   /// \brief Get the address space of this pointer or pointer vector type.
   unsigned getPointerAddressSpace() const;
-  
+
   //===--------------------------------------------------------------------===//
   // Static members exported by the Type class itself.  Useful for getting
   // instances of Type.
@@ -390,7 +390,7 @@ public:
   static IntegerType *getInt32Ty(LLVMContext &C);
   static IntegerType *getInt64Ty(LLVMContext &C);
   static IntegerType *getInt128Ty(LLVMContext &C);
-  
+
   //===--------------------------------------------------------------------===//
   // Convenience methods for getting pointer types with one of the above builtin
   // types as pointee.
@@ -433,13 +433,11 @@ template <> struct isa_impl<PointerType, Type> {
   }
 };
 
-  
 //===----------------------------------------------------------------------===//
 // Provide specializations of GraphTraits to be able to treat a type as a
 // graph of sub types.
 
-
-template <> struct GraphTraits<Type*> {
+template <> struct GraphTraits<Type *> {
   typedef Type NodeType;
   typedef Type::subtype_iterator ChildIteratorType;
 
@@ -477,7 +475,7 @@ inline Type **unwrap(LLVMTypeRef* Tys) {
 inline LLVMTypeRef *wrap(Type **Tys) {
   return reinterpret_cast<LLVMTypeRef*>(const_cast<Type**>(Tys));
 }
-  
+
 } // End llvm namespace
 
 #endif

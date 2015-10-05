@@ -62,8 +62,8 @@ Intrinsic::ID getIntrinsicIDForCall(CallInst *CI, const TargetLibraryInfo *TLI);
 /// pointer.
 unsigned getGEPInductionOperand(const GetElementPtrInst *Gep);
 
-/// \brief If the argument is a GEP, then returns the operand identified by 
-/// getGEPInductionOperand. However, if there is some other non-loop-invariant 
+/// \brief If the argument is a GEP, then returns the operand identified by
+/// getGEPInductionOperand. However, if there is some other non-loop-invariant
 /// operand, it returns that instead.
 Value *stripGetElementPtr(Value *Ptr, ScalarEvolution *SE, Loop *Lp);
 
@@ -78,6 +78,11 @@ Value *getStrideFromPointer(Value *Ptr, ScalarEvolution *SE, Loop *Lp);
 /// already around as a register, for example if it were inserted then extracted
 /// from the vector.
 Value *findScalarElement(Value *V, unsigned EltNo);
+
+/// \brief Get splat value if the input is a splat vector or return nullptr.
+/// The value may be extracted from a splat constants vector or from
+/// a sequence of instructions that broadcast a single value into a vector.
+Value *getSplatValue(Value *V);
 
 } // llvm namespace
 

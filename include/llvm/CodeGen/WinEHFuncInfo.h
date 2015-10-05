@@ -14,11 +14,13 @@
 #ifndef LLVM_CODEGEN_WINEHFUNCINFO_H
 #define LLVM_CODEGEN_WINEHFUNCINFO_H
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TinyPtrVector.h"
-#include "llvm/ADT/DenseMap.h"
 
 namespace llvm {
+class AllocaInst;
 class BasicBlock;
 class Constant;
 class Function;
@@ -26,6 +28,7 @@ class GlobalVariable;
 class InvokeInst;
 class IntrinsicInst;
 class LandingPadInst;
+class MCExpr;
 class MCSymbol;
 class MachineBasicBlock;
 class Value;
@@ -114,48 +117,72 @@ void parseEHActions(const IntrinsicInst *II,
 // The following structs respresent the .xdata for functions using C++
 // exceptions on Windows.
 
+typedef PointerUnion<const BasicBlock *, MachineBasicBlock *> MBBOrBasicBlock;
+typedef PointerUnion<const Value *, const MachineBasicBlock *> ValueOrMBB;
+
 struct WinEHUnwindMapEntry {
   int ToState;
-  const Value *Cleanup;
+  ValueOrMBB Cleanup;
+};
+
+/// Similar to WinEHUnwindMapEntry, but supports SEH filters.
+struct SEHUnwindMapEntry {
+  /// If unwinding continues through this handler, transition to the handler at
+  /// this state. This indexes into SEHUnwindMap.
+  int ToState = -1;
+
+  bool IsFinally = false;
+
+  /// Holds the filter expression function.
+  const Function *Filter = nullptr;
+
+  /// Holds the __except or __finally basic block.
+  MBBOrBasicBlock Handler;
 };
 
 struct WinEHHandlerType {
   int Adjectives;
-  GlobalVariable *TypeDescriptor;
   int CatchObjRecoverIdx;
-  const Value *Handler;
-  MachineBasicBlock *HandlerMBB;
+  /// The CatchObj starts out life as an LLVM alloca, is turned into a frame
+  /// index, and after PEI, becomes a raw offset.
+  union {
+    const AllocaInst *Alloca;
+    int FrameOffset;
+    int FrameIndex;
+  } CatchObj = {};
+  GlobalVariable *TypeDescriptor;
+  ValueOrMBB Handler;
 };
 
 struct WinEHTryBlockMapEntry {
-  int TryLow;
-  int TryHigh;
+  int TryLow = -1;
+  int TryHigh = -1;
   int CatchHigh = -1;
   SmallVector<WinEHHandlerType, 1> HandlerArray;
 };
 
 struct WinEHFuncInfo {
-  DenseMap<const Function *, const LandingPadInst *> RootLPad;
-  DenseMap<const Function *, const InvokeInst *> LastInvoke;
-  DenseMap<const Function *, int> HandlerEnclosedState;
-  DenseMap<const Function *, bool> LastInvokeVisited;
   DenseMap<const Instruction *, int> EHPadStateMap;
-  DenseMap<const Function *, int> CatchHandlerParentFrameObjIdx;
-  DenseMap<const Function *, int> CatchHandlerParentFrameObjOffset;
-  DenseMap<const Function *, int> CatchHandlerMaxState;
-  DenseMap<const Function *, int> HandlerBaseState;
+  DenseMap<const CatchReturnInst *, const BasicBlock *>
+      CatchRetSuccessorColorMap;
+  DenseMap<MCSymbol *, std::pair<int, MCSymbol *>> InvokeToStateMap;
   SmallVector<WinEHUnwindMapEntry, 4> UnwindMap;
   SmallVector<WinEHTryBlockMapEntry, 4> TryBlockMap;
-  SmallVector<std::pair<MCSymbol *, int>, 4> IPToStateList;
+  SmallVector<SEHUnwindMapEntry, 4> SEHUnwindMap;
   int UnwindHelpFrameIdx = INT_MAX;
   int UnwindHelpFrameOffset = -1;
-  unsigned NumIPToStateFuncsVisited = 0;
 
   int getLastStateNumber() const { return UnwindMap.size() - 1; }
+
+  void addIPToStateRange(const BasicBlock *PadBB, MCSymbol *InvokeBegin,
+                         MCSymbol *InvokeEnd);
 
   /// localescape index of the 32-bit EH registration node. Set by
   /// WinEHStatePass and used indirectly by SEH filter functions of the parent.
   int EHRegNodeEscapeIndex = INT_MAX;
+  const AllocaInst *EHRegNode = nullptr;
+  int EHRegNodeFrameIndex = INT_MAX;
+  int EHRegNodeEndOffset = INT_MAX;
 
   WinEHFuncInfo() {}
 };
@@ -166,5 +193,10 @@ struct WinEHFuncInfo {
 void calculateWinCXXEHStateNumbers(const Function *ParentFn,
                                    WinEHFuncInfo &FuncInfo);
 
+void calculateSEHStateNumbers(const Function *ParentFn,
+                              WinEHFuncInfo &FuncInfo);
+
+void calculateCatchReturnSuccessorColors(const Function *Fn,
+                                         WinEHFuncInfo &FuncInfo);
 }
 #endif // LLVM_CODEGEN_WINEHFUNCINFO_H

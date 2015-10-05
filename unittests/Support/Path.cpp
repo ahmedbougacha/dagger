@@ -150,6 +150,11 @@ TEST(Support, Path) {
 
     path::native(*i, temp_store);
   }
+
+  SmallString<32> Relative("foo.cpp");
+  ASSERT_NO_ERROR(sys::fs::make_absolute("/root", Relative));
+  Relative[5] = '/'; // Fix up windows paths.
+  ASSERT_EQ("/root/foo.cpp", Relative);
 }
 
 TEST(Support, RelativePathIterator) {
@@ -158,7 +163,7 @@ TEST(Support, RelativePathIterator) {
   PathComponents ExpectedPathComponents;
   PathComponents ActualPathComponents;
 
-  StringRef(Path).split(ExpectedPathComponents, "/");
+  StringRef(Path).split(ExpectedPathComponents, '/');
 
   for (path::const_iterator I = path::begin(Path), E = path::end(Path); I != E;
        ++I) {
@@ -178,7 +183,7 @@ TEST(Support, RelativePathDotIterator) {
   PathComponents ExpectedPathComponents;
   PathComponents ActualPathComponents;
 
-  StringRef(Path).split(ExpectedPathComponents, "/");
+  StringRef(Path).split(ExpectedPathComponents, '/');
 
   for (path::const_iterator I = path::begin(Path), E = path::end(Path); I != E;
        ++I) {
@@ -198,7 +203,7 @@ TEST(Support, AbsolutePathIterator) {
   PathComponents ExpectedPathComponents;
   PathComponents ActualPathComponents;
 
-  StringRef(Path).split(ExpectedPathComponents, "/");
+  StringRef(Path).split(ExpectedPathComponents, '/');
 
   // The root path will also be a component when iterating
   ExpectedPathComponents[0] = "/";
@@ -221,7 +226,7 @@ TEST(Support, AbsolutePathDotIterator) {
   PathComponents ExpectedPathComponents;
   PathComponents ActualPathComponents;
 
-  StringRef(Path).split(ExpectedPathComponents, "/");
+  StringRef(Path).split(ExpectedPathComponents, '/');
 
   // The root path will also be a component when iterating
   ExpectedPathComponents[0] = "/";
@@ -788,5 +793,15 @@ TEST(Support, NormalizePath) {
   EXPECT_PATH_IS(Path6, "a\\", "a/");
 
 #undef EXPECT_PATH_IS
+}
+
+TEST(Support, RemoveLeadingDotSlash) {
+  StringRef Path1("././/foolz/wat");
+  StringRef Path2("./////");
+
+  Path1 = path::remove_leading_dotslash(Path1);
+  EXPECT_EQ(Path1, "foolz/wat");
+  Path2 = path::remove_leading_dotslash(Path2);
+  EXPECT_EQ(Path2, "");
 }
 } // anonymous namespace

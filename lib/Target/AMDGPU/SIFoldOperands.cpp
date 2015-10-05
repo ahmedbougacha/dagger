@@ -45,6 +45,7 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<MachineDominatorTree>();
+    AU.addPreserved<MachineDominatorTree>();
     AU.setPreservesCFG();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
@@ -164,8 +165,8 @@ static bool tryAddToFoldList(std::vector<FoldCandidate> &FoldList,
 
     // Operand is not legal, so try to commute the instruction to
     // see if this makes it possible to fold.
-    unsigned CommuteIdx0;
-    unsigned CommuteIdx1;
+    unsigned CommuteIdx0 = TargetInstrInfo::CommuteAnyOperandIndex;
+    unsigned CommuteIdx1 = TargetInstrInfo::CommuteAnyOperandIndex;
     bool CanCommute = TII->findCommutedOpIndices(MI, CommuteIdx0, CommuteIdx1);
 
     if (CanCommute) {
@@ -175,7 +176,16 @@ static bool tryAddToFoldList(std::vector<FoldCandidate> &FoldList,
         OpNo = CommuteIdx0;
     }
 
-    if (!CanCommute || !TII->commuteInstruction(MI))
+    // One of operands might be an Imm operand, and OpNo may refer to it after
+    // the call of commuteInstruction() below. Such situations are avoided
+    // here explicitly as OpNo must be a register operand to be a candidate
+    // for memory folding.
+    if (CanCommute && (!MI->getOperand(CommuteIdx0).isReg() ||
+                       !MI->getOperand(CommuteIdx1).isReg()))
+      return false;
+
+    if (!CanCommute ||
+        !TII->commuteInstruction(MI, false, CommuteIdx0, CommuteIdx1))
       return false;
 
     if (!TII->isOperandLegal(MI, OpNo, OpToFold))
@@ -189,6 +199,7 @@ static bool tryAddToFoldList(std::vector<FoldCandidate> &FoldList,
 static void foldOperand(MachineOperand &OpToFold, MachineInstr *UseMI,
                         unsigned UseOpIdx,
                         std::vector<FoldCandidate> &FoldList,
+                        SmallVectorImpl<MachineInstr *> &CopiesToReplace,
                         const SIInstrInfo *TII, const SIRegisterInfo &TRI,
                         MachineRegisterInfo &MRI) {
   const MachineOperand &UseOp = UseMI->getOperand(UseOpIdx);
@@ -242,7 +253,29 @@ static void foldOperand(MachineOperand &OpToFold, MachineInstr *UseMI,
         return;
 
       UseMI->setDesc(TII->get(MovOp));
+      CopiesToReplace.push_back(UseMI);
     }
+  }
+
+  // Special case for REG_SEQUENCE: We can't fold literals into
+  // REG_SEQUENCE instructions, so we have to fold them into the
+  // uses of REG_SEQUENCE.
+  if (UseMI->getOpcode() == AMDGPU::REG_SEQUENCE) {
+    unsigned RegSeqDstReg = UseMI->getOperand(0).getReg();
+    unsigned RegSeqDstSubReg = UseMI->getOperand(UseOpIdx + 1).getImm();
+
+    for (MachineRegisterInfo::use_iterator
+         RSUse = MRI.use_begin(RegSeqDstReg),
+         RSE = MRI.use_end(); RSUse != RSE; ++RSUse) {
+
+      MachineInstr *RSUseMI = RSUse->getParent();
+      if (RSUse->getSubReg() != RegSeqDstSubReg)
+        continue;
+
+      foldOperand(OpToFold, RSUseMI, RSUse.getOperandNo(), FoldList,
+                  CopiesToReplace, TII, TRI, MRI);
+    }
+    return;
   }
 
   const MCInstrDesc &UseDesc = UseMI->getDesc();
@@ -307,6 +340,12 @@ bool SIFoldOperands::runOnMachineFunction(MachineFunction &MF) {
            OpToFold.getSubReg()))
         continue;
 
+
+      // We need mutate the operands of new mov instructions to add implicit
+      // uses of EXEC, but adding them invalidates the use_iterator, so defer
+      // this.
+      SmallVector<MachineInstr *, 4> CopiesToReplace;
+
       std::vector<FoldCandidate> FoldList;
       for (MachineRegisterInfo::use_iterator
            Use = MRI.use_begin(MI.getOperand(0).getReg()), E = MRI.use_end();
@@ -315,8 +354,12 @@ bool SIFoldOperands::runOnMachineFunction(MachineFunction &MF) {
         MachineInstr *UseMI = Use->getParent();
 
         foldOperand(OpToFold, UseMI, Use.getOperandNo(), FoldList,
-                    TII, TRI, MRI);
+                    CopiesToReplace, TII, TRI, MRI);
       }
+
+      // Make sure we add EXEC uses to any new v_mov instructions created.
+      for (MachineInstr *Copy : CopiesToReplace)
+        Copy->addImplicitDefUseOperands(MF);
 
       for (FoldCandidate &Fold : FoldList) {
         if (updateOperand(Fold, TRI)) {

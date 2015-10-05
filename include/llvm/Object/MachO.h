@@ -100,7 +100,7 @@ private:
 };
 typedef content_iterator<ExportEntry> export_iterator;
 
-/// MachORebaseEntry encapsulates the current state in the decompression of   
+/// MachORebaseEntry encapsulates the current state in the decompression of
 /// rebasing opcodes. This allows you to iterate through the compressed table of
 /// rebasing using:
 ///    for (const llvm::object::MachORebaseEntry &Entry : Obj->rebaseTable()) {
@@ -116,7 +116,7 @@ public:
   bool operator==(const MachORebaseEntry &) const;
 
   void moveNext();
-  
+
 private:
   friend class MachOObjectFile;
   void moveToFirst();
@@ -521,4 +521,3 @@ inline const ObjectFile *DiceRef::getObjectFile() const {
 }
 
 #endif
-

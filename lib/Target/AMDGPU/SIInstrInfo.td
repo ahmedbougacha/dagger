@@ -73,9 +73,12 @@ class sopk <bits<5> si, bits<5> vi = si> {
 }
 
 // Specify an SMRD opcode for SI and SMEM opcode for VI
-class smrd<bits<5> si, bits<5> vi = si> {
-  field bits<5> SI = si;
-  field bits<8> VI = { 0, 0, 0, vi };
+
+// FIXME: This should really be bits<5> si, Tablegen crashes if
+// parameter default value is other parameter with different bit size
+class smrd<bits<8> si, bits<8> vi = si> {
+  field bits<5> SI = si{4-0};
+  field bits<8> VI = vi;
 }
 
 // Execpt for the NONE field, this must be kept in sync with the SISubtarget enum
@@ -337,9 +340,9 @@ class SGPRImm <dag frag> : PatLeaf<frag, [{
       static_cast<const SIRegisterInfo *>(Subtarget->getRegisterInfo());
   for (SDNode::use_iterator U = N->use_begin(), E = SDNode::use_end();
                                                 U != E; ++U) {
-    if (SIRI->isSGPRClass(getOperandRegClass(*U, U.getOperandNo()))) {
+    const TargetRegisterClass *RC = getOperandRegClass(*U, U.getOperandNo());
+    if (RC && SIRI->isSGPRClass(RC))
       return true;
-    }
   }
   return false;
 }]>;
@@ -899,8 +902,8 @@ class SMRD_Real_si <bits<5> op, string opName, bit imm, dag outs, dag ins,
 }
 
 class SMRD_Real_vi <bits<8> op, string opName, bit imm, dag outs, dag ins,
-                    string asm> :
-  SMRD <outs, ins, asm, []>,
+                    string asm, list<dag> pattern = []> :
+  SMRD <outs, ins, asm, pattern>,
   SMEMe_vi <op, imm>,
   SIMCInstr<opName, SISubtarget.VI> {
   let AssemblerPredicates = [isVI];
@@ -918,6 +921,33 @@ multiclass SMRD_m <smrd op, string opName, bit imm, dag outs, dag ins,
   let glc = 0 in {
     def _vi : SMRD_Real_vi <op.VI, opName, imm, outs, ins, asm>;
   }
+}
+
+multiclass SMRD_Inval <smrd op, string opName,
+                       SDPatternOperator node> {
+  let hasSideEffects = 1, mayStore = 1 in {
+    def "" : SMRD_Pseudo <opName, (outs), (ins), [(node)]>;
+
+    let sbase = 0, offset = 0 in {
+      let sdst = 0 in {
+        def _si : SMRD_Real_si <op.SI, opName, 0, (outs), (ins), opName>;
+      }
+
+      let glc = 0, sdata = 0 in {
+        def _vi : SMRD_Real_vi <op.VI, opName, 0, (outs), (ins), opName>;
+      }
+    }
+  }
+}
+
+class SMEM_Inval <bits<8> op, string opName, SDPatternOperator node> :
+  SMRD_Real_vi<op, opName, 0, (outs), (ins), opName, [(node)]> {
+  let hasSideEffects = 1;
+  let mayStore = 1;
+  let sbase = 0;
+  let sdata = 0;
+  let glc = 0;
+  let offset = 0;
 }
 
 multiclass SMRD_Helper <smrd op, string opName, RegisterClass baseClass,
@@ -990,7 +1020,14 @@ class getVOPSrc1ForVT<ValueType VT> {
 // Returns the register class to use for sources of VOP3 instructions for the
 // given VT.
 class getVOP3SrcForVT<ValueType VT> {
-  RegisterOperand ret = !if(!eq(VT.Size, 64), VCSrc_64, VCSrc_32);
+  RegisterOperand ret =
+  !if(!eq(VT.Size, 64),
+      VCSrc_64,
+      !if(!eq(VT.Value, i1.Value),
+          SCSrc_64,
+          VCSrc_32
+       )
+    );
 }
 
 // Returns 1 if the source arguments have modifiers, 0 if they do not.
@@ -1070,7 +1107,6 @@ class getAsm64 <int NumSrcArgs, bit HasModifiers> {
       "$dst, "#src0#src1#src2#"$clamp"#"$omod");
 }
 
-
 class VOPProfile <list<ValueType> _ArgVT> {
 
   field list<ValueType> ArgVT = _ArgVT;
@@ -1132,17 +1168,41 @@ def VOP_I32_F32_F32 : VOPProfile <[i32, f32, f32, untyped]>;
 def VOP_I32_F32_I32 : VOPProfile <[i32, f32, i32, untyped]>;
 def VOP_I32_I32_I32 : VOPProfile <[i32, i32, i32, untyped]>;
 
-class VOP2b_Profile<ValueType vt> : VOPProfile<[vt, vt, vt, untyped]> {
+// Write out to vcc or arbitrary SGPR.
+def VOP2b_I32_I1_I32_I32 : VOPProfile<[i32, i32, i32, untyped]> {
   let Asm32 = "$dst, vcc, $src0, $src1";
   let Asm64 = "$dst, $sdst, $src0, $src1";
   let Outs32 = (outs DstRC:$dst);
   let Outs64 = (outs DstRC:$dst, SReg_64:$sdst);
 }
 
-def VOP2b_I32_I1_I32_I32 : VOP2b_Profile<i32>;
-
-def VOP2b_I32_I1_I32_I32_VCC : VOP2b_Profile<i32> {
+// Write out to vcc or arbitrary SGPR and read in from vcc or
+// arbitrary SGPR.
+def VOP2b_I32_I1_I32_I32_I1 : VOPProfile<[i32, i32, i32, i1]> {
   let Src0RC32 = VCSrc_32;
+  let Asm32 = "$dst, vcc, $src0, $src1, vcc";
+  let Asm64 = "$dst, $sdst, $src0, $src1, $src2";
+  let Outs32 = (outs DstRC:$dst);
+  let Outs64 = (outs DstRC:$dst, SReg_64:$sdst);
+
+  // Suppress src2 implied by type since the 32-bit encoding uses an
+  // implicit VCC use.
+  let Ins32 = (ins Src0RC32:$src0, Src1RC32:$src1);
+}
+
+class VOP3b_Profile<ValueType vt> : VOPProfile<[vt, vt, vt, vt]> {
+  let Outs64 = (outs DstRC:$vdst, SReg_64:$sdst);
+  let Asm64 = "$vdst, $sdst, $src0_modifiers, $src1_modifiers, $src2_modifiers"#"$clamp"#"$omod";
+}
+
+def VOP3b_F32_I1_F32_F32_F32 : VOP3b_Profile<f32> {
+  // FIXME: Hack to stop printing _e64
+  let DstRC = RegisterOperand<VGPR_32>;
+}
+
+def VOP3b_F64_I1_F64_F64_F64 : VOP3b_Profile<f64> {
+  // FIXME: Hack to stop printing _e64
+  let DstRC = RegisterOperand<VReg_64>;
 }
 
 // VOPC instructions are a special case because for the 32-bit
@@ -1364,22 +1424,6 @@ multiclass VOP3_m <vop op, dag outs, dag ins, string asm, list<dag> pattern,
                               HasMods>;
 }
 
-// VOP3_m without source modifiers
-multiclass VOP3_m_nomods <vop op, dag outs, dag ins, string asm, list<dag> pattern,
-                   string opName, int NumSrcArgs, bit HasMods = 1> {
-
-  def "" : VOP3_Pseudo <outs, ins, pattern, opName>;
-
-  let src0_modifiers = 0,
-      src1_modifiers = 0,
-      src2_modifiers = 0,
-      clamp = 0,
-      omod = 0 in {
-    def _si : VOP3_Real_si <op.SI3, outs, ins, asm, opName>;
-    def _vi : VOP3_Real_vi <op.VI3, outs, ins, asm, opName>;
-  }
-}
-
 multiclass VOP3_1_m <vop op, dag outs, dag ins, string asm,
                      list<dag> pattern, string opName, bit HasMods = 1> {
 
@@ -1404,7 +1448,7 @@ multiclass VOP3SI_1_m <vop op, dag outs, dag ins, string asm,
 
 multiclass VOP3_2_m <vop op, dag outs, dag ins, string asm,
                      list<dag> pattern, string opName, string revOp,
-                     bit HasMods = 1, bit UseFullOp = 0> {
+                     bit HasMods = 1> {
 
   def "" : VOP3_Pseudo <outs, ins, pattern, opName>,
            VOP2_REV<revOp#"_e64", !eq(revOp, opName)>;
@@ -1418,7 +1462,7 @@ multiclass VOP3_2_m <vop op, dag outs, dag ins, string asm,
 
 multiclass VOP3SI_2_m <vop op, dag outs, dag ins, string asm,
                      list<dag> pattern, string opName, string revOp,
-                     bit HasMods = 1, bit UseFullOp = 0> {
+                     bit HasMods = 1> {
 
   def "" : VOP3_Pseudo <outs, ins, pattern, opName>,
            VOP2_REV<revOp#"_e64", !eq(revOp, opName)>;
@@ -1429,49 +1473,41 @@ multiclass VOP3SI_2_m <vop op, dag outs, dag ins, string asm,
   // No VI instruction. This class is for SI only.
 }
 
-// XXX - Is v_div_scale_{f32|f64} only available in vop3b without
-// option of implicit vcc use?
-multiclass VOP3b_2_m <vop op, dag outs, dag ins, string asm,
-                      list<dag> pattern, string opName, string revOp,
-                      bit HasMods = 1, bit UseFullOp = 0> {
-  def "" : VOP3_Pseudo <outs, ins, pattern, opName>,
-           VOP2_REV<revOp#"_e64", !eq(revOp, opName)>;
-
-  def _si : VOP3b_Real_si <op.SI3, outs, ins, asm, opName>,
-            VOP3DisableFields<1, 0, HasMods>;
-
-  def _vi : VOP3b_Real_vi <op.VI3, outs, ins, asm, opName>,
-            VOP3DisableFields<1, 0, HasMods>;
-}
-
-multiclass VOP3b_3_m <vop op, dag outs, dag ins, string asm,
-                      list<dag> pattern, string opName, string revOp,
-                      bit HasMods = 1, bit UseFullOp = 0> {
+// Two operand VOP3b instruction that may have a 3rd SGPR bool operand
+// instead of an implicit VCC as in the VOP2b format.
+multiclass VOP3b_2_3_m <vop op, dag outs, dag ins, string asm,
+                        list<dag> pattern, string opName, string revOp,
+                        bit HasMods = 1, bit useSrc2Input = 0> {
   def "" : VOP3_Pseudo <outs, ins, pattern, opName>;
 
-
   def _si : VOP3b_Real_si <op.SI3, outs, ins, asm, opName>,
-            VOP3DisableFields<1, 1, HasMods>;
+            VOP3DisableFields<1, useSrc2Input, HasMods>;
 
   def _vi : VOP3b_Real_vi <op.VI3, outs, ins, asm, opName>,
-            VOP3DisableFields<1, 1, HasMods>;
+            VOP3DisableFields<1, useSrc2Input, HasMods>;
 }
 
 multiclass VOP3_C_m <vop op, dag outs, dag ins, string asm,
                      list<dag> pattern, string opName,
-                     bit HasMods, bit defExec, string revOp> {
+                     bit HasMods, bit defExec,
+                     string revOp, list<SchedReadWrite> sched> {
 
   def "" : VOP3_Pseudo <outs, ins, pattern, opName>,
-           VOP2_REV<revOp#"_e64", !eq(revOp, opName)>;
+           VOP2_REV<revOp#"_e64", !eq(revOp, opName)> {
+    let Defs = !if(defExec, [EXEC], []);
+    let SchedRW = sched;
+  }
 
   def _si : VOP3_Real_si <op.SI3, outs, ins, asm, opName>,
             VOP3DisableFields<1, 0, HasMods> {
     let Defs = !if(defExec, [EXEC], []);
+    let SchedRW = sched;
   }
 
   def _vi : VOP3_Real_vi <op.VI3, outs, ins, asm, opName>,
             VOP3DisableFields<1, 0, HasMods> {
     let Defs = !if(defExec, [EXEC], []);
+    let SchedRW = sched;
   }
 }
 
@@ -1575,13 +1611,16 @@ multiclass VOP2InstSI <vop2 op, string opName, VOPProfile P,
 multiclass VOP2b_Helper <vop2 op, string opName, dag outs32, dag outs64,
                          dag ins32, string asm32, list<dag> pat32,
                          dag ins64, string asm64, list<dag> pat64,
-                         string revOp, bit HasMods> {
+                         string revOp, bit HasMods, bit useSGPRInput> {
+  let SchedRW = [Write32Bit, WriteSALU] in {
+    let Uses = !if(useSGPRInput, [VCC, EXEC], [EXEC]), Defs = [VCC] in {
+      defm _e32 : VOP2_m <op, outs32, ins32, asm32, pat32, opName, revOp>;
+    }
 
-  defm _e32 : VOP2_m <op, outs32, ins32, asm32, pat32, opName, revOp>;
-
-  defm _e64 : VOP3b_2_m <op,
-    outs64, ins64, opName#asm64, pat64, opName, revOp, HasMods
-  >;
+    defm _e64 : VOP3b_2_3_m <op,
+      outs64, ins64, opName#asm64, pat64, opName, revOp, HasMods, useSGPRInput
+    >;
+  }
 }
 
 multiclass VOP2bInst <vop2 op, string opName, VOPProfile P,
@@ -1596,7 +1635,7 @@ multiclass VOP2bInst <vop2 op, string opName, VOPProfile P,
                                       i1:$clamp, i32:$omod)),
                  (P.Src1VT (VOP3Mods P.Src1VT:$src1, i32:$src1_modifiers))))],
       [(set P.DstVT:$dst, (node P.Src0VT:$src0, P.Src1VT:$src1))]),
-  revOp, P.HasModifiers
+  revOp, P.HasModifiers, !eq(P.NumSrcArgs, 3)
 >;
 
 // A VOP2 instruction that is VOP3-only on VI.
@@ -1657,39 +1696,41 @@ class VOPC_Pseudo <dag ins, list<dag> pattern, string opName> :
 
 multiclass VOPC_m <vopc op, dag ins, string op_asm, list<dag> pattern,
                    string opName, bit DefExec, VOPProfile p,
+                   list<SchedReadWrite> sched,
                    string revOpName = "", string asm = opName#"_e32 "#op_asm,
                    string alias_asm = opName#" "#op_asm> {
-  def "" : VOPC_Pseudo <ins, pattern, opName>;
-
-  let AssemblerPredicates = [isSICI] in {
-
-  def _si : VOPC<op.SI, ins, asm, []>,
-            SIMCInstr <opName#"_e32", SISubtarget.SI> {
+  def "" : VOPC_Pseudo <ins, pattern, opName> {
     let Defs = !if(DefExec, [VCC, EXEC], [VCC]);
-    let hasSideEffects = DefExec;
+    let SchedRW = sched;
   }
 
-  def : SIInstAlias <
-    alias_asm,
-    (!cast<Instruction>(NAME#"_e32_si") p.Src0RC32:$src0, p.Src1RC32:$src1)
-  >;
+  let AssemblerPredicates = [isSICI] in {
+    def _si : VOPC<op.SI, ins, asm, []>,
+              SIMCInstr <opName#"_e32", SISubtarget.SI> {
+      let Defs = !if(DefExec, [VCC, EXEC], [VCC]);
+      let hasSideEffects = DefExec;
+      let SchedRW = sched;
+    }
+
+    def : SIInstAlias <
+      alias_asm,
+      (!cast<Instruction>(NAME#"_e32_si") p.Src0RC32:$src0, p.Src1RC32:$src1)
+    >;
 
   } // End AssemblerPredicates = [isSICI]
 
-
   let AssemblerPredicates = [isVI] in {
+    def _vi : VOPC<op.VI, ins, asm, []>,
+              SIMCInstr <opName#"_e32", SISubtarget.VI> {
+      let Defs = !if(DefExec, [VCC, EXEC], [VCC]);
+      let hasSideEffects = DefExec;
+      let SchedRW = sched;
+    }
 
-  def _vi : VOPC<op.VI, ins, asm, []>,
-            SIMCInstr <opName#"_e32", SISubtarget.VI> {
-    let Defs = !if(DefExec, [VCC, EXEC], [VCC]);
-    let hasSideEffects = DefExec;
-  }
-
-  def : SIInstAlias <
-    alias_asm,
-    (!cast<Instruction>(NAME#"_e32_vi") p.Src0RC32:$src0, p.Src1RC32:$src1)
-  >;
-
+    def : SIInstAlias <
+      alias_asm,
+      (!cast<Instruction>(NAME#"_e32_vi") p.Src0RC32:$src0, p.Src1RC32:$src1)
+    >;
   } // End AssemblerPredicates = [isVI]
 }
 
@@ -1697,11 +1738,13 @@ multiclass VOPC_Helper <vopc op, string opName,
                         dag ins32, string asm32, list<dag> pat32,
                         dag out64, dag ins64, string asm64, list<dag> pat64,
                         bit HasMods, bit DefExec, string revOp,
-                        VOPProfile p> {
-  defm _e32 : VOPC_m <op, ins32, asm32, pat32, opName, DefExec, p>;
+                        VOPProfile p,
+                        list<SchedReadWrite> sched> {
+  defm _e32 : VOPC_m <op, ins32, asm32, pat32, opName, DefExec, p, sched>;
 
   defm _e64 : VOP3_C_m <op, out64, ins64, opName#asm64, pat64,
-                        opName, HasMods, DefExec, revOp>;
+                        opName, HasMods, DefExec, revOp,
+                        sched>;
 }
 
 // Special case for class instructions which only have modifiers on
@@ -1710,18 +1753,21 @@ multiclass VOPC_Class_Helper <vopc op, string opName,
                              dag ins32, string asm32, list<dag> pat32,
                              dag out64, dag ins64, string asm64, list<dag> pat64,
                              bit HasMods, bit DefExec, string revOp,
-                             VOPProfile p> {
-  defm _e32 : VOPC_m <op, ins32, asm32, pat32, opName, DefExec, p>;
+                             VOPProfile p,
+                             list<SchedReadWrite> sched> {
+  defm _e32 : VOPC_m <op, ins32, asm32, pat32, opName, DefExec, p, sched>;
 
   defm _e64 : VOP3_C_m <op, out64, ins64, opName#asm64, pat64,
-                        opName, HasMods, DefExec, revOp>,
+                        opName, HasMods, DefExec, revOp, sched>,
                         VOP3DisableModFields<1, 0, 0>;
 }
 
 multiclass VOPCInst <vopc op, string opName,
                      VOPProfile P, PatLeaf cond = COND_NULL,
                      string revOp = opName,
-                     bit DefExec = 0> : VOPC_Helper <
+                     bit DefExec = 0,
+                     list<SchedReadWrite> sched = [Write32Bit]> :
+                     VOPC_Helper <
   op, opName,
   P.Ins32, P.Asm32, [],
   (outs VOPDstS64:$dst), P.Ins64, P.Asm64,
@@ -1732,11 +1778,12 @@ multiclass VOPCInst <vopc op, string opName,
                  (P.Src1VT (VOP3Mods P.Src1VT:$src1, i32:$src1_modifiers)),
                  cond))],
       [(set i1:$dst, (setcc P.Src0VT:$src0, P.Src1VT:$src1, cond))]),
-  P.HasModifiers, DefExec, revOp, P
+  P.HasModifiers, DefExec, revOp, P, sched
 >;
 
 multiclass VOPCClassInst <vopc op, string opName, VOPProfile P,
-                     bit DefExec = 0> : VOPC_Class_Helper <
+                     bit DefExec = 0,
+                     list<SchedReadWrite> sched> : VOPC_Class_Helper <
   op, opName,
   P.Ins32, P.Asm32, [],
   (outs VOPDstS64:$dst), P.Ins64, P.Asm64,
@@ -1744,7 +1791,7 @@ multiclass VOPCClassInst <vopc op, string opName, VOPProfile P,
       [(set i1:$dst,
           (AMDGPUfp_class (P.Src0VT (VOP3Mods0Clamp0OMod P.Src0VT:$src0, i32:$src0_modifiers)), P.Src1VT:$src1))],
       [(set i1:$dst, (AMDGPUfp_class P.Src0VT:$src0, P.Src1VT:$src1))]),
-  P.HasModifiers, DefExec, opName, P
+  P.HasModifiers, DefExec, opName, P, sched
 >;
 
 
@@ -1752,31 +1799,32 @@ multiclass VOPC_F32 <vopc op, string opName, PatLeaf cond = COND_NULL, string re
   VOPCInst <op, opName, VOPC_I1_F32_F32, cond, revOp>;
 
 multiclass VOPC_F64 <vopc op, string opName, PatLeaf cond = COND_NULL, string revOp = opName> :
-  VOPCInst <op, opName, VOPC_I1_F64_F64, cond, revOp>;
+  VOPCInst <op, opName, VOPC_I1_F64_F64, cond, revOp, 0, [WriteDoubleAdd]>;
 
 multiclass VOPC_I32 <vopc op, string opName, PatLeaf cond = COND_NULL, string revOp = opName> :
   VOPCInst <op, opName, VOPC_I1_I32_I32, cond, revOp>;
 
 multiclass VOPC_I64 <vopc op, string opName, PatLeaf cond = COND_NULL, string revOp = opName> :
-  VOPCInst <op, opName, VOPC_I1_I64_I64, cond, revOp>;
+  VOPCInst <op, opName, VOPC_I1_I64_I64, cond, revOp, 0, [Write64Bit]>;
 
 
 multiclass VOPCX <vopc op, string opName, VOPProfile P,
                   PatLeaf cond = COND_NULL,
+                  list<SchedReadWrite> sched,
                   string revOp = "">
-  : VOPCInst <op, opName, P, cond, revOp, 1>;
+  : VOPCInst <op, opName, P, cond, revOp, 1, sched>;
 
 multiclass VOPCX_F32 <vopc op, string opName, string revOp = opName> :
-  VOPCX <op, opName, VOPC_I1_F32_F32, COND_NULL, revOp>;
+  VOPCX <op, opName, VOPC_I1_F32_F32, COND_NULL, [Write32Bit], revOp>;
 
 multiclass VOPCX_F64 <vopc op, string opName, string revOp = opName> :
-  VOPCX <op, opName, VOPC_I1_F64_F64, COND_NULL, revOp>;
+  VOPCX <op, opName, VOPC_I1_F64_F64, COND_NULL, [WriteDoubleAdd], revOp>;
 
 multiclass VOPCX_I32 <vopc op, string opName, string revOp = opName> :
-  VOPCX <op, opName, VOPC_I1_I32_I32, COND_NULL, revOp>;
+  VOPCX <op, opName, VOPC_I1_I32_I32, COND_NULL, [Write32Bit], revOp>;
 
 multiclass VOPCX_I64 <vopc op, string opName, string revOp = opName> :
-  VOPCX <op, opName, VOPC_I1_I64_I64, COND_NULL, revOp>;
+  VOPCX <op, opName, VOPC_I1_I64_I64, COND_NULL, [Write64Bit], revOp>;
 
 multiclass VOP3_Helper <vop3 op, string opName, dag outs, dag ins, string asm,
                         list<dag> pat, int NumSrcArgs, bit HasMods> : VOP3_m <
@@ -1784,16 +1832,16 @@ multiclass VOP3_Helper <vop3 op, string opName, dag outs, dag ins, string asm,
 >;
 
 multiclass VOPC_CLASS_F32 <vopc op, string opName> :
-  VOPCClassInst <op, opName, VOPC_I1_F32_I32, 0>;
+  VOPCClassInst <op, opName, VOPC_I1_F32_I32, 0, [Write32Bit]>;
 
 multiclass VOPCX_CLASS_F32 <vopc op, string opName> :
-  VOPCClassInst <op, opName, VOPC_I1_F32_I32, 1>;
+  VOPCClassInst <op, opName, VOPC_I1_F32_I32, 1, [Write32Bit]>;
 
 multiclass VOPC_CLASS_F64 <vopc op, string opName> :
-  VOPCClassInst <op, opName, VOPC_I1_F64_I32, 0>;
+  VOPCClassInst <op, opName, VOPC_I1_F64_I32, 0, [WriteDoubleAdd]>;
 
 multiclass VOPCX_CLASS_F64 <vopc op, string opName> :
-  VOPCClassInst <op, opName, VOPC_I1_F64_I32, 1>;
+  VOPCClassInst <op, opName, VOPC_I1_F64_I32, 1, [WriteDoubleAdd]>;
 
 multiclass VOP3Inst <vop3 op, string opName, VOPProfile P,
                      SDPatternOperator node = null_frag> : VOP3_Helper <
@@ -1845,24 +1893,12 @@ multiclass VOP3_VCC_Inst <vop3 op, string opName,
   3, 1
 >;
 
-multiclass VOP3b_Helper <vop op, RegisterClass vrc, RegisterOperand arc,
-                    string opName, list<dag> pattern> :
-  VOP3b_3_m <
-  op, (outs vrc:$vdst, SReg_64:$sdst),
-      (ins InputModsNoDefault:$src0_modifiers, arc:$src0,
-           InputModsNoDefault:$src1_modifiers, arc:$src1,
-           InputModsNoDefault:$src2_modifiers, arc:$src2,
-           ClampMod:$clamp, omod:$omod),
-  opName#" $vdst, $sdst, $src0_modifiers, $src1_modifiers, $src2_modifiers"#"$clamp"#"$omod", pattern,
-  opName, opName, 1, 1
+multiclass VOP3bInst <vop op, string opName, VOPProfile P, list<dag> pattern = []> :
+  VOP3b_2_3_m <
+  op, P.Outs64, P.Ins64,
+  opName#" "#P.Asm64, pattern,
+  opName, "", 1, 1
 >;
-
-multiclass VOP3b_64 <vop3 op, string opName, list<dag> pattern> :
-  VOP3b_Helper <op, VReg_64, VSrc_64, opName, pattern>;
-
-multiclass VOP3b_32 <vop3 op, string opName, list<dag> pattern> :
-  VOP3b_Helper <op, VGPR_32, VSrc_32, opName, pattern>;
-
 
 class Vop3ModPat<Instruction Inst, VOPProfile P, SDPatternOperator node> : Pat<
   (node (P.Src0VT (VOP3Mods0 P.Src0VT:$src0, i32:$src0_modifiers, i1:$clamp, i32:$omod)),
@@ -2009,12 +2045,14 @@ multiclass DS_1A1D_RET <bits<8> op, string opName, RegisterClass rc,
   dag ins = (ins VGPR_32:$addr, rc:$data0, ds_offset:$offset, gds:$gds),
   string asm = opName#" $vdst, $addr, $data0"#"$offset$gds"> {
 
-  def "" : DS_Pseudo <opName, outs, ins, []>,
-           AtomicNoRet<noRetOp, 1>;
+  let hasPostISelHook = 1 in {
+    def "" : DS_Pseudo <opName, outs, ins, []>,
+             AtomicNoRet<noRetOp, 1>;
 
-  let data1 = 0 in {
-    def _si : DS_Off16_Real_si <op, opName, outs, ins, asm>;
-    def _vi : DS_Off16_Real_vi <op, opName, outs, ins, asm>;
+    let data1 = 0 in {
+      def _si : DS_Off16_Real_si <op, opName, outs, ins, asm>;
+      def _vi : DS_Off16_Real_vi <op, opName, outs, ins, asm>;
+    }
   }
 }
 
@@ -2023,11 +2061,13 @@ multiclass DS_1A2D_RET_m <bits<8> op, string opName, RegisterClass rc,
   dag outs = (outs rc:$vdst),
   string asm = opName#" $vdst, $addr, $data0, $data1"#"$offset"#"$gds"> {
 
-  def "" : DS_Pseudo <opName, outs, ins, []>,
-           AtomicNoRet<noRetOp, 1>;
+  let hasPostISelHook = 1 in {
+    def "" : DS_Pseudo <opName, outs, ins, []>,
+             AtomicNoRet<noRetOp, 1>;
 
-  def _si : DS_Off16_Real_si <op, opName, outs, ins, asm>;
-  def _vi : DS_Off16_Real_vi <op, opName, outs, ins, asm>;
+    def _si : DS_Off16_Real_si <op, opName, outs, ins, asm>;
+    def _vi : DS_Off16_Real_vi <op, opName, outs, ins, asm>;
+  }
 }
 
 multiclass DS_1A2D_RET <bits<8> op, string asm, RegisterClass rc,
@@ -2329,7 +2369,7 @@ multiclass MUBUF_Atomic <mubuf op, string name, RegisterClass rc,
         op, name#"_rtn_offset", (outs rc:$vdata),
         (ins rc:$vdata_in, SReg_128:$srsrc, SCSrc_32:$soffset,
              mbuf_offset:$offset, slc:$slc),
-        name#" $vdata, $srsrc, $soffset"#"$offset"#" glc $slc",
+        name#" $vdata, $srsrc, $soffset"#"$offset"#" glc$slc",
         [(set vt:$vdata,
          (atomic (MUBUFOffsetAtomic v4i32:$srsrc, i32:$soffset, i16:$offset,
                                     i1:$slc), vt:$vdata_in))], 1
@@ -2452,6 +2492,23 @@ multiclass MUBUF_Store_Helper <mubuf op, string name, RegisterClass vdataClass,
   } // End mayLoad = 0, mayStore = 1
 }
 
+// For cache invalidation instructions.
+multiclass MUBUF_Invalidate <mubuf op, string opName, SDPatternOperator node> {
+  let hasSideEffects = 1, mayStore = 1, AsmMatchConverter = "" in {
+    def "" : MUBUF_Pseudo <opName, (outs), (ins), [(node)]>;
+
+    // Set everything to 0.
+    let offset = 0, offen = 0, idxen = 0, glc = 0, vaddr = 0,
+        vdata = 0, srsrc = 0, slc = 0, tfe = 0, soffset = 0 in {
+      let addr64 = 0 in {
+        def _si : MUBUF_Real_si <op, opName, (outs), (ins), opName>;
+      }
+
+      def _vi : MUBUF_Real_vi <op, opName, (outs), (ins), opName>;
+    }
+  } // End hasSideEffects = 1, mayStore = 1, AsmMatchConverter = ""
+}
+
 class FLAT_Load_Helper <bits<7> op, string asm, RegisterClass regClass> :
       FLAT <op, (outs regClass:$vdst),
                 (ins VReg_64:$addr, glc_flat:$glc, slc_flat:$slc, tfe_flat:$tfe),
@@ -2492,6 +2549,7 @@ multiclass FLAT_ATOMIC <bits<7> op, string name, RegisterClass vdst_rc,
                      name#" $vdst, $addr, $data glc"#"$slc"#"$tfe", []>,
                AtomicNoRet <NAME, 1> {
       let glc = 1;
+      let hasPostISelHook = 1;
     }
   }
 }

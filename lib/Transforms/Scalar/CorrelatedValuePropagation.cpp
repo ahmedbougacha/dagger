@@ -13,6 +13,7 @@
 
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/LazyValueInfo.h"
 #include "llvm/IR/CFG.h"
@@ -43,6 +44,7 @@ namespace {
     bool processMemAccess(Instruction *I);
     bool processCmp(CmpInst *C);
     bool processSwitch(SwitchInst *SI);
+    bool processCallSite(CallSite CS);
 
   public:
     static char ID;
@@ -54,6 +56,7 @@ namespace {
 
     void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.addRequired<LazyValueInfo>();
+      AU.addPreserved<GlobalsAAWrapperPass>();
     }
   };
 }
@@ -307,6 +310,32 @@ bool CorrelatedValuePropagation::processSwitch(SwitchInst *SI) {
   return Changed;
 }
 
+/// processCallSite - Infer nonnull attributes for the arguments at the
+/// specified callsite.
+bool CorrelatedValuePropagation::processCallSite(CallSite CS) {
+  bool Changed = false;
+
+  unsigned ArgNo = 0;
+  for (Value *V : CS.args()) {
+    PointerType *Type = dyn_cast<PointerType>(V->getType());
+
+    if (Type && !CS.paramHasAttr(ArgNo + 1, Attribute::NonNull) &&
+        LVI->getPredicateAt(ICmpInst::ICMP_EQ, V,
+                            ConstantPointerNull::get(Type),
+                            CS.getInstruction()) == LazyValueInfo::False) {
+      AttributeSet AS = CS.getAttributes();
+      AS = AS.addAttribute(CS.getInstruction()->getContext(), ArgNo + 1,
+                           Attribute::NonNull);
+      CS.setAttributes(AS);
+      Changed = true;
+    }
+    ArgNo++;
+  }
+  assert(ArgNo == CS.arg_size() && "sanity check");
+
+  return Changed;
+}
+
 bool CorrelatedValuePropagation::runOnFunction(Function &F) {
   if (skipOptnoneFunction(F))
     return false;
@@ -333,6 +362,10 @@ bool CorrelatedValuePropagation::runOnFunction(Function &F) {
       case Instruction::Load:
       case Instruction::Store:
         BBChanged |= processMemAccess(II);
+        break;
+      case Instruction::Call:
+      case Instruction::Invoke:
+        BBChanged |= processCallSite(CallSite(II));
         break;
       }
     }

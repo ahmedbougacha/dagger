@@ -42,7 +42,12 @@ namespace bitc {
 
     TYPE_BLOCK_ID_NEW,
 
-    USELIST_BLOCK_ID
+    USELIST_BLOCK_ID,
+
+    MODULE_STRTAB_BLOCK_ID,
+    FUNCTION_SUMMARY_BLOCK_ID,
+
+    OPERAND_BUNDLE_TAGS_BLOCK_ID
   };
 
 
@@ -66,13 +71,18 @@ namespace bitc {
     MODULE_CODE_FUNCTION    = 8,
 
     // ALIAS: [alias type, aliasee val#, linkage, visibility]
-    MODULE_CODE_ALIAS       = 9,
+    MODULE_CODE_ALIAS_OLD   = 9,
 
     // MODULE_CODE_PURGEVALS: [numvals]
     MODULE_CODE_PURGEVALS   = 10,
 
     MODULE_CODE_GCNAME      = 11,  // GCNAME: [strchr x N]
     MODULE_CODE_COMDAT      = 12,  // COMDAT: [selection_kind, name]
+
+    MODULE_CODE_VSTOFFSET   = 13,  // VSTOFFSET: [offset]
+
+    // ALIAS: [alias value type, addrspace, aliasee val#, linkage, visibility]
+    MODULE_CODE_ALIAS       = 14,
   };
 
   /// PARAMATTR blocks have code for defining a parameter attribute set.
@@ -126,15 +136,34 @@ namespace bitc {
     TYPE_CODE_TOKEN = 22        // TOKEN
   };
 
+  enum OperandBundleTagCode {
+    OPERAND_BUNDLE_TAG = 1,     // TAG: [strchr x N]
+  };
+
   // The type symbol table only has one code (TST_ENTRY_CODE).
   enum TypeSymtabCodes {
     TST_CODE_ENTRY = 1     // TST_ENTRY: [typeid, namechar x N]
   };
 
-  // The value symbol table only has one code (VST_ENTRY_CODE).
+  // Value symbol table codes.
   enum ValueSymtabCodes {
-    VST_CODE_ENTRY   = 1,  // VST_ENTRY: [valid, namechar x N]
-    VST_CODE_BBENTRY = 2   // VST_BBENTRY: [bbid, namechar x N]
+    VST_CODE_ENTRY   = 1,   // VST_ENTRY: [valueid, namechar x N]
+    VST_CODE_BBENTRY = 2,   // VST_BBENTRY: [bbid, namechar x N]
+    VST_CODE_FNENTRY = 3,   // VST_FNENTRY: [valueid, offset, namechar x N]
+    // VST_COMBINED_FNENTRY: [offset, namechar x N]
+    VST_CODE_COMBINED_FNENTRY = 4
+  };
+
+  // The module path symbol table only has one code (MST_CODE_ENTRY).
+  enum ModulePathSymtabCodes {
+    MST_CODE_ENTRY   = 1,  // MST_ENTRY: [modid, namechar x N]
+  };
+
+  // The function summary section uses different codes in the per-module
+  // and combined index cases.
+  enum FunctionSummarySymtabCodes {
+    FS_CODE_PERMODULE_ENTRY = 1,  // FS_ENTRY: [valueid, islocal, instcount]
+    FS_CODE_COMBINED_ENTRY  = 2,  // FS_ENTRY: [modid, instcount]
   };
 
   enum MetadataCodes {
@@ -362,6 +391,9 @@ namespace bitc {
     FUNC_CODE_INST_TERMINATEPAD = 51, // TERMINATEPAD: [bb#,num,args...]
     FUNC_CODE_INST_CLEANUPPAD = 52, // CLEANUPPAD: [num,args...]
     FUNC_CODE_INST_CATCHENDPAD = 53, // CATCHENDPAD: [] or [bb#]
+    FUNC_CODE_INST_CLEANUPENDPAD = 54, // CLEANUPENDPAD: [val] or [val,bb#]
+
+    FUNC_CODE_OPERAND_BUNDLE = 55, // OPERAND_BUNDLE: [tag#, value...]
   };
 
   enum UseListCodes {

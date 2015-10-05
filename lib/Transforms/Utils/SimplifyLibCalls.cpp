@@ -1242,7 +1242,7 @@ Value *LibCallSimplifier::optimizeFMinFMax(CallInst *CI, IRBuilder<> &B) {
       return nullptr;
     // No-signed-zeros is implied by the definitions of fmax/fmin themselves:
     // "Ideally, fmax would be sensitive to the sign of zero, for example
-    // fmax(−0. 0, +0. 0) would return +0; however, implementation in software
+    // fmax(-0. 0, +0. 0) would return +0; however, implementation in software
     // might be impractical."
     FMF.setNoSignedZeros();
     FMF.setNoNaNs();
@@ -2075,13 +2075,17 @@ Value *LibCallSimplifier::optimizeCall(CallInst *CI) {
   if (Value *SimplifiedFortifiedCI = FortifiedSimplifier.optimizeCall(CI)) {
     // Try to further simplify the result.
     CallInst *SimplifiedCI = dyn_cast<CallInst>(SimplifiedFortifiedCI);
-    if (SimplifiedCI && SimplifiedCI->getCalledFunction())
-      if (Value *V = optimizeStringMemoryLibCall(SimplifiedCI, Builder)) {
+    if (SimplifiedCI && SimplifiedCI->getCalledFunction()) {
+      // Use an IR Builder from SimplifiedCI if available instead of CI
+      // to guarantee we reach all uses we might replace later on.
+      IRBuilder<> TmpBuilder(SimplifiedCI);
+      if (Value *V = optimizeStringMemoryLibCall(SimplifiedCI, TmpBuilder)) {
         // If we were able to further simplify, remove the now redundant call.
         SimplifiedCI->replaceAllUsesWith(V);
         SimplifiedCI->eraseFromParent();
         return V;
       }
+    }
     return SimplifiedFortifiedCI;
   }
 

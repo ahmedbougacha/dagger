@@ -673,7 +673,7 @@ TailDuplicatePass::duplicateSimpleBB(MachineBasicBlock *TailBB,
        PE = Preds.end(); PI != PE; ++PI) {
     MachineBasicBlock *PredBB = *PI;
 
-    if (PredBB->getLandingPadSuccessor())
+    if (PredBB->hasEHPadSuccessor())
       continue;
 
     if (bothUsedInPHI(*PredBB, Succs))
@@ -791,8 +791,8 @@ TailDuplicatePass::TailDuplicate(MachineBasicBlock *TailBB,
       RS->enterBasicBlock(PredBB);
       if (!PredBB->empty())
         RS->forward(std::prev(PredBB->end()));
-      for (unsigned LI : TailBB->liveins()) {
-        if (!RS->isRegUsed(LI, false))
+      for (const auto &LI : TailBB->liveins()) {
+        if (!RS->isRegUsed(LI.PhysReg, false))
           // If a register is previously livein to the tail but it's not live
           // at the end of predecessor BB, then it should be added to its
           // livein list.

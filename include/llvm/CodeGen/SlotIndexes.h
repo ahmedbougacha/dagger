@@ -155,7 +155,7 @@ namespace llvm {
              "Attempt to construct index with 0 pointer.");
     }
 
-    /// Returns true if this is a valid index. Invalid indicies do
+    /// Returns true if this is a valid index. Invalid indices do
     /// not point into an index table, and cannot be compared.
     bool isValid() const {
       return lie.getPointer();
@@ -539,17 +539,6 @@ namespace llvm {
              index < getMBBEndIdx(J->second) &&
              "index does not correspond to an MBB");
       return J->second;
-    }
-
-    bool findLiveInMBBs(SlotIndex start, SlotIndex end,
-                        SmallVectorImpl<MachineBasicBlock*> &mbbs) const {
-      bool resVal = false;
-      for (MBBIndexIterator itr = findMBBIndex(start);
-           itr != MBBIndexEnd() && itr->first < end; ++itr) {
-        mbbs.push_back(itr->second);
-        resVal = true;
-      }
-      return resVal;
     }
 
     /// Returns the MBB covering the given range, or null if the range covers

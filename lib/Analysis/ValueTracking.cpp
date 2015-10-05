@@ -58,12 +58,12 @@ static cl::opt<unsigned> DomConditionsMaxDepth("dom-conditions-max-depth",
 /// conditions?
 static cl::opt<unsigned> DomConditionsMaxDomBlocks("dom-conditions-dom-blocks",
                                                    cl::Hidden,
-                                                   cl::init(20000));
+                                                   cl::init(20));
 
 // Controls the number of uses of the value searched for possible
 // dominating comparisons.
 static cl::opt<unsigned> DomConditionsMaxUses("dom-conditions-max-uses",
-                                              cl::Hidden, cl::init(2000));
+                                              cl::Hidden, cl::init(20));
 
 // If true, don't consider only compares whose only use is a branch.
 static cl::opt<bool> DomConditionsSingleCmpUse("dom-conditions-single-cmp-use",
@@ -328,7 +328,7 @@ static void computeKnownBitsMul(Value *Op0, Value *Op1, bool NSW,
   }
 
   // If low bits are zero in either operand, output low known-0 bits.
-  // Also compute a conserative estimate for high known-0 bits.
+  // Also compute a conservative estimate for high known-0 bits.
   // More trickiness is possible, but this is sufficient for the
   // interesting case of alignment computation.
   KnownOne.clearAllBits();
@@ -609,6 +609,11 @@ static void computeKnownBitsFromDominatingCondition(Value *V, APInt &KnownZero,
   if (!Q.DT || !Q.CxtI)
     return;
   Instruction *Cxt = const_cast<Instruction *>(Q.CxtI);
+  // The context instruction might be in a statically unreachable block.  If
+  // so, asking dominator queries may yield suprising results.  (e.g. the block
+  // may not have a dom tree node)
+  if (!Q.DT->isReachableFromEntry(Cxt->getParent()))
+    return;
 
   // Avoid useless work
   if (auto VI = dyn_cast<Instruction>(V))
@@ -655,7 +660,9 @@ static void computeKnownBitsFromDominatingCondition(Value *V, APInt &KnownZero,
     // instruction.  Finding a condition where one path dominates the context
     // isn't enough because both the true and false cases could merge before
     // the context instruction we're actually interested in.  Instead, we need
-    // to ensure that the taken *edge* dominates the context instruction.
+    // to ensure that the taken *edge* dominates the context instruction.  We
+    // know that the edge must be reachable since we started from a reachable
+    // block.
     BasicBlock *BB0 = BI->getSuccessor(0);
     BasicBlockEdge Edge(BI->getParent(), BB0);
     if (!Edge.isSingleEdge() || !Q.DT->dominates(Edge, Q.CxtI->getParent()))
@@ -1402,6 +1409,37 @@ static void computeKnownBitsFromOperator(Operator *I, APInt &KnownZero,
   }
 }
 
+static unsigned getAlignment(Value *V, const DataLayout &DL) {
+  unsigned Align = 0;
+  if (auto *GO = dyn_cast<GlobalObject>(V)) {
+    Align = GO->getAlignment();
+    if (Align == 0) {
+      if (auto *GVar = dyn_cast<GlobalVariable>(GO)) {
+        Type *ObjectType = GVar->getType()->getElementType();
+        if (ObjectType->isSized()) {
+          // If the object is defined in the current Module, we'll be giving
+          // it the preferred alignment. Otherwise, we have to assume that it
+          // may only have the minimum ABI alignment.
+          if (GVar->isStrongDefinitionForLinker())
+            Align = DL.getPreferredAlignment(GVar);
+          else
+            Align = DL.getABITypeAlignment(ObjectType);
+        }
+      }
+    }
+  } else if (Argument *A = dyn_cast<Argument>(V)) {
+    Align = A->getType()->isPointerTy() ? A->getParamAlignment() : 0;
+
+    if (!Align && A->hasStructRetAttr()) {
+      // An sret parameter has at least the ABI alignment of the return type.
+      Type *EltTy = cast<PointerType>(A->getType())->getElementType();
+      if (EltTy->isSized())
+        Align = DL.getABITypeAlignment(EltTy);
+    }
+  }
+  return Align;
+}
+
 /// Determine which bits of V are known to be either zero or one and return
 /// them in the KnownZero/KnownOne bit sets.
 ///
@@ -1462,59 +1500,6 @@ void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
     return;
   }
 
-  // The address of an aligned GlobalValue has trailing zeros.
-  if (auto *GO = dyn_cast<GlobalObject>(V)) {
-    unsigned Align = GO->getAlignment();
-    if (Align == 0) {
-      if (auto *GVar = dyn_cast<GlobalVariable>(GO)) {
-        Type *ObjectType = GVar->getType()->getElementType();
-        if (ObjectType->isSized()) {
-          // If the object is defined in the current Module, we'll be giving
-          // it the preferred alignment. Otherwise, we have to assume that it
-          // may only have the minimum ABI alignment.
-          if (GVar->isStrongDefinitionForLinker())
-            Align = DL.getPreferredAlignment(GVar);
-          else
-            Align = DL.getABITypeAlignment(ObjectType);
-        }
-      }
-    }
-    if (Align > 0)
-      KnownZero = APInt::getLowBitsSet(BitWidth,
-                                       countTrailingZeros(Align));
-    else
-      KnownZero.clearAllBits();
-    KnownOne.clearAllBits();
-    return;
-  }
-
-  if (Argument *A = dyn_cast<Argument>(V)) {
-    unsigned Align = A->getType()->isPointerTy() ? A->getParamAlignment() : 0;
-
-    if (!Align && A->hasStructRetAttr()) {
-      // An sret parameter has at least the ABI alignment of the return type.
-      Type *EltTy = cast<PointerType>(A->getType())->getElementType();
-      if (EltTy->isSized())
-        Align = DL.getABITypeAlignment(EltTy);
-    }
-
-    if (Align)
-      KnownZero = APInt::getLowBitsSet(BitWidth, countTrailingZeros(Align));
-    else
-      KnownZero.clearAllBits();
-    KnownOne.clearAllBits();
-
-    // Don't give up yet... there might be an assumption that provides more
-    // information...
-    computeKnownBitsFromAssume(V, KnownZero, KnownOne, DL, Depth, Q);
-
-    // Or a dominating condition for that matter
-    if (EnableDomConditions && Depth <= DomConditionsMaxDepth)
-      computeKnownBitsFromDominatingCondition(V, KnownZero, KnownOne, DL,
-                                              Depth, Q);
-    return;
-  }
-
   // Start out not knowing anything.
   KnownZero.clearAllBits(); KnownOne.clearAllBits();
 
@@ -1533,6 +1518,14 @@ void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
 
   if (Operator *I = dyn_cast<Operator>(V))
     computeKnownBitsFromOperator(I, KnownZero, KnownOne, DL, Depth, Q);
+
+  // Aligned pointers have trailing zeros - refine KnownZero set
+  if (V->getType()->isPointerTy()) {
+    unsigned Align = getAlignment(V, DL);
+    if (Align)
+      KnownZero |= APInt::getLowBitsSet(BitWidth, countTrailingZeros(Align));
+  }
+
   // computeKnownBitsFromAssume and computeKnownBitsFromDominatingCondition
   // strictly refines KnownZero and KnownOne. Therefore, we run them after
   // computeKnownBitsFromOperator.
@@ -1820,6 +1813,23 @@ bool isKnownNonZero(Value *V, const DataLayout &DL, unsigned Depth,
     ComputeSignBit(X, XKnownNonNegative, XKnownNegative, DL, Depth, Q);
     if (XKnownNegative)
       return true;
+
+    // If the shifter operand is a constant, and all of the bits shifted
+    // out are known to be zero, and X is known non-zero then at least one
+    // non-zero bit must remain.
+    if (ConstantInt *Shift = dyn_cast<ConstantInt>(Y)) {
+      APInt KnownZero(BitWidth, 0);
+      APInt KnownOne(BitWidth, 0);
+      computeKnownBits(X, KnownZero, KnownOne, DL, Depth, Q);
+      
+      auto ShiftVal = Shift->getLimitedValue(BitWidth - 1);
+      // Is there a known one in the portion not shifted out?
+      if (KnownOne.countLeadingZeros() < BitWidth - ShiftVal)
+        return true;
+      // Are all the bits to be shifted out known zero?
+      if (KnownZero.countTrailingOnes() >= ShiftVal)
+        return isKnownNonZero(X, DL, Depth, Q);
+    }
   }
   // div exact can only produce a zero if the dividend is zero.
   else if (match(V, m_Exact(m_IDiv(m_Value(X), m_Value())))) {
@@ -1878,6 +1888,26 @@ bool isKnownNonZero(Value *V, const DataLayout &DL, unsigned Depth,
     if (isKnownNonZero(SI->getTrueValue(), DL, Depth, Q) &&
         isKnownNonZero(SI->getFalseValue(), DL, Depth, Q))
       return true;
+  }
+  // PHI
+  else if (PHINode *PN = dyn_cast<PHINode>(V)) {
+    // Try and detect a recurrence that monotonically increases from a
+    // starting value, as these are common as induction variables.
+    if (PN->getNumIncomingValues() == 2) {
+      Value *Start = PN->getIncomingValue(0);
+      Value *Induction = PN->getIncomingValue(1);
+      if (isa<ConstantInt>(Induction) && !isa<ConstantInt>(Start))
+        std::swap(Start, Induction);
+      if (ConstantInt *C = dyn_cast<ConstantInt>(Start)) {
+        if (!C->isZero() && !C->isNegative()) {
+          ConstantInt *X;
+          if ((match(Induction, m_NSWAdd(m_Specific(PN), m_ConstantInt(X))) ||
+               match(Induction, m_NUWAdd(m_Specific(PN), m_ConstantInt(X)))) &&
+              !X->isNegative())
+            return true;
+        }
+      }
+    }
   }
 
   if (!BitWidth) return false;
@@ -2952,6 +2982,13 @@ static bool isAligned(const Value *Base, APInt Offset, unsigned Align,
     BaseAlign = GV->getAlignment();
   else if (const Argument *A = dyn_cast<Argument>(Base))
     BaseAlign = A->getParamAlignment();
+  else if (auto CS = ImmutableCallSite(Base))
+    BaseAlign = CS.getAttributes().getParamAlignment(AttributeSet::ReturnIndex);
+  else if (const LoadInst *LI = dyn_cast<LoadInst>(Base))
+    if (MDNode *MD = LI->getMetadata(LLVMContext::MD_align)) {
+      ConstantInt *CI = mdconst::extract<ConstantInt>(MD->getOperand(0));
+      BaseAlign = CI->getLimitedValue();
+    }
 
   if (!BaseAlign) {
     Type *Ty = Base->getType()->getPointerElementType();
@@ -3207,6 +3244,7 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V,
   case Instruction::CatchEndPad:
   case Instruction::CatchRet:
   case Instruction::CleanupPad:
+  case Instruction::CleanupEndPad:
   case Instruction::CleanupRet:
   case Instruction::TerminatePad:
     return false; // Misc instructions which have effects
@@ -3219,6 +3257,8 @@ bool llvm::mayBeMemoryDependent(const Instruction &I) {
 
 /// Return true if we know that the specified value is never null.
 bool llvm::isKnownNonNull(const Value *V, const TargetLibraryInfo *TLI) {
+  assert(V->getType()->isPointerTy() && "V must be pointer type");
+
   // Alloca never returns null, malloc might.
   if (isa<AllocaInst>(V)) return true;
 
@@ -3251,6 +3291,8 @@ bool llvm::isKnownNonNull(const Value *V, const TargetLibraryInfo *TLI) {
 static bool isKnownNonNullFromDominatingCondition(const Value *V,
                                                   const Instruction *CtxI,
                                                   const DominatorTree *DT) {
+  assert(V->getType()->isPointerTy() && "V must be pointer type");
+
   unsigned NumUsesExplored = 0;
   for (auto U : V->users()) {
     // Avoid massive lists
@@ -3750,13 +3792,25 @@ static SelectPatternResult matchSelectPattern(CmpInst::Predicate Pred,
   return {SPF_UNKNOWN, SPNB_NA, false};
 }
 
-static Constant *lookThroughCast(CmpInst *CmpI, Value *V1, Value *V2,
-                                 Instruction::CastOps *CastOp) {
+static Value *lookThroughCast(CmpInst *CmpI, Value *V1, Value *V2,
+                              Instruction::CastOps *CastOp) {
   CastInst *CI = dyn_cast<CastInst>(V1);
   Constant *C = dyn_cast<Constant>(V2);
-  if (!CI || !C)
+  CastInst *CI2 = dyn_cast<CastInst>(V2);
+  if (!CI)
     return nullptr;
   *CastOp = CI->getOpcode();
+
+  if (CI2) {
+    // If V1 and V2 are both the same cast from the same type, we can look
+    // through V1.
+    if (CI2->getOpcode() == CI->getOpcode() &&
+        CI2->getSrcTy() == CI->getSrcTy())
+      return CI2->getOperand(0);
+    return nullptr;
+  } else if (!C) {
+    return nullptr;
+  }
 
   if (isa<SExtInst>(CI) && CmpI->isSigned()) {
     Constant *T = ConstantExpr::getTrunc(C, CI->getSrcTy());
@@ -3817,11 +3871,11 @@ SelectPatternResult llvm::matchSelectPattern(Value *V,
 
   // Deal with type mismatches.
   if (CastOp && CmpLHS->getType() != TrueVal->getType()) {
-    if (Constant *C = lookThroughCast(CmpI, TrueVal, FalseVal, CastOp))
+    if (Value *C = lookThroughCast(CmpI, TrueVal, FalseVal, CastOp))
       return ::matchSelectPattern(Pred, FMF, CmpLHS, CmpRHS,
                                   cast<CastInst>(TrueVal)->getOperand(0), C,
                                   LHS, RHS);
-    if (Constant *C = lookThroughCast(CmpI, FalseVal, TrueVal, CastOp))
+    if (Value *C = lookThroughCast(CmpI, FalseVal, TrueVal, CastOp))
       return ::matchSelectPattern(Pred, FMF, CmpLHS, CmpRHS,
                                   C, cast<CastInst>(FalseVal)->getOperand(0),
                                   LHS, RHS);

@@ -30,7 +30,9 @@ def isGCN : Predicate<"Subtarget->getGeneration() "
                       ">= AMDGPUSubtarget::SOUTHERN_ISLANDS">,
             AssemblerPredicate<"FeatureGCN">;
 def isSI : Predicate<"Subtarget->getGeneration() "
-                      "== AMDGPUSubtarget::SOUTHERN_ISLANDS">;
+                      "== AMDGPUSubtarget::SOUTHERN_ISLANDS">,
+           AssemblerPredicate<"FeatureSouthernIslands">;
+
 
 def has16BankLDS : Predicate<"Subtarget->getLDSBankCount() == 16">;
 def has32BankLDS : Predicate<"Subtarget->getLDSBankCount() == 32">;
@@ -91,7 +93,9 @@ defm S_BUFFER_LOAD_DWORDX16 : SMRD_Helper <
 } // mayLoad = 1
 
 //def S_MEMTIME : SMRD_ <0x0000001e, "s_memtime", []>;
-//def S_DCACHE_INV : SMRD_ <0x0000001f, "s_dcache_inv", []>;
+
+defm S_DCACHE_INV : SMRD_Inval <smrd<0x1f, 0x20>, "s_dcache_inv",
+  int_amdgcn_s_dcache_inv>;
 
 //===----------------------------------------------------------------------===//
 // SOP1 Instructions
@@ -479,11 +483,11 @@ let hasSideEffects = 1 in {
 def S_BARRIER : SOPP <0x0000000a, (ins), "s_barrier",
   [(int_AMDGPU_barrier_local)]
 > {
+  let SchedRW = [WriteBarrier];
   let simm16 = 0;
-  let isBarrier = 1;
-  let hasCtrlDep = 1;
   let mayLoad = 1;
   let mayStore = 1;
+  let isConvergent = 1;
 }
 
 def S_WAITCNT : SOPP <0x0000000c, (ins WAIT_FLAG:$simm16), "s_waitcnt $simm16">;
@@ -1028,9 +1032,12 @@ defm BUFFER_ATOMIC_XOR : MUBUF_Atomic <
 //def BUFFER_ATOMIC_FCMPSWAP_X2 : MUBUF_X2 <mubuf<0x5e>, "buffer_atomic_fcmpswap_x2", []>; // isn't on VI
 //def BUFFER_ATOMIC_FMIN_X2 : MUBUF_X2 <mubuf<0x5f>, "buffer_atomic_fmin_x2", []>; // isn't on VI
 //def BUFFER_ATOMIC_FMAX_X2 : MUBUF_X2 <mubuf<0x60>, "buffer_atomic_fmax_x2", []>; // isn't on VI
-//def BUFFER_WBINVL1_SC : MUBUF_WBINVL1 <mubuf<0x70>, "buffer_wbinvl1_sc", []>; // isn't on CI & VI
-//def BUFFER_WBINVL1_VOL : MUBUF_WBINVL1 <mubuf<0x70, 0x3f>, "buffer_wbinvl1_vol", []>; // isn't on SI
-//def BUFFER_WBINVL1 : MUBUF_WBINVL1 <mubuf<0x71, 0x3e>, "buffer_wbinvl1", []>;
+
+let SubtargetPredicate = isSI in {
+defm BUFFER_WBINVL1_SC : MUBUF_Invalidate <mubuf<0x70>, "buffer_wbinvl1_sc", int_amdgcn_buffer_wbinvl1_sc>; // isn't on CI & VI
+}
+
+defm BUFFER_WBINVL1 : MUBUF_Invalidate <mubuf<0x71, 0x3e>, "buffer_wbinvl1", int_amdgcn_buffer_wbinvl1>;
 
 //===----------------------------------------------------------------------===//
 // MTBUF Instructions
@@ -1367,7 +1374,7 @@ defm V_RSQ_CLAMP_F64 : VOP1InstSI <vop1<0x32>, "v_rsq_clamp_f64",
 // VINTRP Instructions
 //===----------------------------------------------------------------------===//
 
-let Uses = [M0] in {
+let Uses = [M0, EXEC] in {
 
 // FIXME: Specify SchedRW for VINTRP insturctions.
 
@@ -1412,7 +1419,7 @@ defm V_INTERP_MOV_F32 : VINTRP_m <
   [(set f32:$dst, (AMDGPUinterp_mov (i32 imm:$src0), (i32 imm:$attr_chan),
                                     (i32 imm:$attr)))]>;
 
-} // End Uses = [M0]
+} // End Uses = [M0, EXEC]
 
 //===----------------------------------------------------------------------===//
 // VOP2 Instructions
@@ -1507,7 +1514,7 @@ let isCommutable = 1 in {
 defm V_MADAK_F32 : VOP2MADK <vop2<0x21, 0x18>, "v_madak_f32">;
 } // End isCommutable = 1
 
-let isCommutable = 1, Defs = [VCC] in { // Carry-out goes to VCC
+let isCommutable = 1 in {
 // No patterns so that the scalar instructions are always selected.
 // The scalar versions will be replaced with vector when needed later.
 
@@ -1522,19 +1529,17 @@ defm V_SUBREV_I32 : VOP2bInst <vop2<0x27, 0x1b>, "v_subrev_i32",
   VOP2b_I32_I1_I32_I32, null_frag, "v_sub_i32"
 >;
 
-let Uses = [VCC] in { // Carry-in comes from VCC
 defm V_ADDC_U32 : VOP2bInst <vop2<0x28, 0x1c>, "v_addc_u32",
-  VOP2b_I32_I1_I32_I32_VCC
+  VOP2b_I32_I1_I32_I32_I1
 >;
 defm V_SUBB_U32 : VOP2bInst <vop2<0x29, 0x1d>, "v_subb_u32",
-  VOP2b_I32_I1_I32_I32_VCC
+  VOP2b_I32_I1_I32_I32_I1
 >;
 defm V_SUBBREV_U32 : VOP2bInst <vop2<0x2a, 0x1e>, "v_subbrev_u32",
-  VOP2b_I32_I1_I32_I32_VCC, null_frag, "v_subb_u32"
+  VOP2b_I32_I1_I32_I32_I1, null_frag, "v_subb_u32"
 >;
 
-} // End Uses = [VCC]
-} // End isCommutable = 1, Defs = [VCC]
+} // End isCommutable = 1
 
 defm V_READLANE_B32 : VOP2SI_3VI_m <
   vop3 <0x001, 0x289>,
@@ -1763,15 +1768,19 @@ defm V_MUL_HI_I32 : VOP3Inst <vop3<0x16c, 0x287>, "v_mul_hi_i32",
 } // isCommutable = 1, SchedRW = [WriteQuarterRate32]
 
 let SchedRW = [WriteFloatFMA, WriteSALU] in {
-defm V_DIV_SCALE_F32 : VOP3b_32 <vop3<0x16d, 0x1e0>, "v_div_scale_f32", []>;
+defm V_DIV_SCALE_F32 : VOP3bInst <vop3<0x16d, 0x1e0>, "v_div_scale_f32",
+  VOP3b_F32_I1_F32_F32_F32
+>;
 }
 
 let SchedRW = [WriteDouble, WriteSALU] in {
 // Double precision division pre-scale.
-defm V_DIV_SCALE_F64 : VOP3b_64 <vop3<0x16e, 0x1e1>, "v_div_scale_f64", []>;
+defm V_DIV_SCALE_F64 : VOP3bInst <vop3<0x16e, 0x1e1>, "v_div_scale_f64",
+  VOP3b_F64_I1_F64_F64_F64
+>;
 } // let SchedRW = [WriteDouble]
 
-let isCommutable = 1, Uses = [VCC] in {
+let isCommutable = 1, Uses = [VCC, EXEC] in {
 
 let SchedRW = [WriteFloatFMA] in {
 // v_div_fmas_f32:
@@ -1795,7 +1804,7 @@ defm V_DIV_FMAS_F64 : VOP3_VCC_Inst <vop3<0x170, 0x1e3>, "v_div_fmas_f64",
 >;
 
 } // End SchedRW = [WriteDouble]
-} // End isCommutable = 1
+} // End isCommutable = 1, Uses = [VCC, EXEC]
 
 //def V_MSAD_U8 : VOP3_U8 <0x00000171, "v_msad_u8", []>;
 //def V_QSAD_U8 : VOP3_U8 <0x00000172, "v_qsad_u8", []>;
@@ -1844,13 +1853,13 @@ def V_CNDMASK_B64_PSEUDO : VOP3Common <(outs VReg_64:$dst),
   (ins VSrc_64:$src0, VSrc_64:$src1, SSrc_64:$src2), "", []
 >;
 
-let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Uses = [EXEC] in {
 // 64-bit vector move instruction.  This is mainly used by the SIFoldOperands
 // pass to enable folding of inline immediates.
 def V_MOV_B64_PSEUDO : InstSI <(outs VReg_64:$dst), (ins VSrc_64:$src0), "", []>;
 } // end let hasSideEffects = 0, mayLoad = 0, mayStore = 0
 
-let hasSideEffects = 1 in {
+let hasSideEffects = 1, SALU = 1 in {
 def SGPR_USE : InstSI <(outs),(ins), "", []>;
 }
 
@@ -1986,7 +1995,7 @@ def SI_INDIRECT_DST_V16 : SI_INDIRECT_DST<VReg_512>;
 
 multiclass SI_SPILL_SGPR <RegisterClass sgpr_class> {
 
-  let UseNamedOperandTable = 1 in {
+  let UseNamedOperandTable = 1, Uses = [EXEC] in {
     def _SAVE : InstSI <
       (outs),
       (ins sgpr_class:$src, i32imm:$frame_idx, SReg_128:$scratch_rsrc,
@@ -2018,7 +2027,7 @@ defm SI_SPILL_S256 : SI_SPILL_SGPR <SReg_256>;
 defm SI_SPILL_S512 : SI_SPILL_SGPR <SReg_512>;
 
 multiclass SI_SPILL_VGPR <RegisterClass vgpr_class> {
-  let UseNamedOperandTable = 1, VGPRSpill = 1 in {
+  let UseNamedOperandTable = 1, VGPRSpill = 1, Uses = [EXEC] in {
     def _SAVE : InstSI <
       (outs),
       (ins vgpr_class:$src, i32imm:$frame_idx, SReg_128:$scratch_rsrc,
@@ -2053,7 +2062,9 @@ def SI_CONSTDATA_PTR : InstSI <
   (outs SReg_64:$dst),
   (ins),
   "", [(set SReg_64:$dst, (i64 SIconstdata_ptr))]
->;
+> {
+  let SALU = 1;
+}
 
 } // End Defs = [SCC]
 

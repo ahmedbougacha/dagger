@@ -54,13 +54,13 @@ inline static unsigned getCRFromCRBit(unsigned SrcReg) {
   return Reg;
 }
 
-
 class PPCRegisterInfo : public PPCGenRegisterInfo {
   DenseMap<unsigned, unsigned> ImmToIdxMap;
   const PPCTargetMachine &TM;
+
 public:
   PPCRegisterInfo(const PPCTargetMachine &TM);
-  
+
   /// getPointerRegClass - Return the register class to use to hold pointers.
   /// This is used for addressing modes.
   const TargetRegisterClass *
@@ -115,9 +115,9 @@ public:
                           unsigned FrameIndex) const;
 
   bool hasReservedSpillSlot(const MachineFunction &MF, unsigned Reg,
-			    int &FrameIdx) const override;
-  void eliminateFrameIndex(MachineBasicBlock::iterator II,
-                           int SPAdj, unsigned FIOperandNum,
+                            int &FrameIdx) const override;
+  void eliminateFrameIndex(MachineBasicBlock::iterator II, int SPAdj,
+                           unsigned FIOperandNum,
                            RegScavenger *RS = nullptr) const override;
 
   // Support for virtual base registers.

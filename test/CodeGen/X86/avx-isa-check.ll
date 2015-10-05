@@ -214,3 +214,56 @@ define <16 x i8> @test_vpcmpeqb_128(<16 x i8> %i, <16 x i8> %j) nounwind readnon
   %x = sext <16 x i1> %bincmp to <16 x i8>
   ret <16 x i8> %x
 }
+
+define <8 x i16> @shuffle_v8i16_vpalignr(<8 x i16> %a, <8 x i16> %b) {
+  %shuffle = shufflevector <8 x i16> %a, <8 x i16> %b, <8 x i32> <i32 4, i32 5, i32 6, i32 7, i32 8, i32 9, i32 10, i32 11>
+  ret <8 x i16> %shuffle
+}
+
+define <16 x i16> @shuffle_v16i16_vpalignr(<16 x i16> %a, <16 x i16> %b) {
+  %shuffle = shufflevector <16 x i16> %a, <16 x i16> %b, <16 x i32> <i32 23, i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 31, i32 8, i32 9, i32 10, i32 11, i32 12, i32 13, i32 14>
+  ret <16 x i16> %shuffle
+}
+
+define <16 x i8> @shuffle_v16i8_vpalignr(<16 x i8> %a, <16 x i8> %b) {
+  %shuffle = shufflevector <16 x i8> %a, <16 x i8> %b, <16 x i32> <i32 31, i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 8, i32 9, i32 10, i32 11, i32 12, i32 13, i32 14>
+  ret <16 x i8> %shuffle
+}
+
+define <32 x i8> @shuffle_v32i8_vpalignr(<32 x i8> %a, <32 x i8> %b) {
+  %shuffle = shufflevector <32 x i8> %a, <32 x i8> %b, <32 x i32> <i32 undef, i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 8, i32 9, i32 10, i32 11, i32 12, i32 13, i32 14, i32 63, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef>
+  ret <32 x i8> %shuffle
+}
+
+define <2 x i64> @shuffle_v2i64_vpalignr(<2 x i64> %a, <2 x i64> %b) {
+  %shuffle = shufflevector <2 x i64> %a, <2 x i64> %b, <2 x i32> <i32 1, i32 2>
+  ret <2 x i64> %shuffle
+}
+
+define <4 x i32> @shuffle_v4i32_vpalignr(<4 x i32> %a, <4 x i32> %b) {
+  %shuffle = shufflevector <4 x i32> %a, <4 x i32> %b, <4 x i32> <i32 7, i32 0, i32 1, i32 2>
+  ret <4 x i32> %shuffle
+}
+
+define <8 x i32> @shuffle_v8i32_vpalignr(<8 x i32> %a, <8 x i32> %b) {
+  %shuffle = shufflevector <8 x i32> %a, <8 x i32> %b, <8 x i32> <i32 11, i32 0, i32 1, i32 2, i32 15, i32 4, i32 5, i32 6>
+  ret <8 x i32> %shuffle
+}
+
+define <4 x double> @shuffle_v4f64_5163(<4 x double> %a, <4 x double> %b) {
+  %shuffle = shufflevector <4 x double> %a, <4 x double> %b, <4 x i32> <i32 5, i32 1, i32 6, i32 3>
+  ret <4 x double> %shuffle
+}
+
+define <2 x double> @shuffle_v2f64_bitcast_1z(<2 x double> %a) {
+  %shuffle64 = shufflevector <2 x double> %a, <2 x double> zeroinitializer, <2 x i32> <i32 2, i32 1>
+  %bitcast32 = bitcast <2 x double> %shuffle64 to <4 x float>
+  %shuffle32 = shufflevector <4 x float> %bitcast32, <4 x float> undef, <4 x i32> <i32 2, i32 3, i32 0, i32 1>
+  %bitcast64 = bitcast <4 x float> %shuffle32 to <2 x double>
+  ret <2 x double> %bitcast64
+}
+
+define <16 x i16> @shuffle_v16i16_zz_zz_zz_zz_zz_zz_zz_16_zz_zz_zz_zz_zz_zz_zz_24(<16 x i16> %a) {
+  %shuffle = shufflevector <16 x i16> zeroinitializer, <16 x i16> %a, <16 x i32> <i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 16, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 24>
+  ret <16 x i16> %shuffle
+}

@@ -61,6 +61,7 @@ class X86AsmParser : public MCTargetAsmParser {
   const MCInstrInfo &MII;
   ParseInstructionInfo *InstInfo;
   std::unique_ptr<X86AsmInstrumentation> Instrumentation;
+
 private:
   SMLoc consumeToken() {
     MCAsmParser &Parser = getParser();
@@ -269,6 +270,7 @@ private:
     bool StopOnLBrac, AddImmPrefix;
     InfixCalculator IC;
     InlineAsmIdentifierInfo Info;
+
   public:
     IntelExprStateMachine(int64_t imm, bool stoponlbrac, bool addimmprefix) :
       State(IES_PLUS), PrevState(IES_ERROR), BaseReg(0), IndexReg(0), TmpReg(0),
@@ -775,7 +777,7 @@ private:
     unsigned FB = ComputeAvailableFeatures(
       STI.ToggleFeature(OldMode.flip(mode)));
     setAvailableFeatures(FB);
-    
+
     assert(FeatureBitset({mode}) == (STI.getFeatureBits() & AllModes));
   }
 
@@ -1245,7 +1247,7 @@ bool X86AsmParser::ParseIntelExpression(IntelExprStateMachine &SM, SMLoc &End) {
               getContext().getDirectionalLocalSymbol(IntVal, IDVal == "b");
           MCSymbolRefExpr::VariantKind Variant = MCSymbolRefExpr::VK_None;
           const MCExpr *Val =
-	    MCSymbolRefExpr::create(Sym, Variant, getContext());
+              MCSymbolRefExpr::create(Sym, Variant, getContext());
           if (IDVal == "b" && Sym->isUndefined())
             return Error(Loc, "invalid reference to undefined symbol");
           StringRef Identifier = Sym->getName();
@@ -1993,12 +1995,13 @@ std::unique_ptr<X86Operand> X86AsmParser::ParseMemOperand(unsigned SegReg,
           }
 
           // Validate the scale amount.
-	  if (X86MCRegisterClasses[X86::GR16RegClassID].contains(BaseReg) &&
+          if (X86MCRegisterClasses[X86::GR16RegClassID].contains(BaseReg) &&
               ScaleVal != 1) {
             Error(Loc, "scale factor in 16-bit address must be 1");
             return nullptr;
-	  }
-          if (ScaleVal != 1 && ScaleVal != 2 && ScaleVal != 4 && ScaleVal != 8){
+          }
+          if (ScaleVal != 1 && ScaleVal != 2 && ScaleVal != 4 &&
+              ScaleVal != 8) {
             Error(Loc, "scale factor in address must be 1, 2, 4 or 8");
             return nullptr;
           }
@@ -2185,7 +2188,6 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
     Name == "repne" || Name == "repnz" ||
     Name == "rex64" || Name == "data16";
 
-
   // This does the actual operand parsing.  Don't parse any more if we have a
   // prefix juxtaposed with an operation like "lock incl 4(%rax)", because we
   // just want to parse the "lock" as the first instruction and the "incl" as
@@ -2252,9 +2254,8 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
 
   // Append default arguments to "ins[bwld]"
   if (Name.startswith("ins") && Operands.size() == 1 &&
-      (Name == "insb" || Name == "insw" || Name == "insl" ||
-       Name == "insd" )) {
-    AddDefaultSrcDestOperands(Operands, 
+      (Name == "insb" || Name == "insw" || Name == "insl" || Name == "insd")) {
+    AddDefaultSrcDestOperands(Operands,
                               X86Operand::CreateReg(X86::DX, NameLoc, NameLoc),
                               DefaultMemDIOperand(NameLoc));
   }

@@ -11,31 +11,30 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Support/BranchProbability.h"
 #include "llvm/Support/BlockFrequency.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
 
 using namespace llvm;
 
-BlockFrequency &BlockFrequency::operator*=(const BranchProbability &Prob) {
+BlockFrequency &BlockFrequency::operator*=(BranchProbability Prob) {
   Frequency = Prob.scale(Frequency);
   return *this;
 }
 
 const BlockFrequency
-BlockFrequency::operator*(const BranchProbability &Prob) const {
+BlockFrequency::operator*(BranchProbability Prob) const {
   BlockFrequency Freq(Frequency);
   Freq *= Prob;
   return Freq;
 }
 
-BlockFrequency &BlockFrequency::operator/=(const BranchProbability &Prob) {
+BlockFrequency &BlockFrequency::operator/=(BranchProbability Prob) {
   Frequency = Prob.scaleByInverse(Frequency);
   return *this;
 }
 
-BlockFrequency BlockFrequency::operator/(const BranchProbability &Prob) const {
+BlockFrequency BlockFrequency::operator/(BranchProbability Prob) const {
   BlockFrequency Freq(Frequency);
   Freq /= Prob;
   return Freq;

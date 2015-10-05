@@ -28,6 +28,7 @@
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/Loads.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
@@ -608,6 +609,10 @@ namespace {
     DenseMap<uint32_t, LeaderTableEntry> LeaderTable;
     BumpPtrAllocator TableAllocator;
 
+    // Block-local map of equivalent values to their leader, does not
+    // propagate to any successors. Entries added mid-block are applied
+    // to the remaining instructions in the block.
+    SmallMapVector<llvm::Value *, llvm::Constant *, 4> ReplaceWithConstMap;
     SmallVector<Instruction*, 8> InstrsToErase;
 
     typedef SmallVector<NonLocalDepResult, 64> LoadDepVect;
@@ -689,16 +694,17 @@ namespace {
       AU.addRequired<TargetLibraryInfoWrapperPass>();
       if (!NoLoads)
         AU.addRequired<MemoryDependenceAnalysis>();
-      AU.addRequired<AliasAnalysis>();
+      AU.addRequired<AAResultsWrapperPass>();
 
       AU.addPreserved<DominatorTreeWrapperPass>();
-      AU.addPreserved<AliasAnalysis>();
+      AU.addPreserved<GlobalsAAWrapperPass>();
     }
 
 
     // Helper functions of redundant load elimination 
     bool processLoad(LoadInst *L);
     bool processNonLocalLoad(LoadInst *L);
+    bool processAssumeIntrinsic(IntrinsicInst *II);
     void AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps, 
                                  AvailValInBlkVect &ValuesPerBlock,
                                  UnavailBlkVect &UnavailableBlocks);
@@ -719,7 +725,9 @@ namespace {
     void verifyRemoved(const Instruction *I) const;
     bool splitCriticalEdges();
     BasicBlock *splitCriticalEdges(BasicBlock *Pred, BasicBlock *Succ);
-    bool propagateEquality(Value *LHS, Value *RHS, const BasicBlockEdge &Root);
+    bool replaceOperandsWithConsts(Instruction *I) const;
+    bool propagateEquality(Value *LHS, Value *RHS, const BasicBlockEdge &Root,
+                           bool DominatesByEdge);
     bool processFoldableCondBr(BranchInst *BI);
     void addDeadBlock(BasicBlock *BB);
     void assignValNumForDeadCode();
@@ -738,7 +746,8 @@ INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(MemoryDependenceAnalysis)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
-INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
 INITIALIZE_PASS_END(GVN, "gvn", "Global Value Numbering", false, false)
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -1660,6 +1669,9 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
     if (Tags)
       NewLoad->setAAMetadata(Tags);
 
+    if (auto *InvGroupMD = LI->getMetadata(LLVMContext::MD_invariant_group))
+      NewLoad->setMetadata(LLVMContext::MD_invariant_group, InvGroupMD);
+
     // Transfer DebugLoc.
     NewLoad->setDebugLoc(LI->getDebugLoc());
 
@@ -1760,6 +1772,63 @@ bool GVN::processNonLocalLoad(LoadInst *LI) {
   return PerformLoadPRE(LI, ValuesPerBlock, UnavailableBlocks);
 }
 
+bool GVN::processAssumeIntrinsic(IntrinsicInst *IntrinsicI) {
+  assert(IntrinsicI->getIntrinsicID() == Intrinsic::assume &&
+         "This function can only be called with llvm.assume intrinsic");
+  Value *V = IntrinsicI->getArgOperand(0);
+
+  if (ConstantInt *Cond = dyn_cast<ConstantInt>(V)) {
+    if (Cond->isZero()) {
+      Type *Int8Ty = Type::getInt8Ty(V->getContext());
+      // Insert a new store to null instruction before the load to indicate that
+      // this code is not reachable.  FIXME: We could insert unreachable
+      // instruction directly because we can modify the CFG.
+      new StoreInst(UndefValue::get(Int8Ty),
+                    Constant::getNullValue(Int8Ty->getPointerTo()),
+                    IntrinsicI);
+    }
+    markInstructionForDeletion(IntrinsicI);
+    return false;
+  }
+
+  Constant *True = ConstantInt::getTrue(V->getContext());
+  bool Changed = false;
+
+  for (BasicBlock *Successor : successors(IntrinsicI->getParent())) {
+    BasicBlockEdge Edge(IntrinsicI->getParent(), Successor);
+
+    // This property is only true in dominated successors, propagateEquality
+    // will check dominance for us.
+    Changed |= propagateEquality(V, True, Edge, false);
+  }
+
+  // We can replace assume value with true, which covers cases like this:
+  // call void @llvm.assume(i1 %cmp)
+  // br i1 %cmp, label %bb1, label %bb2 ; will change %cmp to true
+  ReplaceWithConstMap[V] = True;
+
+  // If one of *cmp *eq operand is const, adding it to map will cover this:
+  // %cmp = fcmp oeq float 3.000000e+00, %0 ; const on lhs could happen
+  // call void @llvm.assume(i1 %cmp)
+  // ret float %0 ; will change it to ret float 3.000000e+00
+  if (auto *CmpI = dyn_cast<CmpInst>(V)) {
+    if (CmpI->getPredicate() == CmpInst::Predicate::ICMP_EQ ||
+        CmpI->getPredicate() == CmpInst::Predicate::FCMP_OEQ ||
+        (CmpI->getPredicate() == CmpInst::Predicate::FCMP_UEQ &&
+         CmpI->getFastMathFlags().noNaNs())) {
+      Value *CmpLHS = CmpI->getOperand(0);
+      Value *CmpRHS = CmpI->getOperand(1);
+      if (isa<Constant>(CmpLHS))
+        std::swap(CmpLHS, CmpRHS);
+      auto *RHSConst = dyn_cast<Constant>(CmpRHS);
+
+      // If only one operand is constant.
+      if (RHSConst != nullptr && !isa<Constant>(CmpLHS))
+        ReplaceWithConstMap[CmpLHS] = RHSConst;
+    }
+  }
+  return Changed;
+}
 
 static void patchReplacementInstruction(Instruction *I, Value *Repl) {
   // Patch the replacement so that it is not more restrictive than the value
@@ -1780,13 +1849,10 @@ static void patchReplacementInstruction(Instruction *I, Value *Repl) {
     // regions, and so we need a conservative combination of the noalias
     // scopes.
     static const unsigned KnownIDs[] = {
-      LLVMContext::MD_tbaa,
-      LLVMContext::MD_alias_scope,
-      LLVMContext::MD_noalias,
-      LLVMContext::MD_range,
-      LLVMContext::MD_fpmath,
-      LLVMContext::MD_invariant_load,
-    };
+        LLVMContext::MD_tbaa,           LLVMContext::MD_alias_scope,
+        LLVMContext::MD_noalias,        LLVMContext::MD_range,
+        LLVMContext::MD_fpmath,         LLVMContext::MD_invariant_load,
+        LLVMContext::MD_invariant_group};
     combineMetadata(ReplInst, I, KnownIDs);
   }
 }
@@ -1873,10 +1939,8 @@ bool GVN::processLoad(LoadInst *L) {
       ++NumGVNLoad;
       return true;
     }
-  }
 
-  // If the value isn't available, don't do anything!
-  if (Dep.isClobber()) {
+    // If the value isn't available, don't do anything!
     DEBUG(
       // fast print dep, using operator<< on instruction is too slow.
       dbgs() << "GVN: load ";
@@ -2032,11 +2096,31 @@ static bool isOnlyReachableViaThisEdge(const BasicBlockEdge &E,
   return Pred != nullptr;
 }
 
+// Tries to replace instruction with const, using information from
+// ReplaceWithConstMap.
+bool GVN::replaceOperandsWithConsts(Instruction *Instr) const {
+  bool Changed = false;
+  for (unsigned OpNum = 0; OpNum < Instr->getNumOperands(); ++OpNum) {
+    Value *Operand = Instr->getOperand(OpNum);
+    auto it = ReplaceWithConstMap.find(Operand);
+    if (it != ReplaceWithConstMap.end()) {
+      assert(!isa<Constant>(Operand) &&
+             "Replacing constants with constants is invalid");
+      DEBUG(dbgs() << "GVN replacing: " << *Operand << " with " << *it->second
+                   << " in instruction " << *Instr << '\n');
+      Instr->setOperand(OpNum, it->second);
+      Changed = true;
+    }
+  }
+  return Changed;
+}
+
 /// The given values are known to be equal in every block
 /// dominated by 'Root'.  Exploit this, for example by replacing 'LHS' with
 /// 'RHS' everywhere in the scope.  Returns whether a change was made.
-bool GVN::propagateEquality(Value *LHS, Value *RHS,
-                            const BasicBlockEdge &Root) {
+/// If DominatesByEdge is false, then it means that it is dominated by Root.End.
+bool GVN::propagateEquality(Value *LHS, Value *RHS, const BasicBlockEdge &Root,
+                            bool DominatesByEdge) {
   SmallVector<std::pair<Value*, Value*>, 4> Worklist;
   Worklist.push_back(std::make_pair(LHS, RHS));
   bool Changed = false;
@@ -2048,11 +2132,13 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
     std::pair<Value*, Value*> Item = Worklist.pop_back_val();
     LHS = Item.first; RHS = Item.second;
 
-    if (LHS == RHS) continue;
+    if (LHS == RHS)
+      continue;
     assert(LHS->getType() == RHS->getType() && "Equality but unequal types!");
 
     // Don't try to propagate equalities between constants.
-    if (isa<Constant>(LHS) && isa<Constant>(RHS)) continue;
+    if (isa<Constant>(LHS) && isa<Constant>(RHS))
+      continue;
 
     // Prefer a constant on the right-hand side, or an Argument if no constants.
     if (isa<Constant>(LHS) || (isa<Argument>(LHS) && !isa<Constant>(RHS)))
@@ -2091,7 +2177,11 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
     // LHS always has at least one use that is not dominated by Root, this will
     // never do anything if LHS has only one use.
     if (!LHS->hasOneUse()) {
-      unsigned NumReplacements = replaceDominatedUsesWith(LHS, RHS, *DT, Root);
+      unsigned NumReplacements =
+          DominatesByEdge
+              ? replaceDominatedUsesWith(LHS, RHS, *DT, Root)
+              : replaceDominatedUsesWith(LHS, RHS, *DT, Root.getEnd());
+
       Changed |= NumReplacements > 0;
       NumGVNEqProp += NumReplacements;
     }
@@ -2163,7 +2253,10 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS,
         Value *NotCmp = findLeader(Root.getEnd(), Num);
         if (NotCmp && isa<Instruction>(NotCmp)) {
           unsigned NumReplacements =
-            replaceDominatedUsesWith(NotCmp, NotVal, *DT, Root);
+              DominatesByEdge
+                  ? replaceDominatedUsesWith(NotCmp, NotVal, *DT, Root)
+                  : replaceDominatedUsesWith(NotCmp, NotVal, *DT,
+                                             Root.getEnd());
           Changed |= NumReplacements > 0;
           NumGVNEqProp += NumReplacements;
         }
@@ -2203,6 +2296,10 @@ bool GVN::processInstruction(Instruction *I) {
     return true;
   }
 
+  if (IntrinsicInst *IntrinsicI = dyn_cast<IntrinsicInst>(I))
+    if (IntrinsicI->getIntrinsicID() == Intrinsic::assume)
+      return processAssumeIntrinsic(IntrinsicI);
+
   if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
     if (processLoad(LI))
       return true;
@@ -2233,11 +2330,11 @@ bool GVN::processInstruction(Instruction *I) {
 
     Value *TrueVal = ConstantInt::getTrue(TrueSucc->getContext());
     BasicBlockEdge TrueE(Parent, TrueSucc);
-    Changed |= propagateEquality(BranchCond, TrueVal, TrueE);
+    Changed |= propagateEquality(BranchCond, TrueVal, TrueE, true);
 
     Value *FalseVal = ConstantInt::getFalse(FalseSucc->getContext());
     BasicBlockEdge FalseE(Parent, FalseSucc);
-    Changed |= propagateEquality(BranchCond, FalseVal, FalseE);
+    Changed |= propagateEquality(BranchCond, FalseVal, FalseE, true);
 
     return Changed;
   }
@@ -2259,7 +2356,7 @@ bool GVN::processInstruction(Instruction *I) {
       // If there is only a single edge, propagate the case value into it.
       if (SwitchEdges.lookup(Dst) == 1) {
         BasicBlockEdge E(Parent, Dst);
-        Changed |= propagateEquality(SwitchCond, i.getCaseValue(), E);
+        Changed |= propagateEquality(SwitchCond, i.getCaseValue(), E, true);
       }
     }
     return Changed;
@@ -2267,7 +2364,8 @@ bool GVN::processInstruction(Instruction *I) {
 
   // Instructions with void type don't return a value, so there's
   // no point in trying to find redundancies in them.
-  if (I->getType()->isVoidTy()) return false;
+  if (I->getType()->isVoidTy())
+    return false;
 
   uint32_t NextNum = VN.getNextUnusedValueNumber();
   unsigned Num = VN.lookup_or_add(I);
@@ -2314,7 +2412,7 @@ bool GVN::runOnFunction(Function& F) {
   DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
   TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-  VN.setAliasAnalysis(&getAnalysis<AliasAnalysis>());
+  VN.setAliasAnalysis(&getAnalysis<AAResultsWrapperPass>().getAAResults());
   VN.setMemDep(MD);
   VN.setDomTree(DT);
 
@@ -2365,7 +2463,6 @@ bool GVN::runOnFunction(Function& F) {
   return Changed;
 }
 
-
 bool GVN::processBlock(BasicBlock *BB) {
   // FIXME: Kill off InstrsToErase by doing erasing eagerly in a helper function
   // (and incrementing BI before processing an instruction).
@@ -2374,11 +2471,16 @@ bool GVN::processBlock(BasicBlock *BB) {
   if (DeadBlocks.count(BB))
     return false;
 
+  // Clearing map before every BB because it can be used only for single BB.
+  ReplaceWithConstMap.clear();
   bool ChangedFunction = false;
 
   for (BasicBlock::iterator BI = BB->begin(), BE = BB->end();
        BI != BE;) {
+    if (!ReplaceWithConstMap.empty())
+      ChangedFunction |= replaceOperandsWithConsts(BI);
     ChangedFunction |= processInstruction(BI);
+
     if (InstrsToErase.empty()) {
       ++BI;
       continue;

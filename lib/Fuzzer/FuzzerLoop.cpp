@@ -136,6 +136,8 @@ void Fuzzer::ShuffleAndMinimize() {
       U.clear();
       size_t Last = std::min(First + Options.MaxLen, C.size());
       U.insert(U.begin(), C.begin() + First, C.begin() + Last);
+      if (Options.OnlyASCII)
+        ToASCII(U);
       size_t NewCoverage = RunOne(U);
       if (NewCoverage) {
         MaxCov = NewCoverage;
@@ -154,11 +156,7 @@ void Fuzzer::ShuffleAndMinimize() {
 size_t Fuzzer::RunOne(const Unit &U) {
   UnitStartTime = system_clock::now();
   TotalNumberOfRuns++;
-  size_t Res = 0;
-  if (Options.UseFullCoverageSet)
-    Res = RunOneMaximizeFullCoverageSet(U);
-  else
-    Res = RunOneMaximizeTotalCoverage(U);
+  size_t Res = RunOneMaximizeTotalCoverage(U);
   auto UnitStopTime = system_clock::now();
   auto TimeOfUnit =
       duration_cast<seconds>(UnitStopTime - UnitStartTime).count();
@@ -181,14 +179,6 @@ void Fuzzer::RunOneAndUpdateCorpus(Unit &U) {
   ReportNewCoverage(RunOne(U), U);
 }
 
-static uintptr_t HashOfArrayOfPCs(uintptr_t *PCs, uintptr_t NumPCs) {
-  uintptr_t Res = 0;
-  for (uintptr_t i = 0; i < NumPCs; i++) {
-    Res = (Res + PCs[i]) * 7;
-  }
-  return Res;
-}
-
 Unit Fuzzer::SubstituteTokens(const Unit &U) const {
   Unit Res;
   for (auto Idx : U) {
@@ -204,28 +194,14 @@ Unit Fuzzer::SubstituteTokens(const Unit &U) const {
 }
 
 void Fuzzer::ExecuteCallback(const Unit &U) {
+  int Res = 0;
   if (Options.Tokens.empty()) {
-    USF.TargetFunction(U.data(), U.size());
+    Res = USF.TargetFunction(U.data(), U.size());
   } else {
     auto T = SubstituteTokens(U);
-    USF.TargetFunction(T.data(), T.size());
+    Res = USF.TargetFunction(T.data(), T.size());
   }
-}
-
-// Experimental.
-// Fuly reset the current coverage state, run a single unit,
-// compute a hash function from the full coverage set,
-// return non-zero if the hash value is new.
-// This produces tons of new units and as is it's only suitable for small tests,
-// e.g. test/FullCoverageSetTest.cpp. FIXME: make it scale.
-size_t Fuzzer::RunOneMaximizeFullCoverageSet(const Unit &U) {
-  __sanitizer_reset_coverage();
-  ExecuteCallback(U);
-  uintptr_t *PCs;
-  uintptr_t NumPCs =__sanitizer_get_coverage_guards(&PCs);
-  if (FullCoverageSets.insert(HashOfArrayOfPCs(PCs, NumPCs)).second)
-    return FullCoverageSets.size();
-  return 0;
+  assert(Res == 0);
 }
 
 size_t Fuzzer::RunOneMaximizeTotalCoverage(const Unit &U) {
@@ -256,11 +232,7 @@ void Fuzzer::WriteToOutputCorpus(const Unit &U) {
   WriteToFile(U, Path);
   if (Options.Verbosity >= 2)
     Printf("Written to %s\n", Path.c_str());
-#ifdef DEBUG
-  if (Options.OnlyASCII)
-    for (auto X : U)
-      assert(isprint(X) || isspace(X));
-#endif
+  assert(!Options.OnlyASCII || IsASCII(U));
 }
 
 void Fuzzer::WriteUnitToFileWithPrefix(const Unit &U, const char *Prefix) {
@@ -329,30 +301,38 @@ void Fuzzer::MutateAndTestOne(Unit *U) {
   }
 }
 
-void Fuzzer::Loop(size_t NumIterations) {
-  for (size_t i = 1; i <= NumIterations; i++) {
+void Fuzzer::Loop() {
+  for (auto &U: Options.Dictionary)
+    USF.GetMD().AddWordToDictionary(U.data(), U.size());
+
+  while (true) {
     for (size_t J1 = 0; J1 < Corpus.size(); J1++) {
       SyncCorpus();
       RereadOutputCorpus();
       if (TotalNumberOfRuns >= Options.MaxNumberOfRuns)
         return;
-      // First, simply mutate the unit w/o doing crosses.
+      if (Options.MaxTotalTimeSec > 0 &&
+          secondsSinceProcessStartUp() >
+              static_cast<size_t>(Options.MaxTotalTimeSec))
+        return;
       CurrentUnit = Corpus[J1];
-      MutateAndTestOne(&CurrentUnit);
-      // Now, cross with others.
-      if (Options.DoCrossOver && !Corpus[J1].empty()) {
-        for (size_t J2 = 0; J2 < Corpus.size(); J2++) {
+      // Optionally, cross with another unit.
+      if (Options.DoCrossOver && USF.GetRand().RandBool()) {
+        size_t J2 = USF.GetRand()(Corpus.size());
+        if (!Corpus[J1].empty() && !Corpus[J2].empty()) {
+          assert(!Corpus[J2].empty());
           CurrentUnit.resize(Options.MaxLen);
           size_t NewSize = USF.CrossOver(
               Corpus[J1].data(), Corpus[J1].size(), Corpus[J2].data(),
               Corpus[J2].size(), CurrentUnit.data(), CurrentUnit.size());
           assert(NewSize > 0 && "CrossOver returned empty unit");
           assert(NewSize <= (size_t)Options.MaxLen &&
-                 "CrossOver return overisized unit");
+                 "CrossOver returned overisized unit");
           CurrentUnit.resize(NewSize);
-          MutateAndTestOne(&CurrentUnit);
         }
       }
+      // Perform several mutations and runs.
+      MutateAndTestOne(&CurrentUnit);
     }
   }
 }

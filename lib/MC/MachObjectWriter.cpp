@@ -78,7 +78,6 @@ uint64_t MachObjectWriter::getSymbolAddress(const MCSymbol &S,
           dyn_cast<const MCConstantExpr>(S.getVariableValue()))
       return C->getValue();
 
-
     MCValue Target;
     if (!S.getVariableValue()->evaluateAsRelocatable(Target, &Layout, nullptr))
       report_fatal_error("unable to evaluate offset for variable '" +
@@ -129,7 +128,7 @@ void MachObjectWriter::writeHeader(MachO::HeaderFileType Type,
   // struct mach_header (28 bytes) or
   // struct mach_header_64 (32 bytes)
 
-  uint64_t Start = OS.tell();
+  uint64_t Start = getStream().tell();
   (void) Start;
 
   write32(is64Bit() ? MachO::MH_MAGIC_64 : MachO::MH_MAGIC);
@@ -144,8 +143,9 @@ void MachObjectWriter::writeHeader(MachO::HeaderFileType Type,
   if (is64Bit())
     write32(0); // reserved
 
-  assert(OS.tell() - Start ==
-         (is64Bit()?sizeof(MachO::mach_header_64): sizeof(MachO::mach_header)));
+  assert(
+      getStream().tell() - Start ==
+      (is64Bit() ? sizeof(MachO::mach_header_64) : sizeof(MachO::mach_header)));
 }
 
 /// writeSegmentLoadCommand - Write a segment load command.
@@ -159,7 +159,7 @@ void MachObjectWriter::writeSegmentLoadCommand(
   // struct segment_command (56 bytes) or
   // struct segment_command_64 (72 bytes)
 
-  uint64_t Start = OS.tell();
+  uint64_t Start = getStream().tell();
   (void) Start;
 
   unsigned SegmentLoadCommandSize =
@@ -190,7 +190,7 @@ void MachObjectWriter::writeSegmentLoadCommand(
   write32(NumSections);
   write32(0); // flags
 
-  assert(OS.tell() - Start == SegmentLoadCommandSize);
+  assert(getStream().tell() - Start == SegmentLoadCommandSize);
 }
 
 void MachObjectWriter::writeSection(const MCAsmLayout &Layout,
@@ -210,7 +210,7 @@ void MachObjectWriter::writeSection(const MCAsmLayout &Layout,
   // struct section (68 bytes) or
   // struct section_64 (80 bytes)
 
-  uint64_t Start = OS.tell();
+  uint64_t Start = getStream().tell();
   (void) Start;
 
   writeBytes(Section.getSectionName(), 16);
@@ -234,8 +234,8 @@ void MachObjectWriter::writeSection(const MCAsmLayout &Layout,
   if (is64Bit())
     write32(0); // reserved3
 
-  assert(OS.tell() - Start == (is64Bit() ? sizeof(MachO::section_64) :
-                               sizeof(MachO::section)));
+  assert(getStream().tell() - Start ==
+         (is64Bit() ? sizeof(MachO::section_64) : sizeof(MachO::section)));
 }
 
 void MachObjectWriter::writeSymtabLoadCommand(uint32_t SymbolOffset,
@@ -244,7 +244,7 @@ void MachObjectWriter::writeSymtabLoadCommand(uint32_t SymbolOffset,
                                               uint32_t StringTableSize) {
   // struct symtab_command (24 bytes)
 
-  uint64_t Start = OS.tell();
+  uint64_t Start = getStream().tell();
   (void) Start;
 
   write32(MachO::LC_SYMTAB);
@@ -254,7 +254,7 @@ void MachObjectWriter::writeSymtabLoadCommand(uint32_t SymbolOffset,
   write32(StringTableOffset);
   write32(StringTableSize);
 
-  assert(OS.tell() - Start == sizeof(MachO::symtab_command));
+  assert(getStream().tell() - Start == sizeof(MachO::symtab_command));
 }
 
 void MachObjectWriter::writeDysymtabLoadCommand(uint32_t FirstLocalSymbol,
@@ -267,7 +267,7 @@ void MachObjectWriter::writeDysymtabLoadCommand(uint32_t FirstLocalSymbol,
                                                 uint32_t NumIndirectSymbols) {
   // struct dysymtab_command (80 bytes)
 
-  uint64_t Start = OS.tell();
+  uint64_t Start = getStream().tell();
   (void) Start;
 
   write32(MachO::LC_DYSYMTAB);
@@ -291,7 +291,7 @@ void MachObjectWriter::writeDysymtabLoadCommand(uint32_t FirstLocalSymbol,
   write32(0); // locreloff
   write32(0); // nlocrel
 
-  assert(OS.tell() - Start == sizeof(MachO::dysymtab_command));
+  assert(getStream().tell() - Start == sizeof(MachO::dysymtab_command));
 }
 
 MachObjectWriter::MachSymbolData *
@@ -387,7 +387,7 @@ void MachObjectWriter::writeNlist(MachSymbolData &MSD,
 void MachObjectWriter::writeLinkeditLoadCommand(uint32_t Type,
                                                 uint32_t DataOffset,
                                                 uint32_t DataSize) {
-  uint64_t Start = OS.tell();
+  uint64_t Start = getStream().tell();
   (void) Start;
 
   write32(Type);
@@ -395,7 +395,7 @@ void MachObjectWriter::writeLinkeditLoadCommand(uint32_t Type,
   write32(DataOffset);
   write32(DataSize);
 
-  assert(OS.tell() - Start == sizeof(MachO::linkedit_data_command));
+  assert(getStream().tell() - Start == sizeof(MachO::linkedit_data_command));
 }
 
 static unsigned ComputeLinkerOptionsLoadCommandSize(
@@ -411,7 +411,7 @@ void MachObjectWriter::writeLinkerOptionsLoadCommand(
   const std::vector<std::string> &Options)
 {
   unsigned Size = ComputeLinkerOptionsLoadCommandSize(Options, is64Bit());
-  uint64_t Start = OS.tell();
+  uint64_t Start = getStream().tell();
   (void) Start;
 
   write32(MachO::LC_LINKER_OPTION);
@@ -427,7 +427,7 @@ void MachObjectWriter::writeLinkerOptionsLoadCommand(
   // Pad to a multiple of the pointer size.
   writeBytes("", OffsetToAlignment(BytesWritten, is64Bit() ? 8 : 4));
 
-  assert(OS.tell() - Start == Size);
+  assert(getStream().tell() - Start == Size);
 }
 
 void MachObjectWriter::recordRelocation(MCAssembler &Asm,
@@ -456,9 +456,9 @@ void MachObjectWriter::bindIndirectSymbols(MCAssembler &Asm) {
     if (Section.getType() != MachO::S_NON_LAZY_SYMBOL_POINTERS &&
         Section.getType() != MachO::S_LAZY_SYMBOL_POINTERS &&
         Section.getType() != MachO::S_SYMBOL_STUBS) {
-	MCSymbol &Symbol = *it->Symbol;
-	report_fatal_error("indirect symbol '" + Symbol.getName() +
-                           "' not in a symbol pointer or stub section");
+      MCSymbol &Symbol = *it->Symbol;
+      report_fatal_error("indirect symbol '" + Symbol.getName() +
+                         "' not in a symbol pointer or stub section");
     }
   }
 
@@ -626,6 +626,18 @@ void MachObjectWriter::executePostLayoutBinding(MCAssembler &Asm,
 }
 
 bool MachObjectWriter::isSymbolRefDifferenceFullyResolvedImpl(
+    const MCAssembler &Asm, const MCSymbol &A, const MCSymbol &B,
+    bool InSet) const {
+  // FIXME: We don't handle things like
+  // foo = .
+  // creating atoms.
+  if (A.isVariable() || B.isVariable())
+    return false;
+  return MCObjectWriter::isSymbolRefDifferenceFullyResolvedImpl(Asm, A, B,
+                                                                InSet);
+}
+
+bool MachObjectWriter::isSymbolRefDifferenceFullyResolvedImpl(
     const MCAssembler &Asm, const MCSymbol &SymA, const MCFragment &FB,
     bool InSet, bool IsPCRel) const {
   if (InSet)
@@ -744,7 +756,7 @@ void MachObjectWriter::writeObject(MCAssembler &Asm,
     ++NumLoadCommands;
     LoadCommandsSize += ComputeLinkerOptionsLoadCommandSize(Option, is64Bit());
   }
-  
+
   // Compute the total size of the section data, as well as its file size and vm
   // size.
   uint64_t SectionDataStart = (is64Bit() ? sizeof(MachO::mach_header_64) :
@@ -906,12 +918,12 @@ void MachObjectWriter::writeObject(MCAssembler &Asm,
   // Write out the loh commands, if there is one.
   if (LOHSize) {
 #ifndef NDEBUG
-    unsigned Start = OS.tell();
+    unsigned Start = getStream().tell();
 #endif
     Asm.getLOHContainer().emit(*this, Layout);
     // Pad to a multiple of the pointer size.
     writeBytes("", OffsetToAlignment(LOHRawSize, is64Bit() ? 8 : 4));
-    assert(OS.tell() - Start == LOHSize);
+    assert(getStream().tell() - Start == LOHSize);
   }
 
   // Write the symbol table data, if used.
@@ -947,7 +959,7 @@ void MachObjectWriter::writeObject(MCAssembler &Asm,
         writeNlist(Entry, Layout);
 
     // Write the string table.
-    OS << StringTable.data();
+    getStream() << StringTable.data();
   }
 }
 

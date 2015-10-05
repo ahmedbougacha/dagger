@@ -35,6 +35,7 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <map>
 #include <set>
 #include <tuple>
@@ -198,6 +199,13 @@ bool DAE::DeleteDeadVarargs(Function &Fn) {
   if (Fn.hasAddressTaken())
     return false;
 
+  // Don't touch naked functions. The assembly might be using an argument, or
+  // otherwise rely on the frame layout in a way that this analysis will not
+  // see.
+  if (Fn.hasFnAttribute(Attribute::Naked)) {
+    return false;
+  }
+
   // Okay, we know we can transform this function if safe.  Scan its body
   // looking for calls marked musttail or calls to llvm.vastart.
   for (Function::iterator BB = Fn.begin(), E = Fn.end(); BB != E; ++BB) {
@@ -343,6 +351,12 @@ bool DAE::RemoveDeadArgumentsFromCallers(Function &Fn)
   // Functions with local linkage should already have been handled, except the
   // fragile (variadic) ones which we can improve here.
   if (Fn.hasLocalLinkage() && !Fn.getFunctionType()->isVarArg())
+    return false;
+
+  // Don't touch naked functions. The assembly might be using an argument, or
+  // otherwise rely on the frame layout in a way that this analysis will not
+  // see.
+  if (Fn.hasFnAttribute(Attribute::Naked))
     return false;
 
   if (Fn.use_empty())
@@ -539,6 +553,14 @@ void DAE::SurveyFunction(const Function &F) {
   // Functions with inalloca parameters are expecting args in a particular
   // register and memory layout.
   if (F.getAttributes().hasAttrSomewhere(Attribute::InAlloca)) {
+    MarkLive(F);
+    return;
+  }
+
+  // Don't touch naked functions. The assembly might be using an argument, or
+  // otherwise rely on the frame layout in a way that this analysis will not
+  // see.
+  if (F.hasFnAttribute(Attribute::Naked)) {
     MarkLive(F);
     return;
   }
@@ -946,7 +968,7 @@ bool DAE::RemoveDeadStuffFromFunction(Function *F) {
     Instruction *New;
     if (InvokeInst *II = dyn_cast<InvokeInst>(Call)) {
       New = InvokeInst::Create(NF, II->getNormalDest(), II->getUnwindDest(),
-                               Args, "", Call);
+                               Args, "", Call->getParent());
       cast<InvokeInst>(New)->setCallingConv(CS.getCallingConv());
       cast<InvokeInst>(New)->setAttributes(NewCallPAL);
     } else {
@@ -976,9 +998,8 @@ bool DAE::RemoveDeadStuffFromFunction(Function *F) {
                " must have been a struct or an array!");
         Instruction *InsertPt = Call;
         if (InvokeInst *II = dyn_cast<InvokeInst>(Call)) {
-          BasicBlock::iterator IP = II->getNormalDest()->begin();
-          while (isa<PHINode>(IP)) ++IP;
-          InsertPt = IP;
+          BasicBlock *NewEdge = SplitEdge(New->getParent(), II->getNormalDest());
+          InsertPt = NewEdge->getFirstInsertionPt();
         }
 
         // We used to return a struct or array. Instead of doing smart stuff

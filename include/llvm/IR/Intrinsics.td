@@ -150,6 +150,7 @@ def llvm_anyptr_ty     : LLVMAnyPointerType<llvm_i8_ty>;          // (space)i8*
 def llvm_empty_ty      : LLVMType<OtherVT>;                       // { }
 def llvm_descriptor_ty : LLVMPointerType<llvm_empty_ty>;          // { }*
 def llvm_metadata_ty   : LLVMType<MetadataVT>;                    // !{...}
+def llvm_token_ty      : LLVMType<token>;                         // token
 
 def llvm_x86mmx_ty     : LLVMType<x86mmx>;
 def llvm_ptrx86mmx_ty  : LLVMPointerType<llvm_x86mmx_ty>;         // <1 x i64>*
@@ -318,7 +319,7 @@ def int_instrprof_increment : Intrinsic<[],
                                         [llvm_ptr_ty, llvm_i64_ty,
                                          llvm_i32_ty, llvm_i32_ty],
                                         []>;
-
+                                        
 //===------------------- Standard C Library Intrinsics --------------------===//
 //
 
@@ -435,6 +436,11 @@ def int_eh_begincatch : Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty],
                                   [NoCapture<0>, NoCapture<1>]>;
 def int_eh_endcatch : Intrinsic<[], []>;
 
+// eh.exceptionpointer returns the pointer to the exception caught by
+// the given `catchpad`.
+def int_eh_exceptionpointer : Intrinsic<[llvm_anyptr_ty], [llvm_token_ty],
+                                        [IntrNoMem]>;
+
 // Represents the list of actions to take when an exception is thrown.
 def int_eh_actions : Intrinsic<[llvm_ptr_ty], [llvm_vararg_ty], []>;
 
@@ -523,6 +529,10 @@ def int_invariant_end   : Intrinsic<[],
                                     [llvm_descriptor_ty, llvm_i64_ty,
                                      llvm_ptr_ty],
                                     [IntrReadWriteArgMem, NoCapture<2>]>;
+
+def int_invariant_group_barrier : Intrinsic<[llvm_ptr_ty], 
+                                            [llvm_ptr_ty], 
+                                            [IntrNoMem]>;
 
 //===------------------------ Stackmap Intrinsics -------------------------===//
 //

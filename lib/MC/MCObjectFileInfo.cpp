@@ -16,6 +16,7 @@
 #include "llvm/MC/MCSectionCOFF.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSectionMachO.h"
+#include "llvm/Support/COFF.h"
 using namespace llvm;
 
 static bool useCompactUnwind(const Triple &T) {
@@ -402,7 +403,6 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(Triple T) {
       EHSectionFlags |= ELF::SHF_WRITE;
   }
 
-
   // ELF
   BSSSection = Ctx->getELFSection(".bss", ELF::SHT_NOBITS,
                                   ELF::SHF_WRITE | ELF::SHF_ALLOC);
@@ -733,11 +733,11 @@ void MCObjectFileInfo::initCOFFMCObjectFileInfo(Triple T) {
       ".tls$", COFF::IMAGE_SCN_CNT_INITIALIZED_DATA | COFF::IMAGE_SCN_MEM_READ |
                    COFF::IMAGE_SCN_MEM_WRITE,
       SectionKind::getDataRel());
-	  
+
   StackMapSection = Ctx->getCOFFSection(".llvm_stackmaps",
                                         COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
                                             COFF::IMAGE_SCN_MEM_READ,
-                                        SectionKind::getReadOnly());	
+                                        SectionKind::getReadOnly());
 }
 
 void MCObjectFileInfo::InitMCObjectFileInfo(const Triple &TheTriple,

@@ -49,6 +49,11 @@ DumpCriticalPathLength("misched-dcpl", cl::Hidden,
 static cl::opt<bool> ViewMISchedDAGs("view-misched-dags", cl::Hidden,
   cl::desc("Pop up a window to show MISched dags after they are processed"));
 
+/// In some situations a few uninteresting nodes depend on nearly all other
+/// nodes in the graph, provide a cutoff to hide them.
+static cl::opt<unsigned> ViewMISchedCutoff("view-misched-cutoff", cl::Hidden,
+  cl::desc("Hide nodes with more predecessor/successor than cutoff"));
+
 static cl::opt<unsigned> MISchedCutoff("misched-cutoff", cl::Hidden,
   cl::desc("Stop scheduling after N instructions"), cl::init(~0U));
 
@@ -146,7 +151,7 @@ char &llvm::MachineSchedulerID = MachineScheduler::ID;
 
 INITIALIZE_PASS_BEGIN(MachineScheduler, "machine-scheduler",
                       "Machine Instruction Scheduler", false, false)
-INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(SlotIndexes)
 INITIALIZE_PASS_DEPENDENCY(LiveIntervals)
 INITIALIZE_PASS_END(MachineScheduler, "machine-scheduler",
@@ -161,7 +166,7 @@ void MachineScheduler::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesCFG();
   AU.addRequiredID(MachineDominatorsID);
   AU.addRequired<MachineLoopInfo>();
-  AU.addRequired<AliasAnalysis>();
+  AU.addRequired<AAResultsWrapperPass>();
   AU.addRequired<TargetPassConfig>();
   AU.addRequired<SlotIndexes>();
   AU.addPreserved<SlotIndexes>();
@@ -322,7 +327,7 @@ bool MachineScheduler::runOnMachineFunction(MachineFunction &mf) {
   MLI = &getAnalysis<MachineLoopInfo>();
   MDT = &getAnalysis<MachineDominatorTree>();
   PassConfig = &getAnalysis<TargetPassConfig>();
-  AA = &getAnalysis<AliasAnalysis>();
+  AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
 
   LIS = &getAnalysis<LiveIntervals>();
 
@@ -499,7 +504,7 @@ void MachineSchedulerBase::print(raw_ostream &O, const Module* m) const {
 
 LLVM_DUMP_METHOD
 void ReadyQueue::dump() {
-  dbgs() << Name << ": ";
+  dbgs() << "Queue " << Name << ": ";
   for (unsigned i = 0, e = Queue.size(); i < e; ++i)
     dbgs() << Queue[i]->NodeNum << " ";
   dbgs() << "\n";
@@ -660,6 +665,9 @@ bool ScheduleDAGMI::checkSchedLimit() {
 /// does not consider liveness or register pressure. It is useful for PostRA
 /// scheduling and potentially other custom schedulers.
 void ScheduleDAGMI::schedule() {
+  DEBUG(dbgs() << "ScheduleDAGMI::schedule starting\n");
+  DEBUG(SchedImpl->dumpPolicy());
+
   // Build the DAG.
   buildSchedGraph(AA);
 
@@ -682,7 +690,11 @@ void ScheduleDAGMI::schedule() {
   initQueues(TopRoots, BotRoots);
 
   bool IsTopNode = false;
-  while (SUnit *SU = SchedImpl->pickNode(IsTopNode)) {
+  while (true) {
+    DEBUG(dbgs() << "** ScheduleDAGMI::schedule picking next node\n");
+    SUnit *SU = SchedImpl->pickNode(IsTopNode);
+    if (!SU) break;
+
     assert(!SU->isScheduled && "Node already scheduled");
     if (!checkSchedLimit())
       break;
@@ -1004,6 +1016,8 @@ void ScheduleDAGMILive::updatePressureDiffs(ArrayRef<unsigned> LiveUses) {
 /// ScheduleDAGMILive then it will want to override this virtual method in order
 /// to update any specialized state.
 void ScheduleDAGMILive::schedule() {
+  DEBUG(dbgs() << "ScheduleDAGMILive::schedule starting\n");
+  DEBUG(SchedImpl->dumpPolicy());
   buildDAGWithRegPressure();
 
   Topo.InitDAGTopologicalSorting();
@@ -1030,7 +1044,11 @@ void ScheduleDAGMILive::schedule() {
   }
 
   bool IsTopNode = false;
-  while (SUnit *SU = SchedImpl->pickNode(IsTopNode)) {
+  while (true) {
+    DEBUG(dbgs() << "** ScheduleDAGMILive::schedule picking next node\n");
+    SUnit *SU = SchedImpl->pickNode(IsTopNode);
+    if (!SU) break;
+
     assert(!SU->isScheduled && "Node already scheduled");
     if (!checkSchedLimit())
       break;
@@ -2301,7 +2319,7 @@ void GenericSchedulerBase::traceCandidate(const SchedCandidate &Cand) {
     Latency = Cand.SU->getDepth();
     break;
   }
-  dbgs() << "  SU(" << Cand.SU->NodeNum << ") " << getReasonStr(Cand.Reason);
+  dbgs() << "  Cand SU(" << Cand.SU->NodeNum << ") " << getReasonStr(Cand.Reason);
   if (P.isValid())
     dbgs() << " " << TRI->getRegPressureSetName(P.getPSet())
            << ":" << P.getUnitInc() << " ";
@@ -2460,6 +2478,14 @@ void GenericScheduler::initPolicy(MachineBasicBlock::iterator Begin,
     if (RegionPolicy.OnlyTopDown)
       RegionPolicy.OnlyBottomUp = false;
   }
+}
+
+void GenericScheduler::dumpPolicy() {
+  dbgs() << "GenericScheduler RegionPolicy: "
+         << " ShouldTrackPressure=" << RegionPolicy.ShouldTrackPressure
+         << " OnlyTopDown=" << RegionPolicy.OnlyTopDown
+         << " OnlyBottomUp=" << RegionPolicy.OnlyBottomUp
+         << "\n";
 }
 
 /// Set IsAcyclicLatencyLimited if the acyclic path is longer than the cyclic
@@ -2621,7 +2647,7 @@ void GenericScheduler::tryCandidate(SchedCandidate &Cand,
     }
   }
   DEBUG(if (TryCand.RPDelta.Excess.isValid())
-          dbgs() << "  SU(" << TryCand.SU->NodeNum << ") "
+          dbgs() << "  Try  SU(" << TryCand.SU->NodeNum << ") "
                  << TRI->getRegPressureSetName(TryCand.RPDelta.Excess.getPSet())
                  << ":" << TryCand.RPDelta.Excess.getUnitInc() << "\n");
 
@@ -3278,7 +3304,10 @@ struct DOTGraphTraits<ScheduleDAGMI*> : public DefaultDOTGraphTraits {
   }
 
   static bool isNodeHidden(const SUnit *Node) {
-    return (Node->Preds.size() > 10 || Node->Succs.size() > 10);
+    if (ViewMISchedCutoff == 0)
+      return false;
+    return (Node->Preds.size() > ViewMISchedCutoff
+         || Node->Succs.size() > ViewMISchedCutoff);
   }
 
   static bool hasNodeAddressLabel(const SUnit *Node,

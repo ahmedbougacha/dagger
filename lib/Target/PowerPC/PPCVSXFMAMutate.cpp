@@ -186,12 +186,12 @@ protected:
         if (!KilledProdOp)
           continue;
 
-	// If the addend copy is used only by this MI, then the addend source
-	// register is likely not live here. This could be fixed (based on the
-	// legality checks above, the live range for the addend source register
-	// could be extended), but it seems likely that such a trivial copy can
-	// be coalesced away later, and thus is not worth the effort.
-	if (TargetRegisterInfo::isVirtualRegister(AddendSrcReg) &&
+        // If the addend copy is used only by this MI, then the addend source
+        // register is likely not live here. This could be fixed (based on the
+        // legality checks above, the live range for the addend source register
+        // could be extended), but it seems likely that such a trivial copy can
+        // be coalesced away later, and thus is not worth the effort.
+        if (TargetRegisterInfo::isVirtualRegister(AddendSrcReg) &&
             !LIS->getInterval(AddendSrcReg).liveAt(FMAIdx))
           continue;
 
@@ -360,7 +360,6 @@ INITIALIZE_PASS_END(PPCVSXFMAMutate, DEBUG_TYPE,
 char &llvm::PPCVSXFMAMutateID = PPCVSXFMAMutate::ID;
 
 char PPCVSXFMAMutate::ID = 0;
-FunctionPass*
-llvm::createPPCVSXFMAMutatePass() { return new PPCVSXFMAMutate(); }
-
-
+FunctionPass *llvm::createPPCVSXFMAMutatePass() {
+  return new PPCVSXFMAMutate();
+}

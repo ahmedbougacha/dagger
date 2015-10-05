@@ -30,6 +30,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/InstructionSimplify.h"
@@ -37,6 +38,10 @@
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Analysis/BlockFrequencyInfoImpl.h"
+#include "llvm/Analysis/BlockFrequencyInfo.h"
+#include "llvm/Analysis/BranchProbabilityInfo.h"
+#include "llvm/Support/BranchProbability.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
@@ -69,6 +74,19 @@ STATISTIC(TotalInsts,  "Total number of instructions analyzed");
 static cl::opt<unsigned>
 Threshold("loop-unswitch-threshold", cl::desc("Max loop size to unswitch"),
           cl::init(100), cl::Hidden);
+
+static cl::opt<bool>
+LoopUnswitchWithBlockFrequency("loop-unswitch-with-block-frequency",
+    cl::init(false), cl::Hidden,
+    cl::desc("Enable the use of the block frequency analysis to access PGO "
+             "heuristics to minimize code growth in cold regions."));
+
+static cl::opt<unsigned>
+ColdnessThreshold("loop-unswitch-coldness-threshold", cl::init(1), cl::Hidden,
+    cl::desc("Coldness threshold in percentage. The loop header frequency "
+             "(relative to the entry frequency) is compared with this "
+             "threshold to determine if non-trivial unswitching should be "
+             "enabled."));
 
 namespace {
 
@@ -154,6 +172,13 @@ namespace {
 
     LUAnalysisCache BranchesInfo;
 
+    bool EnabledPGO;
+
+    // BFI and ColdEntryFreq are only used when PGO and
+    // LoopUnswitchWithBlockFrequency are enabled.
+    BlockFrequencyInfo BFI;
+    BlockFrequency ColdEntryFreq;
+
     bool OptimizeForSize;
     bool redoLoop;
 
@@ -192,9 +217,11 @@ namespace {
       AU.addPreserved<LoopInfoWrapperPass>();
       AU.addRequiredID(LCSSAID);
       AU.addPreservedID(LCSSAID);
+      AU.addRequired<DominatorTreeWrapperPass>();
       AU.addPreserved<DominatorTreeWrapperPass>();
       AU.addPreserved<ScalarEvolutionWrapperPass>();
       AU.addRequired<TargetTransformInfoWrapperPass>();
+      AU.addPreserved<GlobalsAAWrapperPass>();
     }
 
   private:
@@ -410,11 +437,23 @@ bool LoopUnswitch::runOnLoop(Loop *L, LPPassManager &LPM_Ref) {
       *L->getHeader()->getParent());
   LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   LPM = &LPM_Ref;
-  DominatorTreeWrapperPass *DTWP =
-      getAnalysisIfAvailable<DominatorTreeWrapperPass>();
-  DT = DTWP ? &DTWP->getDomTree() : nullptr;
+  DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   currentLoop = L;
   Function *F = currentLoop->getHeader()->getParent();
+
+  EnabledPGO = F->getEntryCount().hasValue();
+
+  if (LoopUnswitchWithBlockFrequency && EnabledPGO) {
+    BranchProbabilityInfo BPI(*F, *LI);
+    BFI.calculate(*L->getHeader()->getParent(), BPI, *LI);
+
+    // Use BranchProbability to compute a minimum frequency based on
+    // function entry baseline frequency. Loops with headers below this
+    // frequency are considered as cold.
+    const BranchProbability ColdProb(ColdnessThreshold, 100);
+    ColdEntryFreq = BlockFrequency(BFI.getEntryFreq()) * ColdProb;
+  }
+
   bool Changed = false;
   do {
     assert(currentLoop->isLCSSAForm(*DT));
@@ -422,11 +461,9 @@ bool LoopUnswitch::runOnLoop(Loop *L, LPPassManager &LPM_Ref) {
     Changed |= processCurrentLoop();
   } while(redoLoop);
 
-  if (Changed) {
-    // FIXME: Reconstruct dom info, because it is not preserved properly.
-    if (DT)
-      DT->recalculate(*F);
-  }
+  // FIXME: Reconstruct dom info, because it is not preserved properly.
+  if (Changed)
+    DT->recalculate(*F);
   return Changed;
 }
 
@@ -468,6 +505,16 @@ bool LoopUnswitch::processCurrentLoop() {
   if (OptimizeForSize ||
       loopHeader->getParent()->hasFnAttribute(Attribute::OptimizeForSize))
     return false;
+
+  if (LoopUnswitchWithBlockFrequency && EnabledPGO) {
+    // Compute the weighted frequency of the hottest block in the
+    // loop (loopHeader in this case since inner loops should be
+    // processed before outer loop). If it is less than ColdFrequency,
+    // we should not unswitch.
+    BlockFrequency LoopEntryFreq = BFI.getBlockFreq(loopHeader);
+    if (LoopEntryFreq < ColdEntryFreq)
+      return false;
+  }
 
   // Loop over all of the basic blocks in the loop.  If we find an interior
   // block that is branching on a loop-invariant condition, we can unswitch this
@@ -1194,8 +1241,7 @@ void LoopUnswitch::RewriteLoopBodyWithConditionConstant(Loop *L, Value *LIC,
     // domtree here -- instead we force it to do a full recomputation
     // after the pass is complete -- but we do need to inform it of
     // new blocks.
-    if (DT)
-      DT->addNewBlock(Abort, NewSISucc);
+    DT->addNewBlock(Abort, NewSISucc);
   }
 
   SimplifyCode(Worklist, L);

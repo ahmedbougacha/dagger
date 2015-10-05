@@ -212,6 +212,20 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
   // also creates the initial PHI MachineInstrs, though none of the input
   // operands are populated.
   for (BB = Fn->begin(); BB != EB; ++BB) {
+    // Don't create MachineBasicBlocks for imaginary EH pad blocks. These blocks
+    // are really data, and no instructions can live here.
+    if (BB->isEHPad()) {
+      const Instruction *I = BB->getFirstNonPHI();
+      if (!isa<LandingPadInst>(I))
+        MMI.setHasEHFunclets(true);
+      if (isa<CatchPadInst>(I) || isa<CatchEndPadInst>(I) ||
+          isa<CleanupEndPadInst>(I)) {
+        assert(&*BB->begin() == I &&
+               "WinEHPrepare failed to remove PHIs from imaginary BBs");
+        continue;
+      }
+    }
+
     MachineBasicBlock *MBB = mf.CreateMachineBasicBlock(BB);
     MBBMap[BB] = MBB;
     MF->push_back(MBB);
@@ -252,9 +266,9 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
   // Mark landing pad blocks.
   SmallVector<const LandingPadInst *, 4> LPads;
   for (BB = Fn->begin(); BB != EB; ++BB) {
-    if (BB->isEHPad())
-      MBBMap[BB]->setIsEHPad();
     const Instruction *FNP = BB->getFirstNonPHI();
+    if (BB->isEHPad() && MBBMap.count(BB))
+      MBBMap[BB]->setIsEHPad();
     if (const auto *LPI = dyn_cast<LandingPadInst>(FNP))
       LPads.push_back(LPI);
   }
@@ -271,15 +285,43 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
     addSEHHandlersForLPads(LPads);
   }
 
+  // Calculate state numbers if we haven't already.
   WinEHFuncInfo &EHInfo = MMI.getWinEHFuncInfo(&fn);
-  if (Personality == EHPersonality::MSVC_CXX) {
-    // Calculate state numbers and then map from funclet BBs to MBBs.
-    const Function *WinEHParentFn = MMI.getWinEHParent(&fn);
+  const Function *WinEHParentFn = MMI.getWinEHParent(&fn);
+  if (Personality == EHPersonality::MSVC_CXX)
     calculateWinCXXEHStateNumbers(WinEHParentFn, EHInfo);
-    for (WinEHTryBlockMapEntry &TBME : EHInfo.TryBlockMap)
-      for (WinEHHandlerType &H : TBME.HandlerArray)
-        if (const auto *BB = dyn_cast<BasicBlock>(H.Handler))
-          H.HandlerMBB = MBBMap[BB];
+  else if (isAsynchronousEHPersonality(Personality))
+    calculateSEHStateNumbers(WinEHParentFn, EHInfo);
+
+  calculateCatchReturnSuccessorColors(WinEHParentFn, EHInfo);
+
+  // Map all BB references in the WinEH data to MBBs.
+  for (WinEHTryBlockMapEntry &TBME : EHInfo.TryBlockMap) {
+    for (WinEHHandlerType &H : TBME.HandlerArray) {
+      if (H.CatchObjRecoverIdx == -2 && H.CatchObj.Alloca) {
+        assert(StaticAllocaMap.count(H.CatchObj.Alloca));
+        H.CatchObj.FrameIndex = StaticAllocaMap[H.CatchObj.Alloca];
+      } else {
+        H.CatchObj.FrameIndex = INT_MAX;
+      }
+      if (const auto *BB = dyn_cast<BasicBlock>(H.Handler.get<const Value *>()))
+        H.Handler = MBBMap[BB];
+    }
+  }
+  for (WinEHUnwindMapEntry &UME : EHInfo.UnwindMap)
+    if (UME.Cleanup)
+      if (const auto *BB = dyn_cast<BasicBlock>(UME.Cleanup.get<const Value *>()))
+        UME.Cleanup = MBBMap[BB];
+  for (SEHUnwindMapEntry &UME : EHInfo.SEHUnwindMap) {
+    const BasicBlock *BB = UME.Handler.get<const BasicBlock *>();
+    UME.Handler = MBBMap[BB];
+  }
+
+  // If there's an explicit EH registration node on the stack, record its
+  // frame index.
+  if (EHInfo.EHRegNode && EHInfo.EHRegNode->getParent()->getParent() == Fn) {
+    assert(StaticAllocaMap.count(EHInfo.EHRegNode));
+    EHInfo.EHRegNodeFrameIndex = StaticAllocaMap[EHInfo.EHRegNode];
   }
 
   // Copy the state numbers to LandingPadInfo for the current function, which
@@ -553,10 +595,9 @@ void llvm::ComputeUsesVAFloatArgument(const CallInst &I,
 /// landingpad instruction and add them to the specified machine module info.
 void llvm::AddLandingPadInfo(const LandingPadInst &I, MachineModuleInfo &MMI,
                              MachineBasicBlock *MBB) {
-  MMI.addPersonality(
-      MBB,
-      cast<Function>(
-          I.getParent()->getParent()->getPersonalityFn()->stripPointerCasts()));
+  if (const auto *PF = dyn_cast<Function>(
+      I.getParent()->getParent()->getPersonalityFn()->stripPointerCasts()))
+    MMI.addPersonality(PF);
 
   if (I.isCleanup())
     MMI.addCleanup(MBB);

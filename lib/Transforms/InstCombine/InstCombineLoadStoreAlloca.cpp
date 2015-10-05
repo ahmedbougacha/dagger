@@ -511,7 +511,7 @@ static Instruction *unpackLoadToAggregate(InstCombiner &IC, LoadInst &LI) {
   if (!T->isAggregateType())
     return nullptr;
 
-  assert(LI.getAlignment() && "Alignement must be set at this point");
+  assert(LI.getAlignment() && "Alignment must be set at this point");
 
   if (auto *ST = dyn_cast<StructType>(T)) {
     // If the struct only have one element, we unpack.
@@ -681,7 +681,7 @@ static bool canReplaceGEPIdxWithZero(InstCombiner &IC, GetElementPtrInst *GEPI,
   // FIXME: If the GEP is not inbounds, and there are extra indices after the
   // one we'll replace, those could cause the address computation to wrap
   // (rendering the IsAllNonNegative() check below insufficient). We can do
-  // better, ignoring zero indicies (and other indicies we can prove small
+  // better, ignoring zero indices (and other indices we can prove small
   // enough not to wrap).
   if (Idx+1 != GEPI->getNumOperands() && !GEPI->isInBounds())
     return false;
@@ -750,17 +750,15 @@ Instruction *InstCombiner::visitLoadInst(LoadInst &LI) {
   // separated by a few arithmetic operations.
   BasicBlock::iterator BBI = &LI;
   AAMDNodes AATags;
-  if (Value *AvailableVal = FindAvailableLoadedValue(Op, LI.getParent(), BBI,
-                                                     6, AA, &AATags)) {
+  if (Value *AvailableVal =
+      FindAvailableLoadedValue(Op, LI.getParent(), BBI,
+                               DefMaxInstsToScan, AA, &AATags)) {
     if (LoadInst *NLI = dyn_cast<LoadInst>(AvailableVal)) {
       unsigned KnownIDs[] = {
-        LLVMContext::MD_tbaa,
-        LLVMContext::MD_alias_scope,
-        LLVMContext::MD_noalias,
-        LLVMContext::MD_range,
-        LLVMContext::MD_invariant_load,
-        LLVMContext::MD_nonnull,
-      };
+          LLVMContext::MD_tbaa,           LLVMContext::MD_alias_scope,
+          LLVMContext::MD_noalias,        LLVMContext::MD_range,
+          LLVMContext::MD_invariant_load, LLVMContext::MD_nonnull,
+          LLVMContext::MD_invariant_group};
       combineMetadata(NLI, &LI, KnownIDs);
     };
 
@@ -822,7 +820,7 @@ Instruction *InstCombiner::visitLoadInst(LoadInst &LI) {
       }
 
       // load (select (cond, null, P)) -> load P
-      if (isa<ConstantPointerNull>(SI->getOperand(1)) && 
+      if (isa<ConstantPointerNull>(SI->getOperand(1)) &&
           LI.getPointerAddressSpace() == 0) {
         LI.setOperand(0, SI->getOperand(2));
         return &LI;
@@ -857,7 +855,7 @@ Instruction *InstCombiner::visitLoadInst(LoadInst &LI) {
 ///
 /// \returns true if the store was successfully combined away. This indicates
 /// the caller must erase the store instruction. We have to let the caller erase
-/// the store instruction sas otherwise there is no way to signal whether it was
+/// the store instruction as otherwise there is no way to signal whether it was
 /// combined or not: IC.EraseInstFromFunction returns a null pointer.
 static bool combineStoreToValueType(InstCombiner &IC, StoreInst &SI) {
   // FIXME: We could probably with some care handle both volatile and atomic

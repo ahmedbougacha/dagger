@@ -14,12 +14,12 @@
 #ifndef LLVM_SUPPORT_BLOCKFREQUENCY_H
 #define LLVM_SUPPORT_BLOCKFREQUENCY_H
 
+#include "llvm/Support/BranchProbability.h"
 #include "llvm/Support/DataTypes.h"
 
 namespace llvm {
 
 class raw_ostream;
-class BranchProbability;
 
 // This class represents Block Frequency as a 64-bit value.
 class BlockFrequency {
@@ -37,13 +37,13 @@ public:
 
   /// \brief Multiplies with a branch probability. The computation will never
   /// overflow.
-  BlockFrequency &operator*=(const BranchProbability &Prob);
-  const BlockFrequency operator*(const BranchProbability &Prob) const;
+  BlockFrequency &operator*=(BranchProbability Prob);
+  const BlockFrequency operator*(BranchProbability Prob) const;
 
   /// \brief Divide by a non-zero branch probability using saturating
   /// arithmetic.
-  BlockFrequency &operator/=(const BranchProbability &Prob);
-  BlockFrequency operator/(const BranchProbability &Prob) const;
+  BlockFrequency &operator/=(BranchProbability Prob);
+  BlockFrequency operator/(BranchProbability Prob) const;
 
   /// \brief Adds another block frequency using saturating arithmetic.
   BlockFrequency &operator+=(const BlockFrequency &Freq);

@@ -54,6 +54,9 @@ void DecodePSHUFHWMask(MVT VT, unsigned Imm, SmallVectorImpl<int> &ShuffleMask);
 
 void DecodePSHUFLWMask(MVT, unsigned Imm, SmallVectorImpl<int> &ShuffleMask);
 
+/// \brief Decodes a PSWAPD 3DNow! instruction.
+void DecodePSWAPMask(MVT VT, SmallVectorImpl<int> &ShuffleMask);
+
 /// DecodeSHUFPMask - This decodes the shuffle masks for shufp*. VT indicates
 /// the type of the vector allowing it to handle different datatypes and vector
 /// widths.
@@ -108,6 +111,22 @@ void DecodeEXTRQIMask(int Len, int Idx,
 /// \brief Decode a SSE4A INSERTQ instruction as a v16i8 shuffle mask.
 void DecodeINSERTQIMask(int Len, int Idx,
                         SmallVectorImpl<int> &ShuffleMask);
+
+/// \brief Decode a VPERM W/D/Q/PS/PD mask from an IR-level vector constant.
+void DecodeVPERMVMask(const Constant *C, MVT VT,
+                      SmallVectorImpl<int> &ShuffleMask);
+
+/// \brief Decode a VPERM W/D/Q/PS/PD mask from a raw array of constants.
+void DecodeVPERMVMask(ArrayRef<uint64_t> RawMask,
+                      SmallVectorImpl<int> &ShuffleMask);
+
+/// \brief Decode a VPERMT2 W/D/Q/PS/PD mask from an IR-level vector constant.
+void DecodeVPERMV3Mask(const Constant *C, MVT VT,
+                      SmallVectorImpl<int> &ShuffleMask);
+
+/// \brief Decode a VPERMT2 W/D/Q/PS/PD mask from a raw array of constants.
+void DecodeVPERMV3Mask(ArrayRef<uint64_t> RawMask,
+                      SmallVectorImpl<int> &ShuffleMask);
 } // llvm namespace
 
 #endif

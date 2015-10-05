@@ -36,7 +36,10 @@ class LLVM_LIBRARY_VISIBILITY WinException : public EHStreamer {
   /// True if this is a 64-bit target and we should use image relative offsets.
   bool useImageRel32 = false;
 
-  void emitCSpecificHandlerTable();
+  /// Pointer to the current funclet entry BB.
+  const MachineBasicBlock *CurrentFuncletEntry = nullptr;
+
+  void emitCSpecificHandlerTable(const MachineFunction *MF);
 
   /// Emit the EH table data for 32-bit and 64-bit functions using
   /// the __CxxFrameHandler3 personality.
@@ -47,8 +50,9 @@ class LLVM_LIBRARY_VISIBILITY WinException : public EHStreamer {
   /// tables.
   void emitExceptHandlerTable(const MachineFunction *MF);
 
-  void extendIP2StateTable(const MachineFunction *MF, const Function *ParentF,
-                           WinEHFuncInfo &FuncInfo);
+  void computeIP2StateTable(
+      const MachineFunction *MF, WinEHFuncInfo &FuncInfo,
+      SmallVectorImpl<std::pair<const MCExpr *, int>> &IPToStateTable);
 
   /// Emits the label used with llvm.x86.seh.recoverfp, which is used by
   /// outlined funclets.
@@ -57,6 +61,7 @@ class LLVM_LIBRARY_VISIBILITY WinException : public EHStreamer {
 
   const MCExpr *create32bitRef(const MCSymbol *Value);
   const MCExpr *create32bitRef(const Value *V);
+  const MCExpr *getLabelPlusOne(MCSymbol *Label);
 
 public:
   //===--------------------------------------------------------------------===//
@@ -74,6 +79,10 @@ public:
 
   /// Gather and emit post-function exception information.
   void endFunction(const MachineFunction *) override;
+
+  /// \brief Emit target-specific EH funclet machinery.
+  void beginFunclet(const MachineBasicBlock &MBB, MCSymbol *Sym) override;
+  void endFunclet() override;
 };
 }
 

@@ -2,7 +2,7 @@
 
 ; Test that basic functions assemble as expected.
 
-target datalayout = "e-p:32:32-i64:64-v128:8:128-n32:64-S128"
+target datalayout = "e-p:32:32-i64:64-n32:64-S128"
 target triple = "wasm32-unknown-unknown"
 
 ; CHECK-LABEL: (func $f0{{$}}
@@ -14,7 +14,7 @@ define void @f0() {
 
 ; CHECK-LABEL: (func $f1{{$}}
 ; CHECK-NEXT: (result i32){{$}}
-; CHECK-NEXT: (setlocal @0 (immediate 0)){{$}}
+; CHECK-NEXT: (set_local @0 (immediate 0)){{$}}
 ; CHECK-NEXT: (return @0){{$}}
 ; CHECK-NEXT: ) ;; end func $f1{{$}}
 define i32 @f1() {
@@ -23,7 +23,7 @@ define i32 @f1() {
 
 ; CHECK-LABEL: (func $f2{{$}}
 ; CHECK-NEXT: (param i32) (param f32) (result i32){{$}}
-; CHECK-NEXT: (setlocal @0 (immediate 0)){{$}}
+; CHECK-NEXT: (set_local @0 (immediate 0)){{$}}
 ; CHECK-NEXT: (return @0){{$}}
 ; CHECK-NEXT: ) ;; end func $f2{{$}}
 define i32 @f2(i32 %p1, float %p2) {

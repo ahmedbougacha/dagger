@@ -369,7 +369,9 @@ SystemZTargetLowering::SystemZTargetLowering(const TargetMachine &TM,
       // No special instructions for these.
       setOperationAction(ISD::FSIN, VT, Expand);
       setOperationAction(ISD::FCOS, VT, Expand);
+      setOperationAction(ISD::FSINCOS, VT, Expand);
       setOperationAction(ISD::FREM, VT, Expand);
+      setOperationAction(ISD::FPOW, VT, Expand);
     }
   }
 
@@ -2498,7 +2500,7 @@ SDValue SystemZTargetLowering::lowerTLSGetOffset(GlobalAddressSDNode *Node,
 }
 
 SDValue SystemZTargetLowering::lowerGlobalTLSAddress(GlobalAddressSDNode *Node,
-						     SelectionDAG &DAG) const {
+                                                     SelectionDAG &DAG) const {
   if (DAG.getTarget().Options.EmulatedTLS)
     return LowerToTLSEmulatedModel(Node, DAG);
   SDLoc DL(Node);
@@ -2633,10 +2635,10 @@ SDValue SystemZTargetLowering::lowerConstantPool(ConstantPoolSDNode *CP,
   SDValue Result;
   if (CP->isMachineConstantPoolEntry())
     Result = DAG.getTargetConstantPool(CP->getMachineCPVal(), PtrVT,
-				       CP->getAlignment());
+                                       CP->getAlignment());
   else
     Result = DAG.getTargetConstantPool(CP->getConstVal(), PtrVT,
-				       CP->getAlignment(), CP->getOffset());
+                                       CP->getAlignment(), CP->getOffset());
 
   // Use LARL to load the address of the constant pool entry.
   return DAG.getNode(SystemZISD::PCREL_WRAPPER, DL, PtrVT, Result);
@@ -2842,7 +2844,7 @@ SDValue SystemZTargetLowering::lowerSDIVREM(SDValue Op,
   } else if (DAG.ComputeNumSignBits(Op1) > 32) {
     Op1 = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Op1);
     Opcode = SystemZISD::SDIVREM32;
-  } else    
+  } else
     Opcode = SystemZISD::SDIVREM64;
 
   // DSG(F) takes a 64-bit dividend, so the even register in the GR128
@@ -3252,8 +3254,8 @@ SystemZTargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
     if (Op->getNumValues() == 1)
       return CC;
     assert(Op->getNumValues() == 2 && "Expected a CC and non-CC result");
-    return DAG.getNode(ISD::MERGE_VALUES, SDLoc(Op), Op->getVTList(),
-		    Glued, CC);
+    return DAG.getNode(ISD::MERGE_VALUES, SDLoc(Op), Op->getVTList(), Glued,
+                       CC);
   }
 
   unsigned Id = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
@@ -3895,7 +3897,7 @@ static SDValue tryBuildVectorShuffle(SelectionDAG &DAG,
       GS.addUndef();
     } else {
       GS.add(SDValue(), ResidueOps.size());
-      ResidueOps.push_back(Op);
+      ResidueOps.push_back(BVN->getOperand(I));
     }
   }
 
@@ -4209,7 +4211,7 @@ SystemZTargetLowering::lowerEXTRACT_VECTOR_ELT(SDValue Op,
 
 SDValue
 SystemZTargetLowering::lowerExtendVectorInreg(SDValue Op, SelectionDAG &DAG,
-					      unsigned UnpackHigh) const {
+                                              unsigned UnpackHigh) const {
   SDValue PackedOp = Op.getOperand(0);
   EVT OutVT = Op.getValueType();
   EVT InVT = PackedOp.getValueType();
@@ -4571,9 +4573,9 @@ SDValue SystemZTargetLowering::combineExtract(SDLoc DL, EVT ResVT, EVT VecVT,
       }
       return Op;
     } else if ((Opcode == ISD::SIGN_EXTEND_VECTOR_INREG ||
-		Opcode == ISD::ZERO_EXTEND_VECTOR_INREG ||
-		Opcode == ISD::ANY_EXTEND_VECTOR_INREG) &&
-	       canTreatAsByteVector(Op.getValueType()) &&
+                Opcode == ISD::ZERO_EXTEND_VECTOR_INREG ||
+                Opcode == ISD::ANY_EXTEND_VECTOR_INREG) &&
+               canTreatAsByteVector(Op.getValueType()) &&
                canTreatAsByteVector(Op.getOperand(0).getValueType())) {
       // Make sure that only the unextended bits are significant.
       EVT ExtVT = Op.getValueType();
@@ -4584,14 +4586,14 @@ SDValue SystemZTargetLowering::combineExtract(SDLoc DL, EVT ResVT, EVT VecVT,
       unsigned SubByte = Byte % ExtBytesPerElement;
       unsigned MinSubByte = ExtBytesPerElement - OpBytesPerElement;
       if (SubByte < MinSubByte ||
-	  SubByte + BytesPerElement > ExtBytesPerElement)
-	break;
+          SubByte + BytesPerElement > ExtBytesPerElement)
+        break;
       // Get the byte offset of the unextended element
       Byte = Byte / ExtBytesPerElement * OpBytesPerElement;
       // ...then add the byte offset relative to that element.
       Byte += SubByte - MinSubByte;
       if (Byte % BytesPerElement != 0)
-	break;
+        break;
       Op = Op.getOperand(0);
       Index = Byte / BytesPerElement;
       Force = true;

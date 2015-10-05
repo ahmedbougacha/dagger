@@ -22,6 +22,7 @@
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Analysis/VectorUtils.h"
 #include "llvm/CodeGen/FastISel.h"
 #include "llvm/CodeGen/FunctionLoweringInfo.h"
 #include "llvm/CodeGen/GCMetadata.h"
@@ -79,7 +80,7 @@ LimitFPPrecision("limit-float-precision",
                  cl::init(0));
 
 static cl::opt<bool>
-EnableFMFInDAG("enable-fmf-dag", cl::init(false), cl::Hidden,
+EnableFMFInDAG("enable-fmf-dag", cl::init(true), cl::Hidden,
                 cl::desc("Enable fast-math-flags for DAG nodes"));
 
 // Limit the width of DAG chains. This is important in general to prevent
@@ -1159,49 +1160,100 @@ SDValue SelectionDAGBuilder::getValueImpl(const Value *V) {
 }
 
 void SelectionDAGBuilder::visitCatchPad(const CatchPadInst &I) {
-  // Update machine-CFG edges.
-  MachineBasicBlock *PadMBB = FuncInfo.MBB;
-  MachineBasicBlock *CatchingMBB = FuncInfo.MBBMap[I.getNormalDest()];
-  MachineBasicBlock *UnwindMBB = FuncInfo.MBBMap[I.getUnwindDest()];
-  PadMBB->addSuccessor(CatchingMBB);
-  PadMBB->addSuccessor(UnwindMBB);
-
-  CatchingMBB->setIsEHFuncletEntry();
-  MachineModuleInfo &MMI = DAG.getMachineFunction().getMMI();
-  MMI.setHasEHFunclets(true);
+  llvm_unreachable("should never codegen catchpads");
 }
 
 void SelectionDAGBuilder::visitCatchRet(const CatchReturnInst &I) {
   // Update machine-CFG edge.
-  MachineBasicBlock *PadMBB = FuncInfo.MBB;
   MachineBasicBlock *TargetMBB = FuncInfo.MBBMap[I.getSuccessor()];
-  PadMBB->addSuccessor(TargetMBB);
+  FuncInfo.MBB->addSuccessor(TargetMBB);
+
+  // Figure out the funclet membership for the catchret's successor.
+  // This will be used by the FuncletLayout pass to determine how to order the
+  // BB's.
+  MachineModuleInfo &MMI = DAG.getMachineFunction().getMMI();
+  WinEHFuncInfo &EHInfo =
+      MMI.getWinEHFuncInfo(DAG.getMachineFunction().getFunction());
+  const BasicBlock *SuccessorColor = EHInfo.CatchRetSuccessorColorMap[&I];
+  assert(SuccessorColor && "No parent funclet for catchret!");
+  MachineBasicBlock *SuccessorColorMBB = FuncInfo.MBBMap[SuccessorColor];
+  assert(SuccessorColorMBB && "No MBB for SuccessorColor!");
 
   // Create the terminator node.
   SDValue Ret = DAG.getNode(ISD::CATCHRET, getCurSDLoc(), MVT::Other,
-                            getControlRoot(), DAG.getBasicBlock(TargetMBB));
+                            getControlRoot(), DAG.getBasicBlock(TargetMBB),
+                            DAG.getBasicBlock(SuccessorColorMBB));
   DAG.setRoot(Ret);
 }
 
 void SelectionDAGBuilder::visitCatchEndPad(const CatchEndPadInst &I) {
-  // If this unwinds to caller, we don't need a DAG node hanging around.
-  if (!I.hasUnwindDest())
-    return;
-
-  // Update machine-CFG edge.
-  MachineBasicBlock *PadMBB = FuncInfo.MBB;
-  MachineBasicBlock *UnwindMBB = FuncInfo.MBBMap[I.getUnwindDest()];
-  PadMBB->addSuccessor(UnwindMBB);
+  llvm_unreachable("should never codegen catchendpads");
 }
 
 void SelectionDAGBuilder::visitCleanupPad(const CleanupPadInst &CPI) {
-  MachineModuleInfo &MMI = DAG.getMachineFunction().getMMI();
-  MMI.setHasEHFunclets(true);
-  report_fatal_error("visitCleanupPad not yet implemented!");
+  // Don't emit any special code for the cleanuppad instruction. It just marks
+  // the start of a funclet.
+  FuncInfo.MBB->setIsEHFuncletEntry();
+  FuncInfo.MBB->setIsCleanupFuncletEntry();
+}
+
+/// When an invoke or a cleanupret unwinds to the next EH pad, there are
+/// many places it could ultimately go. In the IR, we have a single unwind
+/// destination, but in the machine CFG, we enumerate all the possible blocks.
+/// This function skips over imaginary basic blocks that hold catchpad,
+/// terminatepad, or catchendpad instructions, and finds all the "real" machine
+/// basic block destinations.
+static void
+findUnwindDestinations(FunctionLoweringInfo &FuncInfo,
+                       const BasicBlock *EHPadBB,
+                       SmallVectorImpl<MachineBasicBlock *> &UnwindDests) {
+  bool IsMSVCCXX = classifyEHPersonality(FuncInfo.Fn->getPersonalityFn()) ==
+                   EHPersonality::MSVC_CXX;
+  while (EHPadBB) {
+    const Instruction *Pad = EHPadBB->getFirstNonPHI();
+    if (isa<LandingPadInst>(Pad)) {
+      // Stop on landingpads. They are not funclets.
+      UnwindDests.push_back(FuncInfo.MBBMap[EHPadBB]);
+      break;
+    } else if (isa<CleanupPadInst>(Pad)) {
+      // Stop on cleanup pads. Cleanups are always funclet entries for all known
+      // personalities.
+      UnwindDests.push_back(FuncInfo.MBBMap[EHPadBB]);
+      UnwindDests.back()->setIsEHFuncletEntry();
+      break;
+    } else if (const auto *CPI = dyn_cast<CatchPadInst>(Pad)) {
+      // Add the catchpad handler to the possible destinations.
+      UnwindDests.push_back(FuncInfo.MBBMap[CPI->getNormalDest()]);
+      // In MSVC C++, catchblocks are funclets and need prologues.
+      if (IsMSVCCXX)
+        UnwindDests.back()->setIsEHFuncletEntry();
+      EHPadBB = CPI->getUnwindDest();
+    } else if (const auto *CEPI = dyn_cast<CatchEndPadInst>(Pad)) {
+      EHPadBB = CEPI->getUnwindDest();
+    } else if (const auto *CEPI = dyn_cast<CleanupEndPadInst>(Pad)) {
+      EHPadBB = CEPI->getUnwindDest();
+    }
+  }
 }
 
 void SelectionDAGBuilder::visitCleanupRet(const CleanupReturnInst &I) {
-  report_fatal_error("visitCleanupRet not yet implemented!");
+  // Update successor info.
+  // FIXME: The weights for catchpads will be wrong.
+  SmallVector<MachineBasicBlock *, 1> UnwindDests;
+  findUnwindDestinations(FuncInfo, I.getUnwindDest(), UnwindDests);
+  for (MachineBasicBlock *UnwindDest : UnwindDests) {
+    UnwindDest->setIsEHPad();
+    addSuccessorWithWeight(FuncInfo.MBB, UnwindDest);
+  }
+
+  // Create the terminator node.
+  SDValue Ret =
+      DAG.getNode(ISD::CLEANUPRET, getCurSDLoc(), MVT::Other, getControlRoot());
+  DAG.setRoot(Ret);
+}
+
+void SelectionDAGBuilder::visitCleanupEndPad(const CleanupEndPadInst &I) {
+  report_fatal_error("visitCleanupEndPad not yet implemented!");
 }
 
 void SelectionDAGBuilder::visitTerminatePad(const TerminatePadInst &TPI) {
@@ -1624,11 +1676,12 @@ void SelectionDAGBuilder::visitBr(const BranchInst &I) {
   //     jle foo
   //
   if (const BinaryOperator *BOp = dyn_cast<BinaryOperator>(CondVal)) {
-    if (!DAG.getTargetLoweringInfo().isJumpExpensive() &&
-        BOp->hasOneUse() && (BOp->getOpcode() == Instruction::And ||
-                             BOp->getOpcode() == Instruction::Or)) {
+    Instruction::BinaryOps Opcode = BOp->getOpcode();
+    if (!DAG.getTargetLoweringInfo().isJumpExpensive() && BOp->hasOneUse() &&
+        !I.getMetadata(LLVMContext::MD_unpredictable) &&
+        (Opcode == Instruction::And || Opcode == Instruction::Or)) {
       FindMergedConditions(BOp, Succ0MBB, Succ1MBB, BrMBB, BrMBB,
-                           BOp->getOpcode(), getEdgeWeight(BrMBB, Succ0MBB),
+                           Opcode, getEdgeWeight(BrMBB, Succ0MBB),
                            getEdgeWeight(BrMBB, Succ1MBB));
       // If the compares in later blocks need to use values not currently
       // exported from this block, export them now.  This block should always
@@ -1923,8 +1976,7 @@ void SelectionDAGBuilder::visitBitTestHeader(BitTestBlock &B,
 
   MachineBasicBlock* MBB = B.Cases[0].ThisBB;
 
-  uint32_t DefaultWeight = getEdgeWeight(SwitchBB, B.Default);
-  addSuccessorWithWeight(SwitchBB, B.Default, DefaultWeight);
+  addSuccessorWithWeight(SwitchBB, B.Default, B.DefaultWeight);
   addSuccessorWithWeight(SwitchBB, MBB, B.Weight);
 
   SDValue BrRange = DAG.getNode(ISD::BRCOND, dl,
@@ -1998,9 +2050,10 @@ void SelectionDAGBuilder::visitBitTestCase(BitTestBlock &BB,
 void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
   MachineBasicBlock *InvokeMBB = FuncInfo.MBB;
 
-  // Retrieve successors.
+  // Retrieve successors. Look through artificial IR level blocks like catchpads
+  // and catchendpads for successors.
   MachineBasicBlock *Return = FuncInfo.MBBMap[I.getSuccessor(0)];
-  MachineBasicBlock *LandingPad = FuncInfo.MBBMap[I.getSuccessor(1)];
+  const BasicBlock *EHPadBB = I.getSuccessor(1);
 
   const Value *Callee(I.getCalledValue());
   const Function *Fn = dyn_cast<Function>(Callee);
@@ -2015,14 +2068,14 @@ void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
       break;
     case Intrinsic::experimental_patchpoint_void:
     case Intrinsic::experimental_patchpoint_i64:
-      visitPatchpoint(&I, LandingPad);
+      visitPatchpoint(&I, EHPadBB);
       break;
     case Intrinsic::experimental_gc_statepoint:
-      LowerStatepoint(ImmutableStatepoint(&I), LandingPad);
+      LowerStatepoint(ImmutableStatepoint(&I), EHPadBB);
       break;
     }
   } else
-    LowerCallTo(&I, getValue(Callee), false, LandingPad);
+    LowerCallTo(&I, getValue(Callee), false, EHPadBB);
 
   // If the value of the invoke is used outside of its defining block, make it
   // available as a virtual register.
@@ -2032,9 +2085,16 @@ void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
     CopyToExportRegsIfNeeded(&I);
   }
 
-  // Update successor info
+  SmallVector<MachineBasicBlock *, 1> UnwindDests;
+  findUnwindDestinations(FuncInfo, EHPadBB, UnwindDests);
+
+  // Update successor info.
+  // FIXME: The weights for catchpads will be wrong.
   addSuccessorWithWeight(InvokeMBB, Return);
-  addSuccessorWithWeight(InvokeMBB, LandingPad);
+  for (MachineBasicBlock *UnwindDest : UnwindDests) {
+    UnwindDest->setIsEHPad();
+    addSuccessorWithWeight(InvokeMBB, UnwindDest);
+  }
 
   // Drop into normal successor.
   DAG.setRoot(DAG.getNode(ISD::BR, getCurSDLoc(),
@@ -2159,7 +2219,8 @@ void SelectionDAGBuilder::visitIndirectBr(const IndirectBrInst &I) {
 
 void SelectionDAGBuilder::visitUnreachable(const UnreachableInst &I) {
   if (DAG.getTarget().Options.TrapUnreachable)
-    DAG.setRoot(DAG.getNode(ISD::TRAP, getCurSDLoc(), MVT::Other, DAG.getRoot()));
+    DAG.setRoot(
+        DAG.getNode(ISD::TRAP, getCurSDLoc(), MVT::Other, DAG.getRoot()));
 }
 
 void SelectionDAGBuilder::visitFSub(const User &I) {
@@ -2300,6 +2361,10 @@ void SelectionDAGBuilder::visitFCmp(const User &I) {
   SDValue Op1 = getValue(I.getOperand(0));
   SDValue Op2 = getValue(I.getOperand(1));
   ISD::CondCode Condition = getFCmpCondCode(predicate);
+  
+  // FIXME: Fcmp instructions have fast-math-flags in IR, so we should use them.
+  // FIXME: We should propagate the fast-math-flags to the DAG node itself for
+  // further optimization, but currently FMF is only applicable to binary nodes.
   if (TM.Options.NoNaNsFPMath)
     Condition = getFCmpCodeWithoutNaN(Condition);
   EVT DestVT = DAG.getTargetLoweringInfo().getValueType(DAG.getDataLayout(),
@@ -3142,56 +3207,63 @@ void SelectionDAGBuilder::visitMaskedStore(const CallInst &I) {
   setValue(&I, StoreNode);
 }
 
-// Gather/scatter receive a vector of pointers.
-// This vector of pointers may be represented as a base pointer + vector of
-// indices, it depends on GEP and instruction preceding GEP
-// that calculates indices
+// Get a uniform base for the Gather/Scatter intrinsic.
+// The first argument of the Gather/Scatter intrinsic is a vector of pointers.
+// We try to represent it as a base pointer + vector of indices.
+// Usually, the vector of pointers comes from a 'getelementptr' instruction.
+// The first operand of the GEP may be a single pointer or a vector of pointers
+// Example:
+//   %gep.ptr = getelementptr i32, <8 x i32*> %vptr, <8 x i32> %ind
+//  or
+//   %gep.ptr = getelementptr i32, i32* %ptr,        <8 x i32> %ind
+// %res = call <8 x i32> @llvm.masked.gather.v8i32(<8 x i32*> %gep.ptr, ..
+//
+// When the first GEP operand is a single pointer - it is the uniform base we
+// are looking for. If first operand of the GEP is a splat vector - we
+// extract the spalt value and use it as a uniform base.
+// In all other cases the function returns 'false'.
+//
 static bool getUniformBase(Value *& Ptr, SDValue& Base, SDValue& Index,
                            SelectionDAGBuilder* SDB) {
 
-  assert(Ptr->getType()->isVectorTy() && "Unexpected pointer type");
-  GetElementPtrInst *Gep = dyn_cast<GetElementPtrInst>(Ptr);
-  if (!Gep || Gep->getNumOperands() > 2)
-    return false;
-  ShuffleVectorInst *ShuffleInst = 
-    dyn_cast<ShuffleVectorInst>(Gep->getPointerOperand());
-  if (!ShuffleInst || !ShuffleInst->getMask()->isNullValue() ||
-      cast<Instruction>(ShuffleInst->getOperand(0))->getOpcode() !=
-      Instruction::InsertElement)
-    return false;
-
-  Ptr = cast<InsertElementInst>(ShuffleInst->getOperand(0))->getOperand(1);
-
   SelectionDAG& DAG = SDB->DAG;
-  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-  // Check is the Ptr is inside current basic block
-  // If not, look for the shuffle instruction
-  if (SDB->findValue(Ptr))
-    Base = SDB->getValue(Ptr);
-  else if (SDB->findValue(ShuffleInst)) {
-    SDValue ShuffleNode = SDB->getValue(ShuffleInst);
-    SDLoc sdl = ShuffleNode;
-    Base = DAG.getNode(
-        ISD::EXTRACT_VECTOR_ELT, sdl,
-        ShuffleNode.getValueType().getScalarType(), ShuffleNode,
-        DAG.getConstant(0, sdl, TLI.getVectorIdxTy(DAG.getDataLayout())));
-    SDB->setValue(Ptr, Base);
-  }
-  else
+  LLVMContext &Context = *DAG.getContext();
+
+  assert(Ptr->getType()->isVectorTy() && "Uexpected pointer type");
+  GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Ptr);
+  if (!GEP || GEP->getNumOperands() > 2)
     return false;
 
-  Value *IndexVal = Gep->getOperand(1);
-  if (SDB->findValue(IndexVal)) {
-    Index = SDB->getValue(IndexVal);
+  Value *GEPPtr = GEP->getPointerOperand();
+  if (!GEPPtr->getType()->isVectorTy())
+    Ptr = GEPPtr;
+  else if (!(Ptr = getSplatValue(GEPPtr)))
+    return false;
 
-    if (SExtInst* Sext = dyn_cast<SExtInst>(IndexVal)) {
+  Value *IndexVal = GEP->getOperand(1);
+
+  // The operands of the GEP may be defined in another basic block.
+  // In this case we'll not find nodes for the operands.
+  if (!SDB->findValue(Ptr) || !SDB->findValue(IndexVal))
+    return false;
+
+  Base = SDB->getValue(Ptr);
+  Index = SDB->getValue(IndexVal);
+
+  // Suppress sign extension.
+  if (SExtInst* Sext = dyn_cast<SExtInst>(IndexVal)) {
+    if (SDB->findValue(Sext->getOperand(0))) {
       IndexVal = Sext->getOperand(0);
-      if (SDB->findValue(IndexVal))
-        Index = SDB->getValue(IndexVal);
+      Index = SDB->getValue(IndexVal);
     }
-    return true;
   }
-  return false;
+  if (!Index.getValueType().isVector()) {
+    unsigned GEPWidth = GEP->getType()->getVectorNumElements();
+    EVT VT = EVT::getVectorVT(Context, Index.getValueType(), GEPWidth);
+    SmallVector<SDValue, 16> Ops(GEPWidth, Index);
+    Index = DAG.getNode(ISD::BUILD_VECTOR, SDLoc(Index), VT, Ops);
+  }
+  return true;
 }
 
 void SelectionDAGBuilder::visitMaskedScatter(const CallInst &I) {
@@ -3575,6 +3647,8 @@ getF32Constant(SelectionDAG &DAG, unsigned Flt, SDLoc dl) {
 
 static SDValue getLimitedPrecisionExp2(SDValue t0, SDLoc dl,
                                        SelectionDAG &DAG) {
+  // TODO: What fast-math-flags should be set on the floating-point nodes?
+
   //   IntegerPartOfX = ((int32_t)(t0);
   SDValue IntegerPartOfX = DAG.getNode(ISD::FP_TO_SINT, dl, MVT::i32, t0);
 
@@ -3673,6 +3747,8 @@ static SDValue expandExp(SDLoc dl, SDValue Op, SelectionDAG &DAG,
     //
     //   #define LOG2OFe 1.4426950f
     //   t0 = Op * LOG2OFe
+
+    // TODO: What fast-math-flags should be set here?
     SDValue t0 = DAG.getNode(ISD::FMUL, dl, MVT::f32, Op,
                              getF32Constant(DAG, 0x3fb8aa3b, dl));
     return getLimitedPrecisionExp2(t0, dl, DAG);
@@ -3686,6 +3762,9 @@ static SDValue expandExp(SDLoc dl, SDValue Op, SelectionDAG &DAG,
 /// limited-precision mode.
 static SDValue expandLog(SDLoc dl, SDValue Op, SelectionDAG &DAG,
                          const TargetLowering &TLI) {
+ 
+  // TODO: What fast-math-flags should be set on the floating-point nodes?
+
   if (Op.getValueType() == MVT::f32 &&
       LimitFloatPrecision > 0 && LimitFloatPrecision <= 18) {
     SDValue Op1 = DAG.getNode(ISD::BITCAST, dl, MVT::i32, Op);
@@ -3782,6 +3861,9 @@ static SDValue expandLog(SDLoc dl, SDValue Op, SelectionDAG &DAG,
 /// limited-precision mode.
 static SDValue expandLog2(SDLoc dl, SDValue Op, SelectionDAG &DAG,
                           const TargetLowering &TLI) {
+  
+  // TODO: What fast-math-flags should be set on the floating-point nodes?
+
   if (Op.getValueType() == MVT::f32 &&
       LimitFloatPrecision > 0 && LimitFloatPrecision <= 18) {
     SDValue Op1 = DAG.getNode(ISD::BITCAST, dl, MVT::i32, Op);
@@ -3877,6 +3959,9 @@ static SDValue expandLog2(SDLoc dl, SDValue Op, SelectionDAG &DAG,
 /// limited-precision mode.
 static SDValue expandLog10(SDLoc dl, SDValue Op, SelectionDAG &DAG,
                            const TargetLowering &TLI) {
+
+  // TODO: What fast-math-flags should be set on the floating-point nodes?
+
   if (Op.getValueType() == MVT::f32 &&
       LimitFloatPrecision > 0 && LimitFloatPrecision <= 18) {
     SDValue Op1 = DAG.getNode(ISD::BITCAST, dl, MVT::i32, Op);
@@ -3986,6 +4071,7 @@ static SDValue expandPow(SDLoc dl, SDValue LHS, SDValue RHS,
     }
   }
 
+  // TODO: What fast-math-flags should be set on the FMUL node?
   if (IsExp10) {
     // Put the exponent in the right bit position for later addition to the
     // final result:
@@ -4029,6 +4115,8 @@ static SDValue ExpandPowI(SDLoc DL, SDValue LHS, SDValue RHS,
       // the benefit of being both really simple and much better than a libcall.
       SDValue Res;  // Logically starts equal to 1.0
       SDValue CurSquare = LHS;
+      // TODO: Intrinsics should have fast-math-flags that propagate to these
+      // nodes.
       while (Val) {
         if (Val & 1) {
           if (Res.getNode())
@@ -4319,15 +4407,9 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
                                    N);
           return nullptr;
         }
-      } else if (AI)
+      } else {
         SDV = DAG.getDbgValue(Variable, Expression, N.getNode(), N.getResNo(),
                               true, 0, dl, SDNodeOrder);
-      else {
-        // Can't do anything with other non-AI cases yet.
-        DEBUG(dbgs() << "Dropping debug info for " << DI << "\n");
-        DEBUG(dbgs() << "non-AllocaInst issue for Address: \n\t");
-        DEBUG(Address->dump());
-        return nullptr;
       }
       DAG.AddDbgValue(SDV, N.getNode(), isParameter);
     } else {
@@ -4682,6 +4764,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
                                getValue(I.getArgOperand(1)),
                                getValue(I.getArgOperand(2))));
     } else {
+      // TODO: Intrinsic calls should have fast-math-flags.
       SDValue Mul = DAG.getNode(ISD::FMUL, sdl,
                                 getValue(I.getArgOperand(0)).getValueType(),
                                 getValue(I.getArgOperand(0)),
@@ -5133,11 +5216,11 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
 
 std::pair<SDValue, SDValue>
 SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
-                                    MachineBasicBlock *LandingPad) {
+                                    const BasicBlock *EHPadBB) {
   MachineModuleInfo &MMI = DAG.getMachineFunction().getMMI();
   MCSymbol *BeginLabel = nullptr;
 
-  if (LandingPad) {
+  if (EHPadBB) {
     // Insert a label before the invoke call to mark the try range.  This can be
     // used to detect deletion of the invoke via the MachineModuleInfo.
     BeginLabel = MMI.getContext().createTempSymbol();
@@ -5147,7 +5230,7 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
     unsigned CallSiteIndex = MMI.getCurrentCallSite();
     if (CallSiteIndex) {
       MMI.setCallSiteBeginLabel(BeginLabel, CallSiteIndex);
-      LPadToCallSiteMap[LandingPad].push_back(CallSiteIndex);
+      LPadToCallSiteMap[FuncInfo.MBBMap[EHPadBB]].push_back(CallSiteIndex);
 
       // Now that the call site is handled, stop tracking it.
       MMI.setCurrentCallSite(0);
@@ -5180,14 +5263,20 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
     DAG.setRoot(Result.second);
   }
 
-  if (LandingPad) {
+  if (EHPadBB) {
     // Insert a label at the end of the invoke call to mark the try range.  This
     // can be used to detect deletion of the invoke via the MachineModuleInfo.
     MCSymbol *EndLabel = MMI.getContext().createTempSymbol();
     DAG.setRoot(DAG.getEHLabel(getCurSDLoc(), getRoot(), EndLabel));
 
     // Inform MachineModuleInfo of range.
-    MMI.addInvoke(LandingPad, BeginLabel, EndLabel);
+    if (MMI.hasEHFunclets()) {
+      WinEHFuncInfo &EHInfo =
+          MMI.getWinEHFuncInfo(DAG.getMachineFunction().getFunction());
+      EHInfo.addIPToStateRange(EHPadBB, BeginLabel, EndLabel);
+    } else {
+      MMI.addInvoke(FuncInfo.MBBMap[EHPadBB], BeginLabel, EndLabel);
+    }
   }
 
   return Result;
@@ -5195,7 +5284,7 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
 
 void SelectionDAGBuilder::LowerCallTo(ImmutableCallSite CS, SDValue Callee,
                                       bool isTailCall,
-                                      MachineBasicBlock *LandingPad) {
+                                      const BasicBlock *EHPadBB) {
   PointerType *PT = cast<PointerType>(CS.getCalledValue()->getType());
   FunctionType *FTy = cast<FunctionType>(PT->getElementType());
   Type *RetTy = FTy->getReturnType();
@@ -5234,7 +5323,7 @@ void SelectionDAGBuilder::LowerCallTo(ImmutableCallSite CS, SDValue Callee,
   CLI.setDebugLoc(getCurSDLoc()).setChain(getRoot())
     .setCallee(RetTy, FTy, Callee, std::move(Args), CS)
     .setTailCall(isTailCall);
-  std::pair<SDValue,SDValue> Result = lowerInvokable(CLI, LandingPad);
+  std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
 
   if (Result.first.getNode())
     setValue(CS.getInstruction(), Result.first);
@@ -6058,7 +6147,7 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
       SDISelAsmOperandInfo &Input = ConstraintOperands[OpInfo.MatchingInput];
 
       if (OpInfo.ConstraintVT != Input.ConstraintVT) {
-	const TargetRegisterInfo *TRI = DAG.getSubtarget().getRegisterInfo();
+        const TargetRegisterInfo *TRI = DAG.getSubtarget().getRegisterInfo();
         std::pair<unsigned, const TargetRegisterClass *> MatchRC =
             TLI.getRegForInlineAsmConstraint(TRI, OpInfo.ConstraintCode,
                                              OpInfo.ConstraintVT);
@@ -6540,12 +6629,9 @@ void SelectionDAGBuilder::visitVACopy(const CallInst &I) {
 /// This is a helper for lowering intrinsics that follow a target calling
 /// convention or require stack pointer adjustment. Only a subset of the
 /// intrinsic's operands need to participate in the calling convention.
-std::pair<SDValue, SDValue>
-SelectionDAGBuilder::lowerCallOperands(ImmutableCallSite CS, unsigned ArgIdx,
-                                       unsigned NumArgs, SDValue Callee,
-                                       Type *ReturnTy,
-                                       MachineBasicBlock *LandingPad,
-                                       bool IsPatchPoint) {
+std::pair<SDValue, SDValue> SelectionDAGBuilder::lowerCallOperands(
+    ImmutableCallSite CS, unsigned ArgIdx, unsigned NumArgs, SDValue Callee,
+    Type *ReturnTy, const BasicBlock *EHPadBB, bool IsPatchPoint) {
   TargetLowering::ArgListTy Args;
   Args.reserve(NumArgs);
 
@@ -6569,7 +6655,7 @@ SelectionDAGBuilder::lowerCallOperands(ImmutableCallSite CS, unsigned ArgIdx,
     .setCallee(CS.getCallingConv(), ReturnTy, Callee, std::move(Args), NumArgs)
     .setDiscardResult(CS->use_empty()).setIsPatchPoint(IsPatchPoint);
 
-  return lowerInvokable(CLI, LandingPad);
+  return lowerInvokable(CLI, EHPadBB);
 }
 
 /// \brief Add a stack map intrinsic call's live variable operands to a stackmap
@@ -6673,7 +6759,7 @@ void SelectionDAGBuilder::visitStackmap(const CallInst &CI) {
 
 /// \brief Lower llvm.experimental.patchpoint directly to its target opcode.
 void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
-                                          MachineBasicBlock *LandingPad) {
+                                          const BasicBlock *EHPadBB) {
   // void|i64 @llvm.experimental.patchpoint.void|i64(i64 <id>,
   //                                                 i32 <numBytes>,
   //                                                 i8* <target>,
@@ -6710,9 +6796,8 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
   unsigned NumCallArgs = IsAnyRegCC ? 0 : NumArgs;
   Type *ReturnTy =
     IsAnyRegCC ? Type::getVoidTy(*DAG.getContext()) : CS->getType();
-  std::pair<SDValue, SDValue> Result =
-    lowerCallOperands(CS, NumMetaOpers, NumCallArgs, Callee, ReturnTy,
-                      LandingPad, true);
+  std::pair<SDValue, SDValue> Result = lowerCallOperands(
+      CS, NumMetaOpers, NumCallArgs, Callee, ReturnTy, EHPadBB, true);
 
   SDNode *CallEnd = Result.second.getNode();
   if (HasDef && (CallEnd->getOpcode() == ISD::CopyFromReg))
@@ -8041,7 +8126,8 @@ void SelectionDAGBuilder::lowerWorkItem(SwitchWorkListItem W, Value *Cond,
   }
 
   // Compute total weight.
-  uint32_t UnhandledWeights = 0;
+  uint32_t DefaultWeight = W.DefaultWeight;
+  uint32_t UnhandledWeights = DefaultWeight;
   for (CaseClusterIt I = W.FirstCluster; I <= W.LastCluster; ++I) {
     UnhandledWeights += I->Weight;
     assert(UnhandledWeights >= I->Weight && "Weight overflow!");
@@ -8071,14 +8157,24 @@ void SelectionDAGBuilder::lowerWorkItem(SwitchWorkListItem W, Value *Cond,
         MachineBasicBlock *JumpMBB = JT->MBB;
         CurMF->insert(BBI, JumpMBB);
 
-        // Collect the sum of weights of outgoing edges from JumpMBB, which will
-        // be the edge weight on CurMBB->JumpMBB.
-        uint32_t JumpWeight = 0;
-        for (auto Succ : JumpMBB->successors())
-          JumpWeight += getEdgeWeight(JumpMBB, Succ);
-        uint32_t FallthruWeight = getEdgeWeight(CurMBB, Fallthrough);
+        uint32_t JumpWeight = I->Weight;
+        uint32_t FallthroughWeight = UnhandledWeights;
 
-        addSuccessorWithWeight(CurMBB, Fallthrough, FallthruWeight);
+        // If the default statement is a target of the jump table, we evenly
+        // distribute the default weight to successors of CurMBB. Also update
+        // the weight on the edge from JumpMBB to Fallthrough.
+        for (MachineBasicBlock::succ_iterator SI = JumpMBB->succ_begin(),
+                                              SE = JumpMBB->succ_end();
+             SI != SE; ++SI) {
+          if (*SI == DefaultMBB) {
+            JumpWeight += DefaultWeight / 2;
+            FallthroughWeight -= DefaultWeight / 2;
+            JumpMBB->setSuccWeight(SI, DefaultWeight / 2);
+            break;
+          }
+        }
+
+        addSuccessorWithWeight(CurMBB, Fallthrough, FallthroughWeight);
         addSuccessorWithWeight(CurMBB, JumpMBB, JumpWeight);
 
         // The jump table header will be inserted in our current block, do the
@@ -8105,8 +8201,17 @@ void SelectionDAGBuilder::lowerWorkItem(SwitchWorkListItem W, Value *Cond,
         BTB->Parent = CurMBB;
         BTB->Default = Fallthrough;
 
-        // If we're in the right place, emit the bit test header header right now.
-        if (CurMBB ==SwitchMBB) {
+        BTB->DefaultWeight = UnhandledWeights;
+        // If the cases in bit test don't form a contiguous range, we evenly
+        // distribute the weight on the edge to Fallthrough to two successors
+        // of CurMBB.
+        if (!BTB->ContiguousRange) {
+          BTB->Weight += DefaultWeight / 2;
+          BTB->DefaultWeight -= DefaultWeight / 2;
+        }
+
+        // If we're in the right place, emit the bit test header right now.
+        if (CurMBB == SwitchMBB) {
           visitBitTestHeader(*BTB, SwitchMBB);
           BTB->Emitted = true;
         }
@@ -8171,8 +8276,8 @@ void SelectionDAGBuilder::splitWorkItem(SwitchWorkList &WorkList,
   // Mehlhorn "Nearly Optimal Binary Search Trees" (1975).
   CaseClusterIt LastLeft = W.FirstCluster;
   CaseClusterIt FirstRight = W.LastCluster;
-  uint32_t LeftWeight = LastLeft->Weight;
-  uint32_t RightWeight = FirstRight->Weight;
+  uint32_t LeftWeight = LastLeft->Weight + W.DefaultWeight / 2;
+  uint32_t RightWeight = FirstRight->Weight + W.DefaultWeight / 2;
 
   // Move LastLeft and FirstRight towards each other from opposite directions to
   // find a partitioning of the clusters which balances the weight on both
@@ -8258,7 +8363,8 @@ void SelectionDAGBuilder::splitWorkItem(SwitchWorkList &WorkList,
   } else {
     LeftMBB = FuncInfo.MF->CreateMachineBasicBlock(W.MBB->getBasicBlock());
     FuncInfo.MF->insert(BBI, LeftMBB);
-    WorkList.push_back({LeftMBB, FirstLeft, LastLeft, W.GE, Pivot});
+    WorkList.push_back(
+        {LeftMBB, FirstLeft, LastLeft, W.GE, Pivot, W.DefaultWeight / 2});
     // Put Cond in a virtual register to make it available from the new blocks.
     ExportFromCurrentBlock(Cond);
   }
@@ -8273,7 +8379,8 @@ void SelectionDAGBuilder::splitWorkItem(SwitchWorkList &WorkList,
   } else {
     RightMBB = FuncInfo.MF->CreateMachineBasicBlock(W.MBB->getBasicBlock());
     FuncInfo.MF->insert(BBI, RightMBB);
-    WorkList.push_back({RightMBB, FirstRight, LastRight, Pivot, W.LT});
+    WorkList.push_back(
+        {RightMBB, FirstRight, LastRight, Pivot, W.LT, W.DefaultWeight / 2});
     // Put Cond in a virtual register to make it available from the new blocks.
     ExportFromCurrentBlock(Cond);
   }
@@ -8374,7 +8481,8 @@ void SelectionDAGBuilder::visitSwitch(const SwitchInst &SI) {
   SwitchWorkList WorkList;
   CaseClusterIt First = Clusters.begin();
   CaseClusterIt Last = Clusters.end() - 1;
-  WorkList.push_back({SwitchMBB, First, Last, nullptr, nullptr});
+  uint32_t DefaultWeight = getEdgeWeight(SwitchMBB, DefaultMBB);
+  WorkList.push_back({SwitchMBB, First, Last, nullptr, nullptr, DefaultWeight});
 
   while (!WorkList.empty()) {
     SwitchWorkListItem W = WorkList.back();

@@ -6,7 +6,7 @@
 ;     http://llvm.org/docs/DeveloperPolicy.html#ir-backwards-compatibility 
 
 ; RUN: llvm-as < %s | llvm-dis | llvm-as | llvm-dis | FileCheck %s
-; RUN: verify-uselistorder < %s
+; RUN-PR24755: verify-uselistorder < %s
 
 target datalayout = "E"
 ; CHECK: target datalayout = "E"
@@ -176,52 +176,52 @@ declare void @g.f1()
 ;                   [unnamed_addr] alias <AliaseeTy> @<Aliasee>
 
 ; Aliases -- Linkage
-@a.private = private alias i32* @g.private
-; CHECK: @a.private = private alias i32* @g.private
-@a.internal = internal alias i32* @g.internal
-; CHECK: @a.internal = internal alias i32* @g.internal
-@a.linkonce = linkonce alias i32* @g.linkonce
-; CHECK: @a.linkonce = linkonce alias i32* @g.linkonce
-@a.weak = weak alias i32* @g.weak
-; CHECK: @a.weak = weak alias i32* @g.weak
-@a.linkonce_odr = linkonce_odr alias i32* @g.linkonce_odr
-; CHECK: @a.linkonce_odr = linkonce_odr alias i32* @g.linkonce_odr
-@a.weak_odr = weak_odr alias i32* @g.weak_odr
-; CHECK: @a.weak_odr = weak_odr alias i32* @g.weak_odr
-@a.external = external alias i32* @g1
-; CHECK: @a.external = alias i32* @g1
+@a.private = private alias i32, i32* @g.private
+; CHECK: @a.private = private alias i32, i32* @g.private
+@a.internal = internal alias i32, i32* @g.internal
+; CHECK: @a.internal = internal alias i32, i32* @g.internal
+@a.linkonce = linkonce alias i32, i32* @g.linkonce
+; CHECK: @a.linkonce = linkonce alias i32, i32* @g.linkonce
+@a.weak = weak alias i32, i32* @g.weak
+; CHECK: @a.weak = weak alias i32, i32* @g.weak
+@a.linkonce_odr = linkonce_odr alias i32, i32* @g.linkonce_odr
+; CHECK: @a.linkonce_odr = linkonce_odr alias i32, i32* @g.linkonce_odr
+@a.weak_odr = weak_odr alias i32, i32* @g.weak_odr
+; CHECK: @a.weak_odr = weak_odr alias i32, i32* @g.weak_odr
+@a.external = external alias i32, i32* @g1
+; CHECK: @a.external = alias i32, i32* @g1
 
 ; Aliases -- Visibility
-@a.default = default alias i32* @g.default
-; CHECK: @a.default = alias i32* @g.default
-@a.hidden = hidden alias i32* @g.hidden
-; CHECK: @a.hidden = hidden alias i32* @g.hidden
-@a.protected = protected alias i32* @g.protected
-; CHECK: @a.protected = protected alias i32* @g.protected
+@a.default = default alias i32, i32* @g.default
+; CHECK: @a.default = alias i32, i32* @g.default
+@a.hidden = hidden alias i32, i32* @g.hidden
+; CHECK: @a.hidden = hidden alias i32, i32* @g.hidden
+@a.protected = protected alias i32, i32* @g.protected
+; CHECK: @a.protected = protected alias i32, i32* @g.protected
 
 ; Aliases -- DLLStorageClass
-@a.dlldefault = default alias i32* @g.dlldefault
-; CHECK: @a.dlldefault = alias i32* @g.dlldefault
-@a.dllimport = dllimport alias i32* @g1
-; CHECK: @a.dllimport = dllimport alias i32* @g1
-@a.dllexport = dllexport alias i32* @g.dllexport
-; CHECK: @a.dllexport = dllexport alias i32* @g.dllexport
+@a.dlldefault = default alias i32, i32* @g.dlldefault
+; CHECK: @a.dlldefault = alias i32, i32* @g.dlldefault
+@a.dllimport = dllimport alias i32, i32* @g1
+; CHECK: @a.dllimport = dllimport alias i32, i32* @g1
+@a.dllexport = dllexport alias i32, i32* @g.dllexport
+; CHECK: @a.dllexport = dllexport alias i32, i32* @g.dllexport
 
 ; Aliases -- ThreadLocal
-@a.notthreadlocal = alias i32* @g.notthreadlocal
-; CHECK: @a.notthreadlocal = alias i32* @g.notthreadlocal
-@a.generaldynamic = thread_local alias i32* @g.generaldynamic
-; CHECK: @a.generaldynamic = thread_local alias i32* @g.generaldynamic
-@a.localdynamic = thread_local(localdynamic) alias i32* @g.localdynamic
-; CHECK: @a.localdynamic = thread_local(localdynamic) alias i32* @g.localdynamic
-@a.initialexec = thread_local(initialexec) alias i32* @g.initialexec
-; CHECK: @a.initialexec = thread_local(initialexec) alias i32* @g.initialexec
-@a.localexec = thread_local(localexec) alias i32* @g.localexec
-; CHECK: @a.localexec = thread_local(localexec) alias i32* @g.localexec
+@a.notthreadlocal = alias i32, i32* @g.notthreadlocal
+; CHECK: @a.notthreadlocal = alias i32, i32* @g.notthreadlocal
+@a.generaldynamic = thread_local alias i32, i32* @g.generaldynamic
+; CHECK: @a.generaldynamic = thread_local alias i32, i32* @g.generaldynamic
+@a.localdynamic = thread_local(localdynamic) alias i32, i32* @g.localdynamic
+; CHECK: @a.localdynamic = thread_local(localdynamic) alias i32, i32* @g.localdynamic
+@a.initialexec = thread_local(initialexec) alias i32, i32* @g.initialexec
+; CHECK: @a.initialexec = thread_local(initialexec) alias i32, i32* @g.initialexec
+@a.localexec = thread_local(localexec) alias i32, i32* @g.localexec
+; CHECK: @a.localexec = thread_local(localexec) alias i32, i32* @g.localexec
 
 ; Aliases -- unnamed_addr
-@a.unnamed_addr = unnamed_addr alias i32* @g.unnamed_addr
-; CHECK: @a.unnamed_addr = unnamed_addr alias i32* @g.unnamed_addr
+@a.unnamed_addr = unnamed_addr alias i32, i32* @g.unnamed_addr
+; CHECK: @a.unnamed_addr = unnamed_addr alias i32, i32* @g.unnamed_addr
 
 ;; Functions
 ; Format: define [linkage] [visibility] [DLLStorageClass]
@@ -700,6 +700,9 @@ define void @typesystem() {
   ret void
 }
 
+declare void @llvm.token(token)
+; CHECK: declare void @llvm.token(token)
+
 ;; Inline Assembler Expressions
 define void @inlineasm(i32 %arg) {
   call i32 asm "bswap $0", "=r,r"(i32 %arg)
@@ -758,6 +761,104 @@ exc:
   ; CHECK: unreachable
 
   ret void
+}
+
+define i32 @instructions.win_eh.1() personality i32 -3 {
+entry:
+  %arg1 = alloca i32
+  %arg2 = alloca i32
+  invoke void @f.ccc() to label %normal unwind label %catchpad1
+  invoke void @f.ccc() to label %normal unwind label %catchpad2
+  invoke void @f.ccc() to label %normal unwind label %catchpad3
+
+catchpad1:
+  catchpad [] to label %normal unwind label %exn.1
+  ; CHECK: catchpad []
+  ; CHECK-NEXT: to label %normal unwind label %exn.1
+
+catchpad2:
+  catchpad [i32* %arg1] to label %normal unwind label %exn.2
+  ; CHECK: catchpad [i32* %arg1]
+  ; CHECK-NEXT: to label %normal unwind label %exn.2
+
+catchpad3:
+  catchpad [i32* %arg1, i32* %arg2] to label %normal unwind label %exn.3
+  ; CHECK: catchpad [i32* %arg1, i32* %arg2] 
+  ; CHECK-NEXT: to label %normal unwind label %exn.3
+
+exn.1:
+  catchendpad unwind label %terminate.1
+  ; CHECK: catchendpad unwind label %terminate.1
+
+exn.2:
+  catchendpad unwind to caller
+  ; CHECK: catchendpad unwind to caller
+
+exn.3:
+  catchendpad unwind label %cleanuppad1
+  ; CHECK: catchendpad unwind label %cleanuppad1
+
+cleanuppad1:
+  %clean.1 = cleanuppad []
+  ; CHECK: %clean.1 = cleanuppad []
+  invoke void @f.ccc() to label %normal unwind label %cleanupendpad1
+
+cleanupendpad1:
+  cleanupendpad %clean.1 unwind label %terminate.2
+  ; CHECK: cleanupendpad %clean.1 unwind label %terminate.2
+
+terminate.1:
+  terminatepad [] unwind to caller
+  ; CHECK: terminatepad [] unwind to caller
+
+terminate.2:
+  terminatepad [i32* %arg1] unwind label %normal.pre
+  ; CHECK: terminatepad [i32* %arg1] unwind label %normal.pre
+
+normal.pre:
+  terminatepad [i32* %arg1, i32* %arg2] unwind to caller
+  ; CHECK: terminatepad [i32* %arg1, i32* %arg2] unwind to caller
+
+normal:
+  ret i32 0
+}
+
+define i32 @instructions.win_eh.2() personality i32 -4 {
+entry:
+  invoke void @f.ccc() to label %invoke.cont unwind label %catchpad
+
+invoke.cont:
+  invoke void @f.ccc() to label %continue unwind label %cleanup
+
+cleanup:
+  %clean = cleanuppad []
+  ; CHECK: %clean = cleanuppad []
+  cleanupret %clean unwind to caller
+  ; CHECK: cleanupret %clean unwind to caller
+
+catchpad:
+  %catch = catchpad [] to label %body unwind label %catchend
+  ; CHECK: %catch = catchpad []
+  ; CHECK-NEXT: to label %body unwind label %catchend
+
+body:
+  invoke void @f.ccc() to label %continue unwind label %catchend
+  catchret %catch to label %return
+  ; CHECK: catchret %catch to label %return
+
+return:
+  ret i32 0
+
+catchend:
+  catchendpad unwind label %terminate
+  ; CHECK: catchendpad unwind label %terminate
+
+terminate:
+  terminatepad [] unwind to caller
+  ; CHECK: terminatepad [] unwind to caller
+
+continue:
+  ret i32 0
 }
 
 ; Instructions -- Binary Operations
@@ -1212,8 +1313,157 @@ define void @misc.metadata() {
   ret void
 }
 
-declare void @llvm.tokenfoo(token)
-; CHECK: declare void @llvm.tokenfoo(token)
+declare void @op_bundle_callee_0()
+declare void @op_bundle_callee_1(i32,i32)
+
+define void @call_with_operand_bundle0(i32* %ptr) {
+; CHECK-LABEL: call_with_operand_bundle0(
+ entry:
+  %l = load i32, i32* %ptr
+  %x = add i32 42, 1
+  call void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "bar"(float  0.000000e+00, i64 100, i32 %l) ]
+; CHECK: call void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "bar"(float  0.000000e+00, i64 100, i32 %l) ]
+  ret void
+}
+
+define void @call_with_operand_bundle1(i32* %ptr) {
+; CHECK-LABEL: call_with_operand_bundle1(
+ entry:
+  %l = load i32, i32* %ptr
+  %x = add i32 42, 1
+
+  call void @op_bundle_callee_0()
+  call void @op_bundle_callee_0() [ "foo"() ]
+  call void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "bar"(float  0.000000e+00, i64 100, i32 %l) ]
+; CHECK: @op_bundle_callee_0(){{$}}
+; CHECK-NEXT: call void @op_bundle_callee_0() [ "foo"() ]
+; CHECK-NEXT: call void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "bar"(float  0.000000e+00, i64 100, i32 %l) ]
+  ret void
+}
+
+define void @call_with_operand_bundle2(i32* %ptr) {
+; CHECK-LABEL: call_with_operand_bundle2(
+ entry:
+  call void @op_bundle_callee_0() [ "foo"() ]
+; CHECK: call void @op_bundle_callee_0() [ "foo"() ]
+  ret void
+}
+
+define void @call_with_operand_bundle3(i32* %ptr) {
+; CHECK-LABEL: call_with_operand_bundle3(
+ entry:
+  %l = load i32, i32* %ptr
+  %x = add i32 42, 1
+  call void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ]
+; CHECK: call void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ]
+  ret void
+}
+
+define void @call_with_operand_bundle4(i32* %ptr) {
+; CHECK-LABEL: call_with_operand_bundle4(
+ entry:
+  %l = load i32, i32* %ptr
+  %x = add i32 42, 1
+  call void @op_bundle_callee_1(i32 10, i32 %x) [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ]
+; CHECK: call void @op_bundle_callee_1(i32 10, i32 %x) [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ]
+  ret void
+}
+
+; Invoke versions of the above tests:
+
+
+define void @invoke_with_operand_bundle0(i32* %ptr) personality i8 3 {
+; CHECK-LABEL: @invoke_with_operand_bundle0(
+ entry:
+  %l = load i32, i32* %ptr
+  %x = add i32 42, 1
+  invoke void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "bar"(float  0.000000e+00, i64 100, i32 %l) ] to label %normal unwind label %exception
+; CHECK: invoke void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "bar"(float  0.000000e+00, i64 100, i32 %l) ]
+
+exception:
+  %cleanup = landingpad i8 cleanup
+  br label %normal
+normal:
+  ret void
+}
+
+define void @invoke_with_operand_bundle1(i32* %ptr) personality i8 3 {
+; CHECK-LABEL: @invoke_with_operand_bundle1(
+ entry:
+  %l = load i32, i32* %ptr
+  %x = add i32 42, 1
+
+  invoke void @op_bundle_callee_0() to label %normal unwind label %exception
+; CHECK: invoke void @op_bundle_callee_0(){{$}}
+
+exception:
+  %cleanup = landingpad i8 cleanup
+  br label %normal
+
+normal:
+  invoke void @op_bundle_callee_0() [ "foo"() ] to label %normal1 unwind label %exception1
+; CHECK: invoke void @op_bundle_callee_0() [ "foo"() ]
+
+exception1:
+  %cleanup1 = landingpad i8 cleanup
+  br label %normal1
+
+normal1:
+  invoke void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ] to label %normal2 unwind label %exception2
+; CHECK: invoke void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ]
+
+exception2:
+  %cleanup2 = landingpad i8 cleanup
+  br label %normal2
+
+normal2:
+  ret void
+}
+
+define void @invoke_with_operand_bundle2(i32* %ptr) personality i8 3 {
+; CHECK-LABEL: @invoke_with_operand_bundle2(
+ entry:
+  invoke void @op_bundle_callee_0() [ "foo"() ] to label %normal unwind label %exception
+; CHECK: invoke void @op_bundle_callee_0() [ "foo"() ]
+
+exception:
+  %cleanup = landingpad i8 cleanup
+  br label %normal
+normal:
+  ret void
+}
+
+define void @invoke_with_operand_bundle3(i32* %ptr) personality i8 3 {
+; CHECK-LABEL: @invoke_with_operand_bundle3(
+ entry:
+  %l = load i32, i32* %ptr
+  %x = add i32 42, 1
+  invoke void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ] to label %normal unwind label %exception
+; CHECK: invoke void @op_bundle_callee_0() [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ]
+
+exception:
+  %cleanup = landingpad i8 cleanup
+  br label %normal
+normal:
+  ret void
+}
+
+define void @invoke_with_operand_bundle4(i32* %ptr) personality i8 3 {
+; CHECK-LABEL: @invoke_with_operand_bundle4(
+ entry:
+  %l = load i32, i32* %ptr
+  %x = add i32 42, 1
+  invoke void @op_bundle_callee_1(i32 10, i32 %x) [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ]
+        to label %normal unwind label %exception
+; CHECK: invoke void @op_bundle_callee_1(i32 10, i32 %x) [ "foo"(i32 42, i64 100, i32 %x), "foo"(i32 42, float  0.000000e+00, i32 %l) ]
+
+exception:
+  %cleanup = landingpad i8 cleanup
+  br label %normal
+normal:
+  ret void
+}
+
 
 ; CHECK: attributes #0 = { alignstack=4 }
 ; CHECK: attributes #1 = { alignstack=8 }

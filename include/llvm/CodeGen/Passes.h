@@ -120,9 +120,6 @@ protected:
   /// Default setting for -enable-tail-merge on this target.
   bool EnableTailMerge;
 
-  /// Default setting for -enable-shrink-wrap on this target.
-  bool EnableShrinkWrap;
-
 public:
   TargetPassConfig(TargetMachine *tm, PassManagerBase &pm);
   // Dummy constructor.
@@ -584,6 +581,9 @@ namespace llvm {
 
   /// StackSlotColoring - This pass performs stack slot coloring.
   extern char &StackSlotColoringID;
+
+  /// \brief This pass lays out funclets contiguously.
+  extern char &FuncletLayoutID;
 
   /// createStackProtectorPass - This pass adds stack protectors to functions.
   ///

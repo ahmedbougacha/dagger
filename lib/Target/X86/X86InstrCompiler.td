@@ -152,13 +152,11 @@ def EH_RETURN64   : I<0xC3, RawFrm, (outs), (ins GR64:$addr),
 
 }
 
-let isTerminator = 1, isBarrier = 1, hasCtrlDep = 1, isCodeGenOnly = 1 in {
-def CATCHRET   : I<0xC3, RawFrm, (outs), (ins GR32:$addr),
-                   "ret{l}\t# CATCHRET",
-                   [(X86catchret GR32:$addr)], IIC_RET>, Sched<[WriteJumpLd]>;
-def CATCHRET64 : I<0xC3, RawFrm, (outs), (ins GR64:$addr),
-                   "ret{q}\t# CATCHRET",
-                   [(X86catchret GR64:$addr)], IIC_RET>, Sched<[WriteJumpLd]>;
+let isTerminator = 1, hasSideEffects = 1, isBarrier = 1, hasCtrlDep = 1, isCodeGenOnly = 1, isReturn = 1 in {
+def CATCHRET : I<0, Pseudo, (outs), (ins brtarget32:$dst, brtarget32:$from),
+                 "# CATCHRET",
+                 [(catchret bb:$dst, bb:$from)]>;
+def CLEANUPRET : I<0, Pseudo, (outs), (ins), "# CLEANUPRET", [(cleanupret)]>;
 }
 
 let hasSideEffects = 1, isBarrier = 1, isCodeGenOnly = 1,
