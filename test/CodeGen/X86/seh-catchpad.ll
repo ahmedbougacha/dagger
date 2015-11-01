@@ -112,7 +112,7 @@ ehcleanup.end:                                    ; preds = %ehcleanup
 ; CHECK:         addq    $48, %rsp
 ; CHECK:         popq    %rbp
 ; CHECK:         retq
-; CHECK: .LBB1_[[except1bb:[0-9]+]]:                                # %__except
+; CHECK: .LBB1_[[except1bb:[0-9]+]]:                                # %catch.dispatch
 ; CHECK: .Ltmp2:
 ; CHECK:         movl    $1, %ecx
 ; CHECK:         xorl    %edx, %edx
@@ -120,7 +120,9 @@ ehcleanup.end:                                    ; preds = %ehcleanup
 ; CHECK: .Ltmp3:
 ; CHECK:         callq   "?fin$0@0@main@@"
 ; CHECK:         jmp     .LBB1_[[epilogue]]
-; CHECK: .LBB1_[[except2bb:[0-9]+]]:                                # %__except.ret
+; CHECK: .LBB1_[[except2bb:[0-9]+]]:                                # %catch.dispatch.7
+; CHECK:         jmp     .LBB1_7
+; CHECK: # %__except.9
 ; CHECK:         leaq    "??_C@_06IBDBCMGJ@caught?$AA@"(%rip), %rcx
 ; CHECK:         callq   puts
 ; CHECK:         jmp     .LBB1_[[epilogue]]
@@ -128,20 +130,24 @@ ehcleanup.end:                                    ; preds = %ehcleanup
 ; CHECK:         .seh_handlerdata
 ; CHECK-NEXT:         .long   (.Llsda_end0-.Llsda_begin0)/16
 ; CHECK-NEXT: .Llsda_begin0:
-; CHECK-NEXT:         .long   .Ltmp0@IMGREL
+; CHECK-NEXT:         .long   .Ltmp0@IMGREL+1
 ; CHECK-NEXT:         .long   .Ltmp1@IMGREL+1
 ; CHECK-NEXT:         .long   1
 ; CHECK-NEXT:         .long   .LBB1_[[except1bb]]@IMGREL
-; CHECK-NEXT:         .long   .Ltmp0@IMGREL
+; CHECK-NEXT:         .long   .Ltmp0@IMGREL+1
 ; CHECK-NEXT:         .long   .Ltmp1@IMGREL+1
 ; CHECK-NEXT:         .long   "?filt$0@0@main@@"@IMGREL
 ; CHECK-NEXT:         .long   .LBB1_[[except2bb]]@IMGREL
-; CHECK-NEXT:         .long   .Ltmp2@IMGREL
+; CHECK-NEXT:         .long   .Ltmp2@IMGREL+1
 ; CHECK-NEXT:         .long   .Ltmp3@IMGREL+1
-; CHECK-NEXT:         .long   .LBB1_[[finbb:[0-9]+]]@IMGREL
+; CHECK-NEXT:         .long   "?dtor$[[finbb:[0-9]+]]@?0?main@4HA"@IMGREL
 ; CHECK-NEXT:         .long   0
-; CHECK-NEXT:         .long   .Ltmp2@IMGREL
+; CHECK-NEXT:         .long   .Ltmp2@IMGREL+1
 ; CHECK-NEXT:         .long   .Ltmp3@IMGREL+1
+; CHECK-NEXT:         .long   "?filt$0@0@main@@"@IMGREL
+; CHECK-NEXT:         .long   .LBB1_6@IMGREL
+; CHECK-NEXT:         .long   .Ltmp6@IMGREL+1
+; CHECK-NEXT:         .long   .Ltmp7@IMGREL+1
 ; CHECK-NEXT:         .long   "?filt$0@0@main@@"@IMGREL
 ; CHECK-NEXT:         .long   .LBB1_6@IMGREL
 ; CHECK-NEXT: .Llsda_end0:

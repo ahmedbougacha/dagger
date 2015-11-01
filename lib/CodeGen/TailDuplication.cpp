@@ -161,7 +161,7 @@ void TailDuplicatePass::getAnalysisUsage(AnalysisUsage &AU) const {
 
 static void VerifyPHIs(MachineFunction &MF, bool CheckExtra) {
   for (MachineFunction::iterator I = ++MF.begin(), E = MF.end(); I != E; ++I) {
-    MachineBasicBlock *MBB = I;
+    MachineBasicBlock *MBB = &*I;
     SmallSetVector<MachineBasicBlock*, 8> Preds(MBB->pred_begin(),
                                                 MBB->pred_end());
     MachineBasicBlock::iterator MI = MBB->begin();
@@ -322,7 +322,7 @@ bool TailDuplicatePass::TailDuplicateBlocks(MachineFunction &MF) {
   }
 
   for (MachineFunction::iterator I = ++MF.begin(), E = MF.end(); I != E; ) {
-    MachineBasicBlock *MBB = I++;
+    MachineBasicBlock *MBB = &*I++;
 
     if (NumTails == TailDupLimit)
       break;
@@ -607,6 +607,27 @@ TailDuplicatePass::shouldTailDuplicate(const MachineFunction &MF,
       return false;
   }
 
+  // Check if any of the successors of TailBB has a PHI node in which the
+  // value corresponding to TailBB uses a subregister.
+  // If a phi node uses a register paired with a subregister, the actual
+  // "value type" of the phi may differ from the type of the register without
+  // any subregisters. Due to a bug, tail duplication may add a new operand
+  // without a necessary subregister, producing an invalid code. This is
+  // demonstrated by test/CodeGen/Hexagon/tail-dup-subreg-abort.ll.
+  // Disable tail duplication for this case for now, until the problem is
+  // fixed.
+  for (auto SB : TailBB.successors()) {
+    for (auto &I : *SB) {
+      if (!I.isPHI())
+        break;
+      unsigned Idx = getPHISrcRegOpIdx(&I, &TailBB);
+      assert(Idx != 0);
+      MachineOperand &PU = I.getOperand(Idx);
+      if (PU.getSubReg() != 0)
+        return false;
+    }
+  }
+
   if (HasIndirectbr && PreRegAlloc)
     return true;
 
@@ -689,7 +710,7 @@ TailDuplicatePass::duplicateSimpleBB(MachineBasicBlock *TailBB,
                  << "From simple Succ: " << *TailBB);
 
     MachineBasicBlock *NewTarget = *TailBB->succ_begin();
-    MachineBasicBlock *NextBB = std::next(MachineFunction::iterator(PredBB));
+    MachineBasicBlock *NextBB = &*std::next(PredBB->getIterator());
 
     // Make PredFBB explicit.
     if (PredCond.empty())
@@ -846,7 +867,7 @@ TailDuplicatePass::TailDuplicate(MachineBasicBlock *TailBB,
   // If TailBB was duplicated into all its predecessors except for the prior
   // block, which falls through unconditionally, move the contents of this
   // block into the prior block.
-  MachineBasicBlock *PrevBB = std::prev(MachineFunction::iterator(TailBB));
+  MachineBasicBlock *PrevBB = &*std::prev(TailBB->getIterator());
   MachineBasicBlock *PriorTBB = nullptr, *PriorFBB = nullptr;
   SmallVector<MachineOperand, 4> PriorCond;
   // This has to check PrevBB->succ_size() because EH edges are ignored by

@@ -78,7 +78,7 @@ public:
         : PhysReg(PhysReg), LaneMask(LaneMask) {}
   };
 
-protected:
+private:
   typedef ilist<MachineInstr> Instructions;
   Instructions Insts;
   const BasicBlock *BB;
@@ -181,7 +181,7 @@ public:
     Ty &operator*() const { return *MII; }
     Ty *operator->() const { return &operator*(); }
 
-    operator Ty*() const { return MII; }
+    operator Ty *() const { return MII.getNodePtrUnchecked(); }
 
     bool operator==(const bundle_iterator &X) const {
       return MII == X.MII;
@@ -425,6 +425,12 @@ public:
   /// Note that duplicate Machine CFG edges are not allowed.
   void addSuccessor(MachineBasicBlock *Succ, uint32_t Weight = 0);
 
+  /// Add Succ as a successor of this MachineBasicBlock.  The Predecessors list
+  /// of Succ is automatically updated. The weight is not provided because BPI
+  /// is not available (e.g. -O0 is used), in which case edge weights won't be
+  /// used. Using this interface can save some space.
+  void addSuccessorWithoutWeight(MachineBasicBlock *Succ);
+
   /// Set successor weight of a given iterator.
   void setSuccWeight(succ_iterator I, uint32_t Weight);
 
@@ -600,7 +606,7 @@ public:
   /// remove_instr to remove individual instructions from a bundle.
   MachineInstr *remove(MachineInstr *I) {
     assert(!I->isBundled() && "Cannot remove bundled instructions");
-    return Insts.remove(I);
+    return Insts.remove(instr_iterator(I));
   }
 
   /// Remove the possibly bundled instruction from the instruction list

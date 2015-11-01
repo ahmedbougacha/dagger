@@ -15,6 +15,7 @@
 
 #include "AMDGPUISelLowering.h"
 #include "AMDGPU.h"
+#include "AMDGPUDiagnosticInfoUnsupported.h"
 #include "AMDGPUFrameLowering.h"
 #include "AMDGPUIntrinsicInfo.h"
 #include "AMDGPURegisterInfo.h"
@@ -27,49 +28,8 @@
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/IR/DataLayout.h"
-#include "llvm/IR/DiagnosticInfo.h"
-#include "llvm/IR/DiagnosticPrinter.h"
 
 using namespace llvm;
-
-namespace {
-
-/// Diagnostic information for unimplemented or unsupported feature reporting.
-class DiagnosticInfoUnsupported : public DiagnosticInfo {
-private:
-  const Twine &Description;
-  const Function &Fn;
-
-  static int KindID;
-
-  static int getKindID() {
-    if (KindID == 0)
-      KindID = llvm::getNextAvailablePluginDiagnosticKind();
-    return KindID;
-  }
-
-public:
-  DiagnosticInfoUnsupported(const Function &Fn, const Twine &Desc,
-                          DiagnosticSeverity Severity = DS_Error)
-    : DiagnosticInfo(getKindID(), Severity),
-      Description(Desc),
-      Fn(Fn) { }
-
-  const Function &getFunction() const { return Fn; }
-  const Twine &getDescription() const { return Description; }
-
-  void print(DiagnosticPrinter &DP) const override {
-    DP << "unsupported " << getDescription() << " in " << Fn.getName();
-  }
-
-  static bool classof(const DiagnosticInfo *DI) {
-    return DI->getKind() == getKindID();
-  }
-};
-
-int DiagnosticInfoUnsupported::KindID = 0;
-}
-
 
 static bool allocateStack(unsigned ValNo, MVT ValVT, MVT LocVT,
                       CCValAssign::LocInfo LocInfo,
@@ -355,7 +315,7 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM,
     setOperationAction(ISD::SMUL_LOHI, VT, Expand);
     setOperationAction(ISD::UMUL_LOHI, VT, Expand);
     setOperationAction(ISD::SDIVREM, VT, Custom);
-    setOperationAction(ISD::UDIVREM, VT, Custom);
+    setOperationAction(ISD::UDIVREM, VT, Expand);
     setOperationAction(ISD::ADDC, VT, Expand);
     setOperationAction(ISD::SUBC, VT, Expand);
     setOperationAction(ISD::ADDE, VT, Expand);
@@ -530,6 +490,18 @@ bool AMDGPUTargetLowering::isFNegFree(EVT VT) const {
 bool AMDGPUTargetLowering:: storeOfVectorConstantIsCheap(EVT MemVT,
                                                          unsigned NumElem,
                                                          unsigned AS) const {
+  return true;
+}
+
+bool AMDGPUTargetLowering::aggressivelyPreferBuildVectorSources(EVT VecVT) const {
+  // There are few operations which truly have vector input operands. Any vector
+  // operation is going to involve operations on each component, and a
+  // build_vector will be a copy per element, so it always makes sense to use a
+  // build_vector input in place of the extracted element to avoid a copy into a
+  // super register.
+  //
+  // We should probably only do this if all users are extracts only, but this
+  // should be the common case.
   return true;
 }
 

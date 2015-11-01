@@ -67,6 +67,10 @@ namespace llvm {
       // Return
       Ret,
 
+      // Interrupt, exception, error trap Return
+      ERet,
+
+      // Software Exception Return.
       EH_RETURN,
 
       // Node used to extract integer from accumulator.
@@ -257,12 +261,6 @@ namespace llvm {
     MachineBasicBlock *
     EmitInstrWithCustomInserter(MachineInstr *MI,
                                 MachineBasicBlock *MBB) const override;
-
-    struct LTStr {
-      bool operator()(const char *S1, const char *S2) const {
-        return strcmp(S1, S2) < 0;
-      }
-    };
 
     void HandleByVal(CCState *, unsigned &, unsigned) const override;
 
@@ -487,6 +485,9 @@ namespace llvm {
                         const SmallVectorImpl<ISD::OutputArg> &Outs,
                         const SmallVectorImpl<SDValue> &OutVals,
                         SDLoc dl, SelectionDAG &DAG) const override;
+
+    SDValue LowerInterruptReturn(SmallVectorImpl<SDValue> &RetOps, SDLoc DL,
+                                 SelectionDAG &DAG) const;
 
     bool shouldSignExtendTypeInLibCall(EVT Type, bool IsSigned) const override;
 

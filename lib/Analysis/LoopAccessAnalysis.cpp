@@ -1397,7 +1397,7 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
       if (it->mayWriteToMemory()) {
         StoreInst *St = dyn_cast<StoreInst>(it);
         if (!St) {
-          emitAnalysis(LoopAccessReport(it) <<
+          emitAnalysis(LoopAccessReport(&*it) <<
                        "instruction cannot be vectorized");
           CanVecMem = false;
           return;
@@ -1593,6 +1593,7 @@ static Instruction *getFirstInst(Instruction *FirstInst, Value *V,
   return nullptr;
 }
 
+namespace {
 /// \brief IR Values for the lower and upper bounds of a pointer evolution.  We
 /// need to use value-handles because SCEV expansion can invalidate previously
 /// expanded values.  Thus expansion of a pointer can invalidate the bounds for
@@ -1601,6 +1602,7 @@ struct PointerBounds {
   TrackingVH<Value> Start;
   TrackingVH<Value> End;
 };
+} // end anonymous namespace
 
 /// \brief Expand code for the lower and upper bound of the pointer group \p CG
 /// in \p TheLoop.  \return the values for the bounds.

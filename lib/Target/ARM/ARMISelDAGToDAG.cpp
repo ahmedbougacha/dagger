@@ -343,7 +343,7 @@ void ARMDAGToDAGISel::PreprocessISelDAG() {
   bool isThumb2 = Subtarget->isThumb();
   for (SelectionDAG::allnodes_iterator I = CurDAG->allnodes_begin(),
        E = CurDAG->allnodes_end(); I != E; ) {
-    SDNode *N = I++;  // Preincrement iterator to avoid invalidation issues.
+    SDNode *N = &*I++; // Preincrement iterator to avoid invalidation issues.
 
     if (N->getOpcode() != ISD::ADD)
       continue;
@@ -531,7 +531,7 @@ bool ARMDAGToDAGISel::canExtractShiftFromMul(const SDValue &N,
 }
 
 void ARMDAGToDAGISel::replaceDAGValue(const SDValue &N, SDValue M) {
-  CurDAG->RepositionNode(N.getNode(), M.getNode());
+  CurDAG->RepositionNode(N.getNode()->getIterator(), M.getNode());
   CurDAG->ReplaceAllUsesWith(N, M);
 }
 
@@ -3924,6 +3924,7 @@ SelectInlineAsmMemoryOperand(const SDValue &Op, unsigned ConstraintID,
     //        be an immediate and not a memory constraint.
     // Fallthrough.
   case InlineAsm::Constraint_m:
+  case InlineAsm::Constraint_o:
   case InlineAsm::Constraint_Q:
   case InlineAsm::Constraint_Um:
   case InlineAsm::Constraint_Un:

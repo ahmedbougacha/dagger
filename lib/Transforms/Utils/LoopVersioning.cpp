@@ -13,12 +13,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Transforms/Utils/LoopVersioning.h"
+
 #include "llvm/Analysis/LoopAccessAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/LoopVersioning.h"
 
 using namespace llvm;
 
@@ -104,7 +105,7 @@ void LoopVersioning::addPHINodes(
     // If not create it.
     if (!PN) {
       PN = PHINode::Create(Inst->getType(), 2, Inst->getName() + ".lver",
-                           PHIBlock->begin());
+                           &PHIBlock->front());
       for (auto *User : Inst->users())
         if (!VersionedLoop->contains(cast<Instruction>(User)->getParent()))
           User->replaceUsesOfWith(Inst, PN);

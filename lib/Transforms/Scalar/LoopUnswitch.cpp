@@ -487,8 +487,7 @@ bool LoopUnswitch::processCurrentLoop() {
 
   LLVMContext &Context = loopHeader->getContext();
 
-  // Probably we reach the quota of branches for this loop. If so
-  // stop unswitching.
+  // Analyze loop cost, and stop unswitching if loop content can not be duplicated.
   if (!BranchesInfo.countLoop(
           currentLoop, getAnalysis<TargetTransformInfoWrapperPass>().getTTI(
                            *currentLoop->getHeader()->getParent()),
@@ -498,6 +497,20 @@ bool LoopUnswitch::processCurrentLoop() {
   // Try trivial unswitch first before loop over other basic blocks in the loop.
   if (TryTrivialLoopUnswitch(Changed)) {
     return true;
+  }
+
+  // Do not unswitch loops containing convergent operations, as we might be
+  // making them control dependent on the unswitch value when they were not
+  // before.
+  // FIXME: This could be refined to only bail if the convergent operation is
+  // not already control-dependent on the unswitch value.
+  for (const auto BB : currentLoop->blocks()) {
+    for (auto &I : *BB) {
+      auto CS = CallSite(&I);
+      if (!CS) continue;
+      if (CS.hasFnAttr(Attribute::Convergent))
+        return false;
+    }
   }
 
   // Do not do non-trivial unswitch while optimizing for size.
@@ -657,20 +670,19 @@ bool LoopUnswitch::UnswitchIfProfitable(Value *LoopCond, Constant *Val,
 /// mapping the blocks with the specified map.
 static Loop *CloneLoop(Loop *L, Loop *PL, ValueToValueMapTy &VM,
                        LoopInfo *LI, LPPassManager *LPM) {
-  Loop *New = new Loop();
-  LPM->insertLoop(New, PL);
+  Loop &New = LPM->addLoop(PL);
 
   // Add all of the blocks in L to the new loop.
   for (Loop::block_iterator I = L->block_begin(), E = L->block_end();
        I != E; ++I)
     if (LI->getLoopFor(*I) == L)
-      New->addBasicBlockToLoop(cast<BasicBlock>(VM[*I]), *LI);
+      New.addBasicBlockToLoop(cast<BasicBlock>(VM[*I]), *LI);
 
   // Add all of the subloops to the new loop.
   for (Loop::iterator I = L->begin(), E = L->end(); I != E; ++I)
-    CloneLoop(*I, New, VM, LI, LPM);
+    CloneLoop(*I, &New, VM, LI, LPM);
 
-  return New;
+  return &New;
 }
 
 static void copyMetadata(Instruction *DstInst, const Instruction *SrcInst,
@@ -768,7 +780,7 @@ void LoopUnswitch::UnswitchTrivialCondition(Loop *L, Value *Cond, Constant *Val,
   // without actually branching to it (the exit block should be dominated by the
   // loop header, not the preheader).
   assert(!L->contains(ExitBlock) && "Exit block is in the loop?");
-  BasicBlock *NewExit = SplitBlock(ExitBlock, ExitBlock->begin(), DT, LI);
+  BasicBlock *NewExit = SplitBlock(ExitBlock, &ExitBlock->front(), DT, LI);
 
   // Okay, now we have a position to branch from and a position to branch to,
   // insert the new conditional branch.
@@ -825,8 +837,8 @@ bool LoopUnswitch::TryTrivialLoopUnswitch(bool &Changed) {
     // Check if this loop will execute any side-effecting instructions (e.g.
     // stores, calls, volatile loads) in the part of the loop that the code
     // *would* execute. Check the header first.
-    for (BasicBlock::iterator I : *CurrentBB)
-      if (I->mayHaveSideEffects())
+    for (Instruction &I : *CurrentBB)
+      if (I.mayHaveSideEffects())
         return false;
 
     // FIXME: add check for constant foldable switch instructions.
@@ -1005,8 +1017,9 @@ void LoopUnswitch::UnswitchNontrivialCondition(Value *LIC, Constant *Val,
 
   // Splice the newly inserted blocks into the function right before the
   // original preheader.
-  F->getBasicBlockList().splice(NewPreheader, F->getBasicBlockList(),
-                                NewBlocks[0], F->end());
+  F->getBasicBlockList().splice(NewPreheader->getIterator(),
+                                F->getBasicBlockList(),
+                                NewBlocks[0]->getIterator(), F->end());
 
   // FIXME: We could register any cloned assumptions instead of clearing the
   // whole function's cache.
@@ -1048,7 +1061,7 @@ void LoopUnswitch::UnswitchNontrivialCondition(Value *LIC, Constant *Val,
 
     if (LandingPadInst *LPad = NewExit->getLandingPadInst()) {
       PHINode *PN = PHINode::Create(LPad->getType(), 0, "",
-                                    ExitSucc->getFirstInsertionPt());
+                                    &*ExitSucc->getFirstInsertionPt());
 
       for (pred_iterator I = pred_begin(ExitSucc), E = pred_end(ExitSucc);
            I != E; ++I) {
@@ -1064,7 +1077,8 @@ void LoopUnswitch::UnswitchNontrivialCondition(Value *LIC, Constant *Val,
   for (unsigned i = 0, e = NewBlocks.size(); i != e; ++i)
     for (BasicBlock::iterator I = NewBlocks[i]->begin(),
            E = NewBlocks[i]->end(); I != E; ++I)
-      RemapInstruction(I, VMap,RF_NoModuleLevelChanges|RF_IgnoreMissingEntries);
+      RemapInstruction(&*I, VMap,
+                       RF_NoModuleLevelChanges | RF_IgnoreMissingEntries);
 
   // Rewrite the original preheader to select between versions of the loop.
   BranchInst *OldBR = cast<BranchInst>(loopPreheader->getTerminator());
@@ -1308,8 +1322,8 @@ void LoopUnswitch::SimplifyCode(std::vector<Instruction*> &Worklist, Loop *L) {
         Succ->replaceAllUsesWith(Pred);
 
         // Move all of the successor contents from Succ to Pred.
-        Pred->getInstList().splice(BI, Succ->getInstList(), Succ->begin(),
-                                   Succ->end());
+        Pred->getInstList().splice(BI->getIterator(), Succ->getInstList(),
+                                   Succ->begin(), Succ->end());
         LPM->deleteSimpleAnalysisValue(BI, L);
         BI->eraseFromParent();
         RemoveFromWorklist(BI, Worklist);

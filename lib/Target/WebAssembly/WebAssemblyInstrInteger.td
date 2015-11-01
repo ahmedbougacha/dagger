@@ -15,10 +15,10 @@
 defm ADD : BinaryInt<add>;
 defm SUB : BinaryInt<sub>;
 defm MUL : BinaryInt<mul>;
-defm SDIV : BinaryInt<sdiv>;
-defm UDIV : BinaryInt<udiv>;
-defm SREM : BinaryInt<srem>;
-defm UREM : BinaryInt<urem>;
+defm DIV_S : BinaryInt<sdiv>;
+defm DIV_U : BinaryInt<udiv>;
+defm REM_S : BinaryInt<srem>;
+defm REM_U : BinaryInt<urem>;
 defm AND : BinaryInt<and>;
 defm IOR : BinaryInt<or>;
 defm XOR : BinaryInt<xor>;
@@ -28,14 +28,14 @@ defm SHR_S : BinaryInt<sra>;
 
 defm EQ : ComparisonInt<SETEQ>;
 defm NE : ComparisonInt<SETNE>;
-defm SLT : ComparisonInt<SETLT>;
-defm SLE : ComparisonInt<SETLE>;
-defm ULT : ComparisonInt<SETULT>;
-defm ULE : ComparisonInt<SETULE>;
-defm SGT : ComparisonInt<SETGT>;
-defm SGE : ComparisonInt<SETGE>;
-defm UGT : ComparisonInt<SETUGT>;
-defm UGE : ComparisonInt<SETUGE>;
+defm LT_S : ComparisonInt<SETLT>;
+defm LE_S : ComparisonInt<SETLE>;
+defm LT_U : ComparisonInt<SETULT>;
+defm LE_U : ComparisonInt<SETULE>;
+defm GT_S : ComparisonInt<SETGT>;
+defm GE_S : ComparisonInt<SETGE>;
+defm GT_U : ComparisonInt<SETUGT>;
+defm GE_U : ComparisonInt<SETUGE>;
 
 defm CLZ : UnaryInt<ctlz>;
 defm CTZ : UnaryInt<cttz>;

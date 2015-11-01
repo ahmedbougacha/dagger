@@ -92,6 +92,7 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/SSAUpdater.h"
 #include <vector>
+
 using namespace llvm;
 
 #define DEBUG_TYPE "mldst-motion"
@@ -117,6 +118,7 @@ public:
 private:
   // This transformation requires dominator postdominator info
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.setPreservesCFG();
     AU.addRequired<TargetLibraryInfoWrapperPass>();
     AU.addRequired<AAResultsWrapperPass>();
     AU.addPreserved<GlobalsAAWrapperPass>();
@@ -238,7 +240,6 @@ bool MergedLoadStoreMotion::isDiamondHead(BasicBlock *BB) {
 /// being loaded or protect against the load from happening
 /// it is considered a hoist barrier.
 ///
-
 bool MergedLoadStoreMotion::isLoadHoistBarrierInRange(const Instruction& Start, 
                                                       const Instruction& End,
                                                       LoadInst* LI) {
@@ -258,7 +259,7 @@ LoadInst *MergedLoadStoreMotion::canHoistFromBlock(BasicBlock *BB1,
 
   for (BasicBlock::iterator BBI = BB1->begin(), BBE = BB1->end(); BBI != BBE;
        ++BBI) {
-    Instruction *Inst = BBI;
+    Instruction *Inst = &*BBI;
 
     // Only merge and hoist loads when their result in used only in BB
     if (!isa<LoadInst>(Inst) || Inst->isUsedOutsideOfBlock(BB1))
@@ -365,8 +366,7 @@ bool MergedLoadStoreMotion::mergeLoads(BasicBlock *BB) {
   int NLoads = 0;
   for (BasicBlock::iterator BBI = Succ0->begin(), BBE = Succ0->end();
        BBI != BBE;) {
-
-    Instruction *I = BBI;
+    Instruction *I = &*BBI;
     ++BBI;
 
     // Only move non-simple (atomic, volatile) loads.
@@ -396,7 +396,6 @@ bool MergedLoadStoreMotion::mergeLoads(BasicBlock *BB) {
 /// value being stored or protect against the store from
 /// happening it is considered a sink barrier.
 ///
-
 bool MergedLoadStoreMotion::isStoreSinkBarrierInRange(const Instruction &Start,
                                                       const Instruction &End,
                                                       MemoryLocation Loc) {
@@ -440,12 +439,12 @@ StoreInst *MergedLoadStoreMotion::canSinkFromBlock(BasicBlock *BB1,
 PHINode *MergedLoadStoreMotion::getPHIOperand(BasicBlock *BB, StoreInst *S0,
                                               StoreInst *S1) {
   // Create a phi if the values mismatch.
-  PHINode *NewPN = 0;
+  PHINode *NewPN = nullptr;
   Value *Opd1 = S0->getValueOperand();
   Value *Opd2 = S1->getValueOperand();
   if (Opd1 != Opd2) {
     NewPN = PHINode::Create(Opd1->getType(), 2, Opd2->getName() + ".sink",
-                            BB->begin());
+                            &BB->front());
     NewPN->addIncoming(Opd1, S0->getParent());
     NewPN->addIncoming(Opd2, S1->getParent());
     if (MD && NewPN->getType()->getScalarType()->isPointerTy())
@@ -479,7 +478,7 @@ bool MergedLoadStoreMotion::sinkStore(BasicBlock *BB, StoreInst *S0,
     // Create the new store to be inserted at the join point.
     StoreInst *SNew = (StoreInst *)(S0->clone());
     Instruction *ANew = A0->clone();
-    SNew->insertBefore(InsertPt);
+    SNew->insertBefore(&*InsertPt);
     ANew->insertBefore(SNew);
 
     assert(S0->getParent() == A0->getParent());
@@ -561,6 +560,7 @@ bool MergedLoadStoreMotion::mergeStores(BasicBlock *T) {
   }
   return MergedStores;
 }
+
 ///
 /// \brief Run the transformation for each function
 ///
@@ -574,7 +574,7 @@ bool MergedLoadStoreMotion::runOnFunction(Function &F) {
   // Merge unconditional branches, allowing PRE to catch more
   // optimization opportunities.
   for (Function::iterator FI = F.begin(), FE = F.end(); FI != FE;) {
-    BasicBlock *BB = FI++;
+    BasicBlock *BB = &*FI++;
 
     // Hoist equivalent loads and sink stores
     // outside diamonds when possible

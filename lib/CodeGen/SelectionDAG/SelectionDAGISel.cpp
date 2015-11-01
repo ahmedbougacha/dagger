@@ -388,8 +388,8 @@ void SelectionDAGISel::getAnalysisUsage(AnalysisUsage &AU) const {
 ///
 static void SplitCriticalSideEffectEdges(Function &Fn) {
   // Loop for blocks with phi nodes.
-  for (Function::iterator BB = Fn.begin(), E = Fn.end(); BB != E; ++BB) {
-    PHINode *PN = dyn_cast<PHINode>(BB->begin());
+  for (BasicBlock &BB : Fn) {
+    PHINode *PN = dyn_cast<PHINode>(BB.begin());
     if (!PN) continue;
 
   ReprocessBlock:
@@ -397,7 +397,7 @@ static void SplitCriticalSideEffectEdges(Function &Fn) {
     // are potentially trapping constant expressions.  Constant expressions are
     // the only potentially trapping value that can occur as the argument to a
     // PHI.
-    for (BasicBlock::iterator I = BB->begin(); (PN = dyn_cast<PHINode>(I)); ++I)
+    for (BasicBlock::iterator I = BB.begin(); (PN = dyn_cast<PHINode>(I)); ++I)
       for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i) {
         ConstantExpr *CE = dyn_cast<ConstantExpr>(PN->getIncomingValue(i));
         if (!CE || !CE->canTrap()) continue;
@@ -411,7 +411,7 @@ static void SplitCriticalSideEffectEdges(Function &Fn) {
 
         // Okay, we have to split this edge.
         SplitCriticalEdge(
-            Pred->getTerminator(), GetSuccessorNumber(Pred, BB),
+            Pred->getTerminator(), GetSuccessorNumber(Pred, &BB),
             CriticalEdgeSplittingOptions().setMergeIdenticalEdges());
         goto ReprocessBlock;
       }
@@ -468,7 +468,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
   // If the first basic block in the function has live ins that need to be
   // copied into vregs, emit the copies into the top of the block before
   // emitting the code for the block.
-  MachineBasicBlock *EntryMBB = MF->begin();
+  MachineBasicBlock *EntryMBB = &MF->front();
   const TargetRegisterInfo &TRI = *MF->getSubtarget().getRegisterInfo();
   RegInfo->EmitLiveInCopies(EntryMBB, TRI, *TII);
 
@@ -888,7 +888,7 @@ void SelectionDAGISel::DoInstructionSelection() {
     // graph) and preceding back toward the beginning (the entry
     // node).
     while (ISelPosition != CurDAG->allnodes_begin()) {
-      SDNode *Node = --ISelPosition;
+      SDNode *Node = &*--ISelPosition;
       // Skip dead nodes. DAGCombiner is expected to eliminate all dead nodes,
       // but there are currently some corner cases that it misses. Also, this
       // makes it theoretically possible to disable the DAGCombiner.
@@ -922,13 +922,45 @@ void SelectionDAGISel::DoInstructionSelection() {
   PostprocessISelDAG();
 }
 
+static bool hasExceptionPointerOrCodeUser(const CatchPadInst *CPI) {
+  for (const User *U : CPI->users()) {
+    if (const IntrinsicInst *EHPtrCall = dyn_cast<IntrinsicInst>(U)) {
+      Intrinsic::ID IID = EHPtrCall->getIntrinsicID();
+      if (IID == Intrinsic::eh_exceptionpointer ||
+          IID == Intrinsic::eh_exceptioncode)
+        return true;
+    }
+  }
+  return false;
+}
+
 /// PrepareEHLandingPad - Emit an EH_LABEL, set up live-in registers, and
 /// do other setup for EH landing-pad blocks.
 bool SelectionDAGISel::PrepareEHLandingPad() {
   MachineBasicBlock *MBB = FuncInfo->MBB;
-
+  const BasicBlock *LLVMBB = MBB->getBasicBlock();
   const TargetRegisterClass *PtrRC =
       TLI->getRegClassFor(TLI->getPointerTy(CurDAG->getDataLayout()));
+
+  // Catchpads have one live-in register, which typically holds the exception
+  // pointer or code.
+  if (const auto *CPI = dyn_cast<CatchPadInst>(LLVMBB->getFirstNonPHI())) {
+    if (hasExceptionPointerOrCodeUser(CPI)) {
+      // Get or create the virtual register to hold the pointer or code.  Mark
+      // the live in physreg and copy into the vreg.
+      MCPhysReg EHPhysReg = TLI->getExceptionPointerRegister();
+      assert(EHPhysReg && "target lacks exception pointer register");
+      MBB->addLiveIn(EHPhysReg);
+      unsigned VReg = FuncInfo->getCatchPadExceptionPointerVReg(CPI, PtrRC);
+      BuildMI(*MBB, FuncInfo->InsertPt, SDB->getCurDebugLoc(),
+              TII->get(TargetOpcode::COPY), VReg)
+          .addReg(EHPhysReg, RegState::Kill);
+    }
+    return true;
+  }
+
+  if (!LLVMBB->isLandingPad())
+    return true;
 
   // Add a label to mark the beginning of the landing pad.  Deletion of the
   // landing pad can thus be detected via the MachineModuleInfo.
@@ -940,44 +972,6 @@ bool SelectionDAGISel::PrepareEHLandingPad() {
   const MCInstrDesc &II = TII->get(TargetOpcode::EH_LABEL);
   BuildMI(*MBB, FuncInfo->InsertPt, SDB->getCurDebugLoc(), II)
     .addSym(Label);
-
-  // If this is an MSVC-style personality function, we need to split the landing
-  // pad into several BBs.
-  const BasicBlock *LLVMBB = MBB->getBasicBlock();
-  const Constant *Personality = MF->getFunction()->getPersonalityFn();
-  if (const auto *PF = dyn_cast<Function>(Personality->stripPointerCasts()))
-    MF->getMMI().addPersonality(PF);
-  EHPersonality PersonalityType = classifyEHPersonality(Personality);
-
-  if (isMSVCEHPersonality(PersonalityType)) {
-    SmallVector<MachineBasicBlock *, 4> ClauseBBs;
-    const IntrinsicInst *ActionsCall =
-        dyn_cast<IntrinsicInst>(LLVMBB->getFirstInsertionPt());
-    // Get all invoke BBs that unwind to this landingpad.
-    SmallVector<MachineBasicBlock *, 4> InvokeBBs(MBB->pred_begin(),
-                                                  MBB->pred_end());
-    if (ActionsCall && ActionsCall->getIntrinsicID() == Intrinsic::eh_actions) {
-      // If this is a call to llvm.eh.actions followed by indirectbr, then we've
-      // run WinEHPrepare, and we should remove this block from the machine CFG.
-      // Mark the targets of the indirectbr as landingpads instead.
-      for (const BasicBlock *LLVMSucc : successors(LLVMBB)) {
-        MachineBasicBlock *ClauseBB = FuncInfo->MBBMap[LLVMSucc];
-        // Add the edge from the invoke to the clause.
-        for (MachineBasicBlock *InvokeBB : InvokeBBs)
-          InvokeBB->addSuccessor(ClauseBB);
-
-        // Mark the clause as a landing pad or MI passes will delete it.
-        ClauseBB->setIsEHPad();
-      }
-    }
-
-    // Remove the edge from the invoke to the lpad.
-    for (MachineBasicBlock *InvokeBB : InvokeBBs)
-      InvokeBB->removeSuccessor(MBB);
-
-    // Don't select instructions for the landingpad.
-    return false;
-  }
 
   // Mark exception register as live in.
   if (unsigned Reg = TLI->getExceptionPointerRegister())
@@ -1147,7 +1141,8 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       FuncInfo->VisitedBBs.insert(LLVMBB);
     }
 
-    BasicBlock::const_iterator const Begin = LLVMBB->getFirstNonPHI();
+    BasicBlock::const_iterator const Begin =
+        LLVMBB->getFirstNonPHI()->getIterator();
     BasicBlock::const_iterator const End = LLVMBB->end();
     BasicBlock::const_iterator BI = End;
 
@@ -1159,10 +1154,9 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
     // Setup an EH landing-pad block.
     FuncInfo->ExceptionPointerVirtReg = 0;
     FuncInfo->ExceptionSelectorVirtReg = 0;
-    if (LLVMBB->isLandingPad())
+    if (LLVMBB->isEHPad())
       if (!PrepareEHLandingPad())
         continue;
-
 
     // Before doing SelectionDAG ISel, see if FastISel has been requested.
     if (FastIS) {
@@ -1199,7 +1193,7 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       unsigned NumFastIselRemaining = std::distance(Begin, End);
       // Do FastISel on as many instructions as possible.
       for (; BI != Begin; --BI) {
-        const Instruction *Inst = std::prev(BI);
+        const Instruction *Inst = &*std::prev(BI);
 
         // If we no longer require this instruction, skip it.
         if (isFoldedOrDeadInstruction(Inst, FuncInfo)) {
@@ -1219,8 +1213,8 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
           // then see if there is a load right before the selected instructions.
           // Try to fold the load if so.
           const Instruction *BeforeInst = Inst;
-          while (BeforeInst != Begin) {
-            BeforeInst = std::prev(BasicBlock::const_iterator(BeforeInst));
+          while (BeforeInst != &*Begin) {
+            BeforeInst = &*std::prev(BasicBlock::const_iterator(BeforeInst));
             if (!isFoldedOrDeadInstruction(BeforeInst, FuncInfo))
               break;
           }
@@ -1261,7 +1255,7 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
 
           bool HadTailCall = false;
           MachineBasicBlock::iterator SavedInsertPt = FuncInfo->InsertPt;
-          SelectBasicBlock(Inst, BI, HadTailCall);
+          SelectBasicBlock(Inst->getIterator(), BI, HadTailCall);
 
           // If the call was emitted as a tail call, we're done with the block.
           // We also need to delete any previously emitted instructions.

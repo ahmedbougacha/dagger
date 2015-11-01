@@ -786,7 +786,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   // NumBytes value that we would've used for the parent frame.
   unsigned ParentFrameNumBytes = NumBytes;
   if (IsFunclet)
-    NumBytes = MFI->getMaxCallFrameSize();
+    NumBytes = getWinEHFuncletFrameSize(MF);
 
   // Skip the callee-saved push instructions.
   bool PushedRegs = false;
@@ -1039,6 +1039,22 @@ static bool isFuncletReturnInstr(MachineInstr *MI) {
   llvm_unreachable("impossible");
 }
 
+unsigned X86FrameLowering::getWinEHFuncletFrameSize(const MachineFunction &MF) const {
+  // This is the size of the pushed CSRs.
+  unsigned CSSize =
+      MF.getInfo<X86MachineFunctionInfo>()->getCalleeSavedFrameSize();
+  // This is the amount of stack a funclet needs to allocate.
+  unsigned MaxCallSize = MF.getFrameInfo()->getMaxCallFrameSize();
+  // RBP is not included in the callee saved register block. After pushing RBP,
+  // everything is 16 byte aligned. Everything we allocate before an outgoing
+  // call must also be 16 byte aligned.
+  unsigned FrameSizeMinusRBP =
+      RoundUpToAlignment(CSSize + MaxCallSize, getStackAlignment());
+  // Subtract out the size of the callee saved registers. This is how much stack
+  // each funclet will allocate.
+  return FrameSizeMinusRBP - CSSize;
+}
+
 void X86FrameLowering::emitEpilogue(MachineFunction &MF,
                                     MachineBasicBlock &MBB) const {
   const MachineFrameInfo *MFI = MF.getFrameInfo();
@@ -1057,6 +1073,8 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   bool IsWin64Prologue = MF.getTarget().getMCAsmInfo()->usesWindowsCFI();
   bool NeedsWinCFI =
       IsWin64Prologue && MF.getFunction()->needsUnwindTableEntry();
+  bool IsFunclet = isFuncletReturnInstr(MBBI);
+  MachineBasicBlock *RestoreMBB = nullptr;
 
   // Get the number of bytes to allocate from the FrameInfo.
   uint64_t StackSize = MFI->getStackSize();
@@ -1065,7 +1083,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   uint64_t NumBytes = 0;
 
   if (MBBI->getOpcode() == X86::CATCHRET) {
-    NumBytes = MFI->getMaxCallFrameSize();
+    NumBytes = getWinEHFuncletFrameSize(MF);
     assert(hasFP(MF) && "EH funclets without FP not yet implemented");
     MachineBasicBlock *TargetMBB = MBBI->getOperand(0).getMBB();
 
@@ -1081,30 +1099,14 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
     }
 
     // For 32-bit, create a new block for the restore code.
-    MachineBasicBlock *RestoreMBB = TargetMBB;
+    RestoreMBB = TargetMBB;
     if (STI.is32Bit()) {
       RestoreMBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
-      MF.insert(TargetMBB, RestoreMBB);
+      MF.insert(TargetMBB->getIterator(), RestoreMBB);
       MBB.removeSuccessor(TargetMBB);
       MBB.addSuccessor(RestoreMBB);
       RestoreMBB->addSuccessor(TargetMBB);
-    }
-
-    // Fill EAX/RAX with the address of the target block.
-    unsigned ReturnReg = STI.is64Bit() ? X86::RAX : X86::EAX;
-    if (STI.is64Bit()) {
-      // LEA64r RestoreMBB(%rip), %rax
-      BuildMI(MBB, MBBI, DL, TII.get(X86::LEA64r), ReturnReg)
-          .addReg(X86::RIP)
-          .addImm(0)
-          .addReg(0)
-          .addMBB(RestoreMBB)
-          .addReg(0);
-    } else {
-      // MOV32ri $RestoreMBB, %eax
-      BuildMI(MBB, MBBI, DL, TII.get(X86::MOV32ri))
-          .addReg(ReturnReg)
-          .addMBB(RestoreMBB);
+      MBBI->getOperand(0).setMBB(RestoreMBB);
     }
 
     // Pop EBP.
@@ -1121,7 +1123,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
           .addMBB(TargetMBB);
     }
   } else if (MBBI->getOpcode() == X86::CLEANUPRET) {
-    NumBytes = MFI->getMaxCallFrameSize();
+    NumBytes = getWinEHFuncletFrameSize(MF);
     assert(hasFP(MF) && "EH funclets without FP not yet implemented");
     BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::POP64r : X86::POP32r),
             MachineFramePtr)
@@ -1159,6 +1161,28 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   }
   MachineBasicBlock::iterator FirstCSPop = MBBI;
 
+  if (RestoreMBB) {
+    // Fill EAX/RAX with the address of the target block.
+    unsigned ReturnReg = STI.is64Bit() ? X86::RAX : X86::EAX;
+    if (STI.is64Bit()) {
+      // LEA64r RestoreMBB(%rip), %rax
+      BuildMI(MBB, FirstCSPop, DL, TII.get(X86::LEA64r), ReturnReg)
+          .addReg(X86::RIP)
+          .addImm(0)
+          .addReg(0)
+          .addMBB(RestoreMBB)
+          .addReg(0);
+    } else {
+      // MOV32ri $RestoreMBB, %eax
+      BuildMI(MBB, FirstCSPop, DL, TII.get(X86::MOV32ri))
+          .addReg(ReturnReg)
+          .addMBB(RestoreMBB);
+    }
+    // Record that we've taken the address of RestoreMBB and no longer just
+    // reference it in a terminator.
+    RestoreMBB->setHasAddressTaken();
+  }
+
   if (MBBI != MBB.end())
     DL = MBBI->getDebugLoc();
 
@@ -1169,8 +1193,10 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
 
   // If dynamic alloca is used, then reset esp to point to the last callee-saved
   // slot before popping them off! Same applies for the case, when stack was
-  // realigned.
-  if (TRI->needsStackRealignment(MF) || MFI->hasVarSizedObjects()) {
+  // realigned. Don't do this if this was a funclet epilogue, since the funclets
+  // will not do realignment or dynamic stack allocation.
+  if ((TRI->needsStackRealignment(MF) || MFI->hasVarSizedObjects()) &&
+      !IsFunclet) {
     if (TRI->needsStackRealignment(MF))
       MBBI = FirstCSPop;
     unsigned SEHFrameOffset = calculateSetFPREG(SEHStackAllocAmt);
@@ -2072,14 +2098,31 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
     // If the stack pointer can be changed after prologue, turn the
     // adjcallstackup instruction into a 'sub ESP, <amt>' and the
     // adjcallstackdown instruction into 'add ESP, <amt>'
-    if (Amount == 0)
-      return;
 
     // We need to keep the stack aligned properly.  To do this, we round the
     // amount of space needed for the outgoing arguments up to the next
     // alignment boundary.
     unsigned StackAlign = getStackAlignment();
     Amount = RoundUpToAlignment(Amount, StackAlign);
+
+    // If we have any exception handlers in this function, and we adjust
+    // the SP before calls, we may need to indicate this to the unwinder,
+    // using GNU_ARGS_SIZE. Note that this may be necessary
+    // even when Amount == 0, because the preceding function may have
+    // set a non-0 GNU_ARGS_SIZE.
+    // TODO: We don't need to reset this between subsequent functions,
+    // if it didn't change.
+    bool HasDwarfEHHandlers =
+      !MF.getTarget().getMCAsmInfo()->usesWindowsCFI() &&
+      !MF.getMMI().getLandingPads().empty();
+
+    if (HasDwarfEHHandlers && !isDestroy && 
+        MF.getInfo<X86MachineFunctionInfo>()->getHasPushSequences())
+      BuildCFI(MBB, I, DL,
+               MCCFIInstruction::createGnuArgsSize(nullptr, Amount));
+
+    if (Amount == 0)
+      return;
 
     // Factor out the amount that gets handled inside the sequence
     // (Pushes of argument for frame setup, callee pops for frame destroy)
@@ -2157,12 +2200,9 @@ MachineBasicBlock::iterator X86FrameLowering::restoreWin32EHStackPointers(
   int EHRegOffset = getFrameIndexReference(MF, FI, UsedReg);
   int EndOffset = -EHRegOffset - EHRegSize;
   FuncInfo.EHRegNodeEndOffset = EndOffset;
-  assert(EndOffset >= 0 &&
-         "end of registration object above normal EBP position!");
 
   if (UsedReg == FramePtr) {
     // ADD $offset, %ebp
-    assert(UsedReg == FramePtr);
     unsigned ADDri = getADDriOpcode(false, EndOffset);
     BuildMI(MBB, MBBI, DL, TII.get(ADDri), FramePtr)
         .addReg(FramePtr)
@@ -2170,8 +2210,9 @@ MachineBasicBlock::iterator X86FrameLowering::restoreWin32EHStackPointers(
         .setMIFlag(MachineInstr::FrameSetup)
         ->getOperand(3)
         .setIsDead();
-  } else {
-    assert(UsedReg == BasePtr);
+    assert(EndOffset >= 0 &&
+           "end of registration object above normal EBP position!");
+  } else if (UsedReg == BasePtr) {
     // LEA offset(%ebp), %esi
     addRegOffset(BuildMI(MBB, MBBI, DL, TII.get(X86::LEA32r), BasePtr),
                  FramePtr, false, EndOffset)
@@ -2184,6 +2225,20 @@ MachineBasicBlock::iterator X86FrameLowering::restoreWin32EHStackPointers(
     addRegOffset(BuildMI(MBB, MBBI, DL, TII.get(X86::MOV32rm), FramePtr),
                  UsedReg, true, Offset)
         .setMIFlag(MachineInstr::FrameSetup);
+  } else {
+    llvm_unreachable("32-bit frames with WinEH must use FramePtr or BasePtr");
   }
   return MBBI;
+}
+
+unsigned X86FrameLowering::getWinEHParentFrameOffset(const MachineFunction &MF) const {
+  // RDX, the parent frame pointer, is homed into 16(%rsp) in the prologue.
+  unsigned Offset = 16;
+  // RBP is immediately pushed.
+  Offset += SlotSize;
+  // All callee-saved registers are then pushed.
+  Offset += MF.getInfo<X86MachineFunctionInfo>()->getCalleeSavedFrameSize();
+  // Every funclet allocates enough stack space for the largest outgoing call.
+  Offset += getWinEHFuncletFrameSize(MF);
+  return Offset;
 }

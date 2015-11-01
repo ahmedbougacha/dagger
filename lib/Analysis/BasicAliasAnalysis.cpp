@@ -616,6 +616,12 @@ ModRefInfo BasicAAResult::getArgModRefInfo(ImmutableCallSite CS,
   }
   // FIXME: Handle memset_pattern4 and memset_pattern8 also.
 
+  if (CS.paramHasAttr(ArgIdx + 1, Attribute::ReadOnly))
+    return MRI_Ref;
+
+  if (CS.paramHasAttr(ArgIdx + 1, Attribute::ReadNone))
+    return MRI_NoModRef;
+
   return AAResultBase::getArgModRefInfo(CS, ArgIdx);
 }
 
@@ -776,10 +782,9 @@ static AliasResult aliasSameBasePointerGEPs(const GEPOperator *GEP1,
   ConstantInt *C2 =
       dyn_cast<ConstantInt>(GEP2->getOperand(GEP2->getNumOperands() - 1));
 
-  // If the last (struct) indices aren't constants, we can't say anything.
-  // If they're identical, the other indices might be also be dynamically
-  // equal, so the GEPs can alias.
-  if (!C1 || !C2 || C1 == C2)
+  // If the last (struct) indices are constants and are equal, the other indices
+  // might be also be dynamically equal, so the GEPs can alias.
+  if (C1 && C2 && C1 == C2)
     return MayAlias;
 
   // Find the last-indexed type of the GEP, i.e., the type you'd get if
@@ -802,12 +807,49 @@ static AliasResult aliasSameBasePointerGEPs(const GEPOperator *GEP1,
     IntermediateIndices.push_back(GEP1->getOperand(i + 1));
   }
 
-  StructType *LastIndexedStruct =
-      dyn_cast<StructType>(GetElementPtrInst::getIndexedType(
-          GEP1->getSourceElementType(), IntermediateIndices));
+  auto *Ty = GetElementPtrInst::getIndexedType(
+    GEP1->getSourceElementType(), IntermediateIndices);
+  StructType *LastIndexedStruct = dyn_cast<StructType>(Ty);
 
-  if (!LastIndexedStruct)
+  if (isa<SequentialType>(Ty)) {
+    // We know that:
+    // - both GEPs begin indexing from the exact same pointer;
+    // - the last indices in both GEPs are constants, indexing into a sequential
+    //   type (array or pointer);
+    // - both GEPs only index through arrays prior to that.
+    //
+    // Because array indices greater than the number of elements are valid in
+    // GEPs, unless we know the intermediate indices are identical between
+    // GEP1 and GEP2 we cannot guarantee that the last indexed arrays don't
+    // partially overlap. We also need to check that the loaded size matches
+    // the element size, otherwise we could still have overlap.
+    const uint64_t ElementSize =
+        DL.getTypeStoreSize(cast<SequentialType>(Ty)->getElementType());
+    if (V1Size != ElementSize || V2Size != ElementSize)
+      return MayAlias;
+
+    for (unsigned i = 0, e = GEP1->getNumIndices() - 1; i != e; ++i)
+      if (GEP1->getOperand(i + 1) != GEP2->getOperand(i + 1))
+        return MayAlias;
+
+    // Now we know that the array/pointer that GEP1 indexes into and that
+    // that GEP2 indexes into must either precisely overlap or be disjoint.
+    // Because they cannot partially overlap and because fields in an array
+    // cannot overlap, if we can prove the final indices are different between
+    // GEP1 and GEP2, we can conclude GEP1 and GEP2 don't alias.
+    
+    // If the last indices are constants, we've already checked they don't
+    // equal each other so we can exit early.
+    if (C1 && C2)
+      return NoAlias;
+    if (isKnownNonEqual(GEP1->getOperand(GEP1->getNumOperands() - 1),
+                        GEP2->getOperand(GEP2->getNumOperands() - 1),
+                        DL))
+      return NoAlias;
     return MayAlias;
+  } else if (!LastIndexedStruct || !C1 || !C2) {
+    return MayAlias;
+  }
 
   // We know that:
   // - both GEPs begin indexing from the exact same pointer;
@@ -1418,7 +1460,7 @@ bool BasicAAResult::isValueEqualInPotentialCycles(const Value *V,
   // the Values cannot come from different iterations of a potential cycle the
   // phi nodes could be involved in.
   for (auto *P : VisitedPhiBBs)
-    if (isPotentiallyReachable(P->begin(), Inst, DT, LI))
+    if (isPotentiallyReachable(&P->front(), Inst, DT, LI))
       return false;
 
   return true;
@@ -1502,11 +1544,10 @@ bool BasicAAResult::constantOffsetHeuristic(
 
   // If we've been sext'ed then zext'd the maximum difference between Var0 and
   // Var1 is possible to calculate, but we're just interested in the absolute
-  // minumum difference between the two. The minimum distance may occur due to
+  // minimum difference between the two. The minimum distance may occur due to
   // wrapping; consider "add i3 %i, 5": if %i == 7 then 7 + 5 mod 8 == 4, and so
   // the minimum distance between %i and %i + 5 is 3.
-  APInt MinDiff = V0Offset - V1Offset,
-        Wrapped = APInt::getMaxValue(Width) - MinDiff + APInt(Width, 1);
+  APInt MinDiff = V0Offset - V1Offset, Wrapped = -MinDiff;
   MinDiff = APIntOps::umin(MinDiff, Wrapped);
   uint64_t MinDiffBytes = MinDiff.getZExtValue() * std::abs(Var0.Scale);
 
@@ -1530,6 +1571,10 @@ BasicAAResult BasicAA::run(Function &F, AnalysisManager<Function> *AM) {
                        AM->getResult<AssumptionAnalysis>(F),
                        AM->getCachedResult<DominatorTreeAnalysis>(F),
                        AM->getCachedResult<LoopAnalysis>(F));
+}
+
+BasicAAWrapperPass::BasicAAWrapperPass() : FunctionPass(ID) {
+    initializeBasicAAWrapperPassPass(*PassRegistry::getPassRegistry());
 }
 
 char BasicAAWrapperPass::ID = 0;

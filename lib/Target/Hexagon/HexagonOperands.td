@@ -11,6 +11,8 @@ def s4_0ImmOperand : AsmOperandClass { let Name = "s4_0Imm"; }
 def s4_1ImmOperand : AsmOperandClass { let Name = "s4_1Imm"; }
 def s4_2ImmOperand : AsmOperandClass { let Name = "s4_2Imm"; }
 def s4_3ImmOperand : AsmOperandClass { let Name = "s4_3Imm"; }
+def s4_6ImmOperand : AsmOperandClass { let Name = "s4_6Imm"; }
+def s3_6ImmOperand : AsmOperandClass { let Name = "s3_6Imm"; }
 
 // Immediate operands.
 
@@ -58,6 +60,19 @@ let PrintMethod = "printImmOperand" in {
   def m6Imm : Operand<i32>;
 }
 
+let OperandType = "OPERAND_IMMEDIATE" in {
+  def s4_6Imm : Operand<i32> { let ParserMatchClass = s4_6ImmOperand;
+                               let PrintMethod = "prints4_6ImmOperand";
+                               let DecoderMethod = "s4_6ImmDecoder";}
+  def s4_7Imm : Operand<i32> { let PrintMethod = "prints4_7ImmOperand";
+                               let DecoderMethod = "s4_6ImmDecoder";}
+  def s3_6Imm : Operand<i32> { let ParserMatchClass = s3_6ImmOperand;
+                               let PrintMethod = "prints3_6ImmOperand";
+                               let DecoderMethod = "s3_6ImmDecoder";}
+  def s3_7Imm : Operand<i32> { let PrintMethod = "prints3_7ImmOperand";
+                               let DecoderMethod = "s3_6ImmDecoder";}
+}
+
 let PrintMethod = "printNOneImmOperand" in
 def nOneImm : Operand<i32>;
 
@@ -81,47 +96,17 @@ def s31_1ImmPred  : PatLeaf<(i32 imm), [{
 
 def s30_2ImmPred  : PatLeaf<(i32 imm), [{
   int64_t v = (int64_t)N->getSExtValue();
-  return isShiftedInt<31,1>(v);
+  return isShiftedInt<30,2>(v);
 }]>;
 
 def s29_3ImmPred  : PatLeaf<(i32 imm), [{
   int64_t v = (int64_t)N->getSExtValue();
-  return isShiftedInt<31,1>(v);
-}]>;
-
-def s22_10ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isShiftedInt<22,10>(v);
-}]>;
-
-def s8_24ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isShiftedInt<8,24>(v);
-}]>;
-
-def s16_16ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isShiftedInt<16,16>(v);
-}]>;
-
-def s26_6ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isShiftedInt<26,6>(v);
+  return isShiftedInt<29,3>(v);
 }]>;
 
 def s16ImmPred  : PatLeaf<(i32 imm), [{
   int64_t v = (int64_t)N->getSExtValue();
   return isInt<16>(v);
-}]>;
-
-def s13ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isInt<13>(v);
-}]>;
-
-def s12ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isInt<12>(v);
 }]>;
 
 def s11_0ImmPred  : PatLeaf<(i32 imm), [{
@@ -147,16 +132,6 @@ def s11_3ImmPred  : PatLeaf<(i32 imm), [{
 def s10ImmPred  : PatLeaf<(i32 imm), [{
   int64_t v = (int64_t)N->getSExtValue();
   return isInt<10>(v);
-}]>;
-
-def s9ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isInt<9>(v);
-}]>;
-
-def m9ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isInt<9>(v) && (v != -256);
 }]>;
 
 def s8ImmPred  : PatLeaf<(i32 imm), [{
@@ -230,19 +205,19 @@ def u26_6ImmPred  : PatLeaf<(i32 imm), [{
   return isShiftedUInt<26,6>(v);
 }]>;
 
-def u16ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isUInt<16>(v);
-}]>;
-
-def u16_s8ImmPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  return isShiftedUInt<16,8>(v);
-}]>;
-
 def u16_0ImmPred  : PatLeaf<(i32 imm), [{
   int64_t v = (int64_t)N->getSExtValue();
   return isUInt<16>(v);
+}]>;
+
+def u16_1ImmPred  : PatLeaf<(i32 imm), [{
+  int64_t v = (int64_t)N->getSExtValue();
+  return isShiftedUInt<16,1>(v);
+}]>;
+
+def u16_2ImmPred  : PatLeaf<(i32 imm), [{
+  int64_t v = (int64_t)N->getSExtValue();
+  return isShiftedUInt<16,2>(v);
 }]>;
 
 def u11_3ImmPred : PatLeaf<(i32 imm), [{
@@ -379,7 +354,7 @@ def Clr5ImmPred : PatLeaf<(i32 imm), [{
 }]>;
 
 def SetClr5ImmPred : PatLeaf<(i32 imm), [{
-  // SetClr5ImmPred predicate - True if the immediate is in range 0..31.
+  // True if the immediate is in range 0..31.
   int32_t v = (int32_t)N->getSExtValue();
   return (v >= 0 && v <= 31);
 }]>;
@@ -404,14 +379,13 @@ def Clr4ImmPred : PatLeaf<(i32 imm), [{
 }]>;
 
 def SetClr4ImmPred : PatLeaf<(i32 imm), [{
-  // SetClr4ImmPred predicate - True if the immediate is in the range 0..15.
+  // True if the immediate is in the range 0..15.
   int16_t v = (int16_t)N->getSExtValue();
   return (v >= 0 && v <= 15);
 }]>;
 
 def Set3ImmPred : PatLeaf<(i32 imm), [{
-  // Set3ImmPred predicate - True if the number is in the series of values:
-  // [ 2^0, 2^1, ... 2^7 ].
+  // True if the number is in the series of values: [ 2^0, 2^1, ... 2^7 ].
   // For use in setbit immediate.
   uint8_t v = (int8_t)N->getSExtValue();
   // Constrain to 8 bits, and then check for single bit.
@@ -419,9 +393,7 @@ def Set3ImmPred : PatLeaf<(i32 imm), [{
 }]>;
 
 def Clr3ImmPred : PatLeaf<(i32 imm), [{
-  // Clr3ImmPred predicate - True if the number is in the series of
-  // bit negated values:
-  // [ 2^0, 2^1, ... 2^7 ].
+  // True if the number is in the series of bit negated values: [ 2^0, 2^1, ... 2^7 ].
   // For use in setbit and clrbit immediate.
   uint8_t v = ~ (int8_t)N->getSExtValue();
   // Constrain to 8 bits, and then check for single bit.
@@ -429,7 +401,7 @@ def Clr3ImmPred : PatLeaf<(i32 imm), [{
 }]>;
 
 def SetClr3ImmPred : PatLeaf<(i32 imm), [{
-  // SetClr3ImmPred predicate - True if the immediate is in the range  0..7.
+  // True if the immediate is in the range  0..7.
   int8_t v = (int8_t)N->getSExtValue();
   return (v >= 0 && v <= 7);
 }]>;
@@ -461,44 +433,41 @@ let PrintMethod = "printExtOperand" in {
   def u6_3Ext : Operand<i32>;
 }
 
-def s10ExtPred  : PatLeaf<(i32 imm), [{
-  int64_t v = (int64_t)N->getSExtValue();
-  if (isInt<10>(v))
-    return true;
 
-  // Return true if extending this immediate is profitable and the value
-  // can fit in a 32-bit signed field.
-  return isConstExtProfitable(Node) && isInt<32>(v);
+def s4_7ImmPred  : PatLeaf<(i32 imm), [{
+  int64_t v = (int64_t)N->getSExtValue();
+  if (HST->hasV60TOps())
+    // Return true if the immediate can fit in a 10-bit sign extended field and
+    // is 128-byte aligned.
+    return isShiftedInt<4,7>(v);
+  return false;
 }]>;
 
-def s8ExtPred  : PatLeaf<(i32 imm), [{
+def s3_7ImmPred  : PatLeaf<(i32 imm), [{
   int64_t v = (int64_t)N->getSExtValue();
-  if (isInt<8>(v))
-    return true;
-
-  // Return true if extending this immediate is profitable and the value
-  // can fit in a 32-bit signed field.
-  return isConstExtProfitable(Node) && isInt<32>(v);
+  if (HST->hasV60TOps())
+    // Return true if the immediate can fit in a 9-bit sign extended field and
+    // is 128-byte aligned.
+    return isShiftedInt<3,7>(v);
+  return false;
 }]>;
 
-def u8ExtPred  : PatLeaf<(i32 imm), [{
+def s4_6ImmPred  : PatLeaf<(i32 imm), [{
   int64_t v = (int64_t)N->getSExtValue();
-  if (isUInt<8>(v))
-    return true;
-
-  // Return true if extending this immediate is profitable and the value
-  // can fit in a 32-bit unsigned field.
-  return isConstExtProfitable(Node) && isUInt<32>(v);
+  if (HST->hasV60TOps())
+    // Return true if the immediate can fit in a 10-bit sign extended field and
+    // is 64-byte aligned.
+    return isShiftedInt<4,6>(v);
+  return false;
 }]>;
 
-def u9ExtPred  : PatLeaf<(i32 imm), [{
+def s3_6ImmPred  : PatLeaf<(i32 imm), [{
   int64_t v = (int64_t)N->getSExtValue();
-  if (isUInt<9>(v))
-    return true;
-
-  // Return true if extending this immediate is profitable and the value
-  // can fit in a 32-bit unsigned field.
-  return isConstExtProfitable(Node) && isUInt<32>(v);
+  if (HST->hasV60TOps())
+    // Return true if the immediate can fit in a 9-bit sign extended field and
+    // is 64-byte aligned.
+    return isShiftedInt<3,6>(v);
+  return false;
 }]>;
 
 

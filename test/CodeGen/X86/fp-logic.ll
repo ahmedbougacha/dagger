@@ -110,9 +110,8 @@ define float @f6(float %x, i32 %y) {
 define float @f7(float %x) {
 ; CHECK-LABEL: f7:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    movd %xmm0, %eax
-; CHECK-NEXT:    andl $3, %eax
-; CHECK-NEXT:    movd %eax, %xmm0
+; CHECK-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; CHECK-NEXT:    andps %xmm1, %xmm0
 ; CHECK-NEXT:    retq
 
   %bc1 = bitcast float %x to i32
@@ -126,9 +125,8 @@ define float @f7(float %x) {
 define float @f8(float %x) {
 ; CHECK-LABEL: f8:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    movd %xmm0, %eax
-; CHECK-NEXT:    andl $4, %eax
-; CHECK-NEXT:    movd %eax, %xmm0
+; CHECK-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; CHECK-NEXT:    andps %xmm1, %xmm0
 ; CHECK-NEXT:    retq
 
   %bc1 = bitcast float %x to i32
@@ -193,6 +191,32 @@ define float @xor(float %x, float %y) {
   ret float %bc3
 }
 
+define float @f7_or(float %x) {
+; CHECK-LABEL: f7_or:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; CHECK-NEXT:    orps %xmm1, %xmm0
+; CHECK-NEXT:    retq
+
+  %bc1 = bitcast float %x to i32
+  %and = or i32 %bc1, 3
+  %bc2 = bitcast i32 %and to float
+  ret float %bc2
+}
+
+define float @f7_xor(float %x) {
+; CHECK-LABEL: f7_xor:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; CHECK-NEXT:    xorps %xmm1, %xmm0
+; CHECK-NEXT:    retq
+
+  %bc1 = bitcast float %x to i32
+  %and = xor i32 %bc1, 3
+  %bc2 = bitcast i32 %and to float
+  ret float %bc2
+}
+
 ; Make sure that doubles work too.
 
 define double @doubles(double %x, double %y) {
@@ -206,5 +230,35 @@ define double @doubles(double %x, double %y) {
   %and = and i64 %bc1, %bc2
   %bc3 = bitcast i64 %and to double
   ret double %bc3
+}
+
+define double @f7_double(double %x) {
+; CHECK-LABEL: f7_double:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    movsd {{.*#+}} xmm1 = mem[0],zero
+; CHECK-NEXT:    andpd %xmm1, %xmm0
+; CHECK-NEXT:    retq
+
+  %bc1 = bitcast double %x to i64
+  %and = and i64 %bc1, 3
+  %bc2 = bitcast i64 %and to double
+  ret double %bc2
+}
+
+; Grabbing the sign bit is a special case that could be handled
+; by movmskps/movmskpd, but if we're not shifting it over, then
+; a simple FP logic op is cheaper.
+
+define float @movmsk(float %x) {
+; CHECK-LABEL: movmsk:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; CHECK-NEXT:    andps %xmm1, %xmm0
+; CHECK-NEXT:    retq
+
+  %bc1 = bitcast float %x to i32
+  %and = and i32 %bc1, 2147483648
+  %bc2 = bitcast i32 %and to float
+  ret float %bc2
 }
 

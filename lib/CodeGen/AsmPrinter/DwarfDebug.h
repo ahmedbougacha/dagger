@@ -49,24 +49,6 @@ class DwarfUnit;
 class MachineModuleInfo;
 
 //===----------------------------------------------------------------------===//
-/// This class is used to record source line correspondence.
-class SrcLineInfo {
-  unsigned Line;     // Source line number.
-  unsigned Column;   // Source column.
-  unsigned SourceID; // Source ID number.
-  MCSymbol *Label;   // Label in code ID number.
-public:
-  SrcLineInfo(unsigned L, unsigned C, unsigned S, MCSymbol *label)
-      : Line(L), Column(C), SourceID(S), Label(label) {}
-
-  // Accessors
-  unsigned getLine() const { return Line; }
-  unsigned getColumn() const { return Column; }
-  unsigned getSourceID() const { return SourceID; }
-  MCSymbol *getLabel() const { return Label; }
-};
-
-//===----------------------------------------------------------------------===//
 /// This class is used to track local variable information.
 ///
 /// Variables can be created from allocas, in which case they're generated from
@@ -307,11 +289,6 @@ class DwarfDebug : public AsmPrinterHandler {
   /// Holders for the various debug information flags that we might need to
   /// have exposed. See accessor functions below for description.
 
-  /// Holder for imported entities.
-  typedef SmallVector<std::pair<const MDNode *, const MDNode *>, 32>
-  ImportedEntityMap;
-  ImportedEntityMap ScopesWithImportedEntities;
-
   /// Map from MDNodes for user-defined types to the type units that
   /// describe them.
   DenseMap<const MDNode *, const DwarfTypeUnit *> DwarfTypeUnits;
@@ -322,13 +299,6 @@ class DwarfDebug : public AsmPrinterHandler {
 
   /// Whether to emit the pubnames/pubtypes sections.
   bool HasDwarfPubSections;
-
-  /// Whether or not to use AT_ranges for compilation units.
-  bool HasCURanges;
-
-  /// Whether we emitted a function into a section other than the
-  /// default text.
-  bool UsedNonDefaultText;
 
   /// Whether to use the GNU TLS opcode (instead of the standard opcode).
   bool UseGNUTLSOpcode;
@@ -402,12 +372,6 @@ class DwarfDebug : public AsmPrinterHandler {
   /// Construct a DIE for this abstract scope.
   void constructAbstractSubprogramScopeDIE(LexicalScope *Scope);
 
-  /// Compute the size and offset of a DIE given an incoming Offset.
-  unsigned computeSizeAndOffset(DIE *Die, unsigned Offset);
-
-  /// Compute the size and offset of all the DIEs.
-  void computeSizeAndOffsets();
-
   /// Collect info for variables that were optimized out.
   void collectDeadVariables();
 
@@ -473,9 +437,6 @@ class DwarfDebug : public AsmPrinterHandler {
   /// Emit visible names into a debug ranges section.
   void emitDebugRanges();
 
-  /// Emit inline info using custom format.
-  void emitDebugInlineInfo();
-
   /// DWARF 5 Experimental Split Dwarf Emitters
 
   /// Initialize common features of skeleton units.
@@ -485,10 +446,6 @@ class DwarfDebug : public AsmPrinterHandler {
   /// Construct the split debug info compile unit for the debug info
   /// section.
   DwarfCompileUnit &constructSkeletonCU(const DwarfCompileUnit &CU);
-
-  /// Construct the split debug info compile unit for the debug info
-  /// section.
-  DwarfTypeUnit &constructSkeletonTU(DwarfTypeUnit &TU);
 
   /// Emit the debug info dwo section.
   void emitDebugInfoDWO();
@@ -649,9 +606,6 @@ public:
   DwarfCompileUnit *lookupUnit(const DIE *CU) const {
     return CUDieMap.lookup(CU);
   }
-  /// isSubprogramContext - Return true if Context is either a subprogram
-  /// or another context nested inside a subprogram.
-  bool isSubprogramContext(const MDNode *Context);
 
   void addSubprogramNames(const DISubprogram *SP, DIE &Die);
 
@@ -666,14 +620,6 @@ public:
   void addAccelType(StringRef Name, const DIE &Die, char Flags);
 
   const MachineFunction *getCurrentFunction() const { return CurFn; }
-
-  iterator_range<ImportedEntityMap::const_iterator>
-  findImportedEntitiesForScope(const MDNode *Scope) const {
-    return make_range(std::equal_range(
-        ScopesWithImportedEntities.begin(), ScopesWithImportedEntities.end(),
-        std::pair<const MDNode *, const MDNode *>(Scope, nullptr),
-        less_first()));
-  }
 
   /// A helper function to check whether the DIE for a given Scope is
   /// going to be null.

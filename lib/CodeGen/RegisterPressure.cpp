@@ -79,8 +79,8 @@ void RegPressureTracker::dump() const {
 
 void PressureDiff::dump(const TargetRegisterInfo &TRI) const {
   for (const PressureChange &Change : *this) {
-    if (!Change.isValid() || Change.getUnitInc() == 0)
-      continue;
+    if (!Change.isValid())
+      break;
     dbgs() << "    " << TRI.getRegPressureSetName(Change.getPSet())
            << " " << Change.getUnitInc();
   }
@@ -157,6 +157,18 @@ void RegionPressure::openBottom(MachineBasicBlock::const_iterator PrevBottom) {
   LiveInRegs.clear();
 }
 
+void LiveRegSet::init(const MachineRegisterInfo &MRI) {
+  const TargetRegisterInfo &TRI = *MRI.getTargetRegisterInfo();
+  unsigned NumRegUnits = TRI.getNumRegs();
+  unsigned NumVirtRegs = MRI.getNumVirtRegs();
+  Regs.setUniverse(NumRegUnits + NumVirtRegs);
+  this->NumRegUnits = NumRegUnits;
+}
+
+void LiveRegSet::clear() {
+  Regs.clear();
+}
+
 const LiveRange *RegPressureTracker::getLiveRange(unsigned Reg) const {
   if (TargetRegisterInfo::isVirtualRegister(Reg))
     return &LIS->getInterval(Reg);
@@ -176,8 +188,7 @@ void RegPressureTracker::reset() {
   else
     static_cast<RegionPressure&>(P).reset();
 
-  LiveRegs.PhysRegs.clear();
-  LiveRegs.VirtRegs.clear();
+  LiveRegs.clear();
   UntiedDefs.clear();
 }
 
@@ -210,8 +221,7 @@ void RegPressureTracker::init(const MachineFunction *mf,
 
   P.MaxSetPressure = CurrSetPressure;
 
-  LiveRegs.PhysRegs.setUniverse(TRI->getNumRegUnits());
-  LiveRegs.VirtRegs.setUniverse(MRI->getNumVirtRegs());
+  LiveRegs.init(*MRI);
   if (TrackUntiedDefs)
     UntiedDefs.setUniverse(MRI->getNumVirtRegs());
 }
@@ -250,9 +260,8 @@ void RegPressureTracker::closeTop() {
     static_cast<RegionPressure&>(P).TopPos = CurrPos;
 
   assert(P.LiveInRegs.empty() && "inconsistent max pressure result");
-  P.LiveInRegs.reserve(LiveRegs.PhysRegs.size() + LiveRegs.VirtRegs.size());
-  P.LiveInRegs.append(LiveRegs.PhysRegs.begin(), LiveRegs.PhysRegs.end());
-  P.LiveInRegs.append(LiveRegs.VirtRegs.begin(), LiveRegs.VirtRegs.end());
+  P.LiveInRegs.reserve(LiveRegs.size());
+  LiveRegs.appendTo(P.LiveInRegs);
 }
 
 /// Set the boundary for the bottom of the region and summarize live outs.
@@ -263,16 +272,14 @@ void RegPressureTracker::closeBottom() {
     static_cast<RegionPressure&>(P).BottomPos = CurrPos;
 
   assert(P.LiveOutRegs.empty() && "inconsistent max pressure result");
-  P.LiveOutRegs.reserve(LiveRegs.PhysRegs.size() + LiveRegs.VirtRegs.size());
-  P.LiveOutRegs.append(LiveRegs.PhysRegs.begin(), LiveRegs.PhysRegs.end());
-  P.LiveOutRegs.append(LiveRegs.VirtRegs.begin(), LiveRegs.VirtRegs.end());
+  P.LiveOutRegs.reserve(LiveRegs.size());
+  LiveRegs.appendTo(P.LiveOutRegs);
 }
 
 /// Finalize the region boundaries and record live ins and live outs.
 void RegPressureTracker::closeRegion() {
   if (!isTopClosed() && !isBottomClosed()) {
-    assert(LiveRegs.PhysRegs.empty() && LiveRegs.VirtRegs.empty() &&
-           "no region boundary");
+    assert(LiveRegs.size() == 0 && "no region boundary");
     return;
   }
   if (!isBottomClosed())
@@ -389,7 +396,7 @@ void PressureDiff::addPressureChange(unsigned RegUnit, bool IsDec,
   int Weight = IsDec ? -PSetI.getWeight() : PSetI.getWeight();
   for (; PSetI.isValid(); ++PSetI) {
     // Find an existing entry in the pressure diff for this PSet.
-    PressureDiff::iterator I = begin(), E = end();
+    PressureDiff::iterator I = nonconst_begin(), E = nonconst_end();
     for (; I != E && I->isValid(); ++I) {
       if (I->getPSet() >= *PSetI)
         break;
@@ -401,10 +408,20 @@ void PressureDiff::addPressureChange(unsigned RegUnit, bool IsDec,
     if (!I->isValid() || I->getPSet() != *PSetI) {
       PressureChange PTmp = PressureChange(*PSetI);
       for (PressureDiff::iterator J = I; J != E && PTmp.isValid(); ++J)
-        std::swap(*J,PTmp);
+        std::swap(*J, PTmp);
     }
     // Update the units for this pressure set.
-    I->setUnitInc(I->getUnitInc() + Weight);
+    unsigned NewUnitInc = I->getUnitInc() + Weight;
+    if (NewUnitInc != 0) {
+      I->setUnitInc(NewUnitInc);
+    } else {
+      // Remove entry
+      PressureDiff::iterator J;
+      for (J = std::next(I); J != E && J->isValid(); ++J, ++I)
+        *I = *J;
+      if (J != E)
+        *I = *J;
+    }
   }
 }
 
@@ -882,19 +899,13 @@ getUpwardPressureDelta(const MachineInstr *MI, /*const*/ PressureDiff &PDiff,
 }
 
 /// Helper to find a vreg use between two indices [PriorUseIdx, NextUseIdx).
-static bool findUseBetween(unsigned Reg,
-                           SlotIndex PriorUseIdx, SlotIndex NextUseIdx,
-                           const MachineRegisterInfo *MRI,
+static bool findUseBetween(unsigned Reg, SlotIndex PriorUseIdx,
+                           SlotIndex NextUseIdx, const MachineRegisterInfo &MRI,
                            const LiveIntervals *LIS) {
-  for (MachineRegisterInfo::use_instr_nodbg_iterator
-       UI = MRI->use_instr_nodbg_begin(Reg),
-       UE = MRI->use_instr_nodbg_end(); UI != UE; ++UI) {
-      const MachineInstr* MI = &*UI;
-      if (MI->isDebugValue())
-        continue;
-      SlotIndex InstSlot = LIS->getInstructionIndex(MI).getRegSlot();
-      if (InstSlot >= PriorUseIdx && InstSlot < NextUseIdx)
-        return true;
+  for (const MachineInstr &MI : MRI.use_nodbg_instructions(Reg)) {
+    SlotIndex InstSlot = LIS->getInstructionIndex(&MI).getRegSlot();
+    if (InstSlot >= PriorUseIdx && InstSlot < NextUseIdx)
+      return true;
   }
   return false;
 }
@@ -927,9 +938,8 @@ void RegPressureTracker::bumpDownwardPressure(const MachineInstr *MI) {
       const LiveRange *LR = getLiveRange(Reg);
       if (LR) {
         LiveQueryResult LRQ = LR->Query(SlotIdx);
-        if (LRQ.isKill() && !findUseBetween(Reg, CurrIdx, SlotIdx, MRI, LIS)) {
+        if (LRQ.isKill() && !findUseBetween(Reg, CurrIdx, SlotIdx, *MRI, LIS))
           decreaseRegPressure(Reg);
-        }
       }
     }
     else if (!TargetRegisterInfo::isVirtualRegister(Reg)) {

@@ -16,7 +16,9 @@
 #ifndef LLVM_IR_INSTRTYPES_H
 #define LLVM_IR_INSTRTYPES_H
 
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/OperandTraits.h"
@@ -1031,6 +1033,19 @@ public:
     return isUnsigned(getPredicate());
   }
 
+  /// For example, ULT->SLT, ULE->SLE, UGT->SGT, UGE->SGE, SLT->Failed assert
+  /// @returns the signed version of the unsigned predicate pred.
+  /// @brief return the signed version of a predicate
+  static Predicate getSignedPredicate(Predicate pred);
+
+  /// For example, ULT->SLT, ULE->SLE, UGT->SGT, UGE->SGE, SLT->Failed assert
+  /// @returns the signed version of the predicate for this instruction (which
+  /// has to be an unsigned predicate).
+  /// @brief return the signed version of a predicate
+  Predicate getSignedPredicate() {
+    return getSignedPredicate(getPredicate());
+  }
+
   /// This is just a convenience.
   /// @brief Determine if this is true when both operands are the same.
   bool isTrueWhenEqual() const {
@@ -1204,16 +1219,80 @@ public:
     return OperandBundleUse(BOI->Tag->getKey(), Inputs);
   }
 
-  /// \brief Return the operand bundle at a specific index.
-  OperandBundleUse getOperandBundle(unsigned Index) {
-    assert(Index < getNumOperandBundles() && "Index out of bounds!");
-    auto *BOI = bundle_op_info_begin() + Index;
-    auto op_begin = static_cast<InstrTy *>(this)->op_begin();
-    ArrayRef<Use> Inputs(op_begin + BOI->Begin, op_begin + BOI->End);
-    return OperandBundleUse(BOI->Tag->getKey(), Inputs);
+  /// \brief Return the number of operand bundles with the tag Name attached to
+  /// this instruction.
+  unsigned countOperandBundlesOfType(StringRef Name) const {
+    unsigned Count = 0;
+    for (unsigned i = 0, e = getNumOperandBundles(); i != e; ++i)
+      if (getOperandBundle(i).Tag == Name)
+        Count++;
+
+    return Count;
+  }
+
+  /// \brief Return an operand bundle by name, if present.
+  ///
+  /// It is an error to call this for operand bundle types that may have
+  /// multiple instances of them on the same instruction.
+  Optional<OperandBundleUse> getOperandBundle(StringRef Name) const {
+    assert(countOperandBundlesOfType(Name) < 2 && "Precondition violated!");
+
+    for (unsigned i = 0, e = getNumOperandBundles(); i != e; ++i) {
+      OperandBundleUse U = getOperandBundle(i);
+      if (U.Tag == Name)
+        return U;
+    }
+
+    return None;
+  }
+
+  /// \brief Return true if this operand bundle user has operand bundles that
+  /// may read from the heap.
+  bool hasReadingOperandBundles() const {
+    // Implementation note: this is a conservative implementation of operand
+    // bundle semantics, where *any* operand bundle forces a callsite to be at
+    // least readonly.
+    return hasOperandBundles();
+  }
+
+  /// \brief Return true if this operand bundle user has operand bundles that
+  /// may write to the heap.
+  bool hasClobberingOperandBundles() const {
+    // Implementation note: this is a conservative implementation of operand
+    // bundle semantics, where *any* operand bundle forces a callsite to be
+    // read-write.
+    return hasOperandBundles();
   }
 
 protected:
+  /// \brief Is the function attribute S disallowed by some operand bundle on
+  /// this operand bundle user?
+  bool isFnAttrDisallowedByOpBundle(StringRef S) const {
+    // Operand bundles only possibly disallow readnone, readonly and argmenonly
+    // attributes.  All String attributes are fine.
+    return false;
+  }
+
+  /// \brief Is the function attribute A disallowed by some operand bundle on
+  /// this operand bundle user?
+  bool isFnAttrDisallowedByOpBundle(Attribute::AttrKind A) const {
+    switch (A) {
+    default:
+      return false;
+
+    case Attribute::ArgMemOnly:
+      return hasReadingOperandBundles();
+
+    case Attribute::ReadNone:
+      return hasReadingOperandBundles();
+
+    case Attribute::ReadOnly:
+      return hasClobberingOperandBundles();
+    }
+
+    llvm_unreachable("switch has a default case!");
+  }
+
   /// \brief Used to keep track of an operand bundle.  See the main comment on
   /// OperandBundleUser above.
   struct BundleOpInfo {

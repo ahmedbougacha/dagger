@@ -168,10 +168,8 @@ static unsigned getAltOpcode(unsigned Op) {
 /// of an alternate sequence which can later be merged as
 /// a ShuffleVector instruction.
 static bool canCombineAsAltInst(unsigned Op) {
-  if (Op == Instruction::FAdd || Op == Instruction::FSub ||
-      Op == Instruction::Sub || Op == Instruction::Add)
-    return true;
-  return false;
+  return Op == Instruction::FAdd || Op == Instruction::FSub ||
+         Op == Instruction::Sub || Op == Instruction::Add;
 }
 
 /// \returns ShuffleVector instruction if instructions in \p VL have
@@ -1742,7 +1740,8 @@ int BoUpSLP::getSpillCost() {
     }    
 
     // Now find the sequence of instructions between PrevInst and Inst.
-    BasicBlock::reverse_iterator InstIt(Inst), PrevInstIt(PrevInst);
+    BasicBlock::reverse_iterator InstIt(Inst->getIterator()),
+        PrevInstIt(PrevInst->getIterator());
     --PrevInstIt;
     while (InstIt != PrevInstIt) {
       if (PrevInstIt == PrevInst->getParent()->rend()) {
@@ -1942,36 +1941,101 @@ void BoUpSLP::reorderAltShuffleOperands(ArrayRef<Value *> VL,
   }
 }
 
+
+// Return true if I should be commuted before adding it's left and right
+// operands to the arrays Left and Right.
+//
+// The vectorizer is trying to either have all elements one side being
+// instruction with the same opcode to enable further vectorization, or having
+// a splat to lower the vectorizing cost.
+static bool shouldReorderOperands(int i, Instruction &I,
+                                  SmallVectorImpl<Value *> &Left,
+                                  SmallVectorImpl<Value *> &Right) {
+  Value *VLeft = I.getOperand(0);
+  Value *VRight = I.getOperand(1);
+  Instruction *ILeft = dyn_cast<Instruction>(VLeft);
+  Instruction *IRight = dyn_cast<Instruction>(VRight);
+
+  // Sort two opcodes. In the code below we try to preserve the ability to use
+  // broadcast of values instead of individual inserts.
+  // vl1 = load
+  // vl2 = phi
+  // vr1 = load
+  // vr2 = vr2
+  //    = vl1 x vr1
+  //    = vl2 x vr2
+  // If we just sorted according to opcode we would leave the first line in
+  // tact but we would swap vl2 with vr2 because opcode(phi) > opcode(load).
+  //    = vl1 x vr1
+  //    = vr2 x vl2
+  // Because vr2 and vr1 are from the same load we loose the opportunity of a
+  // broadcast for the packed right side in the backend: we have [vr1, vl2]
+  // instead of [vr1, vr2=vr1].
+  if (ILeft && IRight) {
+    if (ILeft->getOpcode() > IRight->getOpcode() &&
+               Right[i - 1] != IRight) {
+      // Try not to destroy a broad cast for no apparent benefit.
+      return true;
+    } else if (ILeft->getOpcode() == IRight->getOpcode() &&
+               Right[i - 1] == ILeft) {
+      // Try preserve broadcasts.
+      return true;
+    } else if (ILeft->getOpcode() == IRight->getOpcode() &&
+               Left[i - 1] == IRight) {
+      // Try preserve broadcasts.
+      return true;
+    }
+    return false;
+  }
+  // One opcode, put the instruction on the right.
+  return ILeft != nullptr;
+}
+
 void BoUpSLP::reorderInputsAccordingToOpcode(ArrayRef<Value *> VL,
                                              SmallVectorImpl<Value *> &Left,
                                              SmallVectorImpl<Value *> &Right) {
 
   SmallVector<Value *, 16> OrigLeft, OrigRight;
 
-  bool AllSameOpcodeLeft = true;
-  bool AllSameOpcodeRight = true;
-  for (unsigned i = 0, e = VL.size(); i != e; ++i) {
-    Instruction *I = cast<Instruction>(VL[i]);
-    Value *VLeft = I->getOperand(0);
-    Value *VRight = I->getOperand(1);
-
+  if (VL.size()) {
+    // Peel the first iteration out of the loop since there's nothing
+    // interesting to do anyway and it simplifies the checks
+    auto VLeft = cast<Instruction>(VL[0])->getOperand(0);
+    auto VRight = cast<Instruction>(VL[0])->getOperand(1);
     OrigLeft.push_back(VLeft);
     OrigRight.push_back(VRight);
+    if (!isa<Instruction>(VRight) && isa<Instruction>(VLeft))
+      // Favor having instruction to the right. FIXME: why?
+      std::swap(VLeft, VRight);
+    Left.push_back(VLeft);
+    Right.push_back(VRight);
+  }
 
+  // Keep track if we have instructions with all the same opcode on one side.
+  bool AllSameOpcodeLeft = isa<Instruction>(Left[0]);
+  bool AllSameOpcodeRight = isa<Instruction>(Right[0]);
+
+  for (unsigned i = 1, e = VL.size(); i != e; ++i) {
+    Instruction *I = cast<Instruction>(VL[i]);
+
+    Value *VLeft = I->getOperand(0);
+    Value *VRight = I->getOperand(1);
+    OrigLeft.push_back(VLeft);
+    OrigRight.push_back(VRight);
     Instruction *ILeft = dyn_cast<Instruction>(VLeft);
     Instruction *IRight = dyn_cast<Instruction>(VRight);
 
     // Check whether all operands on one side have the same opcode. In this case
     // we want to preserve the original order and not make things worse by
     // reordering.
-    if (i && AllSameOpcodeLeft && ILeft) {
+    if (AllSameOpcodeLeft && ILeft) {
       if (Instruction *PLeft = dyn_cast<Instruction>(OrigLeft[i - 1])) {
         if (PLeft->getOpcode() != ILeft->getOpcode())
           AllSameOpcodeLeft = false;
       } else
         AllSameOpcodeLeft = false;
     }
-    if (i && AllSameOpcodeRight && IRight) {
+    if (AllSameOpcodeRight && IRight) {
       if (Instruction *PRight = dyn_cast<Instruction>(OrigRight[i - 1])) {
         if (PRight->getOpcode() != IRight->getOpcode())
           AllSameOpcodeRight = false;
@@ -1979,54 +2043,16 @@ void BoUpSLP::reorderInputsAccordingToOpcode(ArrayRef<Value *> VL,
         AllSameOpcodeRight = false;
     }
 
-    // Sort two opcodes. In the code below we try to preserve the ability to use
-    // broadcast of values instead of individual inserts.
-    // vl1 = load
-    // vl2 = phi
-    // vr1 = load
-    // vr2 = vr2
-    //    = vl1 x vr1
-    //    = vl2 x vr2
-    // If we just sorted according to opcode we would leave the first line in
-    // tact but we would swap vl2 with vr2 because opcode(phi) > opcode(load).
-    //    = vl1 x vr1
-    //    = vr2 x vl2
-    // Because vr2 and vr1 are from the same load we loose the opportunity of a
-    // broadcast for the packed right side in the backend: we have [vr1, vl2]
-    // instead of [vr1, vr2=vr1].
-    if (ILeft && IRight) {
-      if (!i && ILeft->getOpcode() > IRight->getOpcode()) {
-        Left.push_back(IRight);
-        Right.push_back(ILeft);
-      } else if (i && ILeft->getOpcode() > IRight->getOpcode() &&
-                 Right[i - 1] != IRight) {
-        // Try not to destroy a broad cast for no apparent benefit.
-        Left.push_back(IRight);
-        Right.push_back(ILeft);
-      } else if (i && ILeft->getOpcode() == IRight->getOpcode() &&
-                 Right[i - 1] == ILeft) {
-        // Try preserve broadcasts.
-        Left.push_back(IRight);
-        Right.push_back(ILeft);
-      } else if (i && ILeft->getOpcode() == IRight->getOpcode() &&
-                 Left[i - 1] == IRight) {
-        // Try preserve broadcasts.
-        Left.push_back(IRight);
-        Right.push_back(ILeft);
-      } else {
-        Left.push_back(ILeft);
-        Right.push_back(IRight);
-      }
-      continue;
+
+    // Commute to favor either a splat or maximizing having the same opcodes on
+    // one side.
+    if (shouldReorderOperands(i, *I, Left, Right)) {
+      Left.push_back(I->getOperand(1));
+      Right.push_back(I->getOperand(0));
+    } else {
+      Left.push_back(I->getOperand(0));
+      Right.push_back(I->getOperand(1));
     }
-    // One opcode, put the instruction on the right.
-    if (ILeft) {
-      Left.push_back(VRight);
-      Right.push_back(ILeft);
-      continue;
-    }
-    Left.push_back(VLeft);
-    Right.push_back(VRight);
   }
 
   bool LeftBroadcast = isSplat(Left);
@@ -2082,7 +2108,7 @@ void BoUpSLP::reorderInputsAccordingToOpcode(ArrayRef<Value *> VL,
 
 void BoUpSLP::setInsertPointAfterBundle(ArrayRef<Value *> VL) {
   Instruction *VL0 = cast<Instruction>(VL[0]);
-  BasicBlock::iterator NextInst = VL0;
+  BasicBlock::iterator NextInst(VL0);
   ++NextInst;
   Builder.SetInsertPoint(VL0->getParent(), NextInst);
   Builder.SetCurrentDebugLocation(VL0->getDebugLoc());
@@ -2539,7 +2565,7 @@ Value *BoUpSLP::vectorizeTree() {
     scheduleBlock(BSIter.second.get());
   }
 
-  Builder.SetInsertPoint(F->getEntryBlock().begin());
+  Builder.SetInsertPoint(&F->getEntryBlock().front());
   vectorizeTree(&VectorizableTree[0]);
 
   DEBUG(dbgs() << "SLP: Extracting " << ExternalUses.size() << " values .\n");
@@ -2584,7 +2610,7 @@ Value *BoUpSLP::vectorizeTree() {
         User->replaceUsesOfWith(Scalar, Ex);
      }
     } else {
-      Builder.SetInsertPoint(F->getEntryBlock().begin());
+      Builder.SetInsertPoint(&F->getEntryBlock().front());
       Value *Ex = Builder.CreateExtractElement(Vec, Lane);
       CSEBlocks.insert(&F->getEntryBlock());
       User->replaceUsesOfWith(Scalar, Ex);
@@ -2693,7 +2719,7 @@ void BoUpSLP::optimizeGatherSequence() {
     BasicBlock *BB = (*I)->getBlock();
     // For all instructions in blocks containing gather sequences:
     for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e;) {
-      Instruction *In = it++;
+      Instruction *In = &*it++;
       if (!isa<InsertElementInst>(In) && !isa<ExtractElementInst>(In))
         continue;
 
@@ -2852,7 +2878,7 @@ bool BoUpSLP::BlockScheduling::extendSchedulingRegion(Value *V) {
   }
   // Search up and down at the same time, because we don't know if the new
   // instruction is above or below the existing scheduling region.
-  BasicBlock::reverse_iterator UpIter(ScheduleStart);
+  BasicBlock::reverse_iterator UpIter(ScheduleStart->getIterator());
   BasicBlock::reverse_iterator UpperEnd = BB->rend();
   BasicBlock::iterator DownIter(ScheduleEnd);
   BasicBlock::iterator LowerEnd = BB->end();
@@ -3104,7 +3130,8 @@ void BoUpSLP::scheduleBlock(BlockScheduling *BS) {
       Instruction *pickedInst = BundleMember->Inst;
       if (LastScheduledInst->getNextNode() != pickedInst) {
         BS->BB->getInstList().remove(pickedInst);
-        BS->BB->getInstList().insert(LastScheduledInst, pickedInst);
+        BS->BB->getInstList().insert(LastScheduledInst->getIterator(),
+                                     pickedInst);
       }
       LastScheduledInst = pickedInst;
       BundleMember = BundleMember->NextInBundle;
@@ -3508,7 +3535,7 @@ bool SLPVectorizer::tryToVectorizeList(ArrayRef<Value *> VL, BoUpSLP &R,
         unsigned VecIdx = 0;
         for (auto &V : BuildVectorSlice) {
           IRBuilder<true, NoFolder> Builder(
-              ++BasicBlock::iterator(InsertAfter));
+              InsertAfter->getParent(), ++BasicBlock::iterator(InsertAfter));
           InsertElementInst *IE = cast<InsertElementInst>(V);
           Instruction *Extract = cast<Instruction>(Builder.CreateExtractElement(
               VectorizedRoot, Builder.getInt32(VecIdx++)));
@@ -3632,16 +3659,17 @@ class HorizontalReduction {
   unsigned ReductionOpcode;
   /// The opcode of the values we perform a reduction on.
   unsigned ReducedValueOpcode;
-  /// The width of one full horizontal reduction operation.
-  unsigned ReduxWidth;
   /// Should we model this reduction as a pairwise reduction tree or a tree that
   /// splits the vector in halves and adds those halves.
   bool IsPairwiseReduction;
 
 public:
+  /// The width of one full horizontal reduction operation.
+  unsigned ReduxWidth;
+
   HorizontalReduction()
     : ReductionRoot(nullptr), ReductionPHI(nullptr), ReductionOpcode(0),
-    ReducedValueOpcode(0), ReduxWidth(0), IsPairwiseReduction(false) {}
+    ReducedValueOpcode(0), IsPairwiseReduction(false), ReduxWidth(0) {}
 
   /// \brief Try to find a reduction tree.
   bool matchAssociativeReduction(PHINode *Phi, BinaryOperator *B) {
@@ -3687,11 +3715,11 @@ public:
       return false;
 
     // Post order traverse the reduction tree starting at B. We only handle true
-    // trees containing only binary operators.
-    SmallVector<std::pair<BinaryOperator *, unsigned>, 32> Stack;
+    // trees containing only binary operators or selects.
+    SmallVector<std::pair<Instruction *, unsigned>, 32> Stack;
     Stack.push_back(std::make_pair(B, 0));
     while (!Stack.empty()) {
-      BinaryOperator *TreeN = Stack.back().first;
+      Instruction *TreeN = Stack.back().first;
       unsigned EdgeToVist = Stack.back().second++;
       bool IsReducedValue = TreeN->getOpcode() != ReductionOpcode;
 
@@ -3727,9 +3755,10 @@ public:
 
       // Visit left or right.
       Value *NextV = TreeN->getOperand(EdgeToVist);
-      BinaryOperator *Next = dyn_cast<BinaryOperator>(NextV);
-      if (Next)
-        Stack.push_back(std::make_pair(Next, 0));
+      // We currently only allow BinaryOperator's and SelectInst's as reduction
+      // values in our tree.
+      if (isa<BinaryOperator>(NextV) || isa<SelectInst>(NextV))
+        Stack.push_back(std::make_pair(cast<Instruction>(NextV), 0));
       else if (NextV != Phi)
         return false;
     }
@@ -3797,8 +3826,11 @@ public:
     return VectorizedTree != nullptr;
   }
 
-private:
+  unsigned numReductionValues() const {
+    return ReducedVals.size();
+  }
 
+private:
   /// \brief Calculate the cost of a reduction.
   int getReductionCost(TargetTransformInfo *TTI, Value *FirstReducedVal) {
     Type *ScalarTy = FirstReducedVal->getType();
@@ -3905,6 +3937,70 @@ static bool PhiTypeSorterFunc(Value *V, Value *V2) {
   return V->getType() < V2->getType();
 }
 
+/// \brief Try and get a reduction value from a phi node.
+///
+/// Given a phi node \p P in a block \p ParentBB, consider possible reductions
+/// if they come from either \p ParentBB or a containing loop latch.
+///
+/// \returns A candidate reduction value if possible, or \code nullptr \endcode
+/// if not possible.
+static Value *getReductionValue(PHINode *P, BasicBlock *ParentBB,
+                                LoopInfo *LI) {
+  Value *Rdx = nullptr;
+
+  // Return the incoming value if it comes from the same BB as the phi node.
+  if (P->getIncomingBlock(0) == ParentBB) {
+    Rdx = P->getIncomingValue(0);
+  } else if (P->getIncomingBlock(1) == ParentBB) {
+    Rdx = P->getIncomingValue(1);
+  }
+
+  if (Rdx)
+    return Rdx;
+
+  // Otherwise, check whether we have a loop latch to look at.
+  Loop *BBL = LI->getLoopFor(ParentBB);
+  if (!BBL)
+    return Rdx;
+  BasicBlock *BBLatch = BBL->getLoopLatch();
+  if (!BBLatch)
+    return Rdx;
+
+  // There is a loop latch, return the incoming value if it comes from
+  // that. This reduction pattern occassionaly turns up.
+  if (P->getIncomingBlock(0) == BBLatch) {
+    Rdx = P->getIncomingValue(0);
+  } else if (P->getIncomingBlock(1) == BBLatch) {
+    Rdx = P->getIncomingValue(1);
+  }
+
+  return Rdx;
+}
+
+/// \brief Attempt to reduce a horizontal reduction.
+/// If it is legal to match a horizontal reduction feeding
+/// the phi node P with reduction operators BI, then check if it
+/// can be done.
+/// \returns true if a horizontal reduction was matched and reduced.
+/// \returns false if a horizontal reduction was not matched.
+static bool canMatchHorizontalReduction(PHINode *P, BinaryOperator *BI,
+                                        BoUpSLP &R, TargetTransformInfo *TTI) {
+  if (!ShouldVectorizeHor)
+    return false;
+
+  HorizontalReduction HorRdx;
+  if (!HorRdx.matchAssociativeReduction(P, BI))
+    return false;
+
+  // If there is a sufficient number of reduction values, reduce
+  // to a nearby power-of-2. Can safely generate oversized
+  // vectors and rely on the backend to split them to legal sizes.
+  HorRdx.ReduxWidth =
+    std::max((uint64_t)4, PowerOf2Floor(HorRdx.numReductionValues()));
+
+  return HorRdx.tryToReduce(R, TTI);
+}
+
 bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
   bool Changed = false;
   SmallVector<Value *, 4> Incoming;
@@ -3961,7 +4057,7 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
 
   for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; it++) {
     // We may go through BB multiple times so skip the one we have checked.
-    if (!VisitedInstrs.insert(it).second)
+    if (!VisitedInstrs.insert(&*it).second)
       continue;
 
     if (isa<DbgInfoIntrinsic>(it))
@@ -3972,20 +4068,16 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
       // Check that the PHI is a reduction PHI.
       if (P->getNumIncomingValues() != 2)
         return Changed;
-      Value *Rdx =
-          (P->getIncomingBlock(0) == BB
-               ? (P->getIncomingValue(0))
-               : (P->getIncomingBlock(1) == BB ? P->getIncomingValue(1)
-                                               : nullptr));
+
+      Value *Rdx = getReductionValue(P, BB, LI);
+
       // Check if this is a Binary Operator.
       BinaryOperator *BI = dyn_cast_or_null<BinaryOperator>(Rdx);
       if (!BI)
         continue;
 
       // Try to match and vectorize a horizontal reduction.
-      HorizontalReduction HorRdx;
-      if (ShouldVectorizeHor && HorRdx.matchAssociativeReduction(P, BI) &&
-          HorRdx.tryToReduce(R, TTI)) {
+      if (canMatchHorizontalReduction(P, BI, R, TTI)) {
         Changed = true;
         it = BB->begin();
         e = BB->end();
@@ -4008,15 +4100,12 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
       continue;
     }
 
-    // Try to vectorize horizontal reductions feeding into a store.
     if (ShouldStartVectorizeHorAtStore)
       if (StoreInst *SI = dyn_cast<StoreInst>(it))
         if (BinaryOperator *BinOp =
                 dyn_cast<BinaryOperator>(SI->getValueOperand())) {
-          HorizontalReduction HorRdx;
-          if (((HorRdx.matchAssociativeReduction(nullptr, BinOp) &&
-                HorRdx.tryToReduce(R, TTI)) ||
-               tryToVectorize(BinOp, R))) {
+          if (canMatchHorizontalReduction(nullptr, BinOp, R, TTI) ||
+              tryToVectorize(BinOp, R)) {
             Changed = true;
             it = BB->begin();
             e = BB->end();

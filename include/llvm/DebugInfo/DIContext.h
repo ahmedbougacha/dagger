@@ -57,12 +57,25 @@ class DIInliningInfo {
     assert(Index < Frames.size());
     return Frames[Index];
   }
+  DILineInfo *getMutableFrame(unsigned Index) {
+    assert(Index < Frames.size());
+    return &Frames[Index];
+  }
   uint32_t getNumberOfFrames() const {
     return Frames.size();
   }
   void addFrame(const DILineInfo &Frame) {
     Frames.push_back(Frame);
   }
+};
+
+/// DIGlobal - container for description of a global variable.
+struct DIGlobal {
+  std::string Name;
+  uint64_t Start;
+  uint64_t Size;
+
+  DIGlobal() : Name("<invalid>"), Start(0), Size(0) {}
 };
 
 /// A DINameKind is passed to name search methods to specify a

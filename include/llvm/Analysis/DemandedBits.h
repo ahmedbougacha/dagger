@@ -41,7 +41,8 @@ struct DemandedBits : public FunctionPass {
 
   bool runOnFunction(Function& F) override;
   void getAnalysisUsage(AnalysisUsage& AU) const override;
-
+  void print(raw_ostream &OS, const Module *M) const override;
+  
   /// Return the bits demanded from instruction I.
   APInt getDemandedBits(Instruction *I);
 
@@ -49,6 +50,7 @@ struct DemandedBits : public FunctionPass {
   bool isInstructionDead(Instruction *I);
 
 private:
+  void performAnalysis();
   void determineLiveOperandBits(const Instruction *UserI,
                                 const Instruction *I, unsigned OperandNo,
                                 const APInt &AOut, APInt &AB,
@@ -57,6 +59,8 @@ private:
 
   AssumptionCache *AC;
   DominatorTree *DT;
+  Function *F;
+  bool Analyzed;
 
   // The set of visited instructions (non-integer-typed only).
   SmallPtrSet<Instruction*, 128> Visited;

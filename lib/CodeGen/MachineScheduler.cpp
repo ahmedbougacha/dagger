@@ -320,7 +320,7 @@ bool MachineScheduler::runOnMachineFunction(MachineFunction &mf) {
   } else if (!mf.getSubtarget().enableMachineScheduler())
     return false;
 
-  DEBUG(dbgs() << "Before MISsched:\n"; mf.print(dbgs()));
+  DEBUG(dbgs() << "Before MISched:\n"; mf.print(dbgs()));
 
   // Initialize the context of the pass.
   MF = &mf;
@@ -405,7 +405,7 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler) {
   for (MachineFunction::iterator MBB = MF->begin(), MBBEnd = MF->end();
        MBB != MBBEnd; ++MBB) {
 
-    Scheduler.startBlock(MBB);
+    Scheduler.startBlock(&*MBB);
 
 #ifndef NDEBUG
     if (SchedOnlyFunc.getNumOccurrences() && SchedOnlyFunc != MF->getName())
@@ -434,7 +434,7 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler) {
 
       // Avoid decrementing RegionEnd for blocks with no terminator.
       if (RegionEnd != MBB->end() ||
-          isSchedBoundary(std::prev(RegionEnd), MBB, MF, TII, IsPostRA)) {
+          isSchedBoundary(&*std::prev(RegionEnd), &*MBB, MF, TII, IsPostRA)) {
         --RegionEnd;
         // Count the boundary instruction.
         --RemainingInstrs;
@@ -445,14 +445,14 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler) {
       unsigned NumRegionInstrs = 0;
       MachineBasicBlock::iterator I = RegionEnd;
       for(;I != MBB->begin(); --I, --RemainingInstrs) {
-        if (isSchedBoundary(std::prev(I), MBB, MF, TII, IsPostRA))
+        if (isSchedBoundary(&*std::prev(I), &*MBB, MF, TII, IsPostRA))
           break;
         if (!I->isDebugValue())
           ++NumRegionInstrs;
       }
       // Notify the scheduler of the region, even if we may skip scheduling
       // it. Perhaps it still needs to be bundled.
-      Scheduler.enterRegion(MBB, I, RegionEnd, NumRegionInstrs);
+      Scheduler.enterRegion(&*MBB, I, RegionEnd, NumRegionInstrs);
 
       // Skip empty scheduling regions (0 or 1 schedulable instructions).
       if (I == RegionEnd || I == std::prev(RegionEnd)) {
@@ -492,7 +492,7 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler) {
     if (Scheduler.isPostRA()) {
       // FIXME: Ideally, no further passes should rely on kill flags. However,
       // thumb2 size reduction is currently an exception.
-      Scheduler.fixupKills(MBB);
+      Scheduler.fixupKills(&*MBB);
     }
   }
   Scheduler.finalizeSchedule();
@@ -988,9 +988,9 @@ void ScheduleDAGMILive::updatePressureDiffs(ArrayRef<unsigned> LiveUses) {
     }
     // RegisterPressureTracker guarantees that readsReg is true for LiveUses.
     assert(VNI && "No live value at use.");
-    for (VReg2UseMap::iterator
-           UI = VRegUses.find(Reg); UI != VRegUses.end(); ++UI) {
-      SUnit *SU = UI->SU;
+    for (const VReg2SUnit &V2SU
+         : make_range(VRegUses.find(Reg), VRegUses.end())) {
+      SUnit *SU = V2SU.SU;
       DEBUG(dbgs() << "  UpdateRegP: SU(" << SU->NodeNum << ") "
             << *SU->getInstr());
       // If this use comes before the reaching def, it cannot be a last use, so
@@ -1167,14 +1167,15 @@ unsigned ScheduleDAGMILive::computeCyclicCriticalPath() {
     unsigned LiveOutHeight = DefSU->getHeight();
     unsigned LiveOutDepth = DefSU->getDepth() + DefSU->Latency;
     // Visit all local users of the vreg def.
-    for (VReg2UseMap::iterator
-           UI = VRegUses.find(Reg); UI != VRegUses.end(); ++UI) {
-      if (UI->SU == &ExitSU)
+    for (const VReg2SUnit &V2SU
+         : make_range(VRegUses.find(Reg), VRegUses.end())) {
+      SUnit *SU = V2SU.SU;
+      if (SU == &ExitSU)
         continue;
 
       // Only consider uses of the phi.
       LiveQueryResult LRQ =
-        LI.Query(LIS->getInstructionIndex(UI->SU->getInstr()));
+        LI.Query(LIS->getInstructionIndex(SU->getInstr()));
       if (!LRQ.valueIn()->isPHIDef())
         continue;
 
@@ -1182,10 +1183,10 @@ unsigned ScheduleDAGMILive::computeCyclicCriticalPath() {
       // overestimate in strange cases. This allows cyclic latency to be
       // estimated as the minimum slack of the vreg's depth or height.
       unsigned CyclicLatency = 0;
-      if (LiveOutDepth > UI->SU->getDepth())
-        CyclicLatency = LiveOutDepth - UI->SU->getDepth();
+      if (LiveOutDepth > SU->getDepth())
+        CyclicLatency = LiveOutDepth - SU->getDepth();
 
-      unsigned LiveInHeight = UI->SU->getHeight() + DefSU->Latency;
+      unsigned LiveInHeight = SU->getHeight() + DefSU->Latency;
       if (LiveInHeight > LiveOutHeight) {
         if (LiveInHeight - LiveOutHeight < CyclicLatency)
           CyclicLatency = LiveInHeight - LiveOutHeight;
@@ -1194,7 +1195,7 @@ unsigned ScheduleDAGMILive::computeCyclicCriticalPath() {
         CyclicLatency = 0;
 
       DEBUG(dbgs() << "Cyclic Path: SU(" << DefSU->NodeNum << ") -> SU("
-            << UI->SU->NodeNum << ") = " << CyclicLatency << "c\n");
+            << SU->NodeNum << ") = " << CyclicLatency << "c\n");
       if (CyclicLatency > MaxCyclicLatency)
         MaxCyclicLatency = CyclicLatency;
     }
@@ -2722,8 +2723,8 @@ void GenericScheduler::tryCandidate(SchedCandidate &Cand,
 
   // Avoid serializing long latency dependence chains.
   // For acyclic path limited loops, latency was already checked above.
-  if (Cand.Policy.ReduceLatency && !Rem.IsAcyclicLatencyLimited
-      && tryLatency(TryCand, Cand, Zone)) {
+  if (!RegionPolicy.DisableLatencyHeuristic && Cand.Policy.ReduceLatency &&
+      !Rem.IsAcyclicLatencyLimited && tryLatency(TryCand, Cand, Zone)) {
     return;
   }
 
@@ -3308,11 +3309,6 @@ struct DOTGraphTraits<ScheduleDAGMI*> : public DefaultDOTGraphTraits {
       return false;
     return (Node->Preds.size() > ViewMISchedCutoff
          || Node->Succs.size() > ViewMISchedCutoff);
-  }
-
-  static bool hasNodeAddressLabel(const SUnit *Node,
-                                  const ScheduleDAG *Graph) {
-    return false;
   }
 
   /// If you want to override the dot attributes printed for a particular

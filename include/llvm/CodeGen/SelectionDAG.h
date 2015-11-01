@@ -215,9 +215,7 @@ class SelectionDAG {
   /// Tracks dbg_value information through SDISel.
   SDDbgInfo *DbgInfo;
 
-#ifndef NDEBUG
   uint16_t NextPersistentId;
-#endif
 
 public:
   /// Clients of various APIs that cause global effects on
@@ -1165,6 +1163,10 @@ public:
   SDValue FoldConstantArithmetic(unsigned Opcode, SDLoc DL, EVT VT,
                                  const ConstantSDNode *Cst1,
                                  const ConstantSDNode *Cst2);
+
+  SDValue FoldConstantVectorArithmetic(unsigned Opcode, SDLoc DL,
+                                       EVT VT, ArrayRef<SDValue> Ops,
+                                       const SDNodeFlags *Flags = nullptr);
 
   /// Constant fold a setcc to true or false.
   SDValue FoldSetCC(EVT VT, SDValue N1,

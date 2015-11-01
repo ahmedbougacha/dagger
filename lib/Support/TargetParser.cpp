@@ -190,9 +190,9 @@ bool llvm::ARM::getExtensionFeatures(unsigned Extensions,
     Features.push_back("-crc");
 
   if (Extensions & ARM::AEK_DSP)
-    Features.push_back("+t2dsp");
+    Features.push_back("+dsp");
   else
-    Features.push_back("-t2dsp");
+    Features.push_back("-dsp");
 
   return getHWDivFeatures(Extensions, Features);
 }
@@ -520,6 +520,7 @@ unsigned llvm::ARM::parseArchProfile(StringRef Arch) {
     return ARM::PK_R;
   case ARM::AK_ARMV7:
   case ARM::AK_ARMV7A:
+  case ARM::AK_ARMV7K:
   case ARM::AK_ARMV7L:
   case ARM::AK_ARMV8A:
   case ARM::AK_ARMV8_1A:

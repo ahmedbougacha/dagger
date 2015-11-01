@@ -203,6 +203,9 @@ namespace {
     void visitMachineBasicBlockAfter(const MachineBasicBlock *MBB);
     void visitMachineFunctionAfter();
 
+    template <typename T> void report(const char *msg, ilist_iterator<T> I) {
+      report(msg, &*I);
+    }
     void report(const char *msg, const MachineFunction *MF);
     void report(const char *msg, const MachineBasicBlock *MBB);
     void report(const char *msg, const MachineInstr *MI);
@@ -314,7 +317,7 @@ bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
   visitMachineFunctionBefore();
   for (MachineFunction::const_iterator MFI = MF.begin(), MFE = MF.end();
        MFI!=MFE; ++MFI) {
-    visitMachineBasicBlockBefore(MFI);
+    visitMachineBasicBlockBefore(&*MFI);
     // Keep track of the current bundle header.
     const MachineInstr *CurBundle = nullptr;
     // Do we expect the next instruction to be part of the same bundle?
@@ -322,7 +325,7 @@ bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
 
     for (MachineBasicBlock::const_instr_iterator MBBI = MFI->instr_begin(),
            MBBE = MFI->instr_end(); MBBI != MBBE; ++MBBI) {
-      if (MBBI->getParent() != MFI) {
+      if (MBBI->getParent() != &*MFI) {
         report("Bad instruction parent pointer", MFI);
         errs() << "Instruction: " << *MBBI;
         continue;
@@ -331,20 +334,22 @@ bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
       // Check for consistent bundle flags.
       if (InBundle && !MBBI->isBundledWithPred())
         report("Missing BundledPred flag, "
-               "BundledSucc was set on predecessor", MBBI);
+               "BundledSucc was set on predecessor",
+               &*MBBI);
       if (!InBundle && MBBI->isBundledWithPred())
         report("BundledPred flag is set, "
-               "but BundledSucc not set on predecessor", MBBI);
+               "but BundledSucc not set on predecessor",
+               &*MBBI);
 
       // Is this a bundle header?
       if (!MBBI->isInsideBundle()) {
         if (CurBundle)
           visitMachineBundleAfter(CurBundle);
-        CurBundle = MBBI;
+        CurBundle = &*MBBI;
         visitMachineBundleBefore(CurBundle);
       } else if (!CurBundle)
         report("No bundle header", MBBI);
-      visitMachineInstrBefore(MBBI);
+      visitMachineInstrBefore(&*MBBI);
       for (unsigned I = 0, E = MBBI->getNumOperands(); I != E; ++I) {
         const MachineInstr &MI = *MBBI;
         const MachineOperand &Op = MI.getOperand(I);
@@ -357,7 +362,7 @@ bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
         visitMachineOperand(&Op, I);
       }
 
-      visitMachineInstrAfter(MBBI);
+      visitMachineInstrAfter(&*MBBI);
 
       // Was this the last bundled instruction?
       InBundle = MBBI->isBundledWithSucc();
@@ -366,7 +371,7 @@ bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
       visitMachineBundleAfter(CurBundle);
     if (InBundle)
       report("BundledSucc flag set on last instruction in block", &MFI->back());
-    visitMachineBasicBlockAfter(MFI);
+    visitMachineBasicBlockAfter(&*MFI);
   }
   visitMachineFunctionAfter();
 
@@ -575,7 +580,7 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
     // check whether its answers match up with reality.
     if (!TBB && !FBB) {
       // Block falls through to its successor.
-      MachineFunction::const_iterator MBBI = MBB;
+      MachineFunction::const_iterator MBBI = MBB->getIterator();
       ++MBBI;
       if (MBBI == MF->end()) {
         // It's possible that the block legitimately ends with a noreturn
@@ -588,7 +593,7 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
       } else if (MBB->succ_size() != 1+LandingPadSuccs.size()) {
         report("MBB exits via unconditional fall-through but doesn't have "
                "exactly one CFG successor!", MBB);
-      } else if (!MBB->isSuccessor(MBBI)) {
+      } else if (!MBB->isSuccessor(&*MBBI)) {
         report("MBB exits via unconditional fall-through but its successor "
                "differs from its CFG successor!", MBB);
       }
@@ -626,7 +631,7 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
       }
     } else if (TBB && !FBB && !Cond.empty()) {
       // Block conditionally branches somewhere, otherwise falls through.
-      MachineFunction::const_iterator MBBI = MBB;
+      MachineFunction::const_iterator MBBI = MBB->getIterator();
       ++MBBI;
       if (MBBI == MF->end()) {
         report("MBB conditionally falls through out of function!", MBB);
@@ -641,7 +646,7 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
       } else if (MBB->succ_size() != 2) {
         report("MBB exits via conditional branch/fall-through but doesn't have "
                "exactly two CFG successors!", MBB);
-      } else if (!matchPair(MBB->succ_begin(), TBB, MBBI)) {
+      } else if (!matchPair(MBB->succ_begin(), TBB, &*MBBI)) {
         report("MBB exits via conditional branch/fall-through but the CFG "
                "successors don't match the actual successors!", MBB);
       }
@@ -987,13 +992,38 @@ MachineVerifier::visitMachineOperand(const MachineOperand *MO, unsigned MONum) {
   case MachineOperand::MO_FrameIndex:
     if (LiveStks && LiveStks->hasInterval(MO->getIndex()) &&
         LiveInts && !LiveInts->isNotInMIMap(MI)) {
-      LiveInterval &LI = LiveStks->getInterval(MO->getIndex());
+      int FI = MO->getIndex();
+      LiveInterval &LI = LiveStks->getInterval(FI);
       SlotIndex Idx = LiveInts->getInstructionIndex(MI);
-      if (MI->mayLoad() && !LI.liveAt(Idx.getRegSlot(true))) {
+
+      bool stores = MI->mayStore();
+      bool loads = MI->mayLoad();
+      // For a memory-to-memory move, we need to check if the frame
+      // index is used for storing or loading, by inspecting the
+      // memory operands.
+      if (stores && loads) {
+        for (auto *MMO : MI->memoperands()) {
+          const PseudoSourceValue *PSV = MMO->getPseudoValue();
+          if (PSV == nullptr) continue;
+          const FixedStackPseudoSourceValue *Value =
+            dyn_cast<FixedStackPseudoSourceValue>(PSV);
+          if (Value == nullptr) continue;
+          if (Value->getFrameIndex() != FI) continue;
+
+          if (MMO->isStore())
+            loads = false;
+          else
+            stores = false;
+          break;
+        }
+        if (loads == stores)
+          report("Missing fixed stack memoperand.", MI);
+      }
+      if (loads && !LI.liveAt(Idx.getRegSlot(true))) {
         report("Instruction loads from dead spill slot", MO, MONum);
         errs() << "Live stack: " << LI << '\n';
       }
-      if (MI->mayStore() && !LI.liveAt(Idx.getRegSlot())) {
+      if (stores && !LI.liveAt(Idx.getRegSlot())) {
         report("Instruction stores to dead spill slot", MO, MONum);
         errs() << "Live stack: " << LI << '\n';
       }
@@ -1610,7 +1640,7 @@ void MachineVerifier::verifyLiveRangeSegment(const LiveRange &LR,
   }
 
   // Now check all the basic blocks in this live segment.
-  MachineFunction::const_iterator MFI = MBB;
+  MachineFunction::const_iterator MFI = MBB->getIterator();
   // Is this live segment the beginning of a non-PHIDef VN?
   if (S.start == VNI->def && !VNI->isPHIDef()) {
     // Not live-in to any blocks.
@@ -1620,7 +1650,7 @@ void MachineVerifier::verifyLiveRangeSegment(const LiveRange &LR,
     ++MFI;
   }
   for (;;) {
-    assert(LiveInts->isLiveInToMBB(LR, MFI));
+    assert(LiveInts->isLiveInToMBB(LR, &*MFI));
     // We don't know how to track physregs into a landing pad.
     if (!TargetRegisterInfo::isVirtualRegister(Reg) &&
         MFI->isEHPad()) {
@@ -1632,7 +1662,7 @@ void MachineVerifier::verifyLiveRangeSegment(const LiveRange &LR,
 
     // Is VNI a PHI-def in the current block?
     bool IsPHI = VNI->isPHIDef() &&
-      VNI->def == LiveInts->getMBBStartIdx(MFI);
+      VNI->def == LiveInts->getMBBStartIdx(&*MFI);
 
     // Check that VNI is live-out of all predecessors.
     for (MachineBasicBlock::const_pred_iterator PI = MFI->pred_begin(),
@@ -1645,8 +1675,8 @@ void MachineVerifier::verifyLiveRangeSegment(const LiveRange &LR,
         report("Register not marked live out of predecessor", *PI, LR, Reg,
                LaneMask);
         errs() << "Valno #" << VNI->id << " live into BB#" << MFI->getNumber()
-            << '@' << LiveInts->getMBBStartIdx(MFI) << ", not live before "
-            << PEnd << '\n';
+               << '@' << LiveInts->getMBBStartIdx(&*MFI) << ", not live before "
+               << PEnd << '\n';
         continue;
       }
 
@@ -1655,9 +1685,9 @@ void MachineVerifier::verifyLiveRangeSegment(const LiveRange &LR,
         report("Different value live out of predecessor", *PI, LR, Reg,
                LaneMask);
         errs() << "Valno #" << PVNI->id << " live out of BB#"
-            << (*PI)->getNumber() << '@' << PEnd
-            << "\nValno #" << VNI->id << " live into BB#" << MFI->getNumber()
-            << '@' << LiveInts->getMBBStartIdx(MFI) << '\n';
+               << (*PI)->getNumber() << '@' << PEnd << "\nValno #" << VNI->id
+               << " live into BB#" << MFI->getNumber() << '@'
+               << LiveInts->getMBBStartIdx(&*MFI) << '\n';
       }
     }
     if (&*MFI == EndMBB)

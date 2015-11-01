@@ -13,6 +13,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Transforms/Instrumentation.h"
 
 #include "llvm/ADT/Triple.h"
@@ -58,22 +59,22 @@ private:
 
   /// Get the section name for the counter variables.
   StringRef getCountersSection() const {
-    return isMachO() ? "__DATA,__llvm_prf_cnts" : "__llvm_prf_cnts";
+    return getInstrProfCountersSectionName(isMachO());
   }
 
   /// Get the section name for the name variables.
   StringRef getNameSection() const {
-    return isMachO() ? "__DATA,__llvm_prf_names" : "__llvm_prf_names";
+    return getInstrProfNameSectionName(isMachO());
   }
 
   /// Get the section name for the profile data variables.
   StringRef getDataSection() const {
-    return isMachO() ? "__DATA,__llvm_prf_data" : "__llvm_prf_data";
+    return getInstrProfDataSectionName(isMachO());
   }
 
   /// Get the section name for the coverage mapping data.
   StringRef getCoverageSection() const {
-    return isMachO() ? "__DATA,__llvm_covmap" : "__llvm_covmap";
+    return getInstrProfCoverageSectionName(isMachO());
   }
 
   /// Replace instrprof_increment with an increment of the appropriate value.
@@ -127,7 +128,8 @@ bool InstrProfiling::runOnModule(Module &M) {
           lowerIncrement(Inc);
           MadeChange = true;
         }
-  if (GlobalVariable *Coverage = M.getNamedGlobal("__llvm_coverage_mapping")) {
+  if (GlobalVariable *Coverage =
+          M.getNamedGlobal(getCoverageMappingVarName())) {
     lowerCoverageData(Coverage);
     MadeChange = true;
   }
@@ -144,7 +146,7 @@ bool InstrProfiling::runOnModule(Module &M) {
 void InstrProfiling::lowerIncrement(InstrProfIncrementInst *Inc) {
   GlobalVariable *Counters = getOrCreateRegionCounters(Inc);
 
-  IRBuilder<> Builder(Inc->getParent(), *Inc);
+  IRBuilder<> Builder(Inc);
   uint64_t Index = Inc->getIndex()->getZExtValue();
   Value *Addr = Builder.CreateConstInBoundsGEP2_64(Counters, 0, Index);
   Value *Count = Builder.CreateLoad(Addr, "pgocount");
@@ -183,10 +185,10 @@ void InstrProfiling::lowerCoverageData(GlobalVariable *CoverageData) {
 }
 
 /// Get the name of a profiling variable for a particular function.
-static std::string getVarName(InstrProfIncrementInst *Inc, StringRef VarName) {
+static std::string getVarName(InstrProfIncrementInst *Inc, StringRef Prefix) {
   auto *Arr = cast<ConstantDataArray>(Inc->getName()->getInitializer());
   StringRef Name = Arr->isCString() ? Arr->getAsCString() : Arr->getAsString();
-  return ("__llvm_profile_" + VarName + "_" + Name).str();
+  return (Prefix + Name).str();
 }
 
 GlobalVariable *
@@ -203,7 +205,8 @@ InstrProfiling::getOrCreateRegionCounters(InstrProfIncrementInst *Inc) {
   Function *Fn = Inc->getParent()->getParent();
   Comdat *ProfileVarsComdat = nullptr;
   if (Fn->hasComdat())
-    ProfileVarsComdat = M->getOrInsertComdat(StringRef(getVarName(Inc, "vars")));
+    ProfileVarsComdat = M->getOrInsertComdat(
+        StringRef(getVarName(Inc, getInstrProfComdatPrefix())));
   Name->setSection(getNameSection());
   Name->setAlignment(1);
   Name->setComdat(ProfileVarsComdat);
@@ -213,9 +216,10 @@ InstrProfiling::getOrCreateRegionCounters(InstrProfIncrementInst *Inc) {
   ArrayType *CounterTy = ArrayType::get(Type::getInt64Ty(Ctx), NumCounters);
 
   // Create the counters variable.
-  auto *Counters = new GlobalVariable(*M, CounterTy, false, Name->getLinkage(),
-                                      Constant::getNullValue(CounterTy),
-                                      getVarName(Inc, "counters"));
+  auto *Counters =
+      new GlobalVariable(*M, CounterTy, false, Name->getLinkage(),
+                         Constant::getNullValue(CounterTy),
+                         getVarName(Inc, getInstrProfCountersVarPrefix()));
   Counters->setVisibility(Name->getVisibility());
   Counters->setSection(getCountersSection());
   Counters->setAlignment(8);
@@ -240,7 +244,7 @@ InstrProfiling::getOrCreateRegionCounters(InstrProfIncrementInst *Inc) {
       ConstantExpr::getBitCast(Counters, Int64PtrTy)};
   auto *Data = new GlobalVariable(*M, DataTy, true, Name->getLinkage(),
                                   ConstantStruct::get(DataTy, DataVals),
-                                  getVarName(Inc, "data"));
+                                  getVarName(Inc, getInstrProfDataVarPrefix()));
   Data->setVisibility(Name->getVisibility());
   Data->setSection(getDataSection());
   Data->setAlignment(8);
@@ -257,20 +261,24 @@ void InstrProfiling::emitRegistration() {
   if (Triple(M->getTargetTriple()).isOSDarwin())
     return;
 
+  // Use linker script magic to get data/cnts/name start/end.
+  if (Triple(M->getTargetTriple()).isOSLinux() ||
+      Triple(M->getTargetTriple()).isOSFreeBSD())
+    return;
+
   // Construct the function.
   auto *VoidTy = Type::getVoidTy(M->getContext());
   auto *VoidPtrTy = Type::getInt8PtrTy(M->getContext());
   auto *RegisterFTy = FunctionType::get(VoidTy, false);
   auto *RegisterF = Function::Create(RegisterFTy, GlobalValue::InternalLinkage,
-                                     "__llvm_profile_register_functions", M);
+                                     getInstrProfRegFuncsName(), M);
   RegisterF->setUnnamedAddr(true);
-  if (Options.NoRedZone)
-    RegisterF->addFnAttr(Attribute::NoRedZone);
+  if (Options.NoRedZone) RegisterF->addFnAttr(Attribute::NoRedZone);
 
   auto *RuntimeRegisterTy = FunctionType::get(VoidTy, VoidPtrTy, false);
   auto *RuntimeRegisterF =
       Function::Create(RuntimeRegisterTy, GlobalVariable::ExternalLinkage,
-                       "__llvm_profile_register_function", M);
+                       getInstrProfRegFuncName(), M);
 
   IRBuilder<> IRB(BasicBlock::Create(M->getContext(), "", RegisterF));
   for (Value *Data : UsedVars)
@@ -279,26 +287,27 @@ void InstrProfiling::emitRegistration() {
 }
 
 void InstrProfiling::emitRuntimeHook() {
-  const char *const RuntimeVarName = "__llvm_profile_runtime";
-  const char *const RuntimeUserName = "__llvm_profile_runtime_user";
+
+  // We expect the linker to be invoked with -u<hook_var> flag for linux,
+  // for which case there is no need to emit the user function.
+  if (Triple(M->getTargetTriple()).isOSLinux())
+    return;
 
   // If the module's provided its own runtime, we don't need to do anything.
-  if (M->getGlobalVariable(RuntimeVarName))
-    return;
+  if (M->getGlobalVariable(getInstrProfRuntimeHookVarName())) return;
 
   // Declare an external variable that will pull in the runtime initialization.
   auto *Int32Ty = Type::getInt32Ty(M->getContext());
   auto *Var =
       new GlobalVariable(*M, Int32Ty, false, GlobalValue::ExternalLinkage,
-                         nullptr, RuntimeVarName);
+                         nullptr, getInstrProfRuntimeHookVarName());
 
   // Make a function that uses it.
-  auto *User =
-      Function::Create(FunctionType::get(Int32Ty, false),
-                       GlobalValue::LinkOnceODRLinkage, RuntimeUserName, M);
+  auto *User = Function::Create(FunctionType::get(Int32Ty, false),
+                                GlobalValue::LinkOnceODRLinkage,
+                                getInstrProfRuntimeHookVarUseFuncName(), M);
   User->addFnAttr(Attribute::NoInline);
-  if (Options.NoRedZone)
-    User->addFnAttr(Attribute::NoRedZone);
+  if (Options.NoRedZone) User->addFnAttr(Attribute::NoRedZone);
   User->setVisibility(GlobalValue::HiddenVisibility);
 
   IRBuilder<> IRB(BasicBlock::Create(M->getContext(), "", User));
@@ -341,19 +350,17 @@ void InstrProfiling::emitUses() {
 void InstrProfiling::emitInitialization() {
   std::string InstrProfileOutput = Options.InstrProfileOutput;
 
-  Constant *RegisterF = M->getFunction("__llvm_profile_register_functions");
-  if (!RegisterF && InstrProfileOutput.empty())
-    return;
+  Constant *RegisterF = M->getFunction(getInstrProfRegFuncsName());
+  if (!RegisterF && InstrProfileOutput.empty()) return;
 
   // Create the initialization function.
   auto *VoidTy = Type::getVoidTy(M->getContext());
-  auto *F =
-      Function::Create(FunctionType::get(VoidTy, false),
-                       GlobalValue::InternalLinkage, "__llvm_profile_init", M);
+  auto *F = Function::Create(FunctionType::get(VoidTy, false),
+                             GlobalValue::InternalLinkage,
+                             getInstrProfInitFuncName(), M);
   F->setUnnamedAddr(true);
   F->addFnAttr(Attribute::NoInline);
-  if (Options.NoRedZone)
-    F->addFnAttr(Attribute::NoRedZone);
+  if (Options.NoRedZone) F->addFnAttr(Attribute::NoRedZone);
 
   // Add the basic block and the necessary calls.
   IRBuilder<> IRB(BasicBlock::Create(M->getContext(), "", F));
@@ -362,9 +369,8 @@ void InstrProfiling::emitInitialization() {
   if (!InstrProfileOutput.empty()) {
     auto *Int8PtrTy = Type::getInt8PtrTy(M->getContext());
     auto *SetNameTy = FunctionType::get(VoidTy, Int8PtrTy, false);
-    auto *SetNameF =
-        Function::Create(SetNameTy, GlobalValue::ExternalLinkage,
-                         "__llvm_profile_override_default_filename", M);
+    auto *SetNameF = Function::Create(SetNameTy, GlobalValue::ExternalLinkage,
+                                      getInstrProfFileOverriderFuncName(), M);
 
     // Create variable for profile name.
     Constant *ProfileNameConst =

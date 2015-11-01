@@ -154,6 +154,9 @@ def FeatureMips16  : SubtargetFeature<"mips16", "InMips16Mode", "true",
 def FeatureDSP : SubtargetFeature<"dsp", "HasDSP", "true", "Mips DSP ASE">;
 def FeatureDSPR2 : SubtargetFeature<"dspr2", "HasDSPR2", "true",
                                     "Mips DSP-R2 ASE", [FeatureDSP]>;
+def FeatureDSPR3
+    : SubtargetFeature<"dspr3", "HasDSPR3", "true", "Mips DSP-R3 ASE",
+                       [ FeatureDSP, FeatureDSPR2 ]>;
 
 def FeatureMSA : SubtargetFeature<"msa", "HasMSA", "true", "Mips MSA ASE">;
 
@@ -198,7 +201,6 @@ def : Proc<"mips64r2", [FeatureMips64r2]>;
 def : Proc<"mips64r3", [FeatureMips64r3]>;
 def : Proc<"mips64r5", [FeatureMips64r5]>;
 def : Proc<"mips64r6", [FeatureMips64r6]>;
-def : Proc<"mips16", [FeatureMips16]>;
 def : Proc<"octeon", [FeatureMips64r2, FeatureCnMips]>;
 def : ProcessorModel<"p5600", MipsP5600Model, [ImplP5600]>;
 

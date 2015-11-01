@@ -37,7 +37,7 @@ struct ArchiveMemberHeader {
   llvm::StringRef getName() const;
 
   /// Members are not larger than 4GB.
-  uint32_t getSize() const;
+  ErrorOr<uint32_t> getSize() const;
 
   sys::fs::perms getAccessMode() const;
   sys::TimeValue getLastModified() const;
@@ -52,6 +52,7 @@ class Archive : public Binary {
   virtual void anchor();
 public:
   class Child {
+    friend Archive;
     const Archive *Parent;
     /// \brief Includes header but not padding byte.
     StringRef Data;
@@ -66,14 +67,11 @@ public:
 
   public:
     Child(const Archive *Parent, const char *Start);
+    Child(const Archive *Parent, StringRef Data, uint16_t StartOfFile);
 
     bool operator ==(const Child &other) const {
       assert(Parent == other.Parent);
       return Data.begin() == other.Data.begin();
-    }
-
-    bool operator <(const Child &other) const {
-      return Data.begin() < other.Data.begin();
     }
 
     const Archive *getParent() const { return Parent; }
@@ -121,10 +119,6 @@ public:
 
     bool operator!=(const child_iterator &other) const {
       return !(*this == other);
-    }
-
-    bool operator<(const child_iterator &other) const {
-      return child < other.child;
     }
 
     child_iterator &operator++() { // Preincrement
@@ -208,18 +202,17 @@ public:
   child_iterator findSym(StringRef name) const;
 
   bool hasSymbolTable() const;
-  child_iterator getSymbolTableChild() const { return SymbolTable; }
-  StringRef getSymbolTable() const {
-    // We know that the symbol table is not an external file,
-    // so we just assert there is no error.
-    return *SymbolTable->getBuffer();
-  }
+  StringRef getSymbolTable() const { return SymbolTable; }
   uint32_t getNumberOfSymbols() const;
 
 private:
-  child_iterator SymbolTable;
-  child_iterator StringTable;
-  child_iterator FirstRegular;
+  StringRef SymbolTable;
+  StringRef StringTable;
+
+  StringRef FirstRegularData;
+  uint16_t FirstRegularStartOfFile = -1;
+  void setFirstRegular(const Child &C);
+
   unsigned Format : 2;
   unsigned IsThin : 1;
   mutable std::vector<std::unique_ptr<MemoryBuffer>> ThinBuffers;

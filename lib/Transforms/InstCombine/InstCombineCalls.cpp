@@ -381,6 +381,196 @@ static Value *SimplifyX86insertps(const IntrinsicInst &II,
   return nullptr;
 }
 
+/// Attempt to simplify SSE4A EXTRQ/EXTRQI instructions using constant folding
+/// or conversion to a shuffle vector.
+static Value *SimplifyX86extrq(IntrinsicInst &II, Value *Op0,
+                               ConstantInt *CILength, ConstantInt *CIIndex,
+                               InstCombiner::BuilderTy &Builder) {
+  auto LowConstantHighUndef = [&](uint64_t Val) {
+    Type *IntTy64 = Type::getInt64Ty(II.getContext());
+    Constant *Args[] = {ConstantInt::get(IntTy64, Val),
+                        UndefValue::get(IntTy64)};
+    return ConstantVector::get(Args);
+  };
+
+  // See if we're dealing with constant values.
+  Constant *C0 = dyn_cast<Constant>(Op0);
+  ConstantInt *CI0 =
+      C0 ? dyn_cast<ConstantInt>(C0->getAggregateElement((unsigned)0))
+         : nullptr;
+
+  // Attempt to constant fold.
+  if (CILength && CIIndex) {
+    // From AMD documentation: "The bit index and field length are each six
+    // bits in length other bits of the field are ignored."
+    APInt APIndex = CIIndex->getValue().zextOrTrunc(6);
+    APInt APLength = CILength->getValue().zextOrTrunc(6);
+
+    unsigned Index = APIndex.getZExtValue();
+
+    // From AMD documentation: "a value of zero in the field length is
+    // defined as length of 64".
+    unsigned Length = APLength == 0 ? 64 : APLength.getZExtValue();
+
+    // From AMD documentation: "If the sum of the bit index + length field
+    // is greater than 64, the results are undefined".
+    unsigned End = Index + Length;
+
+    // Note that both field index and field length are 8-bit quantities.
+    // Since variables 'Index' and 'Length' are unsigned values
+    // obtained from zero-extending field index and field length
+    // respectively, their sum should never wrap around.
+    if (End > 64)
+      return UndefValue::get(II.getType());
+
+    // If we are inserting whole bytes, we can convert this to a shuffle.
+    // Lowering can recognize EXTRQI shuffle masks.
+    if ((Length % 8) == 0 && (Index % 8) == 0) {
+      // Convert bit indices to byte indices.
+      Length /= 8;
+      Index /= 8;
+
+      Type *IntTy8 = Type::getInt8Ty(II.getContext());
+      Type *IntTy32 = Type::getInt32Ty(II.getContext());
+      VectorType *ShufTy = VectorType::get(IntTy8, 16);
+
+      SmallVector<Constant *, 16> ShuffleMask;
+      for (int i = 0; i != (int)Length; ++i)
+        ShuffleMask.push_back(
+            Constant::getIntegerValue(IntTy32, APInt(32, i + Index)));
+      for (int i = Length; i != 8; ++i)
+        ShuffleMask.push_back(
+            Constant::getIntegerValue(IntTy32, APInt(32, i + 16)));
+      for (int i = 8; i != 16; ++i)
+        ShuffleMask.push_back(UndefValue::get(IntTy32));
+
+      Value *SV = Builder.CreateShuffleVector(
+          Builder.CreateBitCast(Op0, ShufTy),
+          ConstantAggregateZero::get(ShufTy), ConstantVector::get(ShuffleMask));
+      return Builder.CreateBitCast(SV, II.getType());
+    }
+
+    // Constant Fold - shift Index'th bit to lowest position and mask off
+    // Length bits.
+    if (CI0) {
+      APInt Elt = CI0->getValue();
+      Elt = Elt.lshr(Index).zextOrTrunc(Length);
+      return LowConstantHighUndef(Elt.getZExtValue());
+    }
+
+    // If we were an EXTRQ call, we'll save registers if we convert to EXTRQI.
+    if (II.getIntrinsicID() == Intrinsic::x86_sse4a_extrq) {
+      Value *Args[] = {Op0, CILength, CIIndex};
+      Module *M = II.getParent()->getParent()->getParent();
+      Value *F = Intrinsic::getDeclaration(M, Intrinsic::x86_sse4a_extrqi);
+      return Builder.CreateCall(F, Args);
+    }
+  }
+
+  // Constant Fold - extraction from zero is always {zero, undef}.
+  if (CI0 && CI0->equalsInt(0))
+    return LowConstantHighUndef(0);
+
+  return nullptr;
+}
+
+/// Attempt to simplify SSE4A INSERTQ/INSERTQI instructions using constant
+/// folding or conversion to a shuffle vector.
+static Value *SimplifyX86insertq(IntrinsicInst &II, Value *Op0, Value *Op1,
+                                 APInt APLength, APInt APIndex,
+                                 InstCombiner::BuilderTy &Builder) {
+
+  // From AMD documentation: "The bit index and field length are each six bits
+  // in length other bits of the field are ignored."
+  APIndex = APIndex.zextOrTrunc(6);
+  APLength = APLength.zextOrTrunc(6);
+
+  // Attempt to constant fold.
+  unsigned Index = APIndex.getZExtValue();
+
+  // From AMD documentation: "a value of zero in the field length is
+  // defined as length of 64".
+  unsigned Length = APLength == 0 ? 64 : APLength.getZExtValue();
+
+  // From AMD documentation: "If the sum of the bit index + length field
+  // is greater than 64, the results are undefined".
+  unsigned End = Index + Length;
+
+  // Note that both field index and field length are 8-bit quantities.
+  // Since variables 'Index' and 'Length' are unsigned values
+  // obtained from zero-extending field index and field length
+  // respectively, their sum should never wrap around.
+  if (End > 64)
+    return UndefValue::get(II.getType());
+
+  // If we are inserting whole bytes, we can convert this to a shuffle.
+  // Lowering can recognize INSERTQI shuffle masks.
+  if ((Length % 8) == 0 && (Index % 8) == 0) {
+    // Convert bit indices to byte indices.
+    Length /= 8;
+    Index /= 8;
+
+    Type *IntTy8 = Type::getInt8Ty(II.getContext());
+    Type *IntTy32 = Type::getInt32Ty(II.getContext());
+    VectorType *ShufTy = VectorType::get(IntTy8, 16);
+
+    SmallVector<Constant *, 16> ShuffleMask;
+    for (int i = 0; i != (int)Index; ++i)
+      ShuffleMask.push_back(Constant::getIntegerValue(IntTy32, APInt(32, i)));
+    for (int i = 0; i != (int)Length; ++i)
+      ShuffleMask.push_back(
+          Constant::getIntegerValue(IntTy32, APInt(32, i + 16)));
+    for (int i = Index + Length; i != 8; ++i)
+      ShuffleMask.push_back(Constant::getIntegerValue(IntTy32, APInt(32, i)));
+    for (int i = 8; i != 16; ++i)
+      ShuffleMask.push_back(UndefValue::get(IntTy32));
+
+    Value *SV = Builder.CreateShuffleVector(Builder.CreateBitCast(Op0, ShufTy),
+                                            Builder.CreateBitCast(Op1, ShufTy),
+                                            ConstantVector::get(ShuffleMask));
+    return Builder.CreateBitCast(SV, II.getType());
+  }
+
+  // See if we're dealing with constant values.
+  Constant *C0 = dyn_cast<Constant>(Op0);
+  Constant *C1 = dyn_cast<Constant>(Op1);
+  ConstantInt *CI00 =
+      C0 ? dyn_cast<ConstantInt>(C0->getAggregateElement((unsigned)0))
+         : nullptr;
+  ConstantInt *CI10 =
+      C1 ? dyn_cast<ConstantInt>(C1->getAggregateElement((unsigned)0))
+         : nullptr;
+
+  // Constant Fold - insert bottom Length bits starting at the Index'th bit.
+  if (CI00 && CI10) {
+    APInt V00 = CI00->getValue();
+    APInt V10 = CI10->getValue();
+    APInt Mask = APInt::getLowBitsSet(64, Length).shl(Index);
+    V00 = V00 & ~Mask;
+    V10 = V10.zextOrTrunc(Length).zextOrTrunc(64).shl(Index);
+    APInt Val = V00 | V10;
+    Type *IntTy64 = Type::getInt64Ty(II.getContext());
+    Constant *Args[] = {ConstantInt::get(IntTy64, Val.getZExtValue()),
+                        UndefValue::get(IntTy64)};
+    return ConstantVector::get(Args);
+  }
+
+  // If we were an INSERTQ call, we'll save demanded elements if we convert to
+  // INSERTQI.
+  if (II.getIntrinsicID() == Intrinsic::x86_sse4a_insertq) {
+    Type *IntTy8 = Type::getInt8Ty(II.getContext());
+    Constant *CILength = ConstantInt::get(IntTy8, Length, false);
+    Constant *CIIndex = ConstantInt::get(IntTy8, Index, false);
+
+    Value *Args[] = {Op0, Op1, CILength, CIIndex};
+    Module *M = II.getParent()->getParent()->getParent();
+    Value *F = Intrinsic::getDeclaration(M, Intrinsic::x86_sse4a_insertqi);
+    return Builder.CreateCall(F, Args);
+  }
+
+  return nullptr;
+}
+
 /// The shuffle mask for a perm2*128 selects any two halves of two 256-bit
 /// source vectors, unless a zero bit is set. If a zero bit is set,
 /// then ignore that half of the mask and clear that half of the vector.
@@ -442,6 +632,43 @@ static Value *SimplifyX86vperm2(const IntrinsicInst &II,
       ShuffleMask[i + HalfSize] = StartIndex + i;
 
     return Builder.CreateShuffleVector(V0, V1, ShuffleMask);
+  }
+  return nullptr;
+}
+
+/// Decode XOP integer vector comparison intrinsics.
+static Value *SimplifyX86vpcom(const IntrinsicInst &II,
+                               InstCombiner::BuilderTy &Builder, bool IsSigned) {
+  if (auto *CInt = dyn_cast<ConstantInt>(II.getArgOperand(2))) {
+    uint64_t Imm = CInt->getZExtValue() & 0x7;
+    VectorType *VecTy = cast<VectorType>(II.getType());
+    CmpInst::Predicate Pred = ICmpInst::BAD_ICMP_PREDICATE;
+
+    switch (Imm) {
+    case 0x0:
+      Pred = IsSigned ? ICmpInst::ICMP_SLT : ICmpInst::ICMP_ULT;
+      break;
+    case 0x1:
+      Pred = IsSigned ? ICmpInst::ICMP_SLE : ICmpInst::ICMP_ULE;
+      break;
+    case 0x2:
+      Pred = IsSigned ? ICmpInst::ICMP_SGT : ICmpInst::ICMP_UGT;
+      break;
+    case 0x3:
+      Pred = IsSigned ? ICmpInst::ICMP_SGE : ICmpInst::ICMP_UGE;
+      break;
+    case 0x4:
+      Pred = ICmpInst::ICMP_EQ; break;
+    case 0x5:
+      Pred = ICmpInst::ICMP_NE; break;
+    case 0x6:
+      return ConstantInt::getSigned(VecTy, 0); // FALSE
+    case 0x7:
+      return ConstantInt::getSigned(VecTy, -1); // TRUE
+    }
+
+    if (Value *Cmp = Builder.CreateICmp(Pred, II.getArgOperand(0), II.getArgOperand(1)))
+      return Builder.CreateSExtOrTrunc(Cmp, VecTy);
   }
   return nullptr;
 }
@@ -968,14 +1195,29 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     break;
 
   case Intrinsic::x86_sse4a_extrq: {
-    // EXTRQ uses only the lowest 64-bits of the first 128-bit vector
-    // operands and the lowest 16-bits of the second.
     Value *Op0 = II->getArgOperand(0);
     Value *Op1 = II->getArgOperand(1);
     unsigned VWidth0 = Op0->getType()->getVectorNumElements();
     unsigned VWidth1 = Op1->getType()->getVectorNumElements();
-    assert(VWidth0 == 2 && VWidth1 == 16 && "Unexpected operand sizes");
+    assert(Op0->getType()->getPrimitiveSizeInBits() == 128 &&
+           Op1->getType()->getPrimitiveSizeInBits() == 128 && VWidth0 == 2 &&
+           VWidth1 == 16 && "Unexpected operand sizes");
 
+    // See if we're dealing with constant values.
+    Constant *C1 = dyn_cast<Constant>(Op1);
+    ConstantInt *CILength =
+        C1 ? dyn_cast<ConstantInt>(C1->getAggregateElement((unsigned)0))
+           : nullptr;
+    ConstantInt *CIIndex =
+        C1 ? dyn_cast<ConstantInt>(C1->getAggregateElement((unsigned)1))
+           : nullptr;
+
+    // Attempt to simplify to a constant, shuffle vector or EXTRQI call.
+    if (Value *V = SimplifyX86extrq(*II, Op0, CILength, CIIndex, *Builder))
+      return ReplaceInstUsesWith(*II, V);
+
+    // EXTRQ only uses the lowest 64-bits of the first 128-bit vector
+    // operands and the lowest 16-bits of the second.
     if (Value *V = SimplifyDemandedVectorEltsLow(Op0, VWidth0, 1)) {
       II->setArgOperand(0, V);
       return II;
@@ -988,13 +1230,24 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   }
 
   case Intrinsic::x86_sse4a_extrqi: {
-    // EXTRQI uses only the lowest 64-bits of the first 128-bit vector
-    // operand.
-    Value *Op = II->getArgOperand(0);
-    unsigned VWidth = Op->getType()->getVectorNumElements();
-    assert(VWidth == 2 && "Unexpected operand size");
+    // EXTRQI: Extract Length bits starting from Index. Zero pad the remaining
+    // bits of the lower 64-bits. The upper 64-bits are undefined.
+    Value *Op0 = II->getArgOperand(0);
+    unsigned VWidth = Op0->getType()->getVectorNumElements();
+    assert(Op0->getType()->getPrimitiveSizeInBits() == 128 && VWidth == 2 &&
+           "Unexpected operand size");
 
-    if (Value *V = SimplifyDemandedVectorEltsLow(Op, VWidth, 1)) {
+    // See if we're dealing with constant values.
+    ConstantInt *CILength = dyn_cast<ConstantInt>(II->getArgOperand(1));
+    ConstantInt *CIIndex = dyn_cast<ConstantInt>(II->getArgOperand(2));
+
+    // Attempt to simplify to a constant or shuffle vector.
+    if (Value *V = SimplifyX86extrq(*II, Op0, CILength, CIIndex, *Builder))
+      return ReplaceInstUsesWith(*II, V);
+
+    // EXTRQI only uses the lowest 64-bits of the first 128-bit vector
+    // operand.
+    if (Value *V = SimplifyDemandedVectorEltsLow(Op0, VWidth, 1)) {
       II->setArgOperand(0, V);
       return II;
     }
@@ -1002,13 +1255,32 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   }
 
   case Intrinsic::x86_sse4a_insertq: {
-    // INSERTQ uses only the lowest 64-bits of the first 128-bit vector
-    // operand.
-    Value *Op = II->getArgOperand(0);
-    unsigned VWidth = Op->getType()->getVectorNumElements();
-    assert(VWidth == 2 && "Unexpected operand size");
+    Value *Op0 = II->getArgOperand(0);
+    Value *Op1 = II->getArgOperand(1);
+    unsigned VWidth = Op0->getType()->getVectorNumElements();
+    assert(Op0->getType()->getPrimitiveSizeInBits() == 128 &&
+           Op1->getType()->getPrimitiveSizeInBits() == 128 && VWidth == 2 &&
+           Op1->getType()->getVectorNumElements() == 2 &&
+           "Unexpected operand size");
 
-    if (Value *V = SimplifyDemandedVectorEltsLow(Op, VWidth, 1)) {
+    // See if we're dealing with constant values.
+    Constant *C1 = dyn_cast<Constant>(Op1);
+    ConstantInt *CI11 =
+        C1 ? dyn_cast<ConstantInt>(C1->getAggregateElement((unsigned)1))
+           : nullptr;
+
+    // Attempt to simplify to a constant, shuffle vector or INSERTQI call.
+    if (CI11) {
+      APInt V11 = CI11->getValue();
+      APInt Len = V11.zextOrTrunc(6);
+      APInt Idx = V11.lshr(8).zextOrTrunc(6);
+      if (Value *V = SimplifyX86insertq(*II, Op0, Op1, Len, Idx, *Builder))
+        return ReplaceInstUsesWith(*II, V);
+    }
+
+    // INSERTQ only uses the lowest 64-bits of the first 128-bit vector
+    // operand.
+    if (Value *V = SimplifyDemandedVectorEltsLow(Op0, VWidth, 1)) {
       II->setArgOperand(0, V);
       return II;
     }
@@ -1016,90 +1288,31 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   }
 
   case Intrinsic::x86_sse4a_insertqi: {
-    // insertqi x, y, 64, 0 can just copy y's lower bits and leave the top
-    // ones undef
-    // TODO: eventually we should lower this intrinsic to IR
-    if (auto CILength = dyn_cast<ConstantInt>(II->getArgOperand(2))) {
-      if (auto CIIndex = dyn_cast<ConstantInt>(II->getArgOperand(3))) {
-        unsigned Index = CIIndex->getZExtValue();
-        // From AMD documentation: "a value of zero in the field length is
-        // defined as length of 64".
-        unsigned Length = CILength->equalsInt(0) ? 64 : CILength->getZExtValue();
-
-        // From AMD documentation: "If the sum of the bit index + length field
-        // is greater than 64, the results are undefined".
-        unsigned End = Index + Length;
-
-        // Note that both field index and field length are 8-bit quantities.
-        // Since variables 'Index' and 'Length' are unsigned values
-        // obtained from zero-extending field index and field length
-        // respectively, their sum should never wrap around.
-        if (End > 64)
-          return ReplaceInstUsesWith(CI, UndefValue::get(II->getType()));
-
-        if (Length == 64 && Index == 0) {
-          Value *Vec = II->getArgOperand(1);
-          Value *Undef = UndefValue::get(Vec->getType());
-          const uint32_t Mask[] = { 0, 2 };
-          return ReplaceInstUsesWith(
-              CI,
-              Builder->CreateShuffleVector(
-                  Vec, Undef, ConstantDataVector::get(
-                                  II->getContext(), makeArrayRef(Mask))));
-        } else if (auto Source =
-                       dyn_cast<IntrinsicInst>(II->getArgOperand(0))) {
-          if (Source->hasOneUse() &&
-              Source->getArgOperand(1) == II->getArgOperand(1)) {
-            // If the source of the insert has only one use and it's another
-            // insert (and they're both inserting from the same vector), try to
-            // bundle both together.
-            auto CISourceLength =
-                dyn_cast<ConstantInt>(Source->getArgOperand(2));
-            auto CISourceIndex =
-                dyn_cast<ConstantInt>(Source->getArgOperand(3));
-            if (CISourceIndex && CISourceLength) {
-              unsigned SourceIndex = CISourceIndex->getZExtValue();
-              unsigned SourceLength = CISourceLength->getZExtValue();
-              unsigned SourceEnd = SourceIndex + SourceLength;
-              unsigned NewIndex, NewLength;
-              bool ShouldReplace = false;
-              if (Index <= SourceIndex && SourceIndex <= End) {
-                NewIndex = Index;
-                NewLength = std::max(End, SourceEnd) - NewIndex;
-                ShouldReplace = true;
-              } else if (SourceIndex <= Index && Index <= SourceEnd) {
-                NewIndex = SourceIndex;
-                NewLength = std::max(SourceEnd, End) - NewIndex;
-                ShouldReplace = true;
-              }
-
-              if (ShouldReplace) {
-                Constant *ConstantLength = ConstantInt::get(
-                    II->getArgOperand(2)->getType(), NewLength, false);
-                Constant *ConstantIndex = ConstantInt::get(
-                    II->getArgOperand(3)->getType(), NewIndex, false);
-                Value *Args[4] = { Source->getArgOperand(0),
-                                   II->getArgOperand(1), ConstantLength,
-                                   ConstantIndex };
-                Module *M = CI.getParent()->getParent()->getParent();
-                Value *F =
-                    Intrinsic::getDeclaration(M, Intrinsic::x86_sse4a_insertqi);
-                return ReplaceInstUsesWith(CI, Builder->CreateCall(F, Args));
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // INSERTQI uses only the lowest 64-bits of the first two 128-bit vector
-    // operands.
+    // INSERTQI: Extract lowest Length bits from lower half of second source and
+    // insert over first source starting at Index bit. The upper 64-bits are
+    // undefined.
     Value *Op0 = II->getArgOperand(0);
     Value *Op1 = II->getArgOperand(1);
     unsigned VWidth0 = Op0->getType()->getVectorNumElements();
     unsigned VWidth1 = Op1->getType()->getVectorNumElements();
-    assert(VWidth0 == 2 && VWidth1 == 2 && "Unexpected operand sizes");
+    assert(Op0->getType()->getPrimitiveSizeInBits() == 128 &&
+           Op1->getType()->getPrimitiveSizeInBits() == 128 && VWidth0 == 2 &&
+           VWidth1 == 2 && "Unexpected operand sizes");
 
+    // See if we're dealing with constant values.
+    ConstantInt *CILength = dyn_cast<ConstantInt>(II->getArgOperand(2));
+    ConstantInt *CIIndex = dyn_cast<ConstantInt>(II->getArgOperand(3));
+
+    // Attempt to simplify to a constant or shuffle vector.
+    if (CILength && CIIndex) {
+      APInt Len = CILength->getValue().zextOrTrunc(6);
+      APInt Idx = CIIndex->getValue().zextOrTrunc(6);
+      if (Value *V = SimplifyX86insertq(*II, Op0, Op1, Len, Idx, *Builder))
+        return ReplaceInstUsesWith(*II, V);
+    }
+
+    // INSERTQI only uses the lowest 64-bits of the first two 128-bit vector
+    // operands.
     if (Value *V = SimplifyDemandedVectorEltsLow(Op0, VWidth0, 1)) {
       II->setArgOperand(0, V);
       return II;
@@ -1183,9 +1396,9 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
         // control mask is set, then zero is written in the result byte.
         // The zero vector is in the right-hand side of the resulting
         // shufflevector.
- 
+
         // The value of each index is the least significant 4 bits of the
-        // shuffle control byte.      
+        // shuffle control byte.
         Indexes[I] = (Index < 0) ? NumElts : Index & 0xF;
       }
     } else if (!isa<ConstantAggregateZero>(V))
@@ -1249,6 +1462,22 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   case Intrinsic::x86_avx_vperm2f128_si_256:
   case Intrinsic::x86_avx2_vperm2i128:
     if (Value *V = SimplifyX86vperm2(*II, *Builder))
+      return ReplaceInstUsesWith(*II, V);
+    break;
+
+  case Intrinsic::x86_xop_vpcomb:
+  case Intrinsic::x86_xop_vpcomd:
+  case Intrinsic::x86_xop_vpcomq:
+  case Intrinsic::x86_xop_vpcomw:
+    if (Value *V = SimplifyX86vpcom(*II, *Builder, true))
+      return ReplaceInstUsesWith(*II, V);
+    break;
+
+  case Intrinsic::x86_xop_vpcomub:
+  case Intrinsic::x86_xop_vpcomud:
+  case Intrinsic::x86_xop_vpcomuq:
+  case Intrinsic::x86_xop_vpcomuw:
+    if (Value *V = SimplifyX86vpcom(*II, *Builder, false))
       return ReplaceInstUsesWith(*II, V);
     break;
 
@@ -1395,15 +1624,14 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     // happen when variable allocas are DCE'd.
     if (IntrinsicInst *SS = dyn_cast<IntrinsicInst>(II->getArgOperand(0))) {
       if (SS->getIntrinsicID() == Intrinsic::stacksave) {
-        BasicBlock::iterator BI = SS;
-        if (&*++BI == II)
+        if (&*++SS->getIterator() == II)
           return EraseInstFromFunction(CI);
       }
     }
 
     // Scan down this block to see if there is another stack restore in the
     // same block without an intervening call/alloca.
-    BasicBlock::iterator BI = II;
+    BasicBlock::iterator BI(II);
     TerminatorInst *TI = II->getParent()->getTerminator();
     bool CannotRemove = false;
     for (++BI; &*BI != TI; ++BI) {
@@ -1437,7 +1665,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     // Remove trivially empty lifetime_start/end ranges, i.e. a start
     // immediately followed by an end (ignoring debuginfo or other
     // lifetime markers in between).
-    BasicBlock::iterator BI = II, BE = II->getParent()->end();
+    BasicBlock::iterator BI = II->getIterator(), BE = II->getParent()->end();
     for (++BI; BI != BE; ++BI) {
       if (IntrinsicInst *LTE = dyn_cast<IntrinsicInst>(BI)) {
         if (isa<DbgInfoIntrinsic>(LTE) ||
@@ -1658,9 +1886,10 @@ static IntrinsicInst *FindInitTrampolineFromBB(IntrinsicInst *AdjustTramp,
                                                Value *TrampMem) {
   // Visit all the previous instructions in the basic block, and try to find a
   // init.trampoline which has a direct path to the adjust.trampoline.
-  for (BasicBlock::iterator I = AdjustTramp,
-       E = AdjustTramp->getParent()->begin(); I != E; ) {
-    Instruction *Inst = --I;
+  for (BasicBlock::iterator I = AdjustTramp->getIterator(),
+                            E = AdjustTramp->getParent()->begin();
+       I != E;) {
+    Instruction *Inst = &*--I;
     if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(I))
       if (II->getIntrinsicID() == Intrinsic::init_trampoline &&
           II->getOperand(0) == TrampMem)

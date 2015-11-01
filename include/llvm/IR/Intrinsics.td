@@ -73,8 +73,8 @@ def IntrNoReturn : IntrinsicProperty;
 // Parallels the noduplicate attribute on LLVM IR functions.
 def IntrNoDuplicate : IntrinsicProperty;
 
-// IntrConvergent - Calls to this intrinsic are convergent and may only be
-// moved to control equivalent blocks.
+// IntrConvergent - Calls to this intrinsic are convergent and may not be made
+// control-dependent on any additional values.
 // Parallels the convergent attribute on LLVM IR functions.
 def IntrConvergent : IntrinsicProperty;
 
@@ -429,22 +429,13 @@ def int_eh_typeid_for : Intrinsic<[llvm_i32_ty], [llvm_ptr_ty], [IntrNoMem]>;
 def int_eh_return_i32 : Intrinsic<[], [llvm_i32_ty, llvm_ptr_ty]>;
 def int_eh_return_i64 : Intrinsic<[], [llvm_i64_ty, llvm_ptr_ty]>;
 
-// eh.begincatch takes a pointer returned by a landingpad instruction and
-// copies the exception object into the memory pointed to by the second
-// parameter. If the second parameter is null, no copy occurs.
-def int_eh_begincatch : Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty],
-                                  [NoCapture<0>, NoCapture<1>]>;
-def int_eh_endcatch : Intrinsic<[], []>;
-
 // eh.exceptionpointer returns the pointer to the exception caught by
 // the given `catchpad`.
 def int_eh_exceptionpointer : Intrinsic<[llvm_anyptr_ty], [llvm_token_ty],
                                         [IntrNoMem]>;
 
-// Represents the list of actions to take when an exception is thrown.
-def int_eh_actions : Intrinsic<[llvm_ptr_ty], [llvm_vararg_ty], []>;
-
-def int_eh_exceptioncode : Intrinsic<[llvm_i32_ty], [], [IntrReadMem]>;
+// Gets the exception code from a catchpad token. Only used on some platforms.
+def int_eh_exceptioncode : Intrinsic<[llvm_i32_ty], [llvm_token_ty], [IntrNoMem]>;
 
 // __builtin_unwind_init is an undocumented GCC intrinsic that causes all
 // callee-saved registers to be saved and restored (regardless of whether they

@@ -2012,15 +2012,6 @@ SDValue NVPTXTargetLowering::LowerSTOREi1(SDValue Op, SelectionDAG &DAG) const {
   return Result;
 }
 
-SDValue NVPTXTargetLowering::getExtSymb(SelectionDAG &DAG, const char *inname,
-                                        int idx, EVT v) const {
-  std::string *name = nvTM->getManagedStrPool()->getManagedString(inname);
-  std::stringstream suffix;
-  suffix << idx;
-  *name += suffix.str();
-  return DAG.getTargetExternalSymbol(name->c_str(), v);
-}
-
 SDValue
 NVPTXTargetLowering::getParamSymbol(SelectionDAG &DAG, int idx, EVT v) const {
   std::string ParamSym;
@@ -2032,10 +2023,6 @@ NVPTXTargetLowering::getParamSymbol(SelectionDAG &DAG, int idx, EVT v) const {
   std::string *SavedStr =
     nvTM->getManagedStrPool()->getManagedString(ParamSym.c_str());
   return DAG.getTargetExternalSymbol(SavedStr->c_str(), v);
-}
-
-SDValue NVPTXTargetLowering::getParamHelpSymbol(SelectionDAG &DAG, int idx) {
-  return getExtSymb(DAG, ".HLPPARAM", idx);
 }
 
 // Check to see if the kernel argument is image*_t or sampler_t
@@ -2057,11 +2044,8 @@ bool llvm::isImageOrSamplerVal(const Value *arg, const Module *context) {
   auto *STy = dyn_cast<StructType>(PTy->getElementType());
   const std::string TypeName = STy && !STy->isLiteral() ? STy->getName() : "";
 
-  for (int i = 0, e = array_lengthof(specialTypes); i != e; ++i)
-    if (TypeName == specialTypes[i])
-      return true;
-
-  return false;
+  return std::find(std::begin(specialTypes), std::end(specialTypes),
+                   TypeName) != std::end(specialTypes);
 }
 
 SDValue NVPTXTargetLowering::LowerFormalArguments(
@@ -2087,10 +2071,9 @@ SDValue NVPTXTargetLowering::LowerFormalArguments(
 
   std::vector<Type *> argTypes;
   std::vector<const Argument *> theArgs;
-  for (Function::const_arg_iterator I = F->arg_begin(), E = F->arg_end();
-       I != E; ++I) {
-    theArgs.push_back(I);
-    argTypes.push_back(I->getType());
+  for (const Argument &I : F->args()) {
+    theArgs.push_back(&I);
+    argTypes.push_back(I.getType());
   }
   // argTypes.size() (or theArgs.size()) and Ins.size() need not match.
   // Ins.size() will be larger
@@ -2548,20 +2531,6 @@ void NVPTXTargetLowering::LowerAsmOperandForConstraint(
     return;
   else
     TargetLowering::LowerAsmOperandForConstraint(Op, Constraint, Ops, DAG);
-}
-
-// NVPTX suuport vector of legal types of any length in Intrinsics because the
-// NVPTX specific type legalizer
-// will legalize them to the PTX supported length.
-bool NVPTXTargetLowering::isTypeSupportedInIntrinsic(MVT VT) const {
-  if (isTypeLegal(VT))
-    return true;
-  if (VT.isVector()) {
-    MVT eVT = VT.getVectorElementType();
-    if (isTypeLegal(eVT))
-      return true;
-  }
-  return false;
 }
 
 static unsigned getOpcForTextureInstr(unsigned Intrinsic) {
@@ -3823,11 +3792,6 @@ NVPTXTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
   return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
 }
 
-/// getFunctionAlignment - Return the Log2 alignment of this function.
-unsigned NVPTXTargetLowering::getFunctionAlignment(const Function *) const {
-  return 4;
-}
-
 //===----------------------------------------------------------------------===//
 //                         NVPTX DAG Combining
 //===----------------------------------------------------------------------===//
@@ -4566,25 +4530,25 @@ void NVPTXTargetLowering::ReplaceNodeResults(
 void NVPTXSection::anchor() {}
 
 NVPTXTargetObjectFile::~NVPTXTargetObjectFile() {
-  delete TextSection;
-  delete DataSection;
-  delete BSSSection;
-  delete ReadOnlySection;
+  delete static_cast<NVPTXSection *>(TextSection);
+  delete static_cast<NVPTXSection *>(DataSection);
+  delete static_cast<NVPTXSection *>(BSSSection);
+  delete static_cast<NVPTXSection *>(ReadOnlySection);
 
-  delete StaticCtorSection;
-  delete StaticDtorSection;
-  delete LSDASection;
-  delete EHFrameSection;
-  delete DwarfAbbrevSection;
-  delete DwarfInfoSection;
-  delete DwarfLineSection;
-  delete DwarfFrameSection;
-  delete DwarfPubTypesSection;
-  delete DwarfDebugInlineSection;
-  delete DwarfStrSection;
-  delete DwarfLocSection;
-  delete DwarfARangesSection;
-  delete DwarfRangesSection;
+  delete static_cast<NVPTXSection *>(StaticCtorSection);
+  delete static_cast<NVPTXSection *>(StaticDtorSection);
+  delete static_cast<NVPTXSection *>(LSDASection);
+  delete static_cast<NVPTXSection *>(EHFrameSection);
+  delete static_cast<NVPTXSection *>(DwarfAbbrevSection);
+  delete static_cast<NVPTXSection *>(DwarfInfoSection);
+  delete static_cast<NVPTXSection *>(DwarfLineSection);
+  delete static_cast<NVPTXSection *>(DwarfFrameSection);
+  delete static_cast<NVPTXSection *>(DwarfPubTypesSection);
+  delete static_cast<const NVPTXSection *>(DwarfDebugInlineSection);
+  delete static_cast<NVPTXSection *>(DwarfStrSection);
+  delete static_cast<NVPTXSection *>(DwarfLocSection);
+  delete static_cast<NVPTXSection *>(DwarfARangesSection);
+  delete static_cast<NVPTXSection *>(DwarfRangesSection);
 }
 
 MCSection *

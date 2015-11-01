@@ -854,11 +854,10 @@ SparcTargetLowering::LowerCall_32(TargetLowering::CallLoweringInfo &CLI,
         // Move from the float value from float registers into the
         // integer registers.
 
-        // TODO: this conversion is done in two steps, because
-        // f64->i64 conversion is done efficiently, and i64->v2i32 is
-        // basically a no-op. But f64->v2i32 is NOT done efficiently
-        // for some reason.
-        Arg = DAG.getNode(ISD::BITCAST, dl, MVT::i64, Arg);
+        // TODO: The f64 -> v2i32 conversion is super-inefficient for
+        // constants: it sticks them in the constant pool, then loads
+        // to a fp register, then stores to temp memory, then loads to
+        // integer registers.
         Arg = DAG.getNode(ISD::BITCAST, dl, MVT::v2i32, Arg);
       }
 
@@ -1041,8 +1040,8 @@ SparcTargetLowering::getSRetArgSize(SelectionDAG &DAG, SDValue Callee) const
   if (!CalleeFn)
     return 0;
 
-  assert(CalleeFn->hasStructRetAttr() &&
-         "Callee does not have the StructRet attribute.");
+  // It would be nice to check for the sret attribute on CalleeFn here,
+  // but since it is not part of the function type, any check will misfire.
 
   PointerType *Ty = cast<PointerType>(CalleeFn->arg_begin()->getType());
   Type *ElementTy = Ty->getElementType();
@@ -2886,7 +2885,7 @@ static SDValue LowerUMULO_SMULO(SDValue Op, SelectionDAG &DAG,
 
   SDValue MulResult = TLI.makeLibCall(DAG,
                                       RTLIB::MUL_I128, WideVT,
-                                      Args, 4, isSigned, dl).first;
+                                      Args, isSigned, dl).first;
   SDValue BottomHalf = DAG.getNode(ISD::EXTRACT_ELEMENT, dl, VT,
                                    MulResult, DAG.getIntPtrConstant(0, dl));
   SDValue TopHalf = DAG.getNode(ISD::EXTRACT_ELEMENT, dl, VT,
@@ -3054,8 +3053,7 @@ SparcTargetLowering::expandSelectCC(MachineInstr *MI,
   // to set, the condition code register to branch on, the true/false values to
   // select between, and a branch opcode to use.
   const BasicBlock *LLVM_BB = BB->getBasicBlock();
-  MachineFunction::iterator It = BB;
-  ++It;
+  MachineFunction::iterator It = ++BB->getIterator();
 
   //  thisMBB:
   //  ...
@@ -3140,7 +3138,7 @@ SparcTargetLowering::expandAtomicRMW(MachineInstr *MI,
     .addReg(AddrReg).addImm(0);
 
   // Split the basic block MBB before MI and insert the loop block in the hole.
-  MachineFunction::iterator MFI = MBB;
+  MachineFunction::iterator MFI = MBB->getIterator();
   const BasicBlock *LLVM_BB = MBB->getBasicBlock();
   MachineFunction *MF = MBB->getParent();
   MachineBasicBlock *LoopMBB = MF->CreateMachineBasicBlock(LLVM_BB);

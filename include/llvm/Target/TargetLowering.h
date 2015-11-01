@@ -87,6 +87,7 @@ public:
     Legal,      // The target natively supports this operation.
     Promote,    // This operation should be executed in a larger type.
     Expand,     // Try to expand this to other ops, otherwise use a libcall.
+    LibCall,    // Don't try to expand this to other ops, always use a libcall.
     Custom      // Use the LowerOperation hook to implement custom lowering.
   };
 
@@ -672,9 +673,9 @@ public:
            ((unsigned)VT.SimpleTy >> 4) < array_lengthof(CondCodeActions[0]) &&
            "Table isn't big enough!");
     // See setCondCodeAction for how this is encoded.
-    uint32_t Shift = 2 * (VT.SimpleTy & 0xF);
-    uint32_t Value = CondCodeActions[CC][VT.SimpleTy >> 4];
-    LegalizeAction Action = (LegalizeAction) ((Value >> Shift) & 0x3);
+    uint32_t Shift = 4 * (VT.SimpleTy & 0x7);
+    uint32_t Value = CondCodeActions[CC][VT.SimpleTy >> 3];
+    LegalizeAction Action = (LegalizeAction) ((Value >> Shift) & 0xF);
     assert(Action != Promote && "Can't promote condition code!");
     return Action;
   }
@@ -995,13 +996,9 @@ public:
     return false;
   }
 
-  /// Return true if the target stores SafeStack pointer at a fixed offset in
-  /// some non-standard address space, and populates the address space and
-  /// offset as appropriate.
-  virtual bool getSafeStackPointerLocation(unsigned & /*AddressSpace*/,
-                                           unsigned & /*Offset*/) const {
-    return false;
-  }
+  /// If the target has a standard location for the unsafe stack pointer,
+  /// returns the address of that location. Otherwise, returns nullptr.
+  virtual Value *getSafeStackPointerLocation(IRBuilder<> &IRB) const;
 
   /// Returns true if a cast between SrcAS and DestAS is a noop.
   virtual bool isNoopAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const {
@@ -1374,12 +1371,13 @@ protected:
                          LegalizeAction Action) {
     assert(VT.isValid() && (unsigned)CC < array_lengthof(CondCodeActions) &&
            "Table isn't big enough!");
-    /// The lower 5 bits of the SimpleTy index into Nth 2bit set from the 32-bit
-    /// value and the upper 27 bits index into the second dimension of the array
+    assert((unsigned)Action < 0x10 && "too many bits for bitfield array");
+    /// The lower 3 bits of the SimpleTy index into Nth 4bit set from the 32-bit
+    /// value and the upper 29 bits index into the second dimension of the array
     /// to select what 32-bit value to use.
-    uint32_t Shift = 2 * (VT.SimpleTy & 0xF);
-    CondCodeActions[CC][VT.SimpleTy >> 4] &= ~((uint32_t)0x3 << Shift);
-    CondCodeActions[CC][VT.SimpleTy >> 4] |= (uint32_t)Action << Shift;
+    uint32_t Shift = 4 * (VT.SimpleTy & 0x7);
+    CondCodeActions[CC][VT.SimpleTy >> 3] &= ~((uint32_t)0xF << Shift);
+    CondCodeActions[CC][VT.SimpleTy >> 3] |= (uint32_t)Action << Shift;
   }
 
   /// If Opc/OrigVT is specified as being promoted, the promotion code defaults
@@ -1720,6 +1718,12 @@ public:
     return false;
   }
 
+  // Return true if it is profitable to use a scalar input to a BUILD_VECTOR
+  // even if the vector itself has multiple uses.
+  virtual bool aggressivelyPreferBuildVectorSources(EVT VecVT) const {
+    return false;
+  }
+
   //===--------------------------------------------------------------------===//
   // Runtime Library hooks
   //
@@ -1914,10 +1918,10 @@ private:
   /// For each condition code (ISD::CondCode) keep a LegalizeAction that
   /// indicates how instruction selection should deal with the condition code.
   ///
-  /// Because each CC action takes up 2 bits, we need to have the array size be
+  /// Because each CC action takes up 4 bits, we need to have the array size be
   /// large enough to fit all of the value types. This can be done by rounding
-  /// up the MVT::LAST_VALUETYPE value to the next multiple of 16.
-  uint32_t CondCodeActions[ISD::SETCC_INVALID][(MVT::LAST_VALUETYPE + 15) / 16];
+  /// up the MVT::LAST_VALUETYPE value to the next multiple of 8.
+  uint32_t CondCodeActions[ISD::SETCC_INVALID][(MVT::LAST_VALUETYPE + 7) / 8];
 
   ValueTypeActionImpl ValueTypeActions;
 
@@ -2098,9 +2102,9 @@ public:
   /// Returns a pair of (return value, chain).
   /// It is an error to pass RTLIB::UNKNOWN_LIBCALL as \p LC.
   std::pair<SDValue, SDValue> makeLibCall(SelectionDAG &DAG, RTLIB::Libcall LC,
-                                          EVT RetVT, const SDValue *Ops,
-                                          unsigned NumOps, bool isSigned,
-                                          SDLoc dl, bool doesNotReturn = false,
+                                          EVT RetVT, ArrayRef<SDValue> Ops,
+                                          bool isSigned, SDLoc dl,
+                                          bool doesNotReturn = false,
                                           bool isReturnValueUsed = true) const;
 
   //===--------------------------------------------------------------------===//
@@ -2428,6 +2432,13 @@ public:
     }
 
   };
+
+  // Mark inreg arguments for lib-calls. For normal calls this is done by
+  // the frontend ABI code.
+  virtual void markInRegArguments(SelectionDAG &DAG, 
+                 TargetLowering::ArgListTy &Args) const {
+    return;
+  }
 
   /// This function lowers an abstract call to a function into an actual call.
   /// This returns a pair of operands.  The first element is the return value

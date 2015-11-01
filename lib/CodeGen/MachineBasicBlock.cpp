@@ -302,8 +302,8 @@ void MachineBasicBlock::print(raw_ostream &OS, ModuleSlotTracker &MST,
 
   for (const_instr_iterator I = instr_begin(); I != instr_end(); ++I) {
     if (Indexes) {
-      if (Indexes->hasIndex(I))
-        OS << Indexes->getInstructionIndex(I);
+      if (Indexes->hasIndex(&*I))
+        OS << Indexes->getInstructionIndex(&*I);
       OS << '\t';
     }
     OS << '\t';
@@ -402,12 +402,11 @@ MachineBasicBlock::addLiveIn(MCPhysReg PhysReg, const TargetRegisterClass *RC) {
 }
 
 void MachineBasicBlock::moveBefore(MachineBasicBlock *NewAfter) {
-  getParent()->splice(NewAfter, this);
+  getParent()->splice(NewAfter->getIterator(), getIterator());
 }
 
 void MachineBasicBlock::moveAfter(MachineBasicBlock *NewBefore) {
-  MachineFunction::iterator BBI = NewBefore;
-  getParent()->splice(++BBI, this);
+  getParent()->splice(++NewBefore->getIterator(), getIterator());
 }
 
 void MachineBasicBlock::updateTerminator() {
@@ -507,15 +506,19 @@ void MachineBasicBlock::updateTerminator() {
 }
 
 void MachineBasicBlock::addSuccessor(MachineBasicBlock *Succ, uint32_t Weight) {
-
-  // If we see non-zero value for the first time it means we actually use Weight
-  // list, so we fill all Weights with 0's.
-  if (Weight != 0 && Weights.empty())
-    Weights.resize(Successors.size());
-
-  if (Weight != 0 || !Weights.empty())
+  // Weight list is either empty (if successor list isn't empty, this means
+  // disabled optimization) or has the same size as successor list.
+  if (!(Weights.empty() && !Successors.empty()))
     Weights.push_back(Weight);
+  Successors.push_back(Succ);
+  Succ->addPredecessor(this);
+}
 
+void MachineBasicBlock::addSuccessorWithoutWeight(MachineBasicBlock *Succ) {
+  // We need to make sure weight list is either empty or has the same size of
+  // successor list. When this function is called, we can safely delete all
+  // weight in the list.
+  Weights.clear();
   Successors.push_back(Succ);
   Succ->addPredecessor(this);
 }
@@ -653,14 +656,14 @@ bool MachineBasicBlock::isLayoutSuccessor(const MachineBasicBlock *MBB) const {
 }
 
 bool MachineBasicBlock::canFallThrough() {
-  MachineFunction::iterator Fallthrough = this;
+  MachineFunction::iterator Fallthrough = getIterator();
   ++Fallthrough;
   // If FallthroughBlock is off the end of the function, it can't fall through.
   if (Fallthrough == getParent()->end())
     return false;
 
   // If FallthroughBlock isn't a successor, no fallthrough is possible.
-  if (!isSuccessor(Fallthrough))
+  if (!isSuccessor(&*Fallthrough))
     return false;
 
   // Analyze the branches, if any, at the end of the block.
@@ -751,7 +754,7 @@ MachineBasicBlock::SplitCriticalEdge(MachineBasicBlock *Succ, Pass *P) {
   if (LV)
     for (instr_iterator I = getFirstInstrTerminator(), E = instr_end();
          I != E; ++I) {
-      MachineInstr *MI = I;
+      MachineInstr *MI = &*I;
       for (MachineInstr::mop_iterator OI = MI->operands_begin(),
            OE = MI->operands_end(); OI != OE; ++OI) {
         if (!OI->isReg() || OI->getReg() == 0 ||
@@ -771,7 +774,7 @@ MachineBasicBlock::SplitCriticalEdge(MachineBasicBlock *Succ, Pass *P) {
   if (LIS) {
     for (instr_iterator I = getFirstInstrTerminator(), E = instr_end();
          I != E; ++I) {
-      MachineInstr *MI = I;
+      MachineInstr *MI = &*I;
 
       for (MachineInstr::mop_iterator OI = MI->operands_begin(),
            OE = MI->operands_end(); OI != OE; ++OI) {
@@ -793,7 +796,7 @@ MachineBasicBlock::SplitCriticalEdge(MachineBasicBlock *Succ, Pass *P) {
   if (Indexes) {
     for (instr_iterator I = getFirstInstrTerminator(), E = instr_end();
          I != E; ++I)
-      Terminators.push_back(I);
+      Terminators.push_back(&*I);
   }
 
   updateTerminator();
@@ -802,7 +805,7 @@ MachineBasicBlock::SplitCriticalEdge(MachineBasicBlock *Succ, Pass *P) {
     SmallVector<MachineInstr*, 4> NewTerminators;
     for (instr_iterator I = getFirstInstrTerminator(), E = instr_end();
          I != E; ++I)
-      NewTerminators.push_back(I);
+      NewTerminators.push_back(&*I);
 
     for (SmallVectorImpl<MachineInstr*>::iterator I = Terminators.begin(),
         E = Terminators.end(); I != E; ++I) {
@@ -823,9 +826,9 @@ MachineBasicBlock::SplitCriticalEdge(MachineBasicBlock *Succ, Pass *P) {
            I != E; ++I) {
         // Some instructions may have been moved to NMBB by updateTerminator(),
         // so we first remove any instruction that already has an index.
-        if (Indexes->hasIndex(I))
-          Indexes->removeMachineInstrFromMaps(I);
-        Indexes->insertMachineInstrInMaps(I);
+        if (Indexes->hasIndex(&*I))
+          Indexes->removeMachineInstrFromMaps(&*I);
+        Indexes->insertMachineInstrInMaps(&*I);
       }
     }
   }
@@ -852,7 +855,7 @@ MachineBasicBlock::SplitCriticalEdge(MachineBasicBlock *Succ, Pass *P) {
         if (!(--I)->addRegisterKilled(Reg, TRI, /* addIfNotFound= */ false))
           continue;
         if (TargetRegisterInfo::isVirtualRegister(Reg))
-          LV->getVarInfo(Reg).Kills.push_back(I);
+          LV->getVarInfo(Reg).Kills.push_back(&*I);
         DEBUG(dbgs() << "Restored terminator kill: " << *I);
         break;
       }
@@ -972,7 +975,7 @@ static void unbundleSingleMI(MachineInstr *MI) {
 
 MachineBasicBlock::instr_iterator
 MachineBasicBlock::erase(MachineBasicBlock::instr_iterator I) {
-  unbundleSingleMI(I);
+  unbundleSingleMI(&*I);
   return Insts.erase(I);
 }
 
@@ -1058,17 +1061,16 @@ bool MachineBasicBlock::CorrectExtraCFGEdges(MachineBasicBlock *DestA,
 
   bool Changed = false;
 
-  MachineFunction::iterator FallThru =
-    std::next(MachineFunction::iterator(this));
+  MachineFunction::iterator FallThru = std::next(getIterator());
 
   if (!DestA && !DestB) {
     // Block falls through to successor.
-    DestA = FallThru;
-    DestB = FallThru;
+    DestA = &*FallThru;
+    DestB = &*FallThru;
   } else if (DestA && !DestB) {
     if (IsCond)
       // Block ends in conditional jump that falls through to successor.
-      DestB = FallThru;
+      DestB = &*FallThru;
   } else {
     assert(DestA && DestB && IsCond &&
            "CFG in a bad state. Cannot correct CFG edges");

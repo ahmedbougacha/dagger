@@ -11,33 +11,33 @@
 #define LLVM_MC_STRINGTABLEBUILDER_H
 
 #include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/DenseMap.h"
 #include <cassert>
 
 namespace llvm {
 
 /// \brief Utility for building string tables with deduplicated suffixes.
 class StringTableBuilder {
+public:
+  enum Kind { ELF, WinCOFF, MachO, RAW };
+
+private:
   SmallString<256> StringTable;
-  StringMap<size_t> StringIndexMap;
+  DenseMap<StringRef, size_t> StringIndexMap;
+  size_t Size = 0;
+  Kind K;
 
 public:
-  /// \brief Add a string to the builder. Returns a StringRef to the internal
-  /// copy of s. Can only be used before the table is finalized.
-  StringRef add(StringRef s) {
-    assert(!isFinalized());
-    return StringIndexMap.insert(std::make_pair(s, 0)).first->first();
-  }
+  StringTableBuilder(Kind K);
 
-  enum Kind {
-    ELF,
-    WinCOFF,
-    MachO
-  };
+  /// \brief Add a string to the builder. Returns the position of S in the
+  /// table. The position will be changed if finalize is used.
+  /// Can only be used before the table is finalized.
+  size_t add(StringRef S);
 
   /// \brief Analyze the strings and build the final table. No more strings can
   /// be added after this point.
-  void finalize(Kind kind);
+  void finalize();
 
   /// \brief Retrieve the string table data. Can only be used after the table
   /// is finalized.
@@ -48,13 +48,10 @@ public:
 
   /// \brief Get the offest of a string in the string table. Can only be used
   /// after the table is finalized.
-  size_t getOffset(StringRef s) const {
-    assert(isFinalized());
-    auto I = StringIndexMap.find(s);
-    assert(I != StringIndexMap.end() && "String is not in table!");
-    return I->second;
-  }
+  size_t getOffset(StringRef S) const;
 
+  const DenseMap<StringRef, size_t> &getMap() const { return StringIndexMap; }
+  size_t getSize() const { return Size; }
   void clear();
 
 private:

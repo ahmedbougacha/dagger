@@ -16,6 +16,7 @@
 #define LLVM_ANALYSIS_VALUETRACKING_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/DataTypes.h"
 
@@ -48,8 +49,9 @@ namespace llvm {
                         const DominatorTree *DT = nullptr);
   /// Compute known bits from the range metadata.
   /// \p KnownZero the set of bits that are known to be zero
+  /// \p KnownOne the set of bits that are known to be one
   void computeKnownBitsFromRangeMetadata(const MDNode &Ranges,
-                                         APInt &KnownZero);
+                                         APInt &KnownZero, APInt &KnownOne);
   /// Return true if LHS and RHS have no common bits set.
   bool haveNoCommonBitsSet(Value *LHS, Value *RHS, const DataLayout &DL,
                            AssumptionCache *AC = nullptr,
@@ -89,6 +91,13 @@ namespace llvm {
                           AssumptionCache *AC = nullptr,
                           const Instruction *CxtI = nullptr,
                           const DominatorTree *DT = nullptr);
+
+  /// isKnownNonEqual - Return true if the given values are known to be
+  /// non-equal when defined. Supports scalar integer types only.
+  bool isKnownNonEqual(Value *V1, Value *V2, const DataLayout &DL,
+                      AssumptionCache *AC = nullptr,
+                      const Instruction *CxtI = nullptr,
+                      const DominatorTree *DT = nullptr);
 
   /// MaskedValueIsZero - Return true if 'V & Mask' is known to be zero.  We use
   /// this predicate to simplify operations downstream.  Mask is known to be
@@ -422,6 +431,20 @@ namespace llvm {
   SelectPatternResult matchSelectPattern(Value *V, Value *&LHS, Value *&RHS,
                                          Instruction::CastOps *CastOp = nullptr);
 
+  /// Parse out a conservative ConstantRange from !range metadata.
+  ///
+  /// E.g. if RangeMD is !{i32 0, i32 10, i32 15, i32 20} then return [0, 20).
+  ConstantRange getConstantRangeFromMetadata(MDNode &RangeMD);
+
+  /// Return true if RHS is known to be implied by LHS.  A & B must be i1
+  /// (boolean) values or a vector of such values. Note that the truth table for
+  /// implication is the same as <=u on i1 values (but not <=s!).  The truth
+  /// table for both is:
+  ///    | T | F (B)
+  ///  T | T | F
+  ///  F | T | T
+  /// (A)
+  bool isImpliedCondition(Value *LHS, Value *RHS);
 } // end namespace llvm
 
 #endif

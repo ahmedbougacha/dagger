@@ -148,7 +148,7 @@ void PEI::calculateSets(MachineFunction &Fn) {
   }
 
   // Save refs to entry and return blocks.
-  SaveBlocks.push_back(Fn.begin());
+  SaveBlocks.push_back(&Fn.front());
   for (MachineBasicBlock &MBB : Fn) {
     if (MBB.isEHFuncletEntry())
       SaveBlocks.push_back(&MBB);
@@ -807,29 +807,6 @@ void PEI::replaceFrameIndices(MachineFunction &Fn) {
   const TargetFrameLowering &TFI = *Fn.getSubtarget().getFrameLowering();
   if (!TFI.needsFrameIndexResolution(Fn)) return;
 
-  MachineModuleInfo &MMI = Fn.getMMI();
-  const Function *F = Fn.getFunction();
-  const Function *ParentF = MMI.getWinEHParent(F);
-  unsigned FrameReg;
-  if (F == ParentF) {
-    WinEHFuncInfo &FuncInfo = MMI.getWinEHFuncInfo(Fn.getFunction());
-    // FIXME: This should be unconditional but we have bugs in the preparation
-    // pass.
-    if (FuncInfo.UnwindHelpFrameIdx != INT_MAX)
-      FuncInfo.UnwindHelpFrameOffset = TFI.getFrameIndexReferenceFromSP(
-          Fn, FuncInfo.UnwindHelpFrameIdx, FrameReg);
-    for (WinEHTryBlockMapEntry &TBME : FuncInfo.TryBlockMap) {
-      for (WinEHHandlerType &H : TBME.HandlerArray) {
-        unsigned UnusedReg;
-        if (H.CatchObj.FrameIndex == INT_MAX)
-          H.CatchObj.FrameOffset = INT_MAX;
-        else
-          H.CatchObj.FrameOffset =
-              TFI.getFrameIndexReference(Fn, H.CatchObj.FrameIndex, UnusedReg);
-      }
-    }
-  }
-
   // Store SPAdj at exit of a basic block.
   SmallVector<int, 8> SPState;
   SPState.resize(Fn.getNumBlockIDs());
@@ -852,12 +829,12 @@ void PEI::replaceFrameIndices(MachineFunction &Fn) {
   }
 
   // Handle the unreachable blocks.
-  for (MachineFunction::iterator BB = Fn.begin(), E = Fn.end(); BB != E; ++BB) {
-    if (Reachable.count(BB))
+  for (auto &BB : Fn) {
+    if (Reachable.count(&BB))
       // Already handled in DFS traversal.
       continue;
     int SPAdj = 0;
-    replaceFrameIndices(BB, Fn, SPAdj);
+    replaceFrameIndices(&BB, Fn, SPAdj);
   }
 }
 
@@ -990,7 +967,7 @@ PEI::scavengeFrameVirtualRegs(MachineFunction &Fn) {
   // Run through the instructions and find any virtual registers.
   for (MachineFunction::iterator BB = Fn.begin(),
        E = Fn.end(); BB != E; ++BB) {
-    RS->enterBasicBlock(BB);
+    RS->enterBasicBlock(&*BB);
 
     int SPAdj = 0;
 
@@ -1051,7 +1028,7 @@ PEI::scavengeFrameVirtualRegs(MachineFunction &Fn) {
       // problem because we need the spill code before I: Move I to just
       // prior to J.
       if (I != std::prev(J)) {
-        BB->splice(J, BB, I);
+        BB->splice(J, &*BB, I);
 
         // Before we move I, we need to prepare the RS to visit I again.
         // Specifically, RS will assert if it sees uses of registers that

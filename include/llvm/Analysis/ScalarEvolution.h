@@ -128,11 +128,9 @@ namespace llvm {
     /// stream.  This should really only be used for debugging purposes.
     void print(raw_ostream &OS) const;
 
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
     /// This method is used for debugging.
     ///
     void dump() const;
-#endif
   };
 
   // Specialize FoldingSetTrait for SCEV to avoid needing to compute
@@ -446,16 +444,16 @@ namespace llvm {
     const BackedgeTakenInfo &getBackedgeTakenInfo(const Loop *L);
 
     /// Compute the number of times the specified loop will iterate.
-    BackedgeTakenInfo ComputeBackedgeTakenCount(const Loop *L);
+    BackedgeTakenInfo computeBackedgeTakenCount(const Loop *L);
 
     /// Compute the number of times the backedge of the specified loop will
     /// execute if it exits via the specified block.
-    ExitLimit ComputeExitLimit(const Loop *L, BasicBlock *ExitingBlock);
+    ExitLimit computeExitLimit(const Loop *L, BasicBlock *ExitingBlock);
 
     /// Compute the number of times the backedge of the specified loop will
     /// execute if its exit condition were a conditional branch of ExitCond,
     /// TBB, and FBB.
-    ExitLimit ComputeExitLimitFromCond(const Loop *L,
+    ExitLimit computeExitLimitFromCond(const Loop *L,
                                        Value *ExitCond,
                                        BasicBlock *TBB,
                                        BasicBlock *FBB,
@@ -464,7 +462,7 @@ namespace llvm {
     /// Compute the number of times the backedge of the specified loop will
     /// execute if its exit condition were a conditional branch of the ICmpInst
     /// ExitCond, TBB, and FBB.
-    ExitLimit ComputeExitLimitFromICmp(const Loop *L,
+    ExitLimit computeExitLimitFromICmp(const Loop *L,
                                        ICmpInst *ExitCond,
                                        BasicBlock *TBB,
                                        BasicBlock *FBB,
@@ -474,22 +472,33 @@ namespace llvm {
     /// execute if its exit condition were a switch with a single exiting case
     /// to ExitingBB.
     ExitLimit
-    ComputeExitLimitFromSingleExitSwitch(const Loop *L, SwitchInst *Switch,
+    computeExitLimitFromSingleExitSwitch(const Loop *L, SwitchInst *Switch,
                                BasicBlock *ExitingBB, bool IsSubExpr);
 
     /// Given an exit condition of 'icmp op load X, cst', try to see if we can
     /// compute the backedge-taken count.
-    ExitLimit ComputeLoadConstantCompareExitLimit(LoadInst *LI,
+    ExitLimit computeLoadConstantCompareExitLimit(LoadInst *LI,
                                                   Constant *RHS,
                                                   const Loop *L,
                                                   ICmpInst::Predicate p);
+
+    /// Compute the exit limit of a loop that is controlled by a
+    /// "(IV >> 1) != 0" type comparison.  We cannot compute the exact trip
+    /// count in these cases (since SCEV has no way of expressing them), but we
+    /// can still sometimes compute an upper bound.
+    ///
+    /// Return an ExitLimit for a loop whose backedge is guarded by `LHS Pred
+    /// RHS`.
+    ExitLimit computeShiftCompareExitLimit(Value *LHS, Value *RHS,
+                                           const Loop *L,
+                                           ICmpInst::Predicate Pred);
 
     /// If the loop is known to execute a constant number of times (the
     /// condition evolves only from constants), try to evaluate a few iterations
     /// of the loop until we get the exit condition gets a value of ExitWhen
     /// (true or false).  If we cannot evaluate the exit count of the loop,
     /// return CouldNotCompute.
-    const SCEV *ComputeExitCountExhaustively(const Loop *L,
+    const SCEV *computeExitCountExhaustively(const Loop *L,
                                              Value *Cond,
                                              bool ExitWhen);
 
@@ -576,10 +585,27 @@ namespace llvm {
     bool isKnownPredicateWithRanges(ICmpInst::Predicate Pred,
                                     const SCEV *LHS, const SCEV *RHS);
 
+    /// Try to prove the condition described by "LHS Pred RHS" by ruling out
+    /// integer overflow.
+    ///
+    /// For instance, this will return true for "A s< (A + C)<nsw>" if C is
+    /// positive.
+    bool isKnownPredicateViaNoOverflow(ICmpInst::Predicate Pred,
+                                       const SCEV *LHS, const SCEV *RHS);
+
     /// Try to split Pred LHS RHS into logical conjunctions (and's) and try to
     /// prove them individually.
     bool isKnownPredicateViaSplitting(ICmpInst::Predicate Pred, const SCEV *LHS,
                                       const SCEV *RHS);
+
+    /// Try to match the Expr as "(L + R)<Flags>".
+    bool splitBinaryAdd(const SCEV *Expr, const SCEV *&L, const SCEV *&R,
+                        SCEV::NoWrapFlags &Flags);
+
+    /// Return true if More == (Less + C), where C is a constant.  This is
+    /// intended to be used as a cheaper substitute for full SCEV subtraction.
+    bool computeConstantDifference(const SCEV *Less, const SCEV *More,
+                                   APInt &C);
 
     /// Drop memoized information computed for S.
     void forgetMemoizedResults(const SCEV *S);
@@ -1075,6 +1101,12 @@ namespace llvm {
                      SmallVectorImpl<const SCEV *> &Subscripts,
                      SmallVectorImpl<const SCEV *> &Sizes,
                      const SCEV *ElementSize);
+
+    /// Return the DataLayout associated with the module this SCEV instance is
+    /// operating on.
+    const DataLayout &getDataLayout() const {
+      return F.getParent()->getDataLayout();
+    }
 
   private:
     /// Compute the backedge taken count knowing the interval difference, the

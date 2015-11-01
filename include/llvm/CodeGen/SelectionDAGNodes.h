@@ -82,11 +82,6 @@ namespace ISD {
   /// all ConstantFPSDNode or undef.
   bool isBuildVectorOfConstantFPSDNodes(const SDNode *N);
 
-  /// Return true if the specified node is a
-  /// ISD::SCALAR_TO_VECTOR node or a BUILD_VECTOR node where only the low
-  /// element is not an undef.
-  bool isScalarToVector(const SDNode *N);
-
   /// Return true if the node has at least one operand
   /// and all operands of the specified node are ISD::UNDEF.
   bool allOperandsUndef(const SDNode *N);
@@ -431,11 +426,9 @@ private:
   friend struct ilist_traits<SDNode>;
 
 public:
-#ifndef NDEBUG
   /// Unique and persistent id per SDNode in the DAG.
   /// Used for debug printing.
   uint16_t PersistentId;
-#endif
 
   //===--------------------------------------------------------------------===//
   //  Accessors
@@ -674,22 +667,6 @@ public:
       getOperand(getNumOperands()-1).getValueType() == MVT::Glue)
       return getOperand(getNumOperands()-1).getNode();
     return nullptr;
-  }
-
-  // If this is a pseudo op, like copyfromreg, look to see if there is a
-  // real target node glued to it.  If so, return the target node.
-  const SDNode *getGluedMachineNode() const {
-    const SDNode *FoundNode = this;
-
-    // Climb up glue edges until a machine-opcode node is found, or the
-    // end of the chain is reached.
-    while (!FoundNode->isMachineOpcode()) {
-      const SDNode *N = FoundNode->getGluedNode();
-      if (!N) break;
-      FoundNode = N;
-    }
-
-    return FoundNode;
   }
 
   /// If this node has a glue value with a user, return
@@ -1713,6 +1690,14 @@ public:
   /// the vector width and set the bits where elements are undef.
   ConstantFPSDNode *
   getConstantFPSplatNode(BitVector *UndefElements = nullptr) const;
+
+  /// \brief If this is a constant FP splat and the splatted constant FP is an
+  /// exact power or 2, return the log base 2 integer value.  Otherwise,
+  /// return -1.
+  ///
+  /// The BitWidth specifies the necessary bit precision.
+  int32_t getConstantFPSplatPow2ToLog2Int(BitVector *UndefElements,
+                                          uint32_t BitWidth) const;
 
   bool isConstant() const;
 

@@ -119,7 +119,7 @@ bool Sinking::runOnFunction(Function &F) {
 
 bool Sinking::ProcessBlock(BasicBlock &BB) {
   // Can't sink anything out of a block that has less than two successors.
-  if (BB.getTerminator()->getNumSuccessors() <= 1 || BB.empty()) return false;
+  if (BB.getTerminator()->getNumSuccessors() <= 1) return false;
 
   // Don't bother sinking code out of unreachable blocks. In addition to being
   // unprofitable, it can also lead to infinite looping, because in an
@@ -134,7 +134,7 @@ bool Sinking::ProcessBlock(BasicBlock &BB) {
   bool ProcessedBegin = false;
   SmallPtrSet<Instruction *, 8> Stores;
   do {
-    Instruction *Inst = I;  // The instruction to sink.
+    Instruction *Inst = &*I; // The instruction to sink.
 
     // Predecrement I (if it's not begin) so that it isn't invalidated by
     // sinking.
@@ -172,7 +172,8 @@ static bool isSafeToMove(Instruction *Inst, AliasAnalysis *AA,
   if (isa<TerminatorInst>(Inst) || isa<PHINode>(Inst))
     return false;
 
-  // Convergent operations can only be moved to control equivalent blocks.
+  // Convergent operations cannot be made control-dependent on additional
+  // values.
   if (auto CS = CallSite(Inst)) {
     if (CS.hasFnAttr(Attribute::Convergent))
       return false;
@@ -278,6 +279,6 @@ bool Sinking::SinkInstruction(Instruction *Inst,
         dbgs() << ")\n");
 
   // Move the instruction.
-  Inst->moveBefore(SuccToSinkTo->getFirstInsertionPt());
+  Inst->moveBefore(&*SuccToSinkTo->getFirstInsertionPt());
   return true;
 }

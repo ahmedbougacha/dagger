@@ -25,6 +25,7 @@
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
@@ -51,7 +52,7 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_END(DemandedBits, "demanded-bits", "Demanded bits analysis",
                     false, false)
 
-DemandedBits::DemandedBits() : FunctionPass(ID) {
+DemandedBits::DemandedBits() : FunctionPass(ID), F(nullptr), Analyzed(false) {
   initializeDemandedBitsPass(*PassRegistry::getPassRegistry());
 }
 
@@ -131,6 +132,7 @@ void DemandedBits::determineLiveOperandBits(
     break;
   case Instruction::Add:
   case Instruction::Sub:
+  case Instruction::Mul:
     // Find the highest live output bit. We don't need any more input
     // bits than that (adds, and thus subtracts, ripple only to the
     // left).
@@ -240,20 +242,37 @@ void DemandedBits::determineLiveOperandBits(
     if (OperandNo != 0)
       AB = AOut;
     break;
+  case Instruction::ICmp:
+    // Count the number of leading zeroes in each operand.
+    ComputeKnownBits(BitWidth, I, UserI->getOperand(1));
+    auto NumLeadingZeroes = std::min(KnownZero.countLeadingOnes(),
+                                     KnownZero2.countLeadingOnes());
+    AB = ~APInt::getHighBitsSet(BitWidth, NumLeadingZeroes);
+    break;
   }
 }
 
-bool DemandedBits::runOnFunction(Function& F) {
-  AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
-  DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+bool DemandedBits::runOnFunction(Function& Fn) {
+  F = &Fn;
+  Analyzed = false;
+  return false;
+}
 
+void DemandedBits::performAnalysis() {
+  if (Analyzed)
+    // Analysis already completed for this function.
+    return;
+  Analyzed = true;
+  AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(*F);
+  DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  
   Visited.clear();
   AliveBits.clear();
 
   SmallVector<Instruction*, 128> Worklist;
 
   // Collect the set of "root" instructions that are known live.
-  for (Instruction &I : instructions(F)) {
+  for (Instruction &I : instructions(*F)) {
     if (!isAlwaysLive(&I))
       continue;
 
@@ -340,11 +359,11 @@ bool DemandedBits::runOnFunction(Function& F) {
       }
     }
   }
-
-  return false;
 }
 
 APInt DemandedBits::getDemandedBits(Instruction *I) {
+  performAnalysis();
+  
   const DataLayout &DL = I->getParent()->getModule()->getDataLayout();
   if (AliveBits.count(I))
     return AliveBits[I];
@@ -352,8 +371,20 @@ APInt DemandedBits::getDemandedBits(Instruction *I) {
 }
 
 bool DemandedBits::isInstructionDead(Instruction *I) {
+  performAnalysis();
+
   return !Visited.count(I) && AliveBits.find(I) == AliveBits.end() &&
     !isAlwaysLive(I);
+}
+
+void DemandedBits::print(raw_ostream &OS, const Module *M) const {
+  // This is gross. But the alternative is making all the state mutable
+  // just because of this one debugging method.
+  const_cast<DemandedBits*>(this)->performAnalysis();
+  for (auto &KV : AliveBits) {
+    OS << "DemandedBits: 0x" << utohexstr(KV.second.getLimitedValue()) << " for "
+       << *KV.first << "\n";
+  }
 }
 
 FunctionPass *llvm::createDemandedBitsPass() {

@@ -151,15 +151,24 @@ void ARMSubtarget::initializeEnvironment() {
   UseNaClTrap = false;
   GenLongCalls = false;
   UnsafeFPMath = false;
+  UseSjLjEH = (isTargetDarwin() &&
+               TargetTriple.getSubArch() != Triple::ARMSubArch_v7k);
 }
 
 void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
   if (CPUString.empty()) {
-    if (isTargetDarwin() && TargetTriple.getArchName().endswith("v7s"))
-      // Default to the Swift CPU when targeting armv7s/thumbv7s.
-      CPUString = "swift";
-    else
-      CPUString = "generic";
+    CPUString = "generic";
+
+    if (isTargetDarwin()) {
+      StringRef ArchName = TargetTriple.getArchName();
+      if (ArchName.endswith("v7s"))
+        // Default to the Swift CPU when targeting armv7s/thumbv7s.
+        CPUString = "swift";
+      else if (ArchName.endswith("v7k"))
+        // Default to the Cortex-a7 CPU when targeting armv7k/thumbv7k.
+        // ARMv7k does not use SjLj exception handling.
+        CPUString = "cortex-a7";
+    }
   }
 
   // Insert the architecture feature derived from the target triple into the
@@ -190,7 +199,7 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
 
   if (isAAPCS_ABI())
     stackAlignment = 8;
-  if (isTargetNaCl())
+  if (isTargetNaCl() || isAAPCS16_ABI())
     stackAlignment = 16;
 
   // FIXME: Completely disable sibcall for Thumb1 since ThumbRegisterInfo::
@@ -241,8 +250,14 @@ bool ARMSubtarget::isAPCS_ABI() const {
 }
 bool ARMSubtarget::isAAPCS_ABI() const {
   assert(TM.TargetABI != ARMBaseTargetMachine::ARM_ABI_UNKNOWN);
-  return TM.TargetABI == ARMBaseTargetMachine::ARM_ABI_AAPCS;
+  return TM.TargetABI == ARMBaseTargetMachine::ARM_ABI_AAPCS ||
+         TM.TargetABI == ARMBaseTargetMachine::ARM_ABI_AAPCS16;
 }
+bool ARMSubtarget::isAAPCS16_ABI() const {
+  assert(TM.TargetABI != ARMBaseTargetMachine::ARM_ABI_UNKNOWN);
+  return TM.TargetABI == ARMBaseTargetMachine::ARM_ABI_AAPCS16;
+}
+
 
 /// GVIsIndirectSymbol - true if the GV will be accessed via an indirect symbol.
 bool
@@ -286,7 +301,8 @@ unsigned ARMSubtarget::getMispredictionPenalty() const {
 }
 
 bool ARMSubtarget::hasSinCos() const {
-  return getTargetTriple().isiOS() && !getTargetTriple().isOSVersionLT(7, 0);
+  return isTargetWatchOS() ||
+    (isTargetIOS() && !getTargetTriple().isOSVersionLT(7, 0));
 }
 
 bool ARMSubtarget::enableMachineScheduler() const {
@@ -310,7 +326,10 @@ bool ARMSubtarget::enableAtomicExpand() const {
 }
 
 bool ARMSubtarget::useStride4VFPs(const MachineFunction &MF) const {
-  return isSwift() && !MF.getFunction()->optForMinSize();
+  // For general targets, the prologue can grow when VFPs are allocated with
+  // stride 4 (more vpush instructions). But WatchOS uses a compact unwind
+  // format which it's more important to get right.
+  return isTargetWatchOS() || (isSwift() && !MF.getFunction()->optForMinSize());
 }
 
 bool ARMSubtarget::useMovt(const MachineFunction &MF) const {

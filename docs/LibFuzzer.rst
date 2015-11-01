@@ -64,6 +64,7 @@ The most important flags are::
   max_total_time                        0       If positive, indicates the maximal total time in seconds to run the fuzzer.
   help                               	0	Print help.
   save_minimized_corpus              	0	If 1, the minimized corpus is saved into the first input directory. Example: ./fuzzer -save_minimized_corpus=1 NEW_EMPTY_DIR OLD_CORPUS
+  merge                                 0       If 1, the 2-nd, 3-rd, etc corpora will be merged into the 1-st corpus. Only interesting units will be taken.
   jobs                               	0	Number of jobs to run. If jobs >= 1 we spawn this number of jobs in separate worker processes with stdout/stderr redirected to fuzz-JOB.log.
   workers                            	0	Number of simultaneous worker processes to run the jobs. If zero, "min(jobs,NumberOfCpuCores()/2)" is used.
   sync_command                       	0	Execute an external command "<sync_command> <test_corpus>" to synchronize the test corpus.
@@ -71,7 +72,7 @@ The most important flags are::
   use_traces                            0       Experimental: use instruction traces
   only_ascii                            0       If 1, generate only ASCII (isprint+isspace) inputs.
   test_single_input                     ""      Use specified file content as test input. Test will be run only once. Useful for debugging a particular case.
-
+  artifact_prefix                       ""      Write fuzzing artifacts (crash, timeout, or slow inputs) as $(artifact_prefix)file
 
 For the full list of flags run the fuzzer binary with ``-help=1``.
 
@@ -457,13 +458,19 @@ Trophies
   * http://git.musl-libc.org/cgit/musl/commit/?id=39dfd58417ef642307d90306e1c7e50aaec5a35c
   * http://www.openwall.com/lists/oss-security/2015/03/30/3
 
-* pugixml: https://github.com/zeux/pugixml/issues/39
+* `pugixml <https://github.com/zeux/pugixml/issues/39>`_
 
-* PCRE: Search for "LLVM fuzzer" in http://vcs.pcre.org/pcre2/code/trunk/ChangeLog?view=markup
+* PCRE: Search for "LLVM fuzzer" in http://vcs.pcre.org/pcre2/code/trunk/ChangeLog?view=markup;
+  also in `bugzilla <https://bugs.exim.org/buglist.cgi?bug_status=__all__&content=libfuzzer&no_redirect=1&order=Importance&product=PCRE&query_format=specific>`_
 
-* ICU: http://bugs.icu-project.org/trac/ticket/11838
+* `ICU <http://bugs.icu-project.org/trac/ticket/11838>`_
 
-* Freetype: https://savannah.nongnu.org/search/?words=LibFuzzer&type_of_search=bugs&Search=Search&exact=1#options
+* `Freetype <https://savannah.nongnu.org/search/?words=LibFuzzer&type_of_search=bugs&Search=Search&exact=1#options>`_
+
+* `Harfbuzz <https://github.com/behdad/harfbuzz/issues/139>`_
+
+* `Libxml2
+  <https://bugzilla.gnome.org/buglist.cgi?bug_status=__all__&content=libFuzzer&list_id=68957&order=Importance&product=libxml2&query_format=specific>`_
 
 * Linux Kernel's BPF verifier: https://github.com/iovisor/bpf-fuzzer
 

@@ -310,12 +310,17 @@ public:
                              bool HasBaseReg, int64_t Scale,
                              unsigned AddrSpace = 0) const;
 
-  /// \brief Return true if the target works with masked instruction
-  /// AVX2 allows masks for consecutive load and store for i32 and i64 elements.
-  /// AVX-512 architecture will also allow masks for non-consecutive memory
-  /// accesses.
-  bool isLegalMaskedStore(Type *DataType, int Consecutive) const;
-  bool isLegalMaskedLoad(Type *DataType, int Consecutive) const;
+  /// \brief Return true if the target supports masked load/store
+  /// AVX2 and AVX-512 targets allow masks for consecutive load and store for
+  /// 32 and 64 bit elements.
+  bool isLegalMaskedStore(Type *DataType) const;
+  bool isLegalMaskedLoad(Type *DataType) const;
+
+  /// \brief Return true if the target supports masked gather/scatter
+  /// AVX-512 fully supports gather and scatter for vectors with 32 and 64
+  /// bits scalar type.
+  bool isLegalMaskedScatter(Type *DataType) const;
+  bool isLegalMaskedGather(Type *DataType) const;
 
   /// \brief Return the cost of the scaling factor used in the addressing
   /// mode represented by AM for this target, for a load/store
@@ -568,8 +573,10 @@ public:
                                      int64_t BaseOffset, bool HasBaseReg,
                                      int64_t Scale,
                                      unsigned AddrSpace) = 0;
-  virtual bool isLegalMaskedStore(Type *DataType, int Consecutive) = 0;
-  virtual bool isLegalMaskedLoad(Type *DataType, int Consecutive) = 0;
+  virtual bool isLegalMaskedStore(Type *DataType) = 0;
+  virtual bool isLegalMaskedLoad(Type *DataType) = 0;
+  virtual bool isLegalMaskedScatter(Type *DataType) = 0;
+  virtual bool isLegalMaskedGather(Type *DataType) = 0;
   virtual int getScalingFactorCost(Type *Ty, GlobalValue *BaseGV,
                                    int64_t BaseOffset, bool HasBaseReg,
                                    int64_t Scale, unsigned AddrSpace) = 0;
@@ -693,11 +700,17 @@ public:
     return Impl.isLegalAddressingMode(Ty, BaseGV, BaseOffset, HasBaseReg,
                                       Scale, AddrSpace);
   }
-  bool isLegalMaskedStore(Type *DataType, int Consecutive) override {
-    return Impl.isLegalMaskedStore(DataType, Consecutive);
+  bool isLegalMaskedStore(Type *DataType) override {
+    return Impl.isLegalMaskedStore(DataType);
   }
-  bool isLegalMaskedLoad(Type *DataType, int Consecutive) override {
-    return Impl.isLegalMaskedLoad(DataType, Consecutive);
+  bool isLegalMaskedLoad(Type *DataType) override {
+    return Impl.isLegalMaskedLoad(DataType);
+  }
+  bool isLegalMaskedScatter(Type *DataType) override {
+    return Impl.isLegalMaskedScatter(DataType);
+  }
+  bool isLegalMaskedGather(Type *DataType) override {
+    return Impl.isLegalMaskedGather(DataType);
   }
   int getScalingFactorCost(Type *Ty, GlobalValue *BaseGV, int64_t BaseOffset,
                            bool HasBaseReg, int64_t Scale,

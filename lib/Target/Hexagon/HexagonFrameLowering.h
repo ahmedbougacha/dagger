@@ -74,7 +74,9 @@ public:
       const override;
 
   bool needsAligna(const MachineFunction &MF) const;
-  MachineInstr *getAlignaInstr(MachineFunction &MF) const;
+  const MachineInstr *getAlignaInstr(const MachineFunction &MF) const;
+
+  void insertCFIInstructions(MachineFunction &MF) const;
 
 private:
   typedef std::vector<CalleeSavedInfo> CSIVect;
@@ -87,6 +89,8 @@ private:
       const HexagonRegisterInfo &HRI) const;
   bool insertCSRRestoresInBlock(MachineBasicBlock &MBB, const CSIVect &CSI,
       const HexagonRegisterInfo &HRI) const;
+  void insertCFIInstructionsAt(MachineBasicBlock &MBB,
+      MachineBasicBlock::iterator At) const;
 
   void adjustForCalleeSavedRegsSpillCall(MachineFunction &MF) const;
   bool replacePredRegPseudoSpillCode(MachineFunction &MF) const;
@@ -95,7 +99,7 @@ private:
   void findShrunkPrologEpilog(MachineFunction &MF, MachineBasicBlock *&PrologB,
       MachineBasicBlock *&EpilogB) const;
 
-  bool shouldInlineCSR(llvm::MachineFunction&, const CSIVect&) const;
+  bool shouldInlineCSR(llvm::MachineFunction &MF, const CSIVect &CSI) const;
   bool useSpillFunction(MachineFunction &MF, const CSIVect &CSI) const;
   bool useRestoreFunction(MachineFunction &MF, const CSIVect &CSI) const;
 };

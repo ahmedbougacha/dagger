@@ -462,11 +462,9 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
 /// Return true if MI is an instruction we are unable to reason about
 /// (like a call or something with unmodeled side effects).
 static inline bool isGlobalMemoryObject(AliasAnalysis *AA, MachineInstr *MI) {
-  if (MI->isCall() || MI->hasUnmodeledSideEffects() ||
-      (MI->hasOrderedMemoryRef() &&
-       (!MI->mayLoad() || !MI->isInvariantLoad(AA))))
-    return true;
-  return false;
+  return MI->isCall() || MI->hasUnmodeledSideEffects() ||
+         (MI->hasOrderedMemoryRef() &&
+          (!MI->mayLoad() || !MI->isInvariantLoad(AA)));
 }
 
 // This MI might have either incomplete info, or known to be unsafe
@@ -1099,7 +1097,7 @@ static void toggleBundleKillFlag(MachineInstr *MI, unsigned Reg,
   // Once we set a kill flag on an instruction, we bail out, as otherwise we
   // might set it on too many operands.  We will clear as many flags as we
   // can though.
-  MachineBasicBlock::instr_iterator Begin = MI;
+  MachineBasicBlock::instr_iterator Begin = MI->getIterator();
   MachineBasicBlock::instr_iterator End = getBundleEnd(MI);
   while (Begin != End) {
     for (MachineOperand &MO : (--End)->operands()) {
@@ -1233,7 +1231,7 @@ void ScheduleDAGInstrs::fixupKills(MachineBasicBlock *MBB) {
         toggleKillFlag(MI, MO);
         DEBUG(MI->dump());
         DEBUG(if (MI->getOpcode() == TargetOpcode::BUNDLE) {
-          MachineBasicBlock::instr_iterator Begin = MI;
+          MachineBasicBlock::instr_iterator Begin = MI->getIterator();
           MachineBasicBlock::instr_iterator End = getBundleEnd(MI);
           while (++Begin != End)
             DEBUG(Begin->dump());

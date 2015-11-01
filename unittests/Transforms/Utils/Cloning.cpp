@@ -165,7 +165,7 @@ TEST_F(CloneInstruction, Attributes) {
 
   Attribute::AttrKind AK[] = { Attribute::NoCapture };
   AttributeSet AS = AttributeSet::get(context, 0, AK);
-  Argument *A = F1->arg_begin();
+  Argument *A = &*F1->arg_begin();
   A->addAttr(AS);
 
   SmallVector<ReturnInst*, 4> Returns;
@@ -193,7 +193,7 @@ TEST_F(CloneInstruction, CallingConvention) {
 
   SmallVector<ReturnInst*, 4> Returns;
   ValueToValueMapTy VMap;
-  VMap[F1->arg_begin()] = F2->arg_begin();
+  VMap[&*F1->arg_begin()] = &*F2->arg_begin();
 
   CloneFunctionInto(F2, F1, VMap, false, Returns);
   EXPECT_EQ(CallingConv::Cold, F2->getCallingConv());
@@ -231,7 +231,7 @@ protected:
     auto *File = DBuilder.createFile("filename.c", "/file/dir/");
     DITypeRefArray ParamTypes = DBuilder.getOrCreateTypeArray(None);
     DISubroutineType *FuncType =
-        DBuilder.createSubroutineType(File, ParamTypes);
+        DBuilder.createSubroutineType(ParamTypes);
     auto *CU =
         DBuilder.createCompileUnit(dwarf::DW_LANG_C99, "filename.c",
                                    "/file/dir", "CloneFunc", false, "", 0);

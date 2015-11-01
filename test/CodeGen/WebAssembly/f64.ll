@@ -14,96 +14,114 @@ declare double @llvm.trunc.f64(double)
 declare double @llvm.nearbyint.f64(double)
 declare double @llvm.rint.f64(double)
 
-; CHECK-LABEL: (func $fadd64
-; CHECK-NEXT: (param f64) (param f64) (result f64)
-; CHECK-NEXT: (set_local @0 (argument 1))
-; CHECK-NEXT: (set_local @1 (argument 0))
-; CHECK-NEXT: (set_local @2 (fadd @1 @0))
-; CHECK-NEXT: (return @2)
+; CHECK-LABEL: fadd64:
+; CHECK-NEXT: .param f64{{$}}
+; CHECK-NEXT: .param f64{{$}}
+; CHECK-NEXT: .result f64{{$}}
+; CHECK-NEXT: .local f64, f64, f64{{$}}
+; CHECK-NEXT: get_local 1{{$}}
+; CHECK-NEXT: set_local 2, pop{{$}}
+; CHECK-NEXT: get_local 0{{$}}
+; CHECK-NEXT: set_local 3, pop{{$}}
+; CHECK-NEXT: add (get_local 3), (get_local 2){{$}}
+; CHECK-NEXT: set_local 4, pop{{$}}
+; CHECK-NEXT: return (get_local 4){{$}}
 define double @fadd64(double %x, double %y) {
   %a = fadd double %x, %y
   ret double %a
 }
 
-; CHECK-LABEL: (func $fsub64
-; CHECK: (set_local @2 (fsub @1 @0))
+; CHECK-LABEL: fsub64:
+; CHECK: sub (get_local 3), (get_local 2){{$}}
+; CHECK-NEXT: set_local 4, pop{{$}}
 define double @fsub64(double %x, double %y) {
   %a = fsub double %x, %y
   ret double %a
 }
 
-; CHECK-LABEL: (func $fmul64
-; CHECK: (set_local @2 (fmul @1 @0))
+; CHECK-LABEL: fmul64:
+; CHECK: mul (get_local 3), (get_local 2){{$}}
+; CHECK-NEXT: set_local 4, pop{{$}}
 define double @fmul64(double %x, double %y) {
   %a = fmul double %x, %y
   ret double %a
 }
 
-; CHECK-LABEL: (func $fdiv64
-; CHECK: (set_local @2 (fdiv @1 @0))
+; CHECK-LABEL: fdiv64:
+; CHECK: div (get_local 3), (get_local 2){{$}}
+; CHECK-NEXT: set_local 4, pop{{$}}
 define double @fdiv64(double %x, double %y) {
   %a = fdiv double %x, %y
   ret double %a
 }
 
-; CHECK-LABEL: (func $fabs64
-; CHECK: (set_local @1 (fabs @0))
+; CHECK-LABEL: fabs64:
+; CHECK: abs (get_local 1){{$}}
+; CHECK-NEXT: set_local 2, pop{{$}}
 define double @fabs64(double %x) {
   %a = call double @llvm.fabs.f64(double %x)
   ret double %a
 }
 
-; CHECK-LABEL: (func $fneg64
-; CHECK: (set_local @1 (fneg @0))
+; CHECK-LABEL: fneg64:
+; CHECK: neg (get_local 1){{$}}
+; CHECK-NEXT: set_local 2, pop{{$}}
 define double @fneg64(double %x) {
   %a = fsub double -0., %x
   ret double %a
 }
 
-; CHECK-LABEL: (func $copysign64
-; CHECK: (set_local @2 (copysign @1 @0))
+; CHECK-LABEL: copysign64:
+; CHECK: copysign (get_local 3), (get_local 2){{$}}
+; CHECK-NEXT: set_local 4, pop{{$}}
 define double @copysign64(double %x, double %y) {
   %a = call double @llvm.copysign.f64(double %x, double %y)
   ret double %a
 }
 
-; CHECK-LABEL: (func $sqrt64
-; CHECK: (set_local @1 (sqrt @0))
+; CHECK-LABEL: sqrt64:
+; CHECK: sqrt (get_local 1){{$}}
+; CHECK-NEXT: set_local 2, pop{{$}}
 define double @sqrt64(double %x) {
   %a = call double @llvm.sqrt.f64(double %x)
   ret double %a
 }
 
-; CHECK-LABEL: (func $ceil64
-; CHECK: (set_local @1 (ceil @0))
+; CHECK-LABEL: ceil64:
+; CHECK: ceil (get_local 1){{$}}
+; CHECK-NEXT: set_local 2, pop{{$}}
 define double @ceil64(double %x) {
   %a = call double @llvm.ceil.f64(double %x)
   ret double %a
 }
 
-; CHECK-LABEL: (func $floor64
-; CHECK: (set_local @1 (floor @0))
+; CHECK-LABEL: floor64:
+; CHECK: floor (get_local 1){{$}}
+; CHECK-NEXT: set_local 2, pop{{$}}
 define double @floor64(double %x) {
   %a = call double @llvm.floor.f64(double %x)
   ret double %a
 }
 
-; CHECK-LABEL: (func $trunc64
-; CHECK: (set_local @1 (trunc @0))
+; CHECK-LABEL: trunc64:
+; CHECK: trunc (get_local 1){{$}}
+; CHECK-NEXT: set_local 2, pop{{$}}
 define double @trunc64(double %x) {
   %a = call double @llvm.trunc.f64(double %x)
   ret double %a
 }
 
-; CHECK-LABEL: (func $nearest64
-; CHECK: (set_local @1 (nearest @0))
+; CHECK-LABEL: nearest64:
+; CHECK: nearest (get_local 1){{$}}
+; CHECK-NEXT: set_local 2, pop{{$}}
 define double @nearest64(double %x) {
   %a = call double @llvm.nearbyint.f64(double %x)
   ret double %a
 }
 
-; CHECK-LABEL: (func $nearest64_via_rint
-; CHECK: (set_local @1 (nearest @0))
+; CHECK-LABEL: nearest64_via_rint:
+; CHECK: nearest (get_local 1){{$}}
+; CHECK-NEXT: set_local 2, pop{{$}}
 define double @nearest64_via_rint(double %x) {
   %a = call double @llvm.rint.f64(double %x)
   ret double %a

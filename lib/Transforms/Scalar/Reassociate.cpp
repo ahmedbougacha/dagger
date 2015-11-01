@@ -84,20 +84,6 @@ namespace {
 
     Factor(Value *Base, unsigned Power) : Base(Base), Power(Power) {}
 
-    /// \brief Sort factors by their Base.
-    struct BaseSorter {
-      bool operator()(const Factor &LHS, const Factor &RHS) {
-        return LHS.Base < RHS.Base;
-      }
-    };
-
-    /// \brief Compare factors for equal bases.
-    struct BaseEqual {
-      bool operator()(const Factor &LHS, const Factor &RHS) {
-        return LHS.Base == RHS.Base;
-      }
-    };
-
     /// \brief Sort factors in descending order by their power.
     struct PowerDescendingSorter {
       bool operator()(const Factor &LHS, const Factor &RHS) {
@@ -956,14 +942,13 @@ static Value *NegateValue(Value *V, Instruction *BI) {
       } else if (auto *CPI = dyn_cast<CatchPadInst>(InstInput)) {
         InsertPt = CPI->getNormalDest()->begin();
       } else {
-        InsertPt = InstInput;
-        ++InsertPt;
+        InsertPt = ++InstInput->getIterator();
       }
       while (isa<PHINode>(InsertPt)) ++InsertPt;
     } else {
       InsertPt = TheNeg->getParent()->getParent()->getEntryBlock().begin();
     }
-    TheNeg->moveBefore(InsertPt);
+    TheNeg->moveBefore(&*InsertPt);
     if (TheNeg->getOpcode() == Instruction::Sub) {
       TheNeg->setHasNoUnsignedWrap(false);
       TheNeg->setHasNoSignedWrap(false);
@@ -1150,7 +1135,7 @@ Value *Reassociate::RemoveFactorFromExpression(Value *V, Value *Factor) {
     return nullptr;
   }
 
-  BasicBlock::iterator InsertPt = BO; ++InsertPt;
+  BasicBlock::iterator InsertPt = ++BO->getIterator();
 
   // If this was just a single multiply, remove the multiply and return the only
   // remaining operand.
@@ -1163,7 +1148,7 @@ Value *Reassociate::RemoveFactorFromExpression(Value *V, Value *Factor) {
   }
 
   if (NeedsNegate)
-    V = CreateNeg(V, "neg", InsertPt, BO);
+    V = CreateNeg(V, "neg", &*InsertPt, BO);
 
   return V;
 }
@@ -2234,10 +2219,10 @@ bool Reassociate::runOnFunction(Function &F) {
   for (Function::iterator BI = F.begin(), BE = F.end(); BI != BE; ++BI) {
     // Optimize every instruction in the basic block.
     for (BasicBlock::iterator II = BI->begin(), IE = BI->end(); II != IE; )
-      if (isInstructionTriviallyDead(II)) {
-        EraseInst(II++);
+      if (isInstructionTriviallyDead(&*II)) {
+        EraseInst(&*II++);
       } else {
-        OptimizeInst(II);
+        OptimizeInst(&*II);
         assert(II->getParent() == BI && "Moved to a different block!");
         ++II;
       }

@@ -15,8 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "LLVMSymbolize.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/DebugInfo/Symbolize/Symbolize.h"
 #include "llvm/Support/COM.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -73,6 +73,9 @@ static cl::list<std::string>
 ClDsymHint("dsym-hint", cl::ZeroOrMore,
            cl::desc("Path to .dSYM bundles to search for debug info for the "
                     "object files"));
+static cl::opt<bool>
+    ClPrintAddress("print-address", cl::init(false),
+                   cl::desc("Show address before line information"));
 
 static bool parseCommand(bool &IsData, std::string &ModuleName,
                          uint64_t &ModuleOffset) {
@@ -118,9 +121,7 @@ static bool parseCommand(bool &IsData, std::string &ModuleName,
   // Skip delimiters and parse module offset.
   pos += strspn(pos, kDelimiters);
   int offset_length = strcspn(pos, kDelimiters);
-  if (StringRef(pos, offset_length).getAsInteger(0, ModuleOffset))
-    return false;
-  return true;
+  return !StringRef(pos, offset_length).getAsInteger(0, ModuleOffset);
 }
 
 int main(int argc, char **argv) {
@@ -132,8 +133,7 @@ int main(int argc, char **argv) {
   llvm::sys::InitializeCOMRAII COM(llvm::sys::COMThreadingMode::MultiThreaded);
 
   cl::ParseCommandLineOptions(argc, argv, "llvm-symbolizer\n");
-  LLVMSymbolizer::Options Opts(ClPrintFunctions, ClUseSymbolTable,
-                               ClPrintInlining, ClDemangle,
+  LLVMSymbolizer::Options Opts(ClPrintFunctions, ClUseSymbolTable, ClDemangle,
                                ClUseRelativeAddress, ClDefaultArch);
   for (const auto &hint : ClDsymHint) {
     if (sys::path::extension(hint) == ".dSYM") {
@@ -151,7 +151,14 @@ int main(int argc, char **argv) {
   while (parseCommand(IsData, ModuleName, ModuleOffset)) {
     std::string Result =
         IsData ? Symbolizer.symbolizeData(ModuleName, ModuleOffset)
-               : Symbolizer.symbolizeCode(ModuleName, ModuleOffset);
+               : ClPrintInlining
+                     ? Symbolizer.symbolizeInlinedCode(ModuleName, ModuleOffset)
+                     : Symbolizer.symbolizeCode(ModuleName, ModuleOffset);
+    if (ClPrintAddress) {
+      outs() << "0x";
+      outs().write_hex(ModuleOffset);
+      outs() << "\n";
+    }
     outs() << Result << "\n";
     outs().flush();
   }

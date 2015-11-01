@@ -13,8 +13,8 @@ set(DFSanTests
   )
 
 set(Tests
+  CallerCalleeTest
   CounterTest
-  CxxTokensTest
   FourIndependentBranchesTest
   FullCoverageSetTest
   InfiniteTest

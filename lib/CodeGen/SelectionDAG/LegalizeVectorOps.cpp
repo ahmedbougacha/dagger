@@ -160,7 +160,7 @@ bool VectorLegalizer::Run() {
   DAG.AssignTopologicalOrder();
   for (SelectionDAG::allnodes_iterator I = DAG.allnodes_begin(),
        E = std::prev(DAG.allnodes_end()); I != std::next(E); ++I)
-    LegalizeOp(SDValue(I, 0));
+    LegalizeOp(SDValue(&*I, 0));
 
   // Finally, it's possible the root changed.  Get the new root.
   SDValue OldRoot = DAG.getRoot();
@@ -219,9 +219,8 @@ SDValue VectorLegalizer::LegalizeOp(SDValue Op) {
             assert(Result.getValue(1).use_empty() &&
                    "There are still live users of the old chain!");
             return LegalizeOp(Lowered);
-          } else {
-            return TranslateLegalizeResults(Op, Lowered);
           }
+          return TranslateLegalizeResults(Op, Lowered);
         }
       case TargetLowering::Expand:
         Changed = true;
@@ -266,6 +265,8 @@ SDValue VectorLegalizer::LegalizeOp(SDValue Op) {
   case ISD::UDIV:
   case ISD::SREM:
   case ISD::UREM:
+  case ISD::SDIVREM:
+  case ISD::UDIVREM:
   case ISD::FADD:
   case ISD::FSUB:
   case ISD::FMUL:
@@ -346,6 +347,7 @@ SDValue VectorLegalizer::LegalizeOp(SDValue Op) {
   }
 
   switch (TLI.getOperationAction(Node->getOpcode(), QueryType)) {
+  default: llvm_unreachable("This action is not supported yet!");
   case TargetLowering::Promote:
     Result = Promote(Op);
     Changed = true;

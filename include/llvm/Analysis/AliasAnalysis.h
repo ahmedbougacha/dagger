@@ -759,8 +759,12 @@ public:
   }
 
   FunctionModRefBehavior getModRefBehavior(ImmutableCallSite CS) {
-    if (const Function *F = CS.getCalledFunction())
-      return getBestAAResults().getModRefBehavior(F);
+    if (!CS.hasOperandBundles())
+      // If CS has operand bundles then aliasing attributes from the function it
+      // calls do not directly apply to the CallSite.  This can be made more
+      // precise in the future.
+      if (const Function *F = CS.getCalledFunction())
+        return getBestAAResults().getModRefBehavior(F);
 
     return FMRB_UnknownModRefBehavior;
   }
@@ -1023,6 +1027,16 @@ public:
 };
 
 FunctionPass *createAAResultsWrapperPass();
+
+/// A wrapper pass around a callback which can be used to populate the
+/// AAResults in the AAResultsWrapperPass from an external AA.
+///
+/// The callback provided here will be used each time we prepare an AAResults
+/// object, and will receive a reference to the function wrapper pass, the
+/// function, and the AAResults object to populate. This should be used when
+/// setting up a custom pass pipeline to inject a hook into the AA results.
+ImmutablePass *createExternalAAWrapperPass(
+    std::function<void(Pass &, Function &, AAResults &)> Callback);
 
 /// A helper for the legacy pass manager to create a \c AAResults
 /// object populated to the best of our ability for a particular function when

@@ -118,6 +118,9 @@ protected:
   typedef std::map<TargetAddress, CompileFtor> TrampolineMapT;
   TrampolineMapT ActiveTrampolines;
   std::vector<TargetAddress> AvailableTrampolines;
+
+private:
+  virtual void anchor();
 };
 
 /// @brief Manage compile callbacks.
@@ -222,6 +225,133 @@ private:
   TargetAddress ResolverBlockAddr;
 };
 
+/// @brief Base class for managing collections of named indirect stubs.
+class IndirectStubsManagerBase {
+public:
+
+  /// @brief Map type for initializing the manager. See init.
+  typedef StringMap<std::pair<TargetAddress, JITSymbolFlags>> StubInitsMap;
+
+  virtual ~IndirectStubsManagerBase() {}
+
+  /// @brief Create a single stub with the given name, target address and flags.
+  virtual std::error_code createStub(StringRef StubName, TargetAddress StubAddr,
+                                     JITSymbolFlags StubFlags) = 0;
+
+  /// @brief Create StubInits.size() stubs with the given names, target
+  ///        addresses, and flags.
+  virtual std::error_code createStubs(const StubInitsMap &StubInits) = 0;
+
+  /// @brief Find the stub with the given name. If ExportedStubsOnly is true,
+  ///        this will only return a result if the stub's flags indicate that it
+  ///        is exported.
+  virtual JITSymbol findStub(StringRef Name, bool ExportedStubsOnly) = 0;
+
+  /// @brief Find the implementation-pointer for the stub.
+  virtual JITSymbol findPointer(StringRef Name) = 0;
+
+  /// @brief Change the value of the implementation pointer for the stub.
+  virtual std::error_code updatePointer(StringRef Name, TargetAddress NewAddr) = 0;
+private:
+  virtual void anchor();
+};
+
+/// @brief IndirectStubsManager implementation for a concrete target, e.g.
+///        OrcX86_64. (See OrcTargetSupport.h).
+template <typename TargetT>
+class IndirectStubsManager : public IndirectStubsManagerBase {
+public:
+
+  std::error_code createStub(StringRef StubName, TargetAddress StubAddr,
+                             JITSymbolFlags StubFlags) override {
+    if (auto EC = reserveStubs(1))
+      return EC;
+
+    createStubInternal(StubName, StubAddr, StubFlags);
+
+    return std::error_code();
+  }
+
+  std::error_code createStubs(const StubInitsMap &StubInits) override {
+    if (auto EC = reserveStubs(StubInits.size()))
+      return EC;
+
+    for (auto &Entry : StubInits)
+      createStubInternal(Entry.first(), Entry.second.first,
+                         Entry.second.second);
+
+    return std::error_code();
+  }
+
+  JITSymbol findStub(StringRef Name, bool ExportedStubsOnly) override {
+    auto I = StubIndexes.find(Name);
+    if (I == StubIndexes.end())
+      return nullptr;
+    auto Key = I->second.first;
+    void *StubAddr = IndirectStubsInfos[Key.first].getStub(Key.second);
+    assert(StubAddr && "Missing stub address");
+    auto StubTargetAddr =
+      static_cast<TargetAddress>(reinterpret_cast<uintptr_t>(StubAddr));
+    auto StubSymbol = JITSymbol(StubTargetAddr, I->second.second);
+    if (ExportedStubsOnly && !StubSymbol.isExported())
+      return nullptr;
+    return StubSymbol;
+  }
+
+  JITSymbol findPointer(StringRef Name) override {
+    auto I = StubIndexes.find(Name);
+    if (I == StubIndexes.end())
+      return nullptr;
+    auto Key = I->second.first;
+    void *PtrAddr = IndirectStubsInfos[Key.first].getPtr(Key.second);
+    assert(PtrAddr && "Missing pointer address");
+    auto PtrTargetAddr =
+      static_cast<TargetAddress>(reinterpret_cast<uintptr_t>(PtrAddr));
+    return JITSymbol(PtrTargetAddr, I->second.second);
+  }
+
+  std::error_code updatePointer(StringRef Name, TargetAddress NewAddr) override {
+    auto I = StubIndexes.find(Name);
+    assert(I != StubIndexes.end() && "No stub pointer for symbol");
+    auto Key = I->second.first;
+    *IndirectStubsInfos[Key.first].getPtr(Key.second) =
+      reinterpret_cast<void*>(static_cast<uintptr_t>(NewAddr));
+    return std::error_code();
+  }
+
+private:
+
+  std::error_code reserveStubs(unsigned NumStubs) {
+    if (NumStubs <= FreeStubs.size())
+      return std::error_code();
+
+    unsigned NewStubsRequired = NumStubs - FreeStubs.size();
+    unsigned NewBlockId = IndirectStubsInfos.size();
+    typename TargetT::IndirectStubsInfo ISI;
+    if (auto EC = TargetT::emitIndirectStubsBlock(ISI, NewStubsRequired,
+                                                  nullptr))
+      return EC;
+    for (unsigned I = 0; I < ISI.getNumStubs(); ++I)
+      FreeStubs.push_back(std::make_pair(NewBlockId, I));
+    IndirectStubsInfos.push_back(std::move(ISI));
+    return std::error_code();
+  }
+
+  void createStubInternal(StringRef StubName, TargetAddress InitAddr,
+                          JITSymbolFlags StubFlags) {
+    auto Key = FreeStubs.back();
+    FreeStubs.pop_back();
+    *IndirectStubsInfos[Key.first].getPtr(Key.second) =
+      reinterpret_cast<void*>(static_cast<uintptr_t>(InitAddr));
+    StubIndexes[StubName] = std::make_pair(Key, StubFlags);
+  }
+
+  std::vector<typename TargetT::IndirectStubsInfo> IndirectStubsInfos;
+  typedef std::pair<uint16_t, uint16_t> StubKey;
+  std::vector<StubKey> FreeStubs;
+  StringMap<std::pair<StubKey, JITSymbolFlags>> StubIndexes;
+};
+
 /// @brief Build a function pointer of FunctionType with the given constant
 ///        address.
 ///
@@ -236,7 +366,7 @@ GlobalVariable* createImplPointer(PointerType &PT, Module &M,
 
 /// @brief Turn a function declaration into a stub function that makes an
 ///        indirect call using the given function pointer.
-void makeStub(Function &F, GlobalVariable &ImplPointer);
+void makeStub(Function &F, Value &ImplPointer);
 
 /// @brief Raise linkage types and rename as necessary to ensure that all
 ///        symbols are accessible for other modules.
@@ -288,6 +418,10 @@ void moveGlobalVariableInitializer(GlobalVariable &OrigGV,
                                    ValueToValueMapTy &VMap,
                                    ValueMaterializer *Materializer = nullptr,
                                    GlobalVariable *NewGV = nullptr);
+
+/// @brief Clone 
+GlobalAlias* cloneGlobalAliasDecl(Module &Dst, const GlobalAlias &OrigA,
+                                  ValueToValueMapTy &VMap);
 
 } // End namespace orc.
 } // End namespace llvm.

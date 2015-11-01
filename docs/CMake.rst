@@ -334,6 +334,10 @@ LLVM-specific variables
 **LLVM_USE_OPROFILE**:BOOL
   Enable building OProfile JIT support. Defaults to OFF.
 
+**LLVM_PROFDATA_FILE**:PATH
+  Path to a profdata file to pass into clang's -fprofile-instr-use flag. This
+  can only be specified if you're building with clang.
+
 **LLVM_USE_INTEL_JITEVENTS**:BOOL
   Enable building support for Intel JIT Events API. Defaults to OFF.
 
@@ -431,6 +435,12 @@ LLVM-specific variables
 **SPHINX_WARNINGS_AS_ERRORS**:BOOL
   If enabled then sphinx documentation warnings will be treated as
   errors. Defaults to ON.
+
+**LLVM_CREATE_XCODE_TOOLCHAIN**:BOOL
+  OS X Only: If enabled CMake will generate a target named
+  'install-xcode-toolchain'. This target will create a directory at
+  $CMAKE_INSTALL_PREFIX/Toolchains containing an xctoolchain directory which can
+  be used to override the default system tools. 
 
 Executing the test suite
 ========================

@@ -19,6 +19,9 @@
 namespace llvm {
 namespace orc {
 
+void JITCompileCallbackManagerBase::anchor() {}
+void IndirectStubsManagerBase::anchor() {}
+
 Constant* createIRTypedAddress(FunctionType &FT, TargetAddress Addr) {
   Constant *AddrIntVal =
     ConstantInt::get(Type::getInt64Ty(FT.getContext()), Addr);
@@ -37,7 +40,7 @@ GlobalVariable* createImplPointer(PointerType &PT, Module &M,
   return IP;
 }
 
-void makeStub(Function &F, GlobalVariable &ImplPointer) {
+void makeStub(Function &F, Value &ImplPointer) {
   assert(F.isDeclaration() && "Can't turn a definition into a stub.");
   assert(F.getParent() && "Function isn't in a module.");
   Module &M = *F.getParent();
@@ -106,6 +109,9 @@ void makeAllSymbolsExternallyAccessible(Module &M) {
 
   for (auto &GV : M.globals())
     raiseVisibilityOnValue(GV, Renamer);
+
+  for (auto &A : M.aliases())
+    raiseVisibilityOnValue(A, Renamer);
 }
 
 Function* cloneFunctionDecl(Module &Dst, const Function &F,
@@ -121,7 +127,7 @@ Function* cloneFunctionDecl(Module &Dst, const Function &F,
     auto NewArgI = NewF->arg_begin();
     for (auto ArgI = F.arg_begin(), ArgE = F.arg_end(); ArgI != ArgE;
          ++ArgI, ++NewArgI)
-      (*VMap)[ArgI] = NewArgI;
+      (*VMap)[&*ArgI] = &*NewArgI;
   }
 
   return NewF;
@@ -175,6 +181,17 @@ void moveGlobalVariableInitializer(GlobalVariable &OrigGV,
 
   NewGV->setInitializer(MapValue(OrigGV.getInitializer(), VMap, RF_None,
                                  nullptr, Materializer));
+}
+
+GlobalAlias* cloneGlobalAliasDecl(Module &Dst, const GlobalAlias &OrigA,
+                                  ValueToValueMapTy &VMap) {
+  assert(OrigA.getAliasee() && "Original alias doesn't have an aliasee?");
+  auto *NewA = GlobalAlias::create(OrigA.getValueType(),
+                                   OrigA.getType()->getPointerAddressSpace(),
+                                   OrigA.getLinkage(), OrigA.getName(), &Dst);
+  NewA->copyAttributesFrom(&OrigA);
+  VMap[&OrigA] = NewA;
+  return NewA;
 }
 
 } // End namespace orc.
