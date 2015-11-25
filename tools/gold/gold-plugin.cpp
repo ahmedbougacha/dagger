@@ -297,7 +297,7 @@ static bool shouldSkip(uint32_t Symflags) {
   return false;
 }
 
-static void diagnosticHandler(const DiagnosticInfo &DI, void *Context) {
+static void diagnosticHandler(const DiagnosticInfo &DI) {
   if (const auto *BDI = dyn_cast<BitcodeDiagnosticInfo>(&DI)) {
     std::error_code EC = BDI->getError();
     if (EC == BitcodeError::InvalidBitcodeSignature)
@@ -325,6 +325,11 @@ static void diagnosticHandler(const DiagnosticInfo &DI, void *Context) {
     break;
   }
   message(Level, "LLVM gold plugin: %s",  ErrStorage.c_str());
+}
+
+static void diagnosticHandlerForContext(const DiagnosticInfo &DI,
+                                        void *Context) {
+  diagnosticHandler(DI);
 }
 
 /// Called by gold to see whether this file is one that our plugin can handle.
@@ -361,7 +366,7 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
     BufferRef = Buffer->getMemBufferRef();
   }
 
-  Context.setDiagnosticHandler(diagnosticHandler);
+  Context.setDiagnosticHandler(diagnosticHandlerForContext);
   ErrorOr<std::unique_ptr<object::IRObjectFile>> ObjOrErr =
       object::IRObjectFile::create(BufferRef, Context);
   std::error_code EC = ObjOrErr.getError();
@@ -385,7 +390,8 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
 
   // If we are doing ThinLTO compilation, don't need to process the symbols.
   // Later we simply build a combined index file after all files are claimed.
-  if (options::thinlto) return LDPS_OK;
+  if (options::thinlto)
+    return LDPS_OK;
 
   for (auto &Sym : Obj->symbols()) {
     uint32_t Symflags = Sym.getFlags();
@@ -445,8 +451,6 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
       const Comdat *C = Base->getComdat();
       if (C)
         sym.comdat_key = strdup(C->getName().str().c_str());
-      else if (Base->hasWeakLinkage() || Base->hasLinkOnceLinkage())
-        sym.comdat_key = strdup(sym.name);
     }
 
     sym.resolution = LDPR_UNKNOWN;
@@ -602,8 +606,8 @@ static void freeSymName(ld_plugin_symbol &Sym) {
   Sym.comdat_key = nullptr;
 }
 
-static std::unique_ptr<FunctionInfoIndex> getFunctionIndexForFile(
-    LLVMContext &Context, claimed_file &F, ld_plugin_input_file &Info) {
+static std::unique_ptr<FunctionInfoIndex>
+getFunctionIndexForFile(claimed_file &F, ld_plugin_input_file &Info) {
 
   if (get_symbols(F.handle, F.syms.size(), &F.syms[0]) != LDPS_OK)
     message(LDPL_FATAL, "Failed to get symbol information");
@@ -614,8 +618,15 @@ static std::unique_ptr<FunctionInfoIndex> getFunctionIndexForFile(
 
   MemoryBufferRef BufferRef(StringRef((const char *)View, Info.filesize),
                             Info.name);
+
+  // Don't bother trying to build an index if there is no summary information
+  // in this bitcode file.
+  if (!object::FunctionIndexObjectFile::hasFunctionSummaryInMemBuffer(
+          BufferRef, diagnosticHandler))
+    return std::unique_ptr<FunctionInfoIndex>(nullptr);
+
   ErrorOr<std::unique_ptr<object::FunctionIndexObjectFile>> ObjOrErr =
-      object::FunctionIndexObjectFile::create(BufferRef, Context);
+      object::FunctionIndexObjectFile::create(BufferRef, diagnosticHandler);
 
   if (std::error_code EC = ObjOrErr.getError())
     message(LDPL_FATAL, "Could not read function index bitcode from file : %s",
@@ -890,7 +901,7 @@ static ld_plugin_status allSymbolsReadHook(raw_fd_ostream *ApiFile) {
     return LDPS_OK;
 
   LLVMContext Context;
-  Context.setDiagnosticHandler(diagnosticHandler, nullptr, true);
+  Context.setDiagnosticHandler(diagnosticHandlerForContext, nullptr, true);
 
   // If we are doing ThinLTO compilation, simply build the combined
   // function index/summary and emit it. We don't need to parse the modules
@@ -904,7 +915,12 @@ static ld_plugin_status allSymbolsReadHook(raw_fd_ostream *ApiFile) {
         message(LDPL_FATAL, "Failed to get file information");
 
       std::unique_ptr<FunctionInfoIndex> Index =
-          getFunctionIndexForFile(Context, F, File);
+          getFunctionIndexForFile(F, File);
+
+      // Skip files without a function summary.
+      if (!Index)
+        continue;
+
       CombinedIndex.mergeFrom(std::move(Index), ++NextModuleId);
     }
 

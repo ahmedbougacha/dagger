@@ -95,6 +95,13 @@ void llvm::CloneFunctionInto(Function *NewFunc, const Function *OldFunc,
   NewFunc->copyAttributesFrom(OldFunc);
   NewFunc->setAttributes(NewAttrs);
 
+  // Fix up the personality function that got copied over.
+  if (OldFunc->hasPersonalityFn())
+    NewFunc->setPersonalityFn(
+        MapValue(OldFunc->getPersonalityFn(), VMap,
+                 ModuleLevelChanges ? RF_None : RF_NoModuleLevelChanges,
+                 TypeMapper, Materializer));
+
   AttributeSet OldAttrs = OldFunc->getAttributes();
   // Clone any argument attributes that are present in the VMap.
   for (const Argument &OldArg : OldFunc->args())
@@ -188,11 +195,9 @@ static void CloneDebugInfoMetadata(Function *NewFunc, const Function *OldFunc,
   const DISubprogram *OldSubprogramMDNode = FindSubprogram(OldFunc, Finder);
   if (!OldSubprogramMDNode) return;
 
-  // Ensure that OldFunc appears in the map.
-  // (if it's already there it must point to NewFunc anyway)
-  VMap[OldFunc] = NewFunc;
   auto *NewSubprogram =
       cast<DISubprogram>(MapMetadata(OldSubprogramMDNode, VMap));
+  NewFunc->setSubprogram(NewSubprogram);
 
   for (auto *CU : Finder.compile_units()) {
     auto Subprograms = CU->getSubprograms();
@@ -375,6 +380,12 @@ void PruningFunctionCloner::CloneBlock(const BasicBlock *BB,
     VMap[&*II] = NewInst; // Add instruction map to value.
     NewBB->getInstList().push_back(NewInst);
     hasCalls |= (isa<CallInst>(II) && !isa<DbgInfoIntrinsic>(II));
+
+    if (CodeInfo)
+      if (auto CS = ImmutableCallSite(&*II))
+        if (CS.hasOperandBundles())
+          CodeInfo->OperandBundleCallSites.push_back(NewInst);
+
     if (const AllocaInst *AI = dyn_cast<AllocaInst>(II)) {
       if (isa<ConstantInt>(AI->getArraySize()))
         hasStaticAllocas = true;
@@ -446,7 +457,12 @@ void PruningFunctionCloner::CloneBlock(const BasicBlock *BB,
       NewInst->setName(OldTI->getName()+NameSuffix);
     NewBB->getInstList().push_back(NewInst);
     VMap[OldTI] = NewInst;             // Add instruction map to value.
-    
+
+    if (CodeInfo)
+      if (auto CS = ImmutableCallSite(OldTI))
+        if (CS.hasOperandBundles())
+          CodeInfo->OperandBundleCallSites.push_back(NewInst);
+
     // Recursively clone any reachable successor blocks.
     const TerminatorInst *TI = BB->getTerminator();
     for (const BasicBlock *Succ : TI->successors())

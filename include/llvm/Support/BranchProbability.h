@@ -34,27 +34,31 @@ class BranchProbability {
 
   // Denominator, which is a constant value.
   static const uint32_t D = 1u << 31;
+  static const uint32_t UnknownN = UINT32_MAX;
 
   // Construct a BranchProbability with only numerator assuming the denominator
   // is 1<<31. For internal use only.
   explicit BranchProbability(uint32_t n) : N(n) {}
 
 public:
-  BranchProbability() : N(0) {}
+  BranchProbability() : N(UnknownN) {}
   BranchProbability(uint32_t Numerator, uint32_t Denominator);
 
   bool isZero() const { return N == 0; }
+  bool isUnknown() const { return N == UnknownN; }
 
   static BranchProbability getZero() { return BranchProbability(0); }
   static BranchProbability getOne() { return BranchProbability(D); }
+  static BranchProbability getUnknown() { return BranchProbability(UnknownN); }
   // Create a BranchProbability object with the given numerator and 1<<31
   // as denominator.
   static BranchProbability getRaw(uint32_t N) { return BranchProbability(N); }
 
   // Normalize given probabilties so that the sum of them becomes approximate
   // one.
-  template <class ProbabilityList>
-  static void normalizeProbabilities(ProbabilityList &Probs);
+  template <class ProbabilityIter>
+  static void normalizeProbabilities(ProbabilityIter Begin,
+                                     ProbabilityIter End);
 
   // Normalize a list of weights by scaling them down so that the sum of them
   // doesn't exceed UINT32_MAX.
@@ -88,20 +92,24 @@ public:
   uint64_t scaleByInverse(uint64_t Num) const;
 
   BranchProbability &operator+=(BranchProbability RHS) {
-    assert(N <= D - RHS.N &&
-           "The sum of branch probabilities should not exceed one!");
-    N += RHS.N;
+    assert(N != UnknownN && RHS.N != UnknownN &&
+           "Unknown probability cannot participate in arithmetics.");
+    // Saturate the result in case of overflow.
+    N = (uint64_t(N) + RHS.N > D) ? D : N + RHS.N;
     return *this;
   }
 
   BranchProbability &operator-=(BranchProbability RHS) {
-    assert(N >= RHS.N &&
-           "Can only subtract a smaller probability from a larger one!");
-    N -= RHS.N;
+    assert(N != UnknownN && RHS.N != UnknownN &&
+           "Unknown probability cannot participate in arithmetics.");
+    // Saturate the result in case of underflow.
+    N = N < RHS.N ? 0 : N - RHS.N;
     return *this;
   }
 
   BranchProbability &operator*=(BranchProbability RHS) {
+    assert(N != UnknownN && RHS.N != UnknownN &&
+           "Unknown probability cannot participate in arithmetics.");
     N = (static_cast<uint64_t>(N) * RHS.N + D / 2) / D;
     return *this;
   }
@@ -133,14 +141,37 @@ inline raw_ostream &operator<<(raw_ostream &OS, BranchProbability Prob) {
   return Prob.print(OS);
 }
 
-template <class ProbabilityList>
-void BranchProbability::normalizeProbabilities(ProbabilityList &Probs) {
-  uint64_t Sum = 0;
-  for (auto Prob : Probs)
-    Sum += Prob.N;
-  assert(Sum > 0);
-  for (auto &Prob : Probs)
-    Prob.N = (Prob.N * uint64_t(D) + Sum / 2) / Sum;
+inline BranchProbability operator/(BranchProbability LHS, uint32_t RHS) {
+  assert(LHS != BranchProbability::getUnknown() &&
+         "Unknown probability cannot participate in arithmetics.");
+  return BranchProbability::getRaw(LHS.getNumerator() / RHS);
+}
+
+template <class ProbabilityIter>
+void BranchProbability::normalizeProbabilities(ProbabilityIter Begin,
+                                               ProbabilityIter End) {
+  if (Begin == End)
+    return;
+
+  auto UnknownProbCount =
+      std::count(Begin, End, BranchProbability::getUnknown());
+  assert((UnknownProbCount == 0 ||
+          UnknownProbCount == std::distance(Begin, End)) &&
+         "Cannot normalize probabilities with known and unknown ones.");
+  (void)UnknownProbCount;
+
+  uint64_t Sum = std::accumulate(
+      Begin, End, uint64_t(0),
+      [](uint64_t S, const BranchProbability &BP) { return S + BP.N; });
+
+  if (Sum == 0) {
+    BranchProbability BP(1, std::distance(Begin, End));
+    std::fill(Begin, End, BP);
+    return;
+  }
+
+  for (auto I = Begin; I != End; ++I)
+    I->N = (I->N * uint64_t(D) + Sum / 2) / Sum;
 }
 
 template <class WeightListIter>

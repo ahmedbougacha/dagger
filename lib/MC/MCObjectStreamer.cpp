@@ -391,26 +391,9 @@ void MCObjectStreamer::EmitCodeAlignment(unsigned ByteAlignment,
   cast<MCAlignFragment>(getCurrentFragment())->setEmitNops(true);
 }
 
-bool MCObjectStreamer::EmitValueToOffset(const MCExpr *Offset,
+void MCObjectStreamer::emitValueToOffset(const MCExpr *Offset,
                                          unsigned char Value) {
-  int64_t Res;
-  if (Offset->evaluateAsAbsolute(Res, getAssembler())) {
-    insert(new MCOrgFragment(*Offset, Value));
-    return false;
-  }
-
-  MCSymbol *CurrentPos = getContext().createTempSymbol();
-  EmitLabel(CurrentPos);
-  MCSymbolRefExpr::VariantKind Variant = MCSymbolRefExpr::VK_None;
-  const MCExpr *Ref =
-    MCSymbolRefExpr::create(CurrentPos, Variant, getContext());
-  const MCExpr *Delta =
-    MCBinaryExpr::create(MCBinaryExpr::Sub, Offset, Ref, getContext());
-
-  if (!Delta->evaluateAsAbsolute(Res, getAssembler()))
-    return true;
-  EmitFill(Res, Value);
-  return false;
+  insert(new MCOrgFragment(*Offset, Value));
 }
 
 // Associate GPRel32 fixup with data and resize data area
@@ -433,19 +416,31 @@ void MCObjectStreamer::EmitGPRel64Value(const MCExpr *Value) {
   DF->getContents().resize(DF->getContents().size() + 8, 0);
 }
 
-void MCObjectStreamer::EmitFill(uint64_t NumBytes, uint8_t FillValue) {
-  // FIXME: A MCFillFragment would be more memory efficient but MCExpr has
-  //        problems evaluating expressions across multiple fragments.
+bool MCObjectStreamer::EmitRelocDirective(const MCExpr &Offset, StringRef Name,
+                                          const MCExpr *Expr, SMLoc Loc) {
+  int64_t OffsetValue;
+  if (!Offset.evaluateAsAbsolute(OffsetValue))
+    llvm_unreachable("Offset is not absolute");
+
   MCDataFragment *DF = getOrCreateDataFragment();
   flushPendingLabels(DF, DF->getContents().size());
-  DF->getContents().append(NumBytes, FillValue);
+
+  MCFixupKind Kind;
+  if (!Assembler->getBackend().getFixupKind(Name, Kind))
+    return true;
+
+  if (Expr == nullptr)
+    Expr =
+        MCSymbolRefExpr::create(getContext().createTempSymbol(), getContext());
+  DF->getFixups().push_back(MCFixup::create(OffsetValue, Expr, Kind, Loc));
+  return false;
 }
 
-void MCObjectStreamer::EmitZeros(uint64_t NumBytes) {
+void MCObjectStreamer::EmitFill(uint64_t NumBytes, uint8_t FillValue) {
   const MCSection *Sec = getCurrentSection().first;
   assert(Sec && "need a section");
   unsigned ItemSize = Sec->isVirtualSection() ? 0 : 1;
-  insert(new MCFillFragment(0, ItemSize, NumBytes));
+  insert(new MCFillFragment(FillValue, ItemSize, NumBytes));
 }
 
 void MCObjectStreamer::FinishImpl() {

@@ -301,6 +301,8 @@ void initializeLoopDistributePass(PassRegistry&);
 void initializeSjLjEHPreparePass(PassRegistry&);
 void initializeDemandedBitsPass(PassRegistry&);
 void initializeFuncletLayoutPass(PassRegistry &);
+void initializeLoopLoadEliminationPass(PassRegistry&);
+void initializeFunctionImportPassPass(PassRegistry &);
 }
 
 #endif

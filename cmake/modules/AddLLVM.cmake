@@ -26,7 +26,9 @@ function(llvm_update_compile_flags name)
 
   # LLVM_REQUIRES_RTTI is an internal flag that individual
   # targets can use to force RTTI
+  set(LLVM_CONFIG_HAS_RTTI YES CACHE INTERNAL "")
   if(NOT (LLVM_REQUIRES_RTTI OR LLVM_ENABLE_RTTI))
+    set(LLVM_CONFIG_HAS_RTTI NO CACHE INTERNAL "")
     list(APPEND LLVM_COMPILE_DEFINITIONS GTEST_HAS_RTTI=0)
     if (LLVM_COMPILER_IS_GCC_COMPATIBLE)
       list(APPEND LLVM_COMPILE_FLAGS "-fno-rtti")
@@ -191,7 +193,7 @@ endfunction(add_link_opts)
 # Note: Don't set variables CMAKE_*_OUTPUT_DIRECTORY any more,
 # or a certain builder, for eaxample, msbuild.exe, would be confused.
 function(set_output_directory target)
-  cmake_parse_arguments(ARG "" "BINARY_DIR;LIBRARY_DIR;" "" ${ARGN})
+  cmake_parse_arguments(ARG "" "BINARY_DIR;LIBRARY_DIR" "" ${ARGN})
 
   # module_dir -- corresponding to LIBRARY_OUTPUT_DIRECTORY.
   # It affects output of add_library(MODULE).
@@ -322,10 +324,12 @@ endfunction(set_windows_version_resource_properties)
 #     Same semantics as target_link_libraries().
 #   ADDITIONAL_HEADERS
 #     May specify header files for IDE generators.
+#   SONAME
+#     Should set SONAME link flags and create symlinks
 #   )
 function(llvm_add_library name)
   cmake_parse_arguments(ARG
-    "MODULE;SHARED;STATIC;DISABLE_LLVM_LINK_LLVM_DYLIB"
+    "MODULE;SHARED;STATIC;DISABLE_LLVM_LINK_LLVM_DYLIB;SONAME"
     "OUTPUT_NAME"
     "ADDITIONAL_HEADERS;DEPENDS;LINK_COMPONENTS;LINK_LIBS;OBJLIBS"
     ${ARGN})
@@ -430,11 +434,6 @@ function(llvm_add_library name)
         PREFIX ""
         )
     endif()
-
-    set_target_properties(${name}
-      PROPERTIES
-      SOVERSION ${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}
-      VERSION ${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}${LLVM_VERSION_SUFFIX})
   endif()
 
   if(ARG_MODULE OR ARG_SHARED)
@@ -446,6 +445,24 @@ function(llvm_add_library name)
 
     if (LLVM_EXPORTED_SYMBOL_FILE)
       add_llvm_symbol_exports( ${name} ${LLVM_EXPORTED_SYMBOL_FILE} )
+    endif()
+  endif()
+
+  if(ARG_SHARED AND UNIX)
+    if(NOT APPLE AND ARG_SONAME)
+      get_target_property(output_name ${name} OUTPUT_NAME)
+      if(${output_name} STREQUAL "output_name-NOTFOUND")
+        set(output_name ${name})
+      endif()
+      set(library_name ${output_name}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}${LLVM_VERSION_SUFFIX})
+      set(api_name ${output_name}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}${LLVM_VERSION_SUFFIX})
+      set_target_properties(${name} PROPERTIES OUTPUT_NAME ${library_name})
+      llvm_install_library_symlink(${api_name} ${library_name} SHARED
+        COMPONENT ${name}
+        ALWAYS_GENERATE)
+      llvm_install_library_symlink(${output_name} ${library_name} SHARED
+        COMPONENT ${name}
+        ALWAYS_GENERATE)
     endif()
   endif()
 
@@ -643,6 +660,10 @@ endmacro(add_llvm_executable name)
 function(export_executable_symbols target)
   if (NOT MSVC) # MSVC's linker doesn't support exporting all symbols.
     set_target_properties(${target} PROPERTIES ENABLE_EXPORTS 1)
+    if (APPLE)
+      set_target_properties(${target} PROPERTIES
+        LINK_FLAGS "-rdynamic")
+    endif()
   endif()
 endfunction()
 
@@ -1040,6 +1061,41 @@ function(add_lit_testsuites project directory)
   endif()
 endfunction()
 
+function(llvm_install_library_symlink name dest type)
+  cmake_parse_arguments(ARG "ALWAYS_GENERATE" "COMPONENT" "" ${ARGN})
+  foreach(path ${CMAKE_MODULE_PATH})
+    if(EXISTS ${path}/LLVMInstallSymlink.cmake)
+      set(INSTALL_SYMLINK ${path}/LLVMInstallSymlink.cmake)
+      break()
+    endif()
+  endforeach()
+
+  set(component ${ARG_COMPONENT})
+  if(NOT component)
+    set(component ${name})
+  endif()
+
+  set(full_name ${CMAKE_${type}_LIBRARY_PREFIX}${name}${CMAKE_${type}_LIBRARY_SUFFIX})
+  set(full_dest ${CMAKE_${type}_LIBRARY_PREFIX}${dest}${CMAKE_${type}_LIBRARY_SUFFIX})
+
+  set(output_dir lib${LLVM_LIBDIR_SUFFIX})
+  if(WIN32 AND "${type}" STREQUAL "SHARED")
+    set(output_dir bin)
+  endif()
+
+  install(SCRIPT ${INSTALL_SYMLINK}
+          CODE "install_symlink(${full_name} ${full_dest} ${output_dir})"
+          COMPONENT ${component})
+
+  if (NOT CMAKE_CONFIGURATION_TYPES AND NOT ARG_ALWAYS_GENERATE)
+    add_custom_target(install-${name}
+                      DEPENDS ${name} ${dest} install-${dest}
+                      COMMAND "${CMAKE_COMMAND}"
+                              -DCMAKE_INSTALL_COMPONENT=${name}
+                              -P "${CMAKE_BINARY_DIR}/cmake_install.cmake")
+  endif()
+endfunction()
+
 function(llvm_install_symlink name dest)
   cmake_parse_arguments(ARG "ALWAYS_GENERATE" "" "" ${ARGN})
   foreach(path ${CMAKE_MODULE_PATH})
@@ -1048,7 +1104,7 @@ function(llvm_install_symlink name dest)
       break()
     endif()
   endforeach()
-  
+
   if(ARG_ALWAYS_GENERATE)
     set(component ${dest})
   else()
@@ -1112,4 +1168,3 @@ function(add_llvm_tool_symlink name dest)
     endif()
   endif()
 endfunction()
-

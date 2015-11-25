@@ -207,7 +207,7 @@ def executeShCmd(cmd, shenv, results):
                                           env = cmd_shenv.env,
                                           close_fds = kUseCloseFDs))
         except OSError as e:
-            raise InternalShellError(j, 'Could not create process due to {}'.format(e))
+            raise InternalShellError(j, 'Could not create process ({}) due to {}'.format(executable, e))
 
         # Immediately close stdin for any process taking stdin from us.
         if stdin == subprocess.PIPE:
@@ -469,7 +469,9 @@ def applySubstitutions(script, substitutions):
 
         # Strip the trailing newline and any extra whitespace.
         return ln.strip()
-    return map(processLine, script)
+    # Note Python 3 map() gives an iterator rather than a list so explicitly
+    # convert to list before returning.
+    return list(map(processLine, script))
 
 def parseIntegratedTestScript(test, require_script=True):
     """parseIntegratedTestScript - Scan an LLVM/Clang style integrated test

@@ -114,8 +114,6 @@ SystemZTargetLowering::SystemZTargetLowering(const TargetMachine &TM,
   computeRegisterProperties(Subtarget.getRegisterInfo());
 
   // Set up special registers.
-  setExceptionPointerRegister(SystemZ::R6D);
-  setExceptionSelectorRegister(SystemZ::R7D);
   setStackPointerRegisterToSaveRestore(SystemZ::R15D);
 
   // TODO: It may be better to default to latency-oriented scheduling, however
@@ -777,9 +775,7 @@ bool SystemZTargetLowering::allowTruncateForTailCall(Type *FromType,
 }
 
 bool SystemZTargetLowering::mayBeEmittedAsTailCall(CallInst *CI) const {
-  if (!CI->isTailCall())
-    return false;
-  return true;
+  return CI->isTailCall();
 }
 
 // We do not yet support 128-bit single-element vector types.  If the user
@@ -5620,8 +5616,8 @@ SystemZTargetLowering::emitTransactionBegin(MachineInstr *MI,
 
 MachineBasicBlock *
 SystemZTargetLowering::emitLoadAndTestCmp0(MachineInstr *MI,
-					  MachineBasicBlock *MBB,
-					  unsigned Opcode) const {
+                                          MachineBasicBlock *MBB,
+                                          unsigned Opcode) const {
   MachineFunction &MF = *MBB->getParent();
   MachineRegisterInfo *MRI = &MF.getRegInfo();
   const SystemZInstrInfo *TII =

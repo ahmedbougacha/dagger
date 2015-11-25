@@ -9,6 +9,15 @@ target triple = "wasm32-unknown-unknown"
 ; CHECK-NOT: llvm.metadata
 @llvm.used = appending global [1 x i32*] [i32* @g], section "llvm.metadata"
 
+; CHECK: foo:
+; CHECK: i32.const $push0=, answer{{$}}
+; CHECK-NEXT: i32.load $0=, $pop0{{$}}
+; CHECK-NEXT: return $0{{$}}
+define i32 @foo() {
+  %a = load i32, i32* @answer
+  ret i32 %a
+}
+
 ; CHECK: .type   g,@object
 ; CHECK: .align  2{{$}}
 ; CHECK-NEXT: g:

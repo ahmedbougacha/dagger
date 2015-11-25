@@ -289,6 +289,7 @@ static void initialize(TargetLibraryInfoImpl &TLI, const Triple &T,
     }
     break;
   case Triple::IOS:
+  case Triple::TvOS:
   case Triple::WatchOS:
     TLI.setUnavailable(LibFunc::exp10l);
     if (!T.isWatchOS() && (T.isOSVersionLT(7, 0) ||
@@ -318,12 +319,13 @@ static void initialize(TargetLibraryInfoImpl &TLI, const Triple &T,
   // ffsl is available on at least Darwin, Mac OS X, iOS, FreeBSD, and
   // Linux (GLIBC):
   // http://developer.apple.com/library/mac/#documentation/Darwin/Reference/ManPages/man3/ffsl.3.html
-  // http://svn.freebsd.org/base/user/eri/pf45/head/lib/libc/string/ffsl.c
+  // http://svn.freebsd.org/base/head/lib/libc/string/ffsl.c
   // http://www.gnu.org/software/gnulib/manual/html_node/ffsl.html
   switch (T.getOS()) {
   case Triple::Darwin:
   case Triple::MacOSX:
   case Triple::IOS:
+  case Triple::TvOS:
   case Triple::WatchOS:
   case Triple::FreeBSD:
   case Triple::Linux:
@@ -333,14 +335,29 @@ static void initialize(TargetLibraryInfoImpl &TLI, const Triple &T,
   }
 
   // ffsll is available on at least FreeBSD and Linux (GLIBC):
-  // http://svn.freebsd.org/base/user/eri/pf45/head/lib/libc/string/ffsll.c
+  // http://svn.freebsd.org/base/head/lib/libc/string/ffsll.c
   // http://www.gnu.org/software/gnulib/manual/html_node/ffsll.html
   switch (T.getOS()) {
+  case Triple::Darwin:
+  case Triple::MacOSX:
+  case Triple::IOS:
+  case Triple::TvOS:
+  case Triple::WatchOS:
   case Triple::FreeBSD:
   case Triple::Linux:
     break;
   default:
     TLI.setUnavailable(LibFunc::ffsll);
+  }
+
+  // The following functions are available on at least FreeBSD:
+  // http://svn.freebsd.org/base/head/lib/libc/string/fls.c
+  // http://svn.freebsd.org/base/head/lib/libc/string/flsl.c
+  // http://svn.freebsd.org/base/head/lib/libc/string/flsll.c
+  if (!T.isOSFreeBSD()) {
+    TLI.setUnavailable(LibFunc::fls);
+    TLI.setUnavailable(LibFunc::flsl);
+    TLI.setUnavailable(LibFunc::flsll);
   }
 
   // The following functions are available on at least Linux:

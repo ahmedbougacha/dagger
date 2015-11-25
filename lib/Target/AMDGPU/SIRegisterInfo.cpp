@@ -41,9 +41,22 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   reserveRegisterTuples(Reserved, AMDGPU::EXEC);
   reserveRegisterTuples(Reserved, AMDGPU::FLAT_SCR);
 
+  // Reserve the last 2 registers so we will always have at least 2 more that
+  // will physically contain VCC.
+  reserveRegisterTuples(Reserved, AMDGPU::SGPR102_SGPR103);
+
+  const AMDGPUSubtarget &ST = MF.getSubtarget<AMDGPUSubtarget>();
+
+  if (ST.getGeneration() >= AMDGPUSubtarget::VOLCANIC_ISLANDS) {
+    // SI/CI have 104 SGPRs. VI has 102. We need to shift down the reservation
+    // for VCC/FLAT_SCR.
+    reserveRegisterTuples(Reserved, AMDGPU::SGPR98_SGPR99);
+    reserveRegisterTuples(Reserved, AMDGPU::SGPR100_SGPR101);
+  }
+
   // Tonga and Iceland can only allocate a fixed number of SGPRs due
   // to a hw bug.
-  if (MF.getSubtarget<AMDGPUSubtarget>().hasSGPRInitBug()) {
+  if (ST.hasSGPRInitBug()) {
     unsigned NumSGPRs = AMDGPU::SGPR_32RegClass.getNumRegs();
     // Reserve some SGPRs for FLAT_SCRATCH and VCC (4 SGPRs).
     // Assume XNACK_MASK is unused.
@@ -60,26 +73,32 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
 unsigned SIRegisterInfo::getRegPressureSetLimit(const MachineFunction &MF,
                                                 unsigned Idx) const {
-
   const AMDGPUSubtarget &STI = MF.getSubtarget<AMDGPUSubtarget>();
   // FIXME: We should adjust the max number of waves based on LDS size.
   unsigned SGPRLimit = getNumSGPRsAllowed(STI.getGeneration(),
                                           STI.getMaxWavesPerCU());
   unsigned VGPRLimit = getNumVGPRsAllowed(STI.getMaxWavesPerCU());
 
+  unsigned VSLimit = SGPRLimit + VGPRLimit;
+
   for (regclass_iterator I = regclass_begin(), E = regclass_end();
        I != E; ++I) {
+    const TargetRegisterClass *RC = *I;
 
-    unsigned NumSubRegs = std::max((int)(*I)->getSize() / 4, 1);
+    unsigned NumSubRegs = std::max((int)RC->getSize() / 4, 1);
     unsigned Limit;
 
-    if (isSGPRClass(*I)) {
+    if (isPseudoRegClass(RC)) {
+      // FIXME: This is a hack. We should never be considering the pressure of
+      // these since no virtual register should ever have this class.
+      Limit = VSLimit;
+    } else if (isSGPRClass(RC)) {
       Limit = SGPRLimit / NumSubRegs;
     } else {
       Limit = VGPRLimit / NumSubRegs;
     }
 
-    const int *Sets = getRegClassPressureSets(*I);
+    const int *Sets = getRegClassPressureSets(RC);
     assert(Sets);
     for (unsigned i = 0; Sets[i] != -1; ++i) {
       if (Sets[i] == (int)Idx)

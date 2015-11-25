@@ -409,6 +409,20 @@ public:
     return TargetLowering::getInlineAsmMemConstraint(ConstraintCode);
   }
 
+  /// If a physical register, this returns the register that receives the
+  /// exception address on entry to an EH pad.
+  unsigned
+  getExceptionPointerRegister(const Constant *PersonalityFn) const override {
+    return SystemZ::R6D;
+  }
+
+  /// If a physical register, this returns the register that receives the
+  /// exception typeid on entry to a landing pad.
+  unsigned
+  getExceptionSelectorRegister(const Constant *PersonalityFn) const override {
+    return SystemZ::R7D;
+  }
+
   MachineBasicBlock *EmitInstrWithCustomInserter(MachineInstr *MI,
                                                  MachineBasicBlock *BB) const
     override;
@@ -531,8 +545,8 @@ private:
                                           unsigned Opcode,
                                           bool NoFloat) const;
   MachineBasicBlock *emitLoadAndTestCmp0(MachineInstr *MI,
-					 MachineBasicBlock *MBB,
-					 unsigned Opcode) const;
+                                         MachineBasicBlock *MBB,
+                                         unsigned Opcode) const;
 
 };
 } // end namespace llvm

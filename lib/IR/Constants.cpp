@@ -53,6 +53,11 @@ bool Constant::isNegativeZeroValue() const {
       if (SplatCFP && SplatCFP->isZero() && SplatCFP->isNegative())
         return true;
 
+  if (const ConstantVector *CV = dyn_cast<ConstantVector>(this))
+    if (ConstantFP *SplatCFP = dyn_cast_or_null<ConstantFP>(CV->getSplatValue()))
+      if (SplatCFP && SplatCFP->isZero() && SplatCFP->isNegative())
+        return true;
+
   // We've already handled true FP case; any other FP vectors can't represent -0.0.
   if (getType()->isFPOrFPVectorTy())
     return false;
@@ -68,6 +73,17 @@ bool Constant::isZeroValue() const {
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(this))
     return CFP->isZero();
 
+  // Equivalent for a vector of -0.0's.
+  if (const ConstantDataVector *CV = dyn_cast<ConstantDataVector>(this))
+    if (ConstantFP *SplatCFP = dyn_cast_or_null<ConstantFP>(CV->getSplatValue()))
+      if (SplatCFP && SplatCFP->isZero())
+        return true;
+
+  if (const ConstantVector *CV = dyn_cast<ConstantVector>(this))
+    if (ConstantFP *SplatCFP = dyn_cast_or_null<ConstantFP>(CV->getSplatValue()))
+      if (SplatCFP && SplatCFP->isZero())
+        return true;
+
   // Otherwise, just use +0.0.
   return isNullValue();
 }
@@ -81,8 +97,10 @@ bool Constant::isNullValue() const {
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(this))
     return CFP->isZero() && !CFP->isNegative();
 
-  // constant zero is zero for aggregates and cpnull is null for pointers.
-  return isa<ConstantAggregateZero>(this) || isa<ConstantPointerNull>(this);
+  // constant zero is zero for aggregates, cpnull is null for pointers, none for
+  // tokens.
+  return isa<ConstantAggregateZero>(this) || isa<ConstantPointerNull>(this) ||
+         isa<ConstantTokenNone>(this);
 }
 
 bool Constant::isAllOnesValue() const {
@@ -204,6 +222,8 @@ Constant *Constant::getNullValue(Type *Ty) {
   case Type::ArrayTyID:
   case Type::VectorTyID:
     return ConstantAggregateZero::get(Ty);
+  case Type::TokenTyID:
+    return ConstantTokenNone::get(Ty->getContext());
   default:
     // Function, Label, or Opaque type?
     llvm_unreachable("Cannot create a null constant of that type!");
@@ -410,32 +430,13 @@ bool Constant::isConstantUsed() const {
   return false;
 }
 
+bool Constant::needsRelocation() const {
+  if (isa<GlobalValue>(this))
+    return true; // Global reference.
 
-
-/// getRelocationInfo - This method classifies the entry according to
-/// whether or not it may generate a relocation entry.  This must be
-/// conservative, so if it might codegen to a relocatable entry, it should say
-/// so.  The return values are:
-/// 
-///  NoRelocation: This constant pool entry is guaranteed to never have a
-///     relocation applied to it (because it holds a simple constant like
-///     '4').
-///  LocalRelocation: This entry has relocations, but the entries are
-///     guaranteed to be resolvable by the static linker, so the dynamic
-///     linker will never see them.
-///  GlobalRelocations: This entry may have arbitrary relocations.
-///
-/// FIXME: This really should not be in IR.
-Constant::PossibleRelocationsTy Constant::getRelocationInfo() const {
-  if (const GlobalValue *GV = dyn_cast<GlobalValue>(this)) {
-    if (GV->hasLocalLinkage() || GV->hasHiddenVisibility())
-      return LocalRelocation;  // Local to this file/library.
-    return GlobalRelocations;    // Global reference.
-  }
-  
   if (const BlockAddress *BA = dyn_cast<BlockAddress>(this))
-    return BA->getFunction()->getRelocationInfo();
-  
+    return BA->getFunction()->needsRelocation();
+
   // While raw uses of blockaddress need to be relocated, differences between
   // two of them don't when they are for labels in the same function.  This is a
   // common idiom when creating a table for the indirect goto extension, so we
@@ -444,20 +445,18 @@ Constant::PossibleRelocationsTy Constant::getRelocationInfo() const {
     if (CE->getOpcode() == Instruction::Sub) {
       ConstantExpr *LHS = dyn_cast<ConstantExpr>(CE->getOperand(0));
       ConstantExpr *RHS = dyn_cast<ConstantExpr>(CE->getOperand(1));
-      if (LHS && RHS &&
-          LHS->getOpcode() == Instruction::PtrToInt &&
+      if (LHS && RHS && LHS->getOpcode() == Instruction::PtrToInt &&
           RHS->getOpcode() == Instruction::PtrToInt &&
           isa<BlockAddress>(LHS->getOperand(0)) &&
           isa<BlockAddress>(RHS->getOperand(0)) &&
           cast<BlockAddress>(LHS->getOperand(0))->getFunction() ==
-            cast<BlockAddress>(RHS->getOperand(0))->getFunction())
-        return NoRelocation;
+              cast<BlockAddress>(RHS->getOperand(0))->getFunction())
+        return false;
     }
 
-  PossibleRelocationsTy Result = NoRelocation;
+  bool Result = false;
   for (unsigned i = 0, e = getNumOperands(); i != e; ++i)
-    Result = std::max(Result,
-                      cast<Constant>(getOperand(i))->getRelocationInfo());
+    Result |= cast<Constant>(getOperand(i))->needsRelocation();
 
   return Result;
 }
@@ -1170,6 +1169,17 @@ Constant *ConstantVector::getSplat(unsigned NumElts, Constant *V) {
   return get(Elts);
 }
 
+ConstantTokenNone *ConstantTokenNone::get(LLVMContext &Context) {
+  LLVMContextImpl *pImpl = Context.pImpl;
+  if (!pImpl->TheNoneToken)
+    pImpl->TheNoneToken.reset(new ConstantTokenNone(Context));
+  return pImpl->TheNoneToken.get();
+}
+
+/// Remove the constant from the constant table.
+void ConstantTokenNone::destroyConstantImpl() {
+  llvm_unreachable("You can't ConstantTokenNone->destroyConstantImpl()!");
+}
 
 // Utility function for determining if a ConstantExpr is a CastOp or not. This
 // can't be inline because we don't want to #include Instruction.h into
@@ -2872,6 +2882,11 @@ Value *ConstantInt::handleOperandChangeImpl(Value *From, Value *To, Use *U) {
 }
 
 Value *ConstantFP::handleOperandChangeImpl(Value *From, Value *To, Use *U) {
+  llvm_unreachable("Unsupported class for handleOperandChange()!");
+}
+
+Value *ConstantTokenNone::handleOperandChangeImpl(Value *From, Value *To,
+                                                  Use *U) {
   llvm_unreachable("Unsupported class for handleOperandChange()!");
 }
 

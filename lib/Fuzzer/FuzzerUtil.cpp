@@ -52,7 +52,6 @@ static void AlarmHandler(int, siginfo_t *, void *) {
 
 void SetTimer(int Seconds) {
   struct itimerval T {{Seconds, 0}, {Seconds, 0}};
-  Printf("SetTimer %d\n", Seconds);
   int Res = setitimer(ITIMER_REAL, &T, nullptr);
   assert(Res == 0);
   struct sigaction sigact;
@@ -70,8 +69,8 @@ int NumberOfCpuCores() {
   return N;
 }
 
-void ExecuteCommand(const std::string &Command) {
-  system(Command.c_str());
+int ExecuteCommand(const std::string &Command) {
+  return system(Command.c_str());
 }
 
 bool ToASCII(Unit &U) {

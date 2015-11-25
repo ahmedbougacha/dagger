@@ -47,10 +47,6 @@ protected:
   unsigned FDECFIEncoding;
   unsigned TTypeEncoding;
 
-  /// Section flags for eh_frame
-  unsigned EHSectionType;
-  unsigned EHSectionFlags;
-
   /// Compact unwind encoding indicating that we should emit only an EH frame.
   unsigned CompactUnwindDwarfEHFrameOnly;
 
@@ -153,10 +149,7 @@ protected:
   MCSection *EHFrameSection;
 
   // ELF specific sections.
-  MCSection *DataRelSection;
-  const MCSection *DataRelLocalSection;
   MCSection *DataRelROSection;
-  MCSection *DataRelROLocalSection;
   MCSection *MergeableConst4Section;
   MCSection *MergeableConst8Section;
   MCSection *MergeableConst16Section;
@@ -282,12 +275,7 @@ public:
   MCSection *getFaultMapSection() const { return FaultMapSection; }
 
   // ELF specific sections.
-  MCSection *getDataRelSection() const { return DataRelSection; }
-  const MCSection *getDataRelLocalSection() const {
-    return DataRelLocalSection;
-  }
   MCSection *getDataRelROSection() const { return DataRelROSection; }
-  MCSection *getDataRelROLocalSection() const { return DataRelROLocalSection; }
   const MCSection *getMergeableConst4Section() const {
     return MergeableConst4Section;
   }
@@ -336,8 +324,6 @@ public:
   MCSection *getSXDataSection() const { return SXDataSection; }
 
   MCSection *getEHFrameSection() {
-    if (!EHFrameSection)
-      InitEHFrameSection();
     return EHFrameSection;
   }
 
@@ -356,9 +342,6 @@ private:
   void initMachOMCObjectFileInfo(Triple T);
   void initELFMCObjectFileInfo(Triple T);
   void initCOFFMCObjectFileInfo(Triple T);
-
-  /// Initialize EHFrameSection on demand.
-  void InitEHFrameSection();
 
 public:
   const Triple &getTargetTriple() const { return TT; }

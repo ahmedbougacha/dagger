@@ -23,13 +23,17 @@ void FunctionInfoIndex::mergeFrom(std::unique_ptr<FunctionInfoIndex> Other,
 
   StringRef ModPath;
   for (auto &OtherFuncInfoLists : *Other) {
-    StringRef FuncName = OtherFuncInfoLists.getKey();
+    std::string FuncName = OtherFuncInfoLists.getKey();
     FunctionInfoList &List = OtherFuncInfoLists.second;
 
     // Assert that the func info list only has one entry, since we shouldn't
     // have duplicate names within a single per-module index.
     assert(List.size() == 1);
     std::unique_ptr<FunctionInfo> Info = std::move(List.front());
+
+    // Skip if there was no function summary section.
+    if (!Info->functionSummary())
+      continue;
 
     // Add the module path string ref for this module if we haven't already
     // saved a reference to it.

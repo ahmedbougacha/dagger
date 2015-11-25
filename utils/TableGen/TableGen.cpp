@@ -42,7 +42,8 @@ enum ActionType {
   PrintEnums,
   PrintSets,
   GenOptParserDefs,
-  GenCTags
+  GenCTags,
+  GenAttributes
 };
 
 namespace {
@@ -88,6 +89,8 @@ namespace {
                                "Generate option definitions"),
                     clEnumValN(GenCTags, "gen-ctags",
                                "Generate ctags-compatible index"),
+                    clEnumValN(GenAttributes, "gen-attrs",
+                               "Generate attributes"),
                     clEnumValEnd));
 
   cl::opt<std::string>
@@ -170,6 +173,9 @@ bool LLVMTableGenMain(raw_ostream &OS, RecordKeeper &Records) {
   }
   case GenCTags:
     EmitCTags(Records, OS);
+    break;
+  case GenAttributes:
+    EmitAttributes(Records, OS);
     break;
   }
 

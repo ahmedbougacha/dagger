@@ -23,6 +23,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -50,6 +51,14 @@ STATISTIC(NumReadOnlyArg, "Number of arguments marked readonly");
 STATISTIC(NumNoAlias, "Number of function returns marked noalias");
 STATISTIC(NumNonNullReturn, "Number of function returns marked nonnull");
 STATISTIC(NumAnnotated, "Number of attributes added to library functions");
+STATISTIC(NumNoRecurse, "Number of functions marked as norecurse");
+
+static cl::list<std::string>
+ForceAttributes("force-attribute", cl::Hidden,
+                cl::desc("Add an attribute to a function. This should be a "
+                         "pair of 'function-name:attribute-name', for "
+                         "example -force-add-attribute=foo:noinline. This "
+                         "option can be specified multiple times."));
 
 namespace {
 typedef SmallSetVector<Function *, 8> SCCNodeSet;
@@ -63,7 +72,12 @@ struct FunctionAttrs : public CallGraphSCCPass {
   }
 
   bool runOnSCC(CallGraphSCC &SCC) override;
-
+  bool doInitialization(CallGraph &CG) override {
+    Revisit.clear();
+    return false;
+  }
+  bool doFinalization(CallGraph &CG) override;
+  
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
     AU.addRequired<AssumptionCacheTracker>();
@@ -73,6 +87,7 @@ struct FunctionAttrs : public CallGraphSCCPass {
 
 private:
   TargetLibraryInfo *TLI;
+  SmallVector<WeakVH,16> Revisit;
 };
 }
 
@@ -147,7 +162,7 @@ static MemoryAccessKind checkFunctionMemoryAccess(Function &F, AAResults &AAR,
       for (CallSite::arg_iterator CI = CS.arg_begin(), CE = CS.arg_end();
            CI != CE; ++CI) {
         Value *Arg = *CI;
-        if (!Arg->getType()->isPointerTy())
+        if (!Arg->getType()->isPtrOrPtrVectorTy())
           continue;
 
         AAMDNodes AAInfo;
@@ -321,23 +336,35 @@ struct ArgumentUsesTracker : public CaptureTracker {
       return true;
     }
 
-    bool Found = false;
-    Function::arg_iterator AI = F->arg_begin(), AE = F->arg_end();
-    for (CallSite::arg_iterator PI = CS.arg_begin(), PE = CS.arg_end();
-         PI != PE; ++PI, ++AI) {
-      if (AI == AE) {
-        assert(F->isVarArg() && "More params than args in non-varargs call");
-        Captured = true;
-        return true;
-      }
-      if (PI == U) {
-        Uses.push_back(&*AI);
-        Found = true;
-        break;
-      }
+    // Note: the callee and the two successor blocks *follow* the argument
+    // operands.  This means there is no need to adjust UseIndex to account for
+    // these.
+
+    unsigned UseIndex =
+        std::distance(const_cast<const Use *>(CS.arg_begin()), U);
+
+    assert(UseIndex < CS.data_operands_size() &&
+           "Indirect function calls should have been filtered above!");
+
+    if (UseIndex >= CS.getNumArgOperands()) {
+      // Data operand, but not a argument operand -- must be a bundle operand
+      assert(CS.hasOperandBundles() && "Must be!");
+
+      // CaptureTracking told us that we're being captured by an operand bundle
+      // use.  In this case it does not matter if the callee is within our SCC
+      // or not -- we've been captured in some unknown way, and we have to be
+      // conservative.
+      Captured = true;
+      return true;
     }
-    assert(Found && "Capturing call-site captured nothing?");
-    (void)Found;
+
+    if (UseIndex >= F->arg_size()) {
+      assert(F->isVarArg() && "More params than args in non-varargs call");
+      Captured = true;
+      return true;
+    }
+
+    Uses.push_back(&*std::next(F->arg_begin(), UseIndex));
     return false;
   }
 
@@ -396,7 +423,6 @@ determinePointerReadAttrs(Argument *A,
   while (!Worklist.empty()) {
     Use *U = Worklist.pop_back_val();
     Instruction *I = cast<Instruction>(U->getUser());
-    Value *V = U->get();
 
     switch (I->getOpcode()) {
     case Instruction::BitCast:
@@ -440,24 +466,44 @@ determinePointerReadAttrs(Argument *A,
         return Attribute::None;
       }
 
-      Function::arg_iterator AI = F->arg_begin(), AE = F->arg_end();
-      CallSite::arg_iterator B = CS.arg_begin(), E = CS.arg_end();
-      for (CallSite::arg_iterator A = B; A != E; ++A, ++AI) {
-        if (A->get() == V) {
-          if (AI == AE) {
-            assert(F->isVarArg() &&
-                   "More params than args in non-varargs call.");
-            return Attribute::None;
-          }
-          Captures &= !CS.doesNotCapture(A - B);
-          if (SCCNodes.count(&*AI))
-            continue;
-          if (!CS.onlyReadsMemory() && !CS.onlyReadsMemory(A - B))
-            return Attribute::None;
-          if (!CS.doesNotAccessMemory(A - B))
-            IsRead = true;
-        }
+      // Note: the callee and the two successor blocks *follow* the argument
+      // operands.  This means there is no need to adjust UseIndex to account
+      // for these.
+
+      unsigned UseIndex = std::distance(CS.arg_begin(), U);
+
+      // U cannot be the callee operand use: since we're exploring the
+      // transitive uses of an Argument, having such a use be a callee would
+      // imply the CallSite is an indirect call or invoke; and we'd take the
+      // early exit above.
+      assert(UseIndex < CS.data_operands_size() &&
+             "Data operand use expected!");
+
+      bool IsOperandBundleUse = UseIndex >= CS.getNumArgOperands();
+
+      if (UseIndex >= F->arg_size() && !IsOperandBundleUse) {
+        assert(F->isVarArg() && "More params than args in non-varargs call");
+        return Attribute::None;
       }
+
+      Captures &= !CS.doesNotCapture(UseIndex);
+
+      // Since the optimizer (by design) cannot see the data flow corresponding
+      // to a operand bundle use, these cannot participate in the optimistic SCC
+      // analysis.  Instead, we model the operand bundle uses as arguments in
+      // call to a function external to the SCC.
+      if (!SCCNodes.count(&*std::next(F->arg_begin(), UseIndex)) ||
+          IsOperandBundleUse) {
+
+        // The accessors used on CallSite here do the right thing for calls and
+        // invokes with operand bundles.
+
+        if (!CS.onlyReadsMemory() && !CS.onlyReadsMemory(UseIndex))
+          return Attribute::None;
+        if (!CS.doesNotAccessMemory(UseIndex))
+          IsRead = true;
+      }
+
       AddUsersToWorklistIfCapturing();
       break;
     }
@@ -943,6 +989,14 @@ static void setDoesNotAlias(Function &F, unsigned n) {
     F.setDoesNotAlias(n);
     ++NumAnnotated;
   }
+}
+
+static bool setDoesNotRecurse(Function &F) {
+  if (F.doesNotRecurse())
+    return false;
+  F.setDoesNotRecurse();
+  ++NumNoRecurse;
+  return true;
 }
 
 /// Analyze the name and prototype of the given function and set any applicable
@@ -1748,6 +1802,113 @@ static bool inferPrototypeAttributes(Function &F, const TargetLibraryInfo &TLI) 
   return true;
 }
 
+static bool addNoRecurseAttrs(const CallGraphSCC &SCC,
+                              SmallVectorImpl<WeakVH> &Revisit) {
+  // Try and identify functions that do not recurse.
+
+  // If the SCC contains multiple nodes we know for sure there is recursion.
+  if (!SCC.isSingular())
+    return false;
+
+  const CallGraphNode *CGN = *SCC.begin();
+  Function *F = CGN->getFunction();
+  if (!F || F->isDeclaration() || F->doesNotRecurse())
+    return false;
+
+  // If all of the calls in F are identifiable and are to norecurse functions, F
+  // is norecurse. This check also detects self-recursion as F is not currently
+  // marked norecurse, so any called from F to F will not be marked norecurse.
+  if (std::all_of(CGN->begin(), CGN->end(),
+                  [](const CallGraphNode::CallRecord &CR) {
+                    Function *F = CR.second->getFunction();
+                    return F && F->doesNotRecurse();
+                  }))
+    // Function calls a potentially recursive function.
+    return setDoesNotRecurse(*F);
+
+  // We know that F is not obviously recursive, but we haven't been able to
+  // prove that it doesn't actually recurse. Add it to the Revisit list to try
+  // again top-down later.
+  Revisit.push_back(F);
+  return false;
+}
+
+static bool addNoRecurseAttrsTopDownOnly(Function *F) {
+  // If F is internal and all uses are in norecurse functions, then F is also
+  // norecurse.
+  if (F->doesNotRecurse())
+    return false;
+  if (F->hasInternalLinkage()) {
+    for (auto *U : F->users())
+      if (auto *I = dyn_cast<Instruction>(U)) {
+        if (!I->getParent()->getParent()->doesNotRecurse())
+          return false;
+      } else {
+        return false;
+      }
+    return setDoesNotRecurse(*F);
+  }
+  return false;
+}
+
+static Attribute::AttrKind parseAttrKind(StringRef Kind) {
+  return StringSwitch<Attribute::AttrKind>(Kind)
+    .Case("alwaysinline", Attribute::AlwaysInline)
+    .Case("builtin", Attribute::Builtin)
+    .Case("cold", Attribute::Cold)
+    .Case("convergent", Attribute::Convergent)
+    .Case("inlinehint", Attribute::InlineHint)
+    .Case("jumptable", Attribute::JumpTable)
+    .Case("minsize", Attribute::MinSize)
+    .Case("naked", Attribute::Naked)
+    .Case("nobuiltin", Attribute::NoBuiltin)
+    .Case("noduplicate", Attribute::NoDuplicate)
+    .Case("noimplicitfloat", Attribute::NoImplicitFloat)
+    .Case("noinline", Attribute::NoInline)
+    .Case("nonlazybind", Attribute::NonLazyBind)
+    .Case("noredzone", Attribute::NoRedZone)
+    .Case("noreturn", Attribute::NoReturn)
+    .Case("norecurse", Attribute::NoRecurse)
+    .Case("nounwind", Attribute::NoUnwind)
+    .Case("optnone", Attribute::OptimizeNone)
+    .Case("optsize", Attribute::OptimizeForSize)
+    .Case("readnone", Attribute::ReadNone)
+    .Case("readonly", Attribute::ReadOnly)
+    .Case("argmemonly", Attribute::ArgMemOnly)
+    .Case("returns_twice", Attribute::ReturnsTwice)
+    .Case("safestack", Attribute::SafeStack)
+    .Case("sanitize_address", Attribute::SanitizeAddress)
+    .Case("sanitize_memory", Attribute::SanitizeMemory)
+    .Case("sanitize_thread", Attribute::SanitizeThread)
+    .Case("ssp", Attribute::StackProtect)
+    .Case("sspreq", Attribute::StackProtectReq)
+    .Case("sspstrong", Attribute::StackProtectStrong)
+    .Case("uwtable", Attribute::UWTable)
+    .Default(Attribute::None);
+}
+
+/// If F has any forced attributes given on the command line, add them.
+static bool addForcedAttributes(Function *F) {
+  bool Changed = false;
+  for (auto &S : ForceAttributes) {
+    auto KV = StringRef(S).split(':');
+    if (KV.first != F->getName())
+      continue;
+
+    auto Kind = parseAttrKind(KV.second);
+    if (Kind == Attribute::None) {
+      DEBUG(dbgs() << "ForcedAttribute: " << KV.second
+                   << " unknown or not handled!\n");
+      continue;
+    }
+    if (F->hasFnAttribute(Kind))
+      continue;
+    Changed = true;
+    F->addFnAttr(Kind);
+  }
+  return Changed;
+}
+
 bool FunctionAttrs::runOnSCC(CallGraphSCC &SCC) {
   TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   bool Changed = false;
@@ -1783,6 +1944,7 @@ bool FunctionAttrs::runOnSCC(CallGraphSCC &SCC) {
     if (F->isDeclaration())
       Changed |= inferPrototypeAttributes(*F, *TLI);
 
+    Changed |= addForcedAttributes(F);
     SCCNodes.insert(F);
   }
 
@@ -1795,6 +1957,19 @@ bool FunctionAttrs::runOnSCC(CallGraphSCC &SCC) {
     Changed |= addNoAliasAttrs(SCCNodes);
     Changed |= addNonNullAttrs(SCCNodes, *TLI);
   }
+  
+  Changed |= addNoRecurseAttrs(SCC, Revisit);
+  return Changed;
+}
 
+bool FunctionAttrs::doFinalization(CallGraph &CG) {
+  bool Changed = false;
+  // When iterating over SCCs we visit functions in a bottom-up fashion. Some of
+  // the rules we have for identifying norecurse functions work best with a
+  // top-down walk, so look again at all the functions we previously marked as
+  // worth revisiting, in top-down order.
+  for (auto &F : reverse(Revisit))
+    if (F)
+      Changed |= addNoRecurseAttrsTopDownOnly(cast<Function>((Value*)F));
   return Changed;
 }

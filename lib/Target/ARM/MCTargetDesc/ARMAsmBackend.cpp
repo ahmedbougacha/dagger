@@ -395,8 +395,10 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
       Value = -Value;
       isAdd = false;
     }
-    if (Ctx && Value >= 4096)
-      Ctx->reportFatalError(Fixup.getLoc(), "out of range pc-relative fixup value");
+    if (Ctx && Value >= 4096) {
+      Ctx->reportError(Fixup.getLoc(), "out of range pc-relative fixup value");
+      return 0;
+    }
     Value |= isAdd << 23;
 
     // Same addressing mode as fixup_arm_pcrel_10,
@@ -414,8 +416,10 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
       Value = -Value;
       opc = 2; // 0b0010
     }
-    if (Ctx && ARM_AM::getSOImmVal(Value) == -1)
-      Ctx->reportFatalError(Fixup.getLoc(), "out of range pc-relative fixup value");
+    if (Ctx && ARM_AM::getSOImmVal(Value) == -1) {
+      Ctx->reportError(Fixup.getLoc(), "out of range pc-relative fixup value");
+      return 0;
+    }
     // Encode the immediate and shift the opcode into place.
     return ARM_AM::getSOImmVal(Value) | (opc << 21);
   }
@@ -544,8 +548,10 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
     // could have an error on our hands.
     if (Ctx && !STI->getFeatureBits()[ARM::FeatureThumb2] && IsResolved) {
       const char *FixupDiagnostic = reasonForFixupRelaxation(Fixup, Value);
-      if (FixupDiagnostic)
-        Ctx->reportFatalError(Fixup.getLoc(), FixupDiagnostic);
+      if (FixupDiagnostic) {
+        Ctx->reportError(Fixup.getLoc(), FixupDiagnostic);
+        return 0;
+      }
     }
     // Offset by 4, and don't encode the low two bits.
     return ((Value - 4) >> 2) & 0xff;
@@ -559,16 +565,20 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
     // Offset by 4 and don't encode the lower bit, which is always 0.
     if (Ctx && !STI->getFeatureBits()[ARM::FeatureThumb2]) {
       const char *FixupDiagnostic = reasonForFixupRelaxation(Fixup, Value);
-      if (FixupDiagnostic)
-        Ctx->reportFatalError(Fixup.getLoc(), FixupDiagnostic);
+      if (FixupDiagnostic) {
+        Ctx->reportError(Fixup.getLoc(), FixupDiagnostic);
+        return 0;
+      }
     }
     return ((Value - 4) >> 1) & 0x7ff;
   case ARM::fixup_arm_thumb_bcc:
     // Offset by 4 and don't encode the lower bit, which is always 0.
     if (Ctx && !STI->getFeatureBits()[ARM::FeatureThumb2]) {
       const char *FixupDiagnostic = reasonForFixupRelaxation(Fixup, Value);
-      if (FixupDiagnostic)
-        Ctx->reportFatalError(Fixup.getLoc(), FixupDiagnostic);
+      if (FixupDiagnostic) {
+        Ctx->reportError(Fixup.getLoc(), FixupDiagnostic);
+        return 0;
+      }
     }
     return ((Value - 4) >> 1) & 0xff;
   case ARM::fixup_arm_pcrel_10_unscaled: {
@@ -580,8 +590,10 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
       isAdd = false;
     }
     // The value has the low 4 bits encoded in [3:0] and the high 4 in [11:8].
-    if (Ctx && Value >= 256)
-      Ctx->reportFatalError(Fixup.getLoc(), "out of range pc-relative fixup value");
+    if (Ctx && Value >= 256) {
+      Ctx->reportError(Fixup.getLoc(), "out of range pc-relative fixup value");
+      return 0;
+    }
     Value = (Value & 0xf) | ((Value & 0xf0) << 4);
     return Value | (isAdd << 23);
   }
@@ -599,8 +611,10 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
     }
     // These values don't encode the low two bits since they're always zero.
     Value >>= 2;
-    if (Ctx && Value >= 256)
-      Ctx->reportFatalError(Fixup.getLoc(), "out of range pc-relative fixup value");
+    if (Ctx && Value >= 256) {
+      Ctx->reportError(Fixup.getLoc(), "out of range pc-relative fixup value");
+      return 0;
+    }
     Value |= isAdd << 23;
 
     // Same addressing mode as fixup_arm_pcrel_10, but with 16-bit halfwords
@@ -620,6 +634,7 @@ void ARMAsmBackend::processFixupValue(const MCAssembler &Asm,
                                       const MCValue &Target, uint64_t &Value,
                                       bool &IsResolved) {
   const MCSymbolRefExpr *A = Target.getSymA();
+  const MCSymbol *Sym = A ? &A->getSymbol() : nullptr;
   // Some fixups to thumb function symbols need the low bit (thumb bit)
   // twiddled.
   if ((unsigned)Fixup.getKind() != ARM::fixup_arm_ldst_pcrel_12 &&
@@ -628,18 +643,21 @@ void ARMAsmBackend::processFixupValue(const MCAssembler &Asm,
       (unsigned)Fixup.getKind() != ARM::fixup_thumb_adr_pcrel_10 &&
       (unsigned)Fixup.getKind() != ARM::fixup_t2_adr_pcrel_12 &&
       (unsigned)Fixup.getKind() != ARM::fixup_arm_thumb_cp) {
-    if (A) {
-      const MCSymbol &Sym = A->getSymbol();
-      if (Asm.isThumbFunc(&Sym))
+    if (Sym) {
+      if (Asm.isThumbFunc(Sym))
         Value |= 1;
     }
   }
-  // For Thumb1 BL instruction, it is possible to be a long jump between
-  // the basic blocks of the same function.  Thus, we would like to resolve
-  // the offset when the destination has the same MCFragment.
-  if (A && (unsigned)Fixup.getKind() == ARM::fixup_arm_thumb_bl) {
-    const MCSymbol &Sym = A->getSymbol();
-    IsResolved = (Sym.getFragment() == DF);
+  if (IsResolved && (unsigned)Fixup.getKind() == ARM::fixup_arm_thumb_bl) {
+    assert(Sym && "How did we resolve this?");
+
+    // If the symbol is external the linker will handle it.
+    // FIXME: Should we handle it as an optimization?
+
+    // If the symbol is out of range, produce a relocation and hope the
+    // linker can handle it. GNU AS produces an error in this case.
+    if (Sym->isExternal() || Value >= 0x400004)
+      IsResolved = false;
   }
   // We must always generate a relocation for BL/BLX instructions if we have
   // a symbol to reference, as the linker relies on knowing the destination
@@ -1003,24 +1021,20 @@ static MachO::CPUSubTypeARM getMachOSubTypeFromArch(StringRef Arch) {
     return MachO::CPU_SUBTYPE_ARM_V7;
   case ARM::AK_ARMV4T:
     return MachO::CPU_SUBTYPE_ARM_V4T;
+  case ARM::AK_ARMV5T:
+  case ARM::AK_ARMV5TE:
+  case ARM::AK_ARMV5TEJ:
+    return MachO::CPU_SUBTYPE_ARM_V5;
   case ARM::AK_ARMV6:
   case ARM::AK_ARMV6K:
     return MachO::CPU_SUBTYPE_ARM_V6;
-  case ARM::AK_ARMV5:
-    return MachO::CPU_SUBTYPE_ARM_V5;
-  case ARM::AK_ARMV5T:
-  case ARM::AK_ARMV5E:
-  case ARM::AK_ARMV5TE:
-  case ARM::AK_ARMV5TEJ:
-    return MachO::CPU_SUBTYPE_ARM_V5TEJ;
-  case ARM::AK_ARMV7:
+  case ARM::AK_ARMV7A:
     return MachO::CPU_SUBTYPE_ARM_V7;
   case ARM::AK_ARMV7S:
     return MachO::CPU_SUBTYPE_ARM_V7S;
   case ARM::AK_ARMV7K:
     return MachO::CPU_SUBTYPE_ARM_V7K;
   case ARM::AK_ARMV6M:
-  case ARM::AK_ARMV6SM:
     return MachO::CPU_SUBTYPE_ARM_V6M;
   case ARM::AK_ARMV7M:
     return MachO::CPU_SUBTYPE_ARM_V7M;

@@ -43,6 +43,7 @@ class TestingProgressDisplay(object):
                                     test.getFullName())
 
         shouldShow = test.result.code.isFailure or \
+            self.opts.showAllOutput or \
             (not self.opts.quiet and not self.opts.succinct)
         if not shouldShow:
             return
@@ -56,9 +57,11 @@ class TestingProgressDisplay(object):
                                      self.completed, self.numTests))
 
         # Show the test failure output, if requested.
-        if test.result.code.isFailure and self.opts.showOutput:
-            print("%s TEST '%s' FAILED %s" % ('*'*20, test.getFullName(),
-                                              '*'*20))
+        if (test.result.code.isFailure and self.opts.showOutput) or \
+           self.opts.showAllOutput:
+            if test.result.code.isFailure:
+                print("%s TEST '%s' FAILED %s" % ('*'*20, test.getFullName(),
+                                                  '*'*20))
             print(test.result.output)
             print("*" * 20)
 
@@ -161,7 +164,10 @@ def main(builtinParameters = {}):
                      help="Reduce amount of output",
                      action="store_true", default=False)
     group.add_option("-v", "--verbose", dest="showOutput",
-                     help="Show all test output",
+                     help="Show test output for failures",
+                     action="store_true", default=False)
+    group.add_option("-a", "--show-all", dest="showAllOutput",
+                     help="Display all commandlines and output",
                      action="store_true", default=False)
     group.add_option("-o", "--output", dest="output_path",
                      help="Write test results to the provided path",

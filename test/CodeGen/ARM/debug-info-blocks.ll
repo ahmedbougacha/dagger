@@ -1,5 +1,5 @@
 ; RUN: llc -O0 < %s | FileCheck %s
-; CHECK: @DEBUG_VALUE: foobar_func_block_invoke_0:mydata <- [SP+{{[0-9]+}}]
+; CHECK: @DEBUG_VALUE: foobar_func_block_invoke_0:mydata <- [%SP+{{[0-9]+}}]
 ; Radar 9331779
 target datalayout = "e-p:32:32:32-i1:8:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-f32:32:32-f64:32:32-v64:32:64-v128:32:128-a0:0:32-n32"
 target triple = "thumbv7-apple-ios"
@@ -27,7 +27,7 @@ declare void @llvm.dbg.value(metadata, i64, metadata, metadata) nounwind readnon
 
 declare void @llvm.memcpy.p0i8.p0i8.i32(i8* nocapture, i8* nocapture, i32, i32, i1) nounwind
 
-define hidden void @foobar_func_block_invoke_0(i8* %.block_descriptor, %0* %loadedMydata, [4 x i32] %bounds.coerce0, [4 x i32] %data.coerce0) ssp {
+define hidden void @foobar_func_block_invoke_0(i8* %.block_descriptor, %0* %loadedMydata, [4 x i32] %bounds.coerce0, [4 x i32] %data.coerce0) ssp !dbg !23 {
   %1 = alloca %0*, align 4
   %bounds = alloca %struct.CR, align 4
   %data = alloca %struct.CR, align 4
@@ -118,7 +118,7 @@ define hidden void @foobar_func_block_invoke_0(i8* %.block_descriptor, %0* %load
 !20 = !DIFile(filename: "header4.h", directory: "/Volumes/Sandbox/llvm")
 !21 = !{!22}
 !22 = !DIEnumerator(name: "Eleven", value: 0) ; [ DW_TAG_enumerator ]
-!23 = distinct !DISubprogram(name: "foobar_func_block_invoke_0", line: 609, isLocal: true, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 609, file: !152, scope: !24, type: !25, function: void (i8*, %0*, [4 x i32], [4 x i32])* @foobar_func_block_invoke_0)
+!23 = distinct !DISubprogram(name: "foobar_func_block_invoke_0", line: 609, isLocal: true, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 609, file: !152, scope: !24, type: !25)
 !24 = !DIFile(filename: "MyLibrary.m", directory: "/Volumes/Sandbox/llvm")
 !25 = !DISubroutineType(types: !26)
 !26 = !{null}

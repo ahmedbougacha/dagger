@@ -202,6 +202,8 @@ static uint64_t getAttrKindEncoding(Attribute::AttrKind Kind) {
     return bitc::ATTR_KIND_NO_IMPLICIT_FLOAT;
   case Attribute::NoInline:
     return bitc::ATTR_KIND_NO_INLINE;
+  case Attribute::NoRecurse:
+    return bitc::ATTR_KIND_NO_RECURSE;
   case Attribute::NonLazyBind:
     return bitc::ATTR_KIND_NON_LAZY_BIND;
   case Attribute::NonNull:
@@ -583,7 +585,8 @@ static void writeComdats(const ValueEnumerator &VE, BitstreamWriter &Stream) {
 /// after the real VST is written. Returns the bit offset to backpatch.
 static uint64_t WriteValueSymbolTableForwardDecl(const ValueSymbolTable &VST,
                                                  BitstreamWriter &Stream) {
-  if (VST.empty()) return 0;
+  if (VST.empty())
+    return 0;
 
   // Write a placeholder value in for the offset of the real VST,
   // which is written after the function blocks so that it can include
@@ -772,6 +775,21 @@ static uint64_t WriteModuleInfo(const Module *M, const ValueEnumerator &VE,
     Stream.EmitRecord(bitc::MODULE_CODE_ALIAS, Vals, AbbrevToUse);
     Vals.clear();
   }
+
+  // Write a record indicating the number of module-level metadata IDs
+  // This is needed because the ids of metadata are assigned implicitly
+  // based on their ordering in the bitcode, with the function-level
+  // metadata ids starting after the module-level metadata ids. For
+  // function importing where we lazy load the metadata as a postpass,
+  // we want to avoid parsing the module-level metadata before parsing
+  // the imported functions.
+  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  Abbv->Add(BitCodeAbbrevOp(bitc::MODULE_CODE_METADATA_VALUES));
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
+  unsigned MDValsAbbrev = Stream.EmitAbbrev(Abbv);
+  Vals.push_back(VE.numMDs());
+  Stream.EmitRecord(bitc::MODULE_CODE_METADATA_VALUES, Vals, MDValsAbbrev);
+  Vals.clear();
 
   uint64_t VSTOffsetPlaceholder =
       WriteValueSymbolTableForwardDecl(M->getValueSymbolTable(), Stream);
@@ -1023,7 +1041,6 @@ static void WriteDISubprogram(const DISubprogram *N, const ValueEnumerator &VE,
   Record.push_back(N->getVirtualIndex());
   Record.push_back(N->getFlags());
   Record.push_back(N->isOptimized());
-  Record.push_back(VE.getMetadataOrNullID(N->getRawFunction()));
   Record.push_back(VE.getMetadataOrNullID(N->getTemplateParams().get()));
   Record.push_back(VE.getMetadataOrNullID(N->getDeclaration()));
   Record.push_back(VE.getMetadataOrNullID(N->getVariables().get()));
@@ -1381,7 +1398,7 @@ static void WriteModuleMetadataStore(const Module *M, BitstreamWriter &Stream) {
 
   if (Names.empty()) return;
 
-  Stream.EnterSubblock(bitc::METADATA_BLOCK_ID, 3);
+  Stream.EnterSubblock(bitc::METADATA_KIND_BLOCK_ID, 3);
 
   for (unsigned MDKindID = 0, e = Names.size(); MDKindID != e; ++MDKindID) {
     Record.push_back(MDKindID);
@@ -1736,8 +1753,8 @@ static void WriteOperandBundles(BitstreamWriter &Stream, ImmutableCallSite CS,
   LLVMContext &C = CS.getInstruction()->getContext();
 
   for (unsigned i = 0, e = CS.getNumOperandBundles(); i != e; ++i) {
-    const auto &Bundle = CS.getOperandBundle(i);
-    Record.push_back(C.getOperandBundleTagID(Bundle.Tag));
+    const auto &Bundle = CS.getOperandBundleAt(i);
+    Record.push_back(C.getOperandBundleTagID(Bundle.getTagName()));
 
     for (auto &Input : Bundle.Inputs)
       PushValueAndType(Input, InstID, Record, VE);
@@ -1889,10 +1906,9 @@ static void WriteInstruction(const Instruction &I, unsigned InstID,
       Vals.push_back(VE.getTypeID(SI.getCondition()->getType()));
       pushValue(SI.getCondition(), InstID, Vals, VE);
       Vals.push_back(VE.getValueID(SI.getDefaultDest()));
-      for (SwitchInst::ConstCaseIt i = SI.case_begin(), e = SI.case_end();
-           i != e; ++i) {
-        Vals.push_back(VE.getValueID(i.getCaseValue()));
-        Vals.push_back(VE.getValueID(i.getCaseSuccessor()));
+      for (SwitchInst::ConstCaseIt Case : SI.cases()) {
+        Vals.push_back(VE.getValueID(Case.getCaseValue()));
+        Vals.push_back(VE.getValueID(Case.getCaseSuccessor()));
       }
     }
     break;
@@ -2128,8 +2144,11 @@ static void WriteInstruction(const Instruction &I, unsigned InstID,
     Code = bitc::FUNC_CODE_INST_CALL;
 
     Vals.push_back(VE.getAttributeID(CI.getAttributes()));
-    Vals.push_back((CI.getCallingConv() << 1) | unsigned(CI.isTailCall()) |
-                   unsigned(CI.isMustTailCall()) << 14 | 1 << 15);
+    Vals.push_back(CI.getCallingConv() << bitc::CALL_CCONV |
+                   unsigned(CI.isTailCall()) << bitc::CALL_TAIL |
+                   unsigned(CI.isMustTailCall()) << bitc::CALL_MUSTTAIL |
+                   1 << bitc::CALL_EXPLICIT_TYPE |
+                   unsigned(CI.isNoTailCall()) << bitc::CALL_NOTAIL);
     Vals.push_back(VE.getTypeID(FTy));
     PushValueAndType(CI.getCalledValue(), InstID, Vals, VE);  // Callee
 
@@ -2220,8 +2239,8 @@ static void WriteValueSymbolTable(
     // 8-bit fixed-width VST_FNENTRY function strings.
     BitCodeAbbrev *Abbv = new BitCodeAbbrev();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_FNENTRY));
-    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // value id
-    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // funcoffset
+    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // value id
+    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 8));
     FnEntry8BitAbbrev = Stream.EmitAbbrev(Abbv);
@@ -2229,8 +2248,8 @@ static void WriteValueSymbolTable(
     // 7-bit fixed width VST_FNENTRY function strings.
     Abbv = new BitCodeAbbrev();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_FNENTRY));
-    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // value id
-    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // funcoffset
+    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // value id
+    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 7));
     FnEntry7BitAbbrev = Stream.EmitAbbrev(Abbv);
@@ -2238,8 +2257,8 @@ static void WriteValueSymbolTable(
     // 6-bit char6 VST_FNENTRY function strings.
     Abbv = new BitCodeAbbrev();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_FNENTRY));
-    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // value id
-    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // funcoffset
+    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // value id
+    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Char6));
     FnEntry6BitAbbrev = Stream.EmitAbbrev(Abbv);
@@ -2303,7 +2322,8 @@ static void WriteValueSymbolTable(
         AbbrevToUse = VST_ENTRY_7_ABBREV;
     }
 
-    for (const auto P : Name.getKey()) NameVals.push_back((unsigned char)P);
+    for (const auto P : Name.getKey())
+      NameVals.push_back((unsigned char)P);
 
     // Emit the finished record.
     Stream.EmitRecord(Code, NameVals, AbbrevToUse);
@@ -2321,7 +2341,7 @@ static void WriteCombinedValueSymbolTable(const FunctionInfoIndex &Index,
   // 8-bit fixed-width VST_COMBINED_FNENTRY function strings.
   BitCodeAbbrev *Abbv = new BitCodeAbbrev();
   Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_COMBINED_FNENTRY));
-  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // funcoffset
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 8));
   unsigned FnEntry8BitAbbrev = Stream.EmitAbbrev(Abbv);
@@ -2329,7 +2349,7 @@ static void WriteCombinedValueSymbolTable(const FunctionInfoIndex &Index,
   // 7-bit fixed width VST_COMBINED_FNENTRY function strings.
   Abbv = new BitCodeAbbrev();
   Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_COMBINED_FNENTRY));
-  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // funcoffset
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 7));
   unsigned FnEntry7BitAbbrev = Stream.EmitAbbrev(Abbv);
@@ -2337,7 +2357,7 @@ static void WriteCombinedValueSymbolTable(const FunctionInfoIndex &Index,
   // 6-bit char6 VST_COMBINED_FNENTRY function strings.
   Abbv = new BitCodeAbbrev();
   Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_COMBINED_FNENTRY));
-  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // funcoffset
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Char6));
   unsigned FnEntry6BitAbbrev = Stream.EmitAbbrev(Abbv);
@@ -2361,7 +2381,8 @@ static void WriteCombinedValueSymbolTable(const FunctionInfoIndex &Index,
       else if (Bits == SE_Fixed7)
         AbbrevToUse = FnEntry7BitAbbrev;
 
-      for (const auto P : FuncName) NameVals.push_back((unsigned char)P);
+      for (const auto P : FuncName)
+        NameVals.push_back((unsigned char)P);
 
       // Emit the finished record.
       Stream.EmitRecord(bitc::VST_CODE_COMBINED_FNENTRY, NameVals, AbbrevToUse);
@@ -2466,7 +2487,8 @@ static void WriteFunction(
          I != E; ++I) {
       WriteInstruction(*I, InstID, VE, Stream, Vals);
 
-      if (!isa<DbgInfoIntrinsic>(I)) ++NumInsts;
+      if (!isa<DbgInfoIntrinsic>(I))
+        ++NumInsts;
 
       if (!I->getType()->isVoidTy())
         ++InstID;
@@ -2728,7 +2750,8 @@ static void WriteModStrings(const FunctionInfoIndex &I,
 
     NameVals.push_back(MPSE.getValue());
 
-    for (const auto P : MPSE.getKey()) NameVals.push_back((unsigned char)P);
+    for (const auto P : MPSE.getKey())
+      NameVals.push_back((unsigned char)P);
 
     // Emit the finished record.
     Stream.EmitRecord(bitc::MST_CODE_ENTRY, NameVals, AbbrevToUse);
@@ -2761,16 +2784,17 @@ static void WritePerModuleFunctionSummary(
   // Abbrev for FS_CODE_PERMODULE_ENTRY.
   BitCodeAbbrev *Abbv = new BitCodeAbbrev();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_CODE_PERMODULE_ENTRY));
-  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));    // valueid
-  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1));  // islocal
-  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));    // instcount
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // islocal
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // instcount
   unsigned FSAbbrev = Stream.EmitAbbrev(Abbv);
 
   SmallVector<unsigned, 64> NameVals;
   for (auto &I : FunctionIndex) {
     // Skip anonymous functions. We will emit a function summary for
     // any aliases below.
-    if (!I.first->hasName()) continue;
+    if (!I.first->hasName())
+      continue;
 
     WritePerModuleFunctionSummaryRecord(
         NameVals, I.second->functionSummary(),
@@ -2779,9 +2803,11 @@ static void WritePerModuleFunctionSummary(
   }
 
   for (const GlobalAlias &A : M->aliases()) {
-    if (!A.getBaseObject()) continue;
+    if (!A.getBaseObject())
+      continue;
     const Function *F = dyn_cast<Function>(A.getBaseObject());
-    if (!F || F->isDeclaration()) continue;
+    if (!F || F->isDeclaration())
+      continue;
 
     assert(FunctionIndex.count(F) == 1);
     WritePerModuleFunctionSummaryRecord(
@@ -2802,8 +2828,8 @@ static void WriteCombinedFunctionSummary(const FunctionInfoIndex &I,
   // Abbrev for FS_CODE_COMBINED_ENTRY.
   BitCodeAbbrev *Abbv = new BitCodeAbbrev();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_CODE_COMBINED_ENTRY));
-  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // modid
-  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));  // instcount
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // modid
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // instcount
   unsigned FSAbbrev = Stream.EmitAbbrev(Abbv);
 
   SmallVector<unsigned, 64> NameVals;
@@ -2847,8 +2873,9 @@ static void WriteIdentificationBlock(const Module *M, BitstreamWriter &Stream) {
   Abbv = new BitCodeAbbrev();
   Abbv->Add(BitCodeAbbrevOp(bitc::IDENTIFICATION_CODE_EPOCH));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
+  auto EpochAbbrev = Stream.EmitAbbrev(Abbv);
   SmallVector<unsigned, 1> Vals = {bitc::BITCODE_CURRENT_EPOCH};
-  Stream.EmitRecord(bitc::IDENTIFICATION_CODE_EPOCH, Vals);
+  Stream.EmitRecord(bitc::IDENTIFICATION_CODE_EPOCH, Vals, EpochAbbrev);
   Stream.ExitBlock();
 }
 

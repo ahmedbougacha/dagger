@@ -86,19 +86,9 @@ void MCELFStreamer::mergeFragment(MCDataFragment *DF,
 }
 
 void MCELFStreamer::InitSections(bool NoExecStack) {
-  // This emulates the same behavior of GNU as. This makes it easier
-  // to compare the output as the major sections are in the same order.
   MCContext &Ctx = getContext();
   SwitchSection(Ctx.getObjectFileInfo()->getTextSection());
   EmitCodeAlignment(4);
-
-  SwitchSection(Ctx.getObjectFileInfo()->getDataSection());
-  EmitCodeAlignment(4);
-
-  SwitchSection(Ctx.getObjectFileInfo()->getBSSSection());
-  EmitCodeAlignment(4);
-
-  SwitchSection(Ctx.getObjectFileInfo()->getTextSection());
 
   if (NoExecStack)
     SwitchSection(Ctx.getAsmInfo()->getNonexecutableStackSection(Ctx));
@@ -311,8 +301,20 @@ void MCELFStreamer::EmitCommonSymbol(MCSymbol *S, uint64_t Size,
   Symbol->setType(ELF::STT_OBJECT);
 
   if (Symbol->getBinding() == ELF::STB_LOCAL) {
-    struct LocalCommon L = {Symbol, Size, ByteAlignment};
-    LocalCommons.push_back(L);
+    MCSection &Section = *getAssembler().getContext().getELFSection(
+        ".bss", ELF::SHT_NOBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
+    MCSectionSubPair P = getCurrentSection();
+    SwitchSection(&Section);
+
+    EmitValueToAlignment(ByteAlignment, 0, 1, 0);
+    EmitLabel(Symbol);
+    EmitZeros(Size);
+
+    // Update the maximum alignment of the section if necessary.
+    if (ByteAlignment > Section.getAlignment())
+      Section.setAlignment(ByteAlignment);
+
+    SwitchSection(P.first, P.second);
   } else {
     if(Symbol->declareCommon(Size, ByteAlignment))
       report_fatal_error("Symbol: " + Symbol->getName() +
@@ -618,38 +620,12 @@ void MCELFStreamer::EmitBundleUnlock() {
     Sec.setBundleLockState(MCSection::NotBundleLocked);
 }
 
-void MCELFStreamer::Flush() {
-  for (std::vector<LocalCommon>::const_iterator i = LocalCommons.begin(),
-                                                e = LocalCommons.end();
-       i != e; ++i) {
-    const MCSymbol &Symbol = *i->Symbol;
-    uint64_t Size = i->Size;
-    unsigned ByteAlignment = i->ByteAlignment;
-    MCSection &Section = *getAssembler().getContext().getELFSection(
-        ".bss", ELF::SHT_NOBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
-
-    getAssembler().registerSection(Section);
-    new MCAlignFragment(ByteAlignment, 0, 1, ByteAlignment, &Section);
-
-    MCFragment *F = new MCFillFragment(0, 0, Size, &Section);
-    Symbol.setFragment(F);
-
-    // Update the maximum alignment of the section if necessary.
-    if (ByteAlignment > Section.getAlignment())
-      Section.setAlignment(ByteAlignment);
-  }
-
-  LocalCommons.clear();
-}
-
 void MCELFStreamer::FinishImpl() {
   // Ensure the last section gets aligned if necessary.
   MCSection *CurSection = getCurrentSectionOnly();
   setSectionAlignmentForBundling(getAssembler(), CurSection);
 
   EmitFrames(nullptr);
-
-  Flush();
 
   this->MCObjectStreamer::FinishImpl();
 }

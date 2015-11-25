@@ -110,6 +110,19 @@ void AMDGPUAsmPrinter::EmitEndOfAsmFile(Module &M) {
   OutStreamer->EmitLabel(EndOfTextLabel);
 }
 
+void AMDGPUAsmPrinter::EmitFunctionEntryLabel() {
+  const SIMachineFunctionInfo *MFI = MF->getInfo<SIMachineFunctionInfo>();
+  const AMDGPUSubtarget &STM = MF->getSubtarget<AMDGPUSubtarget>();
+  if (MFI->isKernel() && STM.isAmdHsaOS()) {
+    AMDGPUTargetStreamer *TS =
+        static_cast<AMDGPUTargetStreamer *>(OutStreamer->getTargetStreamer());
+    TS->EmitAMDGPUSymbolType(CurrentFnSym->getName(),
+                             ELF::STT_AMDGPU_HSA_KERNEL);
+  }
+
+  AsmPrinter::EmitFunctionEntryLabel();
+}
+
 bool AMDGPUAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
 
   // The starting address of all shader programs must be 256 bytes aligned.
@@ -165,6 +178,23 @@ bool AMDGPUAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
                                   false);
       OutStreamer->emitRawComment(" ScratchSize: " + Twine(KernelInfo.ScratchSize),
                                   false);
+
+      OutStreamer->emitRawComment(" COMPUTE_PGM_RSRC2:USER_SGPR: " +
+                                  Twine(G_00B84C_USER_SGPR(KernelInfo.ComputePGMRSrc2)),
+                                  false);
+      OutStreamer->emitRawComment(" COMPUTE_PGM_RSRC2:TGID_X_EN: " +
+                                  Twine(G_00B84C_TGID_X_EN(KernelInfo.ComputePGMRSrc2)),
+                                  false);
+      OutStreamer->emitRawComment(" COMPUTE_PGM_RSRC2:TGID_Y_EN: " +
+                                  Twine(G_00B84C_TGID_Y_EN(KernelInfo.ComputePGMRSrc2)),
+                                  false);
+      OutStreamer->emitRawComment(" COMPUTE_PGM_RSRC2:TGID_Z_EN: " +
+                                  Twine(G_00B84C_TGID_Z_EN(KernelInfo.ComputePGMRSrc2)),
+                                  false);
+      OutStreamer->emitRawComment(" COMPUTE_PGM_RSRC2:TIDIG_COMP_CNT: " +
+                                  Twine(G_00B84C_TIDIG_COMP_CNT(KernelInfo.ComputePGMRSrc2)),
+                                  false);
+
     } else {
       R600MachineFunctionInfo *MFI = MF.getInfo<R600MachineFunctionInfo>();
       OutStreamer->emitRawComment(

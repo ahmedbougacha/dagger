@@ -120,6 +120,13 @@ bool Loop::makeLoopInvariant(Instruction *I, bool &Changed,
 
   // Hoist.
   I->moveBefore(InsertPt);
+
+  // There is possibility of hoisting this instruction above some arbitrary
+  // condition. Any metadata defined on it can be control dependent on this
+  // condition. Conservatively strip it here so that we don't give any wrong
+  // information to the optimizer.
+  I->dropUnknownNonDebugMetadata();
+
   Changed = true;
   return true;
 }
@@ -688,6 +695,20 @@ LoopInfo LoopAnalysis::run(Function &F, AnalysisManager<Function> *AM) {
 PreservedAnalyses LoopPrinterPass::run(Function &F,
                                        AnalysisManager<Function> *AM) {
   AM->getResult<LoopAnalysis>(F).print(OS);
+  return PreservedAnalyses::all();
+}
+
+PrintLoopPass::PrintLoopPass() : OS(dbgs()) {}
+PrintLoopPass::PrintLoopPass(raw_ostream &OS, const std::string &Banner)
+    : OS(OS), Banner(Banner) {}
+
+PreservedAnalyses PrintLoopPass::run(Loop &L) {
+  OS << Banner;
+  for (auto *Block : L.blocks())
+    if (Block)
+      Block->print(OS);
+    else
+      OS << "Printing <null> block";
   return PreservedAnalyses::all();
 }
 

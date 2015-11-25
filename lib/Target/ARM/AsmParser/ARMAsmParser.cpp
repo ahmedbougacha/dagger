@@ -129,7 +129,6 @@ public:
 };
 
 class ARMAsmParser : public MCTargetAsmParser {
-  MCSubtargetInfo &STI;
   const MCInstrInfo &MII;
   const MCRegisterInfo *MRI;
   UnwindContext UC;
@@ -247,48 +246,49 @@ class ARMAsmParser : public MCTargetAsmParser {
                                      OperandVector &Operands);
   bool isThumb() const {
     // FIXME: Can tablegen auto-generate this?
-    return STI.getFeatureBits()[ARM::ModeThumb];
+    return getSTI().getFeatureBits()[ARM::ModeThumb];
   }
   bool isThumbOne() const {
-    return isThumb() && !STI.getFeatureBits()[ARM::FeatureThumb2];
+    return isThumb() && !getSTI().getFeatureBits()[ARM::FeatureThumb2];
   }
   bool isThumbTwo() const {
-    return isThumb() && STI.getFeatureBits()[ARM::FeatureThumb2];
+    return isThumb() && getSTI().getFeatureBits()[ARM::FeatureThumb2];
   }
   bool hasThumb() const {
-    return STI.getFeatureBits()[ARM::HasV4TOps];
+    return getSTI().getFeatureBits()[ARM::HasV4TOps];
   }
   bool hasV6Ops() const {
-    return STI.getFeatureBits()[ARM::HasV6Ops];
+    return getSTI().getFeatureBits()[ARM::HasV6Ops];
   }
   bool hasV6MOps() const {
-    return STI.getFeatureBits()[ARM::HasV6MOps];
+    return getSTI().getFeatureBits()[ARM::HasV6MOps];
   }
   bool hasV7Ops() const {
-    return STI.getFeatureBits()[ARM::HasV7Ops];
+    return getSTI().getFeatureBits()[ARM::HasV7Ops];
   }
   bool hasV8Ops() const {
-    return STI.getFeatureBits()[ARM::HasV8Ops];
+    return getSTI().getFeatureBits()[ARM::HasV8Ops];
   }
   bool hasARM() const {
-    return !STI.getFeatureBits()[ARM::FeatureNoARM];
+    return !getSTI().getFeatureBits()[ARM::FeatureNoARM];
   }
   bool hasDSP() const {
-    return STI.getFeatureBits()[ARM::FeatureDSP];
+    return getSTI().getFeatureBits()[ARM::FeatureDSP];
   }
   bool hasD16() const {
-    return STI.getFeatureBits()[ARM::FeatureD16];
+    return getSTI().getFeatureBits()[ARM::FeatureD16];
   }
   bool hasV8_1aOps() const {
-    return STI.getFeatureBits()[ARM::HasV8_1aOps];
+    return getSTI().getFeatureBits()[ARM::HasV8_1aOps];
   }
 
   void SwitchMode() {
+    MCSubtargetInfo &STI = copySTI();
     uint64_t FB = ComputeAvailableFeatures(STI.ToggleFeature(ARM::ModeThumb));
     setAvailableFeatures(FB);
   }
   bool isMClass() const {
-    return STI.getFeatureBits()[ARM::FeatureMClass];
+    return getSTI().getFeatureBits()[ARM::FeatureMClass];
   }
 
   /// @name Auto-generated Match Functions
@@ -349,9 +349,9 @@ public:
 
   };
 
-  ARMAsmParser(MCSubtargetInfo &STI, MCAsmParser &Parser,
+  ARMAsmParser(const MCSubtargetInfo &STI, MCAsmParser &Parser,
                const MCInstrInfo &MII, const MCTargetOptions &Options)
-      : MCTargetAsmParser(Options), STI(STI), MII(MII), UC(Parser) {
+    : MCTargetAsmParser(Options, STI), MII(MII), UC(Parser) {
     MCAsmParserExtension::Initialize(Parser);
 
     // Cache the MCRegisterInfo.
@@ -5122,6 +5122,7 @@ bool ARMAsmParser::parseOperand(OperandVector &Operands, StringRef Mnemonic) {
     // FALLTHROUGH
   }
   case AsmToken::Colon: {
+    S = Parser.getTok().getLoc();
     // ":lower16:" and ":upper16:" expression prefixes
     // FIXME: Check it's an expression prefix,
     // e.g. (FOO - :lower16:BAR) isn't legal.
@@ -5140,8 +5141,9 @@ bool ARMAsmParser::parseOperand(OperandVector &Operands, StringRef Mnemonic) {
     return false;
   }
   case AsmToken::Equal: {
+    S = Parser.getTok().getLoc();
     if (Mnemonic != "ldr") // only parse for ldr pseudo (e.g. ldr r0, =val)
-      return Error(Parser.getTok().getLoc(), "unexpected token in operand");
+      return Error(S, "unexpected token in operand");
 
     Parser.Lex(); // Eat '='
     const MCExpr *SubExprVal;
@@ -5149,7 +5151,8 @@ bool ARMAsmParser::parseOperand(OperandVector &Operands, StringRef Mnemonic) {
       return true;
     E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
 
-    const MCExpr *CPLoc = getTargetStreamer().addConstantPoolEntry(SubExprVal);
+    const MCExpr *CPLoc =
+        getTargetStreamer().addConstantPoolEntry(SubExprVal, S);
     Operands.push_back(ARMOperand::CreateImm(CPLoc, S, E));
     return false;
   }
@@ -8611,7 +8614,7 @@ bool ARMAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       return false;
 
     Inst.setLoc(IDLoc);
-    Out.EmitInstruction(Inst, STI);
+    Out.EmitInstruction(Inst, getSTI());
     return false;
   case Match_MissingFeature: {
     assert(ErrorInfo && "Unknown missing feature!");
@@ -8801,7 +8804,7 @@ bool ARMAsmParser::parseLiteralValues(unsigned Size, SMLoc L) {
         return false;
       }
 
-      getParser().getStreamer().EmitValue(Value, Size);
+      getParser().getStreamer().EmitValue(Value, Size, L);
 
       if (getLexer().is(AsmToken::EndOfStatement))
         break;
@@ -9039,7 +9042,8 @@ bool ARMAsmParser::parseDirectiveArch(SMLoc L) {
   }
 
   Triple T;
-  STI.setDefaultFeatures(T.getARMCPUForArch(Arch));
+  MCSubtargetInfo &STI = copySTI();
+  STI.setDefaultFeatures("", ("+" + ARM::getArchName(ID)).str());
   setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
 
   getTargetStreamer().emitArch(ID);
@@ -9166,12 +9170,13 @@ bool ARMAsmParser::parseDirectiveCPU(SMLoc L) {
 
   // FIXME: This is using table-gen data, but should be moved to
   // ARMTargetParser once that is table-gen'd.
-  if (!STI.isCPUStringValid(CPU)) {
+  if (!getSTI().isCPUStringValid(CPU)) {
     Error(L, "Unknown CPU name");
     return false;
   }
 
-  STI.setDefaultFeatures(CPU);
+  MCSubtargetInfo &STI = copySTI();
+  STI.setDefaultFeatures(CPU, "");
   setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
 
   return false;
@@ -9189,6 +9194,7 @@ bool ARMAsmParser::parseDirectiveFPU(SMLoc L) {
     return false;
   }
 
+  MCSubtargetInfo &STI = copySTI();
   for (auto Feature : Features)
     STI.ApplyFeatureFlag(Feature);
   setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
@@ -9969,6 +9975,7 @@ bool ARMAsmParser::parseDirectiveArchExtension(SMLoc L) {
       return false;
     }
 
+    MCSubtargetInfo &STI = copySTI();
     FeatureBitset ToggleFeatures = EnableFeature
       ? (~STI.getFeatureBits() & Extension.Features)
       : ( STI.getFeatureBits() & Extension.Features);

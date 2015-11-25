@@ -179,14 +179,19 @@ const MCSymbol *MCAsmLayout::getBaseSymbol(const MCSymbol &Symbol) const {
 
   const MCExpr *Expr = Symbol.getVariableValue();
   MCValue Value;
-  if (!Expr->evaluateAsValue(Value, *this))
-    llvm_unreachable("Invalid Expression");
+  if (!Expr->evaluateAsValue(Value, *this)) {
+    Assembler.getContext().reportError(
+        SMLoc(), "expression could not be evaluated");
+    return nullptr;
+  }
 
   const MCSymbolRefExpr *RefB = Value.getSymB();
-  if (RefB)
-    Assembler.getContext().reportFatalError(
+  if (RefB) {
+    Assembler.getContext().reportError(
         SMLoc(), Twine("symbol '") + RefB->getSymbol().getName() +
                      "' could not be evaluated in a subtraction expression");
+    return nullptr;
+  }
 
   const MCSymbolRefExpr *A = Value.getSymA();
   if (!A)
@@ -196,9 +201,10 @@ const MCSymbol *MCAsmLayout::getBaseSymbol(const MCSymbol &Symbol) const {
   const MCAssembler &Asm = getAssembler();
   if (ASym.isCommon()) {
     // FIXME: we should probably add a SMLoc to MCExpr.
-    Asm.getContext().reportFatalError(SMLoc(),
-                                "Common symbol " + ASym.getName() +
-                                    " cannot be used in assignment expr");
+    Asm.getContext().reportError(SMLoc(),
+                                 "Common symbol '" + ASym.getName() +
+                                     "' cannot be used in assignment expr");
+    return nullptr;
   }
 
   return &ASym;
@@ -436,8 +442,13 @@ bool MCAssembler::evaluateFixup(const MCAsmLayout &Layout,
   // probably merge the two into a single callback that tries to evaluate a
   // fixup and records a relocation if one is needed.
   const MCExpr *Expr = Fixup.getValue();
-  if (!Expr->evaluateAsRelocatable(Target, &Layout, &Fixup))
-    getContext().reportFatalError(Fixup.getLoc(), "expected relocatable expression");
+  if (!Expr->evaluateAsRelocatable(Target, &Layout, &Fixup)) {
+    getContext().reportError(Fixup.getLoc(), "expected relocatable expression");
+    // Claim to have completely evaluated the fixup, to prevent any further
+    // processing from being done.
+    Value = 0;
+    return true;
+  }
 
   bool IsPCRel = Backend.getFixupKindInfo(
     Fixup.getKind()).Flags & MCFixupKindInfo::FKF_IsPCRel;
@@ -533,12 +544,19 @@ uint64_t MCAssembler::computeFragmentSize(const MCAsmLayout &Layout,
 
   case MCFragment::FT_Org: {
     const MCOrgFragment &OF = cast<MCOrgFragment>(F);
-    int64_t TargetLocation;
-    if (!OF.getOffset().evaluateAsAbsolute(TargetLocation, Layout))
+    MCValue Value;
+    if (!OF.getOffset().evaluateAsValue(Value, Layout))
       report_fatal_error("expected assembly-time absolute expression");
 
     // FIXME: We need a way to communicate this error.
     uint64_t FragmentOffset = Layout.getFragmentOffset(&OF);
+    int64_t TargetLocation = Value.getConstant();
+    if (const MCSymbolRefExpr *A = Value.getSymA()) {
+      uint64_t Val;
+      if (!Layout.getSymbolOffset(A->getSymbol(), Val))
+        report_fatal_error("expected absolute expression");
+      TargetLocation += Val;
+    }
     int64_t Size = TargetLocation - FragmentOffset;
     if (Size < 0 || Size >= 0x40000000)
       report_fatal_error("invalid .org offset '" + Twine(TargetLocation) +

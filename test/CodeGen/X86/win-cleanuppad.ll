@@ -1,5 +1,5 @@
-; RUN: llc -mtriple=i686-pc-windows-msvc < %s | FileCheck --check-prefix=X86 %s
-; RUN: llc -mtriple=x86_64-pc-windows-msvc < %s | FileCheck --check-prefix=X64 %s
+; RUN: llc -verify-machineinstrs -mtriple=i686-pc-windows-msvc < %s | FileCheck --check-prefix=X86 %s
+; RUN: llc -verify-machineinstrs -mtriple=x86_64-pc-windows-msvc < %s | FileCheck --check-prefix=X64 %s
 
 %struct.Dtor = type { i8 }
 
@@ -18,6 +18,36 @@ ehcleanup:                                        ; preds = %entry
   call x86_thiscallcc void @"\01??1Dtor@@QAE@XZ"(%struct.Dtor* %o) #2
   cleanupret %0 unwind to caller
 }
+
+; CHECK: simple_cleanup:                         # @simple_cleanup
+; CHECK:         pushq   %rbp
+; CHECK:         subq    $48, %rsp
+; CHECK:         leaq    48(%rsp), %rbp
+; CHECK:         movq    $-2, -8(%rbp)
+; CHECK:         movl    $1, %ecx
+; CHECK:         callq   f
+; CHECK:         callq   "??1Dtor@@QAE@XZ"
+; CHECK:         nop
+; CHECK:         addq    $48, %rsp
+; CHECK:         popq    %rbp
+; CHECK:         retq
+
+; CHECK: "?dtor$2@?0?simple_cleanup@4HA":
+; CHECK:         callq   "??1Dtor@@QAE@XZ"
+; CHECK:         retq
+
+; CHECK: $cppxdata$simple_cleanup:
+; CHECK-NEXT:         .long   429065506
+; CHECK-NEXT:         .long   1
+; CHECK-NEXT:         .long   ($stateUnwindMap$simple_cleanup)@IMGREL
+; CHECK-NEXT:         .long   0
+; CHECK-NEXT:         .long   0
+; CHECK-NEXT:         .long   3
+; CHECK-NEXT:         .long   ($ip2state$simple_cleanup)@IMGREL
+; UnwindHelp offset should match the -2 store above
+; CHECK-NEXT:         .long   40
+; CHECK-NEXT:         .long   0
+; CHECK-NEXT:         .long   1
 
 declare void @f(i32) #0
 
@@ -142,7 +172,7 @@ cleanup.outer:                                      ; preds = %invoke.cont.1, %c
 ; X64-NEXT: .long   0
 ; X64-NEXT: .long   5
 ; X64-NEXT: .long   ($ip2state$nested_cleanup)@IMGREL
-; X64-NEXT: .long   40
+; X64-NEXT: .long   56
 ; X64-NEXT: .long   0
 ; X64-NEXT: .long   1
 

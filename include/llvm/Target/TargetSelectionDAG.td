@@ -393,6 +393,7 @@ def umax       : SDNode<"ISD::UMAX"      , SDTIntBinOp>;
 def sabsdiff   : SDNode<"ISD::SABSDIFF"   , SDTIntBinOp>;
 def uabsdiff   : SDNode<"ISD::UABSDIFF"   , SDTIntBinOp>;
 def sext_inreg : SDNode<"ISD::SIGN_EXTEND_INREG", SDTExtInreg>;
+def bitreverse : SDNode<"ISD::BITREVERSE" , SDTIntUnaryOp>;
 def bswap      : SDNode<"ISD::BSWAP"      , SDTIntUnaryOp>;
 def ctlz       : SDNode<"ISD::CTLZ"       , SDTIntUnaryOp>;
 def cttz       : SDNode<"ISD::CTTZ"       , SDTIntUnaryOp>;
@@ -455,8 +456,11 @@ def brcc       : SDNode<"ISD::BR_CC"      , SDTBrCC,   [SDNPHasChain]>;
 def brcond     : SDNode<"ISD::BRCOND"     , SDTBrcond, [SDNPHasChain]>;
 def brind      : SDNode<"ISD::BRIND"      , SDTBrind,  [SDNPHasChain]>;
 def br         : SDNode<"ISD::BR"         , SDTBr,     [SDNPHasChain]>;
-def catchret   : SDNode<"ISD::CATCHRET"   , SDTCatchret, [SDNPHasChain]>;
+def catchret   : SDNode<"ISD::CATCHRET"   , SDTCatchret,
+                        [SDNPHasChain, SDNPSideEffect]>;
 def cleanupret : SDNode<"ISD::CLEANUPRET" , SDTNone,   [SDNPHasChain]>;
+def catchpad   : SDNode<"ISD::CATCHPAD"   , SDTNone,
+                        [SDNPHasChain, SDNPSideEffect]>;
 
 def trap       : SDNode<"ISD::TRAP"       , SDTNone,
                         [SDNPHasChain, SDNPSideEffect]>;

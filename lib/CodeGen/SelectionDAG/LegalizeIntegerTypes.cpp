@@ -53,6 +53,7 @@ void DAGTypeLegalizer::PromoteIntegerResult(SDNode *N, unsigned ResNo) {
   case ISD::AssertSext:  Res = PromoteIntRes_AssertSext(N); break;
   case ISD::AssertZext:  Res = PromoteIntRes_AssertZext(N); break;
   case ISD::BITCAST:     Res = PromoteIntRes_BITCAST(N); break;
+  case ISD::BITREVERSE:  Res = PromoteIntRes_BITREVERSE(N); break;
   case ISD::BSWAP:       Res = PromoteIntRes_BSWAP(N); break;
   case ISD::BUILD_PAIR:  Res = PromoteIntRes_BUILD_PAIR(N); break;
   case ISD::Constant:    Res = PromoteIntRes_Constant(N); break;
@@ -316,6 +317,19 @@ SDValue DAGTypeLegalizer::PromoteIntRes_BSWAP(SDNode *N) {
   unsigned DiffBits = NVT.getScalarSizeInBits() - OVT.getScalarSizeInBits();
   return DAG.getNode(
       ISD::SRL, dl, NVT, DAG.getNode(ISD::BSWAP, dl, NVT, Op),
+      DAG.getConstant(DiffBits, dl,
+                      TLI.getShiftAmountTy(NVT, DAG.getDataLayout())));
+}
+
+SDValue DAGTypeLegalizer::PromoteIntRes_BITREVERSE(SDNode *N) {
+  SDValue Op = GetPromotedInteger(N->getOperand(0));
+  EVT OVT = N->getValueType(0);
+  EVT NVT = Op.getValueType();
+  SDLoc dl(N);
+
+  unsigned DiffBits = NVT.getScalarSizeInBits() - OVT.getScalarSizeInBits();
+  return DAG.getNode(
+      ISD::SRL, dl, NVT, DAG.getNode(ISD::BITREVERSE, dl, NVT, Op),
       DAG.getConstant(DiffBits, dl,
                       TLI.getShiftAmountTy(NVT, DAG.getDataLayout())));
 }
@@ -1263,6 +1277,7 @@ void DAGTypeLegalizer::ExpandIntegerResult(SDNode *N, unsigned ResNo) {
   case ISD::ANY_EXTEND:  ExpandIntRes_ANY_EXTEND(N, Lo, Hi); break;
   case ISD::AssertSext:  ExpandIntRes_AssertSext(N, Lo, Hi); break;
   case ISD::AssertZext:  ExpandIntRes_AssertZext(N, Lo, Hi); break;
+  case ISD::BITREVERSE:  ExpandIntRes_BITREVERSE(N, Lo, Hi); break;
   case ISD::BSWAP:       ExpandIntRes_BSWAP(N, Lo, Hi); break;
   case ISD::Constant:    ExpandIntRes_Constant(N, Lo, Hi); break;
   case ISD::CTLZ_ZERO_UNDEF:
@@ -1831,6 +1846,14 @@ void DAGTypeLegalizer::ExpandIntRes_AssertZext(SDNode *N,
     // The high part must be zero, make it explicit.
     Hi = DAG.getConstant(0, dl, NVT);
   }
+}
+
+void DAGTypeLegalizer::ExpandIntRes_BITREVERSE(SDNode *N,
+                                               SDValue &Lo, SDValue &Hi) {
+  SDLoc dl(N);
+  GetExpandedInteger(N->getOperand(0), Hi, Lo);  // Note swapped operands.
+  Lo = DAG.getNode(ISD::BITREVERSE, dl, Lo.getValueType(), Lo);
+  Hi = DAG.getNode(ISD::BITREVERSE, dl, Hi.getValueType(), Hi);
 }
 
 void DAGTypeLegalizer::ExpandIntRes_BSWAP(SDNode *N,
@@ -2611,6 +2634,7 @@ bool DAGTypeLegalizer::ExpandIntegerOperand(SDNode *N, unsigned OpNo) {
   case ISD::SCALAR_TO_VECTOR:  Res = ExpandOp_SCALAR_TO_VECTOR(N); break;
   case ISD::SELECT_CC:         Res = ExpandIntOp_SELECT_CC(N); break;
   case ISD::SETCC:             Res = ExpandIntOp_SETCC(N); break;
+  case ISD::SETCCE:            Res = ExpandIntOp_SETCCE(N); break;
   case ISD::SINT_TO_FP:        Res = ExpandIntOp_SINT_TO_FP(N); break;
   case ISD::STORE:   Res = ExpandIntOp_STORE(cast<StoreSDNode>(N), OpNo); break;
   case ISD::TRUNCATE:          Res = ExpandIntOp_TRUNCATE(N); break;
@@ -2738,6 +2762,47 @@ void DAGTypeLegalizer::IntegerExpandSetCCOperands(SDValue &NewLHS,
     return;
   }
 
+  if (LHSHi == RHSHi) {
+    // Comparing the low bits is enough.
+    NewLHS = Tmp1;
+    NewRHS = SDValue();
+    return;
+  }
+
+  // Lower with SETCCE if the target supports it.
+  // FIXME: Make all targets support this, then remove the other lowering.
+  if (TLI.getOperationAction(
+          ISD::SETCCE,
+          TLI.getTypeToExpandTo(*DAG.getContext(), LHSLo.getValueType())) ==
+      TargetLowering::Custom) {
+    // SETCCE can detect < and >= directly. For > and <=, flip operands and
+    // condition code.
+    bool FlipOperands = false;
+    switch (CCCode) {
+    case ISD::SETGT:  CCCode = ISD::SETLT;  FlipOperands = true; break;
+    case ISD::SETUGT: CCCode = ISD::SETULT; FlipOperands = true; break;
+    case ISD::SETLE:  CCCode = ISD::SETGE;  FlipOperands = true; break;
+    case ISD::SETULE: CCCode = ISD::SETUGE; FlipOperands = true; break;
+    default: break;
+    }
+    if (FlipOperands) {
+      std::swap(LHSLo, RHSLo);
+      std::swap(LHSHi, RHSHi);
+    }
+    // Perform a wide subtraction, feeding the carry from the low part into
+    // SETCCE. The SETCCE operation is essentially looking at the high part of
+    // the result of LHS - RHS. It is negative iff LHS < RHS. It is zero or
+    // positive iff LHS >= RHS.
+    SDVTList VTList = DAG.getVTList(LHSLo.getValueType(), MVT::Glue);
+    SDValue LowCmp = DAG.getNode(ISD::SUBC, dl, VTList, LHSLo, RHSLo);
+    SDValue Res =
+        DAG.getNode(ISD::SETCCE, dl, getSetCCResultType(LHSLo.getValueType()),
+                    LHSHi, RHSHi, LowCmp.getValue(1), DAG.getCondCode(CCCode));
+    NewLHS = Res;
+    NewRHS = SDValue();
+    return;
+  }
+
   NewLHS = TLI.SimplifySetCC(getSetCCResultType(LHSHi.getValueType()),
                              LHSHi, RHSHi, ISD::SETEQ, false,
                              DagCombineInfo, dl);
@@ -2800,6 +2865,24 @@ SDValue DAGTypeLegalizer::ExpandIntOp_SETCC(SDNode *N) {
   // Otherwise, update N to have the operands specified.
   return SDValue(DAG.UpdateNodeOperands(N, NewLHS, NewRHS,
                                 DAG.getCondCode(CCCode)), 0);
+}
+
+SDValue DAGTypeLegalizer::ExpandIntOp_SETCCE(SDNode *N) {
+  SDValue LHS = N->getOperand(0);
+  SDValue RHS = N->getOperand(1);
+  SDValue Carry = N->getOperand(2);
+  SDValue Cond = N->getOperand(3);
+  SDLoc dl = SDLoc(N);
+
+  SDValue LHSLo, LHSHi, RHSLo, RHSHi;
+  GetExpandedInteger(LHS, LHSLo, LHSHi);
+  GetExpandedInteger(RHS, RHSLo, RHSHi);
+
+  // Expand to a SUBE for the low part and a smaller SETCCE for the high.
+  SDVTList VTList = DAG.getVTList(LHSLo.getValueType(), MVT::Glue);
+  SDValue LowCmp = DAG.getNode(ISD::SUBE, dl, VTList, LHSLo, RHSLo, Carry);
+  return DAG.getNode(ISD::SETCCE, dl, N->getValueType(0), LHSHi, RHSHi,
+                     LowCmp.getValue(1), Cond);
 }
 
 SDValue DAGTypeLegalizer::ExpandIntOp_Shift(SDNode *N) {

@@ -60,8 +60,8 @@ struct SEHUnwindMapEntry {
 
 struct WinEHHandlerType {
   int Adjectives;
-  /// The CatchObj starts out life as an LLVM alloca, is turned into a frame
-  /// index, and after PEI, becomes a raw offset.
+  /// The CatchObj starts out life as an LLVM alloca and is eventually turned
+  /// frame index.
   union {
     const AllocaInst *Alloca;
     int FrameIndex;
@@ -96,16 +96,13 @@ struct WinEHFuncInfo {
   SmallVector<SEHUnwindMapEntry, 4> SEHUnwindMap;
   SmallVector<ClrEHUnwindMapEntry, 4> ClrEHUnwindMap;
   int UnwindHelpFrameIdx = INT_MAX;
+  int PSPSymFrameIdx = INT_MAX;
 
   int getLastStateNumber() const { return CxxUnwindMap.size() - 1; }
 
   void addIPToStateRange(const BasicBlock *PadBB, MCSymbol *InvokeBegin,
                          MCSymbol *InvokeEnd);
 
-  /// localescape index of the 32-bit EH registration node. Set by
-  /// WinEHStatePass and used indirectly by SEH filter functions of the parent.
-  int EHRegNodeEscapeIndex = INT_MAX;
-  const AllocaInst *EHRegNode = nullptr;
   int EHRegNodeFrameIndex = INT_MAX;
   int EHRegNodeEndOffset = INT_MAX;
 

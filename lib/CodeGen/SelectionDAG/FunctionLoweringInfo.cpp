@@ -215,10 +215,14 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
     // are really data, and no instructions can live here.
     if (BB->isEHPad()) {
       const Instruction *I = BB->getFirstNonPHI();
-      // FIXME: Don't mark SEH functions without __finally blocks as having
+      // If this is a non-landingpad EH pad, mark this function as using
       // funclets.
-      if (!isa<LandingPadInst>(I))
+      // FIXME: SEH catchpads do not create funclets, so we could avoid setting
+      // this in such cases in order to improve frame layout.
+      if (!isa<LandingPadInst>(I)) {
         MMI.setHasEHFunclets(true);
+        MF->getFrameInfo()->setHasOpaqueSPAdjustment(true);
+      }
       if (isa<CatchEndPadInst>(I) || isa<CleanupEndPadInst>(I)) {
         assert(&*BB->begin() == I &&
                "WinEHPrepare failed to remove PHIs from imaginary BBs");
@@ -283,7 +287,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
     return;
 
   // Calculate state numbers if we haven't already.
-  WinEHFuncInfo &EHInfo = MMI.getWinEHFuncInfo(&fn);
+  WinEHFuncInfo &EHInfo = *MF->getWinEHFuncInfo();
   if (Personality == EHPersonality::MSVC_CXX)
     calculateWinCXXEHStateNumbers(&fn, EHInfo);
   else if (isAsynchronousEHPersonality(Personality))
@@ -316,24 +320,6 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
   for (ClrEHUnwindMapEntry &CME : EHInfo.ClrEHUnwindMap) {
     const BasicBlock *BB = CME.Handler.get<const BasicBlock *>();
     CME.Handler = MBBMap[BB];
-  }
-
-  // If there's an explicit EH registration node on the stack, record its
-  // frame index.
-  if (EHInfo.EHRegNode && EHInfo.EHRegNode->getParent()->getParent() == Fn) {
-    assert(StaticAllocaMap.count(EHInfo.EHRegNode));
-    EHInfo.EHRegNodeFrameIndex = StaticAllocaMap[EHInfo.EHRegNode];
-  }
-
-  // Copy the state numbers to LandingPadInfo for the current function, which
-  // could be a handler or the parent. This should happen for 32-bit SEH and
-  // C++ EH.
-  if (Personality == EHPersonality::MSVC_CXX ||
-      Personality == EHPersonality::MSVC_X86SEH) {
-    for (const LandingPadInst *LP : LPads) {
-      MachineBasicBlock *LPadMBB = MBBMap[LP->getParent()];
-      MMI.addWinEHState(LPadMBB, EHInfo.EHPadStateMap[LP]);
-    }
   }
 }
 

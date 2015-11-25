@@ -27,15 +27,47 @@ namespace llvm {
 class WebAssemblyFunctionInfo final : public MachineFunctionInfo {
   MachineFunction &MF;
 
-  unsigned NumArguments;
+  std::vector<MVT> Params;
+
+  /// A mapping from CodeGen vreg index to WebAssembly register number.
+  std::vector<unsigned> WARegs;
+
+  /// A mapping from CodeGen vreg index to a boolean value indicating whether
+  /// the given register is considered to be "stackified", meaning it has been
+  /// determined or made to meet the stack requirements:
+  ///   - single use (per path)
+  ///   - single def (per path)
+  ///   - defined and used in FIFO order with other stack registers
+  BitVector VRegStackified;
 
 public:
-  explicit WebAssemblyFunctionInfo(MachineFunction &MF)
-      : MF(MF), NumArguments(0) {}
+  explicit WebAssemblyFunctionInfo(MachineFunction &MF) : MF(MF) {}
   ~WebAssemblyFunctionInfo() override;
 
-  void setNumArguments(unsigned N) { NumArguments = N; }
-  unsigned getNumArguments() const { return NumArguments; }
+  void addParam(MVT VT) { Params.push_back(VT); }
+  const std::vector<MVT> &getParams() const { return Params; }
+
+  static const unsigned UnusedReg = -1u;
+
+  void stackifyVReg(unsigned VReg) {
+    if (TargetRegisterInfo::virtReg2Index(VReg) >= VRegStackified.size())
+      VRegStackified.resize(TargetRegisterInfo::virtReg2Index(VReg) + 1);
+    VRegStackified.set(TargetRegisterInfo::virtReg2Index(VReg));
+  }
+  bool isVRegStackified(unsigned VReg) const {
+    if (TargetRegisterInfo::virtReg2Index(VReg) >= VRegStackified.size())
+      return false;
+    return VRegStackified.test(TargetRegisterInfo::virtReg2Index(VReg));
+  }
+
+  void initWARegs();
+  void setWAReg(unsigned VReg, unsigned WAReg) {
+    assert(WAReg != UnusedReg);
+    WARegs[TargetRegisterInfo::virtReg2Index(VReg)] = WAReg;
+  }
+  unsigned getWAReg(unsigned VReg) const {
+    return WARegs[TargetRegisterInfo::virtReg2Index(VReg)];
+  }
 };
 
 } // end namespace llvm

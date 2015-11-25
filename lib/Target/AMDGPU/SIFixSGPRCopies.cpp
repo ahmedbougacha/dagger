@@ -82,24 +82,10 @@ using namespace llvm;
 namespace {
 
 class SIFixSGPRCopies : public MachineFunctionPass {
-
-private:
-  static char ID;
-  std::pair<const TargetRegisterClass *, const TargetRegisterClass *>
-  getCopyRegClasses(const MachineInstr &Copy,
-                    const SIRegisterInfo &TRI,
-                    const MachineRegisterInfo &MRI) const;
-
-  bool isVGPRToSGPRCopy(const TargetRegisterClass *SrcRC,
-                        const TargetRegisterClass *DstRC,
-                        const SIRegisterInfo &TRI) const;
-
-  bool isSGPRToVGPRCopy(const TargetRegisterClass *SrcRC,
-                        const TargetRegisterClass *DstRC,
-                        const SIRegisterInfo &TRI) const;
-
 public:
-  SIFixSGPRCopies(TargetMachine &tm) : MachineFunctionPass(ID) { }
+  static char ID;
+
+  SIFixSGPRCopies() : MachineFunctionPass(ID) { }
 
   bool runOnMachineFunction(MachineFunction &MF) override;
 
@@ -115,10 +101,15 @@ public:
 
 } // End anonymous namespace
 
+INITIALIZE_PASS(SIFixSGPRCopies, DEBUG_TYPE,
+                "SI Fix SGPR copies", false, false)
+
 char SIFixSGPRCopies::ID = 0;
 
-FunctionPass *llvm::createSIFixSGPRCopiesPass(TargetMachine &tm) {
-  return new SIFixSGPRCopies(tm);
+char &llvm::SIFixSGPRCopiesID = SIFixSGPRCopies::ID;
+
+FunctionPass *llvm::createSIFixSGPRCopiesPass() {
+  return new SIFixSGPRCopies();
 }
 
 static bool hasVGPROperands(const MachineInstr &MI, const SIRegisterInfo *TRI) {
@@ -134,10 +125,10 @@ static bool hasVGPROperands(const MachineInstr &MI, const SIRegisterInfo *TRI) {
   return false;
 }
 
-std::pair<const TargetRegisterClass *, const TargetRegisterClass *>
-SIFixSGPRCopies::getCopyRegClasses(const MachineInstr &Copy,
-                                   const SIRegisterInfo &TRI,
-                                   const MachineRegisterInfo &MRI) const {
+static std::pair<const TargetRegisterClass *, const TargetRegisterClass *>
+getCopyRegClasses(const MachineInstr &Copy,
+                  const SIRegisterInfo &TRI,
+                  const MachineRegisterInfo &MRI) {
   unsigned DstReg = Copy.getOperand(0).getReg();
   unsigned SrcReg = Copy.getOperand(1).getReg();
 
@@ -157,16 +148,92 @@ SIFixSGPRCopies::getCopyRegClasses(const MachineInstr &Copy,
   return std::make_pair(SrcRC, DstRC);
 }
 
-bool SIFixSGPRCopies::isVGPRToSGPRCopy(const TargetRegisterClass *SrcRC,
-                                       const TargetRegisterClass *DstRC,
-                                       const SIRegisterInfo &TRI) const {
+static bool isVGPRToSGPRCopy(const TargetRegisterClass *SrcRC,
+                             const TargetRegisterClass *DstRC,
+                             const SIRegisterInfo &TRI) {
   return TRI.isSGPRClass(DstRC) && TRI.hasVGPRs(SrcRC);
 }
 
-bool SIFixSGPRCopies::isSGPRToVGPRCopy(const TargetRegisterClass *SrcRC,
-                                       const TargetRegisterClass *DstRC,
-                                       const SIRegisterInfo &TRI) const {
+static bool isSGPRToVGPRCopy(const TargetRegisterClass *SrcRC,
+                             const TargetRegisterClass *DstRC,
+                             const SIRegisterInfo &TRI) {
   return TRI.isSGPRClass(SrcRC) && TRI.hasVGPRs(DstRC);
+}
+
+// Distribute an SGPR->VGPR copy of a REG_SEQUENCE into a VGPR REG_SEQUENCE.
+//
+// SGPRx = ...
+// SGPRy = REG_SEQUENCE SGPRx, sub0 ...
+// VGPRz = COPY SGPRy
+//
+// ==>
+//
+// VGPRx = COPY SGPRx
+// VGPRz = REG_SEQUENCE VGPRx, sub0
+//
+// This exposes immediate folding opportunities when materializing 64-bit
+// immediates.
+static bool foldVGPRCopyIntoRegSequence(MachineInstr &MI,
+                                        const SIRegisterInfo *TRI,
+                                        const SIInstrInfo *TII,
+                                        MachineRegisterInfo &MRI) {
+  assert(MI.isRegSequence());
+
+  unsigned DstReg = MI.getOperand(0).getReg();
+  if (!TRI->isSGPRClass(MRI.getRegClass(DstReg)))
+    return false;
+
+  if (!MRI.hasOneUse(DstReg))
+    return false;
+
+  MachineInstr &CopyUse = *MRI.use_instr_begin(DstReg);
+  if (!CopyUse.isCopy())
+    return false;
+
+  const TargetRegisterClass *SrcRC, *DstRC;
+  std::tie(SrcRC, DstRC) = getCopyRegClasses(CopyUse, *TRI, MRI);
+
+  if (!isSGPRToVGPRCopy(SrcRC, DstRC, *TRI))
+    return false;
+
+  // TODO: Could have multiple extracts?
+  unsigned SubReg = CopyUse.getOperand(1).getSubReg();
+  if (SubReg != AMDGPU::NoSubRegister)
+    return false;
+
+  MRI.setRegClass(DstReg, DstRC);
+
+  // SGPRx = ...
+  // SGPRy = REG_SEQUENCE SGPRx, sub0 ...
+  // VGPRz = COPY SGPRy
+
+  // =>
+  // VGPRx = COPY SGPRx
+  // VGPRz = REG_SEQUENCE VGPRx, sub0
+
+  MI.getOperand(0).setReg(CopyUse.getOperand(0).getReg());
+
+  for (unsigned I = 1, N = MI.getNumOperands(); I != N; I += 2) {
+    unsigned SrcReg = MI.getOperand(I).getReg();
+    unsigned SrcSubReg = MI.getOperand(I).getReg();
+
+    const TargetRegisterClass *SrcRC = MRI.getRegClass(SrcReg);
+    assert(TRI->isSGPRClass(SrcRC) &&
+           "Expected SGPR REG_SEQUENCE to only have SGPR inputs");
+
+    SrcRC = TRI->getSubRegClass(SrcRC, SrcSubReg);
+    const TargetRegisterClass *NewSrcRC = TRI->getEquivalentVGPRClass(SrcRC);
+
+    unsigned TmpReg = MRI.createVirtualRegister(NewSrcRC);
+
+    BuildMI(*MI.getParent(), &MI, MI.getDebugLoc(), TII->get(AMDGPU::COPY), TmpReg)
+      .addOperand(MI.getOperand(I));
+
+    MI.getOperand(I).setReg(TmpReg);
+  }
+
+  CopyUse.eraseFromParent();
+  return true;
 }
 
 bool SIFixSGPRCopies::runOnMachineFunction(MachineFunction &MF) {
@@ -175,12 +242,15 @@ bool SIFixSGPRCopies::runOnMachineFunction(MachineFunction &MF) {
       static_cast<const SIRegisterInfo *>(MF.getSubtarget().getRegisterInfo());
   const SIInstrInfo *TII =
       static_cast<const SIInstrInfo *>(MF.getSubtarget().getInstrInfo());
+
+  SmallVector<MachineInstr *, 16> Worklist;
+
   for (MachineFunction::iterator BI = MF.begin(), BE = MF.end();
                                                   BI != BE; ++BI) {
 
     MachineBasicBlock &MBB = *BI;
     for (MachineBasicBlock::iterator I = MBB.begin(), E = MBB.end();
-                                                      I != E; ++I) {
+         I != E; ++I) {
       MachineInstr &MI = *I;
 
       switch (MI.getOpcode()) {
@@ -273,8 +343,10 @@ bool SIFixSGPRCopies::runOnMachineFunction(MachineFunction &MF) {
       }
       case AMDGPU::REG_SEQUENCE: {
         if (TRI->hasVGPRs(TII->getOpRegClass(MI, 0)) ||
-            !hasVGPROperands(MI, TRI))
+            !hasVGPROperands(MI, TRI)) {
+          foldVGPRCopyIntoRegSequence(MI, TRI, TII, MRI);
           continue;
+        }
 
         DEBUG(dbgs() << "Fixing REG_SEQUENCE: " << MI);
 

@@ -143,10 +143,6 @@ public:
     return getTLI()->isTruncateFree(Ty1, Ty2);
   }
 
-  bool isZExtFree(Type *Ty1, Type *Ty2) const {
-    return getTLI()->isZExtFree(Ty1, Ty2);
-  }
-
   bool isProfitableToHoist(Instruction *I) {
     return getTLI()->isProfitableToHoist(I);
   }
@@ -170,7 +166,7 @@ public:
     }
 
     if (IID == Intrinsic::ctlz) {
-       if (getTLI()->isCheapToSpeculateCtlz())
+      if (getTLI()->isCheapToSpeculateCtlz())
         return TargetTransformInfo::TCC_Basic;
       return TargetTransformInfo::TCC_Expensive;
     }
@@ -500,13 +496,11 @@ public:
       // itself. Unless the corresponding extending load or truncating store is
       // legal, then this will scalarize.
       TargetLowering::LegalizeAction LA = TargetLowering::Expand;
-      EVT MemVT = getTLI()->getValueType(DL, Src, true);
-      if (MemVT.isSimple() && MemVT != MVT::Other) {
-        if (Opcode == Instruction::Store)
-          LA = getTLI()->getTruncStoreAction(LT.second, MemVT.getSimpleVT());
-        else
-          LA = getTLI()->getLoadExtAction(ISD::EXTLOAD, LT.second, MemVT);
-      }
+      EVT MemVT = getTLI()->getValueType(DL, Src);
+      if (Opcode == Instruction::Store)
+        LA = getTLI()->getTruncStoreAction(LT.second, MemVT);
+      else
+        LA = getTLI()->getLoadExtAction(ISD::EXTLOAD, LT.second, MemVT);
 
       if (LA != TargetLowering::Legal && LA != TargetLowering::Custom) {
         // This is a vector load/store for some illegal type that is scalarized.

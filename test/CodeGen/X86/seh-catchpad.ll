@@ -97,10 +97,10 @@ ehcleanup.end:                                    ; preds = %ehcleanup
 ; CHECK:         .seh_handler __C_specific_handler, @unwind, @except
 ; CHECK:         pushq   %rbp
 ; CHECK:         .seh_pushreg 5
-; CHECK:         subq    $48, %rsp
-; CHECK:         .seh_stackalloc 48
-; CHECK:         leaq    48(%rsp), %rbp
-; CHECK:         .seh_setframe 5, 48
+; CHECK:         subq    $32, %rsp
+; CHECK:         .seh_stackalloc 32
+; CHECK:         leaq    32(%rsp), %rbp
+; CHECK:         .seh_setframe 5, 32
 ; CHECK:         .seh_endprologue
 ; CHECK: .Ltmp0:
 ; CHECK:         movl    $1, %ecx
@@ -109,7 +109,7 @@ ehcleanup.end:                                    ; preds = %ehcleanup
 ; CHECK: .Ltmp1:
 ; CHECK: .LBB1_[[epilogue:[0-9]+]]:                                # %__try.cont.12
 ; CHECK:         xorl    %eax, %eax
-; CHECK:         addq    $48, %rsp
+; CHECK:         addq    $32, %rsp
 ; CHECK:         popq    %rbp
 ; CHECK:         retq
 ; CHECK: .LBB1_[[except1bb:[0-9]+]]:                                # %catch.dispatch
@@ -121,8 +121,6 @@ ehcleanup.end:                                    ; preds = %ehcleanup
 ; CHECK:         callq   "?fin$0@0@main@@"
 ; CHECK:         jmp     .LBB1_[[epilogue]]
 ; CHECK: .LBB1_[[except2bb:[0-9]+]]:                                # %catch.dispatch.7
-; CHECK:         jmp     .LBB1_7
-; CHECK: # %__except.9
 ; CHECK:         leaq    "??_C@_06IBDBCMGJ@caught?$AA@"(%rip), %rcx
 ; CHECK:         callq   puts
 ; CHECK:         jmp     .LBB1_[[epilogue]]
@@ -145,18 +143,18 @@ ehcleanup.end:                                    ; preds = %ehcleanup
 ; CHECK-NEXT:         .long   .Ltmp2@IMGREL+1
 ; CHECK-NEXT:         .long   .Ltmp3@IMGREL+1
 ; CHECK-NEXT:         .long   "?filt$0@0@main@@"@IMGREL
-; CHECK-NEXT:         .long   .LBB1_6@IMGREL
+; CHECK-NEXT:         .long   .LBB1_5@IMGREL
 ; CHECK-NEXT:         .long   .Ltmp6@IMGREL+1
 ; CHECK-NEXT:         .long   .Ltmp7@IMGREL+1
 ; CHECK-NEXT:         .long   "?filt$0@0@main@@"@IMGREL
-; CHECK-NEXT:         .long   .LBB1_6@IMGREL
+; CHECK-NEXT:         .long   .LBB1_5@IMGREL
 ; CHECK-NEXT: .Llsda_end0:
 
 ; CHECK:         .text
 ; CHECK:         .seh_endproc
 
-; CHECK: "?dtor$4@?0?main@4HA":
-; CHECK: .seh_proc "?dtor$4@?0?main@4HA"
+; CHECK: "?dtor$3@?0?main@4HA":
+; CHECK: .seh_proc "?dtor$3@?0?main@4HA"
 ; CHECK:         .seh_handler __C_specific_handler, @unwind, @except
 ; CHECK: .LBB1_[[finbb]]:                                # %ehcleanup
 ; CHECK:         movq    %rdx, 16(%rsp)
@@ -164,7 +162,7 @@ ehcleanup.end:                                    ; preds = %ehcleanup
 ; CHECK:         .seh_pushreg 5
 ; CHECK:         subq    $32, %rsp
 ; CHECK:         .seh_stackalloc 32
-; CHECK:         leaq    48(%rdx), %rbp
+; CHECK:         leaq    32(%rdx), %rbp
 ; CHECK:         .seh_endprologue
 ; CHECK:         callq   "?fin$0@0@main@@"
 ; CHECK:         nop

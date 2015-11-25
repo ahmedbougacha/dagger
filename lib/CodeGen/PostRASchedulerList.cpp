@@ -196,7 +196,7 @@ SchedulePostRATDList::SchedulePostRATDList(
     const RegisterClassInfo &RCI,
     TargetSubtargetInfo::AntiDepBreakMode AntiDepMode,
     SmallVectorImpl<const TargetRegisterClass *> &CriticalPathRCs)
-    : ScheduleDAGInstrs(MF, &MLI, /*IsPostRA=*/true), AA(AA), EndIndex(0) {
+    : ScheduleDAGInstrs(MF, &MLI), AA(AA), EndIndex(0) {
 
   const InstrItineraryData *InstrItins =
       MF.getSubtarget().getInstrItineraryData();
@@ -399,8 +399,12 @@ void SchedulePostRATDList::schedule() {
   }
 
   DEBUG(dbgs() << "********** List Scheduling **********\n");
-  DEBUG(for (unsigned su = 0, e = SUnits.size(); su != e; ++su)
-          SUnits[su].dumpAll(this));
+  DEBUG(
+    for (const SUnit &SU : SUnits) {
+      SU.dumpAll(this);
+      dbgs() << '\n';
+    }
+  );
 
   AvailableQueue.initNodes(SUnits);
   ListScheduleTopDown();

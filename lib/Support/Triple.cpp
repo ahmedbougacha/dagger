@@ -487,9 +487,7 @@ static Triple::SubArchType parseSubArch(StringRef SubArchName) {
     return Triple::NoSubArch;
   case ARM::AK_ARMV4T:
     return Triple::ARMSubArch_v4t;
-  case ARM::AK_ARMV5:
   case ARM::AK_ARMV5T:
-  case ARM::AK_ARMV5E:
     return Triple::ARMSubArch_v5;
   case ARM::AK_ARMV5TE:
   case ARM::AK_IWMMXT:
@@ -498,23 +496,16 @@ static Triple::SubArchType parseSubArch(StringRef SubArchName) {
   case ARM::AK_ARMV5TEJ:
     return Triple::ARMSubArch_v5te;
   case ARM::AK_ARMV6:
-  case ARM::AK_ARMV6J:
-  case ARM::AK_ARMV6Z:
     return Triple::ARMSubArch_v6;
   case ARM::AK_ARMV6K:
-  case ARM::AK_ARMV6ZK:
-  case ARM::AK_ARMV6HL:
+  case ARM::AK_ARMV6KZ:
     return Triple::ARMSubArch_v6k;
   case ARM::AK_ARMV6T2:
     return Triple::ARMSubArch_v6t2;
   case ARM::AK_ARMV6M:
-  case ARM::AK_ARMV6SM:
     return Triple::ARMSubArch_v6m;
-  case ARM::AK_ARMV7:
   case ARM::AK_ARMV7A:
   case ARM::AK_ARMV7R:
-  case ARM::AK_ARMV7L:
-  case ARM::AK_ARMV7HL:
     return Triple::ARMSubArch_v7;
   case ARM::AK_ARMV7K:
     return Triple::ARMSubArch_v7k;
@@ -1379,6 +1370,12 @@ StringRef Triple::getARMCPUForArch(StringRef MArch) const {
   case llvm::Triple::Win32:
     // FIXME: this is invalid for WindowsCE
     return "cortex-a9";
+  case llvm::Triple::MacOSX:
+  case llvm::Triple::IOS:
+  case llvm::Triple::WatchOS:
+    if (MArch == "v7k")
+      return "cortex-a7";
+    break;
   default:
     break;
   }

@@ -64,23 +64,17 @@ const char* LTOCodeGenerator::getVersionString() {
 #endif
 }
 
-static void handleLTODiagnostic(const DiagnosticInfo &DI) {
-  DiagnosticPrinterRawOStream DP(errs());                                
-  DI.print(DP);                                                          
-  errs() << "\n";
-}
-
 LTOCodeGenerator::LTOCodeGenerator()
     : Context(getGlobalContext()),
       MergedModule(new Module("ld-temp.o", Context)),
-      IRLinker(MergedModule.get(), handleLTODiagnostic) {
+      IRLinker(MergedModule.get()) {
   initializeLTOPasses();
 }
 
 LTOCodeGenerator::LTOCodeGenerator(std::unique_ptr<LLVMContext> Context)
     : OwnedContext(std::move(Context)), Context(*OwnedContext),
       MergedModule(new Module("ld-temp.o", *OwnedContext)),
-      IRLinker(MergedModule.get(), handleLTODiagnostic) {
+      IRLinker(MergedModule.get()) {
   initializeLTOPasses();
 }
 
@@ -178,9 +172,8 @@ void LTOCodeGenerator::setOptLevel(unsigned Level) {
   }
 }
 
-bool LTOCodeGenerator::writeMergedModules(const char *Path,
-                                          std::string &ErrMsg) {
-  if (!determineTarget(ErrMsg))
+bool LTOCodeGenerator::writeMergedModules(const char *Path) {
+  if (!determineTarget())
     return false;
 
   // mark which symbols can not be internalized
@@ -190,8 +183,9 @@ bool LTOCodeGenerator::writeMergedModules(const char *Path,
   std::error_code EC;
   tool_output_file Out(Path, EC, sys::fs::F_None);
   if (EC) {
-    ErrMsg = "could not open bitcode file for writing: ";
+    std::string ErrMsg = "could not open bitcode file for writing: ";
     ErrMsg += Path;
+    emitError(ErrMsg);
     return false;
   }
 
@@ -200,8 +194,9 @@ bool LTOCodeGenerator::writeMergedModules(const char *Path,
   Out.os().close();
 
   if (Out.os().has_error()) {
-    ErrMsg = "could not write bitcode file: ";
+    std::string ErrMsg = "could not write bitcode file: ";
     ErrMsg += Path;
+    emitError(ErrMsg);
     Out.os().clear_error();
     return false;
   }
@@ -210,22 +205,25 @@ bool LTOCodeGenerator::writeMergedModules(const char *Path,
   return true;
 }
 
-bool LTOCodeGenerator::compileOptimizedToFile(const char **Name,
-                                              std::string &ErrMsg) {
-  // make unique temp .o file to put generated object file
+bool LTOCodeGenerator::compileOptimizedToFile(const char **Name) {
+  // make unique temp output file to put generated code
   SmallString<128> Filename;
   int FD;
+
+  const char *Extension =
+      (FileType == TargetMachine::CGFT_AssemblyFile ? "s" : "o");
+
   std::error_code EC =
-      sys::fs::createTemporaryFile("lto-llvm", "o", FD, Filename);
+      sys::fs::createTemporaryFile("lto-llvm", Extension, FD, Filename);
   if (EC) {
-    ErrMsg = EC.message();
+    emitError(EC.message());
     return false;
   }
 
   // generate object file
   tool_output_file objFile(Filename.c_str(), FD);
 
-  bool genResult = compileOptimized(&objFile.os(), ErrMsg);
+  bool genResult = compileOptimized(&objFile.os());
   objFile.os().close();
   if (objFile.os().has_error()) {
     objFile.os().clear_error();
@@ -245,16 +243,16 @@ bool LTOCodeGenerator::compileOptimizedToFile(const char **Name,
 }
 
 std::unique_ptr<MemoryBuffer>
-LTOCodeGenerator::compileOptimized(std::string &ErrMsg) {
+LTOCodeGenerator::compileOptimized() {
   const char *name;
-  if (!compileOptimizedToFile(&name, ErrMsg))
+  if (!compileOptimizedToFile(&name))
     return nullptr;
 
   // read .o file into memory buffer
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufferOrErr =
       MemoryBuffer::getFile(name, -1, false);
   if (std::error_code EC = BufferOrErr.getError()) {
-    ErrMsg = EC.message();
+    emitError(EC.message());
     sys::fs::remove(NativeObjectPath);
     return nullptr;
   }
@@ -268,27 +266,25 @@ LTOCodeGenerator::compileOptimized(std::string &ErrMsg) {
 bool LTOCodeGenerator::compile_to_file(const char **Name, bool DisableVerify,
                                        bool DisableInline,
                                        bool DisableGVNLoadPRE,
-                                       bool DisableVectorization,
-                                       std::string &ErrMsg) {
+                                       bool DisableVectorization) {
   if (!optimize(DisableVerify, DisableInline, DisableGVNLoadPRE,
-                DisableVectorization, ErrMsg))
+                DisableVectorization))
     return false;
 
-  return compileOptimizedToFile(Name, ErrMsg);
+  return compileOptimizedToFile(Name);
 }
 
 std::unique_ptr<MemoryBuffer>
 LTOCodeGenerator::compile(bool DisableVerify, bool DisableInline,
-                          bool DisableGVNLoadPRE, bool DisableVectorization,
-                          std::string &ErrMsg) {
+                          bool DisableGVNLoadPRE, bool DisableVectorization) {
   if (!optimize(DisableVerify, DisableInline, DisableGVNLoadPRE,
-                DisableVectorization, ErrMsg))
+                DisableVectorization))
     return nullptr;
 
-  return compileOptimized(ErrMsg);
+  return compileOptimized();
 }
 
-bool LTOCodeGenerator::determineTarget(std::string &ErrMsg) {
+bool LTOCodeGenerator::determineTarget() {
   if (TargetMach)
     return true;
 
@@ -300,9 +296,12 @@ bool LTOCodeGenerator::determineTarget(std::string &ErrMsg) {
   llvm::Triple Triple(TripleStr);
 
   // create target machine from info for merged modules
+  std::string ErrMsg;
   const Target *march = TargetRegistry::lookupTarget(TripleStr, ErrMsg);
-  if (!march)
+  if (!march) {
+    emitError(ErrMsg);
     return false;
+  }
 
   // Construct LTOModule, hand over ownership of module and target. Use MAttr as
   // the default set of features.
@@ -465,9 +464,8 @@ void LTOCodeGenerator::applyScopeRestrictions() {
 /// Optimize merged modules using various IPO passes
 bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
                                 bool DisableGVNLoadPRE,
-                                bool DisableVectorization,
-                                std::string &ErrMsg) {
-  if (!this->determineTarget(ErrMsg))
+                                bool DisableVectorization) {
+  if (!this->determineTarget())
     return false;
 
   // Mark which symbols can not be internalized
@@ -502,9 +500,8 @@ bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
   return true;
 }
 
-bool LTOCodeGenerator::compileOptimized(ArrayRef<raw_pwrite_stream *> Out,
-                                        std::string &ErrMsg) {
-  if (!this->determineTarget(ErrMsg))
+bool LTOCodeGenerator::compileOptimized(ArrayRef<raw_pwrite_stream *> Out) {
+  if (!this->determineTarget())
     return false;
 
   legacy::PassManager preCodeGenPasses;
@@ -521,7 +518,7 @@ bool LTOCodeGenerator::compileOptimized(ArrayRef<raw_pwrite_stream *> Out,
   // MergedModule.
   MergedModule =
       splitCodeGen(std::move(MergedModule), Out, MCpu, FeatureStr, Options,
-                   RelocModel, CodeModel::Default, CGOptLevel);
+                   RelocModel, CodeModel::Default, CGOptLevel, FileType);
 
   return true;
 }
@@ -591,4 +588,21 @@ LTOCodeGenerator::setDiagnosticHandler(lto_diagnostic_handler_t DiagHandler,
   // diagnostic to the external DiagHandler.
   Context.setDiagnosticHandler(LTOCodeGenerator::DiagnosticHandler, this,
                                /* RespectFilters */ true);
+}
+
+namespace {
+class LTODiagnosticInfo : public DiagnosticInfo {
+  const Twine &Msg;
+public:
+  LTODiagnosticInfo(const Twine &DiagMsg, DiagnosticSeverity Severity=DS_Error)
+      : DiagnosticInfo(DK_Linker, Severity), Msg(DiagMsg) {}
+  void print(DiagnosticPrinter &DP) const override { DP << Msg; }
+};
+}
+
+void LTOCodeGenerator::emitError(const std::string &ErrMsg) {
+  if (DiagHandler)
+    (*DiagHandler)(LTO_DS_ERROR, ErrMsg.c_str(), DiagContext);
+  else
+    Context.diagnose(LTODiagnosticInfo(ErrMsg));
 }

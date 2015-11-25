@@ -36,7 +36,6 @@ public:
   /// state management
   void reset() override {
     SeenIdent = false;
-    LocalCommons.clear();
     BundleGroups.clear();
     MCObjectStreamer::reset();
   }
@@ -77,8 +76,6 @@ public:
 
   void EmitValueToAlignment(unsigned, int64_t, unsigned, unsigned) override;
 
-  void Flush() override;
-
   void FinishImpl() override;
 
   void EmitBundleAlignMode(unsigned AlignPow2) override;
@@ -96,14 +93,6 @@ private:
   void mergeFragment(MCDataFragment *, MCDataFragment *);
 
   bool SeenIdent;
-
-  struct LocalCommon {
-    const MCSymbol *Symbol;
-    uint64_t Size;
-    unsigned ByteAlignment;
-  };
-
-  std::vector<LocalCommon> LocalCommons;
 
   /// BundleGroups - The stack of fragments holding the bundle-locked
   /// instructions.

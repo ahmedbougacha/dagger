@@ -13,7 +13,7 @@
 ;         }
 ;       }
 
-define void @foo(i32 %i) #0 {
+define void @foo(i32 %i) #0 !dbg !4 {
 entry:
   %i.addr = alloca i32, align 4
   %x = alloca i32, align 4
@@ -46,7 +46,11 @@ if.end:                                           ; preds = %if.then, %entry
 
 attributes #0 = { nounwind uwtable "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
 
-!llvm.dbg.cu = !{!0}
+; We should be able to add discriminators even in the absence of llvm.dbg.cu.
+; When using sample profiles, the front end will generate line tables but it
+; does not generate llvm.dbg.cu to prevent codegen from emitting debug info
+; to the final binary.
+; !llvm.dbg.cu = !{!0}
 !llvm.module.flags = !{!7, !8}
 !llvm.ident = !{!9}
 
@@ -54,7 +58,7 @@ attributes #0 = { nounwind uwtable "less-precise-fpmad"="false" "no-frame-pointe
 !1 = !DIFile(filename: "first-only.c", directory: ".")
 !2 = !{}
 !3 = !{!4}
-!4 = distinct !DISubprogram(name: "foo", line: 1, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 1, file: !1, scope: !5, type: !6, function: void (i32)* @foo, variables: !2)
+!4 = distinct !DISubprogram(name: "foo", line: 1, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 1, file: !1, scope: !5, type: !6, variables: !2)
 !5 = !DIFile(filename: "first-only.c", directory: ".")
 !6 = !DISubroutineType(types: !{null})
 !7 = !{i32 2, !"Dwarf Version", i32 4}

@@ -18,6 +18,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DiagnosticInfo.h"
@@ -30,7 +31,6 @@
 #include "llvm/IR/PatternMatch.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Transforms/Utils/BuildLibCalls.h"
 #include "llvm/Transforms/Utils/Local.h"
 
@@ -53,16 +53,8 @@ static cl::opt<bool>
 //===----------------------------------------------------------------------===//
 
 static bool ignoreCallingConv(LibFunc::Func Func) {
-  switch (Func) {
-  case LibFunc::abs:
-  case LibFunc::labs:
-  case LibFunc::llabs:
-  case LibFunc::strlen:
-    return true;
-  default:
-    return false;
-  }
-  llvm_unreachable("All cases should be covered in the switch.");
+  return Func == LibFunc::abs || Func == LibFunc::labs ||
+         Func == LibFunc::llabs || Func == LibFunc::strlen;
 }
 
 /// isOnlyUsedInZeroEqualityComparison - Return true if it only matters that the
@@ -124,8 +116,8 @@ static bool canUseUnsafeFPMath(Function *F) {
   // FIXME: For finer-grain optimization, we need intrinsics to have the same
   // fast-math flag decorations that are applied to FP instructions. For now,
   // we have to rely on the function-level unsafe-fp-math attribute to do this
-  // optimization because there's no other way to express that the sqrt can be
-  // reassociated.
+  // optimization because there's no other way to express that the call can be
+  // relaxed.
   if (F->hasFnAttribute("unsafe-fp-math")) {
     Attribute Attr = F->getFnAttribute("unsafe-fp-math");
     if (Attr.getValueAsString() == "true")
@@ -485,9 +477,6 @@ Value *LibCallSimplifier::optimizeStrCpy(CallInst *CI, IRBuilder<> &B) {
 
 Value *LibCallSimplifier::optimizeStpCpy(CallInst *CI, IRBuilder<> &B) {
   Function *Callee = CI->getCalledFunction();
-  // Verify the "stpcpy" function prototype.
-  FunctionType *FT = Callee->getFunctionType();
-
   if (!checkStringCopyLibFuncSignature(Callee, LibFunc::stpcpy))
     return nullptr;
 
@@ -502,7 +491,7 @@ Value *LibCallSimplifier::optimizeStpCpy(CallInst *CI, IRBuilder<> &B) {
   if (Len == 0)
     return nullptr;
 
-  Type *PT = FT->getParamType(0);
+  Type *PT = Callee->getFunctionType()->getParamType(0);
   Value *LenV = ConstantInt::get(DL.getIntPtrType(PT), Len);
   Value *DstEnd =
       B.CreateGEP(B.getInt8Ty(), Dst, ConstantInt::get(DL.getIntPtrType(PT), Len - 1));
@@ -515,8 +504,6 @@ Value *LibCallSimplifier::optimizeStpCpy(CallInst *CI, IRBuilder<> &B) {
 
 Value *LibCallSimplifier::optimizeStrNCpy(CallInst *CI, IRBuilder<> &B) {
   Function *Callee = CI->getCalledFunction();
-  FunctionType *FT = Callee->getFunctionType();
-
   if (!checkStringCopyLibFuncSignature(Callee, LibFunc::strncpy))
     return nullptr;
 
@@ -549,7 +536,7 @@ Value *LibCallSimplifier::optimizeStrNCpy(CallInst *CI, IRBuilder<> &B) {
   if (Len > SrcLen + 1)
     return nullptr;
 
-  Type *PT = FT->getParamType(0);
+  Type *PT = Callee->getFunctionType()->getParamType(0);
   // strncpy(x, s, c) -> memcpy(x, s, c, 1) [s and c are constant]
   B.CreateMemCpy(Dst, Src, ConstantInt::get(DL.getIntPtrType(PT), Len), 1);
 
@@ -1054,9 +1041,9 @@ Value *LibCallSimplifier::optimizeBinaryDoubleFP(CallInst *CI, IRBuilder<> &B) {
 Value *LibCallSimplifier::optimizeCos(CallInst *CI, IRBuilder<> &B) {
   Function *Callee = CI->getCalledFunction();
   Value *Ret = nullptr;
-  if (UnsafeFPShrink && Callee->getName() == "cos" && TLI->has(LibFunc::cosf)) {
+  StringRef Name = Callee->getName();
+  if (UnsafeFPShrink && Name == "cos" && hasFloatVersion(Name))
     Ret = optimizeUnaryDoubleFP(CI, B, true);
-  }
 
   FunctionType *FT = Callee->getFunctionType();
   // Just make sure this has 1 argument of FP type, which matches the
@@ -1076,11 +1063,10 @@ Value *LibCallSimplifier::optimizeCos(CallInst *CI, IRBuilder<> &B) {
 
 Value *LibCallSimplifier::optimizePow(CallInst *CI, IRBuilder<> &B) {
   Function *Callee = CI->getCalledFunction();
-
   Value *Ret = nullptr;
-  if (UnsafeFPShrink && Callee->getName() == "pow" && TLI->has(LibFunc::powf)) {
+  StringRef Name = Callee->getName();
+  if (UnsafeFPShrink && Name == "pow" && hasFloatVersion(Name))
     Ret = optimizeUnaryDoubleFP(CI, B, true);
-  }
 
   FunctionType *FT = Callee->getFunctionType();
   // Just make sure this has 2 arguments of the same FP type, which match the
@@ -1099,13 +1085,42 @@ Value *LibCallSimplifier::optimizePow(CallInst *CI, IRBuilder<> &B) {
     if (Op1C->isExactlyValue(2.0) &&
         hasUnaryFloatFn(TLI, Op1->getType(), LibFunc::exp2, LibFunc::exp2f,
                         LibFunc::exp2l))
-      return EmitUnaryFloatFnCall(Op2, "exp2", B, Callee->getAttributes());
+      return EmitUnaryFloatFnCall(Op2, TLI->getName(LibFunc::exp2), B,
+                                  Callee->getAttributes());
     // pow(10.0, x) -> exp10(x)
     if (Op1C->isExactlyValue(10.0) &&
         hasUnaryFloatFn(TLI, Op1->getType(), LibFunc::exp10, LibFunc::exp10f,
                         LibFunc::exp10l))
       return EmitUnaryFloatFnCall(Op2, TLI->getName(LibFunc::exp10), B,
                                   Callee->getAttributes());
+  }
+
+  bool unsafeFPMath = canUseUnsafeFPMath(CI->getParent()->getParent());
+
+  // pow(exp(x), y) -> exp(x*y)
+  // pow(exp2(x), y) -> exp2(x * y)
+  // We enable these only under fast-math. Besides rounding
+  // differences the transformation changes overflow and
+  // underflow behavior quite dramatically.
+  // Example: x = 1000, y = 0.001.
+  // pow(exp(x), y) = pow(inf, 0.001) = inf, whereas exp(x*y) = exp(1).
+  if (unsafeFPMath) {
+    if (auto *OpC = dyn_cast<CallInst>(Op1)) {
+      IRBuilder<>::FastMathFlagGuard Guard(B);
+      FastMathFlags FMF;
+      FMF.setUnsafeAlgebra();
+      B.SetFastMathFlags(FMF);
+
+      LibFunc::Func Func;
+      Function *Callee = OpC->getCalledFunction();
+      StringRef FuncName = Callee->getName();
+
+      if (TLI->getLibFunc(FuncName, Func) && TLI->has(Func) &&
+          (Func == LibFunc::exp || Func == LibFunc::exp2))
+        return EmitUnaryFloatFnCall(
+            B.CreateFMul(OpC->getArgOperand(0), Op2, "mul"), FuncName, B,
+            Callee->getAttributes());
+    }
   }
 
   ConstantFP *Op2C = dyn_cast<ConstantFP>(Op2);
@@ -1120,10 +1135,15 @@ Value *LibCallSimplifier::optimizePow(CallInst *CI, IRBuilder<> &B) {
                       LibFunc::sqrtl) &&
       hasUnaryFloatFn(TLI, Op2->getType(), LibFunc::fabs, LibFunc::fabsf,
                       LibFunc::fabsl)) {
+
+    // In -ffast-math, pow(x, 0.5) -> sqrt(x).
+    if (unsafeFPMath)
+      return EmitUnaryFloatFnCall(Op1, TLI->getName(LibFunc::sqrt), B,
+                                  Callee->getAttributes());
+
     // Expand pow(x, 0.5) to (x == -infinity ? +infinity : fabs(sqrt(x))).
     // This is faster than calling pow, and still handles negative zero
     // and negative infinity correctly.
-    // TODO: In fast-math mode, this could be just sqrt(x).
     // TODO: In finite-only mode, this could be just fabs(sqrt(x)).
     Value *Inf = ConstantFP::getInfinity(CI->getType());
     Value *NegInf = ConstantFP::getInfinity(CI->getType(), true);
@@ -1147,12 +1167,10 @@ Value *LibCallSimplifier::optimizePow(CallInst *CI, IRBuilder<> &B) {
 Value *LibCallSimplifier::optimizeExp2(CallInst *CI, IRBuilder<> &B) {
   Function *Callee = CI->getCalledFunction();
   Function *Caller = CI->getParent()->getParent();
-
   Value *Ret = nullptr;
-  if (UnsafeFPShrink && Callee->getName() == "exp2" &&
-      TLI->has(LibFunc::exp2f)) {
+  StringRef Name = Callee->getName();
+  if (UnsafeFPShrink && Name == "exp2" && hasFloatVersion(Name))
     Ret = optimizeUnaryDoubleFP(CI, B, true);
-  }
 
   FunctionType *FT = Callee->getFunctionType();
   // Just make sure this has 1 argument of FP type, which matches the
@@ -1201,11 +1219,10 @@ Value *LibCallSimplifier::optimizeExp2(CallInst *CI, IRBuilder<> &B) {
 
 Value *LibCallSimplifier::optimizeFabs(CallInst *CI, IRBuilder<> &B) {
   Function *Callee = CI->getCalledFunction();
-
   Value *Ret = nullptr;
-  if (Callee->getName() == "fabs" && TLI->has(LibFunc::fabsf)) {
+  StringRef Name = Callee->getName();
+  if (Name == "fabs" && hasFloatVersion(Name))
     Ret = optimizeUnaryDoubleFP(CI, B, false);
-  }
 
   FunctionType *FT = Callee->getFunctionType();
   // Make sure this has 1 argument of FP type which matches the result type.
@@ -1227,8 +1244,9 @@ Value *LibCallSimplifier::optimizeFMinFMax(CallInst *CI, IRBuilder<> &B) {
   // If we can shrink the call to a float function rather than a double
   // function, do that first.
   Function *Callee = CI->getCalledFunction();
-  if ((Callee->getName() == "fmin" && TLI->has(LibFunc::fminf)) ||
-      (Callee->getName() == "fmax" && TLI->has(LibFunc::fmaxf))) {
+  StringRef Name = Callee->getName();
+  if ((Name == "fmin" && hasFloatVersion(Name)) ||
+      (Name == "fmax" && hasFloatVersion(Name))) {
     Value *Ret = optimizeBinaryDoubleFP(CI, B);
     if (Ret)
       return Ret;
@@ -1335,6 +1353,41 @@ Value *LibCallSimplifier::optimizeSqrt(CallInst *CI, IRBuilder<> &B) {
       }
     }
   }
+  return Ret;
+}
+
+Value *LibCallSimplifier::optimizeTan(CallInst *CI, IRBuilder<> &B) {
+  Function *Callee = CI->getCalledFunction();
+  Value *Ret = nullptr;
+  StringRef Name = Callee->getName();
+  if (UnsafeFPShrink && Name == "tan" && hasFloatVersion(Name))
+    Ret = optimizeUnaryDoubleFP(CI, B, true);
+  FunctionType *FT = Callee->getFunctionType();
+
+  // Just make sure this has 1 argument of FP type, which matches the
+  // result type.
+  if (FT->getNumParams() != 1 || FT->getReturnType() != FT->getParamType(0) ||
+      !FT->getParamType(0)->isFloatingPointTy())
+    return Ret;
+
+  if (!canUseUnsafeFPMath(CI->getParent()->getParent()))
+    return Ret;
+  Value *Op1 = CI->getArgOperand(0);
+  auto *OpC = dyn_cast<CallInst>(Op1);
+  if (!OpC)
+    return Ret;
+
+  // tan(atan(x)) -> x
+  // tanf(atanf(x)) -> x
+  // tanl(atanl(x)) -> x
+  LibFunc::Func Func;
+  Function *F = OpC->getCalledFunction();
+  StringRef FuncName = F->getName();
+  if (TLI->getLibFunc(FuncName, Func) && TLI->has(Func) &&
+      ((Func == LibFunc::atan && Callee->getName() == "tan") ||
+       (Func == LibFunc::atanf && Callee->getName() == "tanf") ||
+       (Func == LibFunc::atanl && Callee->getName() == "tanl")))
+    Ret = OpC->getArgOperand(0);
   return Ret;
 }
 
@@ -1591,10 +1644,7 @@ Value *LibCallSimplifier::optimizeErrorReporting(CallInst *CI, IRBuilder<> &B,
 }
 
 static bool isReportingError(Function *Callee, CallInst *CI, int StreamArg) {
-  if (!ColdErrorCalls)
-    return false;
-
-  if (!Callee || !Callee->isDeclaration())
+  if (!ColdErrorCalls || !Callee || !Callee->isDeclaration())
     return false;
 
   if (StreamArg < 0)
@@ -2128,6 +2178,10 @@ Value *LibCallSimplifier::optimizeCall(CallInst *CI) {
       return optimizeFPuts(CI, Builder);
     case LibFunc::puts:
       return optimizePuts(CI, Builder);
+    case LibFunc::tan:
+    case LibFunc::tanf:
+    case LibFunc::tanl:
+      return optimizeTan(CI, Builder);
     case LibFunc::perror:
       return optimizeErrorReporting(CI, Builder);
     case LibFunc::vfprintf:
@@ -2162,7 +2216,6 @@ Value *LibCallSimplifier::optimizeCall(CallInst *CI) {
     case LibFunc::logb:
     case LibFunc::sin:
     case LibFunc::sinh:
-    case LibFunc::tan:
     case LibFunc::tanh:
       if (UnsafeFPShrink && hasFloatVersion(FuncName))
         return optimizeUnaryDoubleFP(CI, Builder, true);
@@ -2220,7 +2273,6 @@ void LibCallSimplifier::replaceAllUsesWith(Instruction *I, Value *With) {
 //   * lround(cnst) -> cnst'
 //
 // pow, powf, powl:
-//   * pow(exp(x),y)  -> exp(x*y)
 //   * pow(sqrt(x),y) -> pow(x,y*0.5)
 //   * pow(pow(x,y),z)-> pow(x,y*z)
 //
@@ -2235,9 +2287,6 @@ void LibCallSimplifier::replaceAllUsesWith(Instruction *I, Value *With) {
 //   * sqrt(expN(x))  -> expN(x*0.5)
 //   * sqrt(Nroot(x)) -> pow(x,1/(2*N))
 //   * sqrt(pow(x,y)) -> pow(|x|,y*0.5)
-//
-// tan, tanf, tanl:
-//   * tan(atan(x)) -> x
 //
 // trunc, truncf, truncl:
 //   * trunc(cnst) -> cnst'

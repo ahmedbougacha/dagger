@@ -112,6 +112,7 @@ enum DIDumpType {
   DIDT_LineDwo,
   DIDT_Loc,
   DIDT_LocDwo,
+  DIDT_Macro,
   DIDT_Ranges,
   DIDT_Pubnames,
   DIDT_Pubtypes,
@@ -123,7 +124,9 @@ enum DIDumpType {
   DIDT_AppleNames,
   DIDT_AppleTypes,
   DIDT_AppleNamespaces,
-  DIDT_AppleObjC
+  DIDT_AppleObjC,
+  DIDT_CUIndex,
+  DIDT_TUIndex,
 };
 
 class DIContext {

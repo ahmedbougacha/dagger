@@ -1,4 +1,4 @@
-; RUN: opt < %s -sample-profile -sample-profile-file=%S/Inputs/inline-coverage.prof -sample-profile-check-coverage=100 -pass-remarks=sample-profile 2>&1 | FileCheck %s
+; RUN: opt < %s -sample-profile -sample-profile-file=%S/Inputs/inline-coverage.prof -sample-profile-check-record-coverage=100 -sample-profile-check-sample-coverage=110 -pass-remarks=sample-profile -o /dev/null 2>&1 | FileCheck %s
 ;
 ; Original code:
 ;
@@ -16,17 +16,22 @@
 ;    12    }
 ;
 ; CHECK: remark: coverage.cc:10:12: inlined hot callee '_Z3fool' with 172746 samples into 'main'
-; CHECK: remark: coverage.cc:9:19: Applied 23478 samples from profile
-; CHECK: remark: coverage.cc:10:16: Applied 23478 samples from profile
-; CHECK: remark: coverage.cc:4:10: Applied 31878 samples from profile
-; CHECK: remark: coverage.cc:11:10: Applied 0 samples from profile
+; CHECK: remark: coverage.cc:9:19: Applied 23478 samples from profile (offset: 2.1)
+; CHECK: remark: coverage.cc:10:16: Applied 23478 samples from profile (offset: 3)
+; CHECK: remark: coverage.cc:4:10: Applied 31878 samples from profile (offset: 1)
+; CHECK: remark: coverage.cc:11:10: Applied 0 samples from profile (offset: 4)
 ; CHECK: remark: coverage.cc:10:16: most popular destination for conditional branches at coverage.cc:9:3
 ;
 ; There is one sample record with 0 samples at offset 4 in main() that we never
 ; use:
 ; CHECK: warning: coverage.cc:7: 4 of 5 available profile records (80%) were applied
+;
+; Since the unused sample record contributes no samples, sample coverage should
+; be 100%. Note that we get this warning because we are requesting an impossible
+; 110% coverage check.
+; CHECK: warning: coverage.cc:7: 78834 of 78834 available profile samples (100%) were applied
 
-define i64 @_Z3fool(i64 %i) {
+define i64 @_Z3fool(i64 %i) !dbg !4 {
 entry:
   %i.addr = alloca i64, align 8
   store i64 %i, i64* %i.addr, align 8
@@ -42,7 +47,7 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata)
 
 declare i32 @rand()
 
-define i32 @main() {
+define i32 @main() !dbg !9 {
 entry:
   %retval = alloca i32, align 4
   %sum = alloca i64, align 8
@@ -89,12 +94,12 @@ for.end:                                          ; preds = %for.cond
 !1 = !DIFile(filename: "coverage.cc", directory: ".")
 !2 = !{}
 !3 = !{!4, !9}
-!4 = distinct !DISubprogram(name: "foo", linkageName: "_Z3fool", scope: !1, file: !1, line: 3, type: !5, isLocal: false, isDefinition: true, scopeLine: 3, flags: DIFlagPrototyped, isOptimized: false, function: i64 (i64)* @_Z3fool, variables: !2)
+!4 = distinct !DISubprogram(name: "foo", linkageName: "_Z3fool", scope: !1, file: !1, line: 3, type: !5, isLocal: false, isDefinition: true, scopeLine: 3, flags: DIFlagPrototyped, isOptimized: false, variables: !2)
 !5 = !DISubroutineType(types: !6)
 !6 = !{!7, !8}
 !7 = !DIBasicType(name: "long long int", size: 64, align: 64, encoding: DW_ATE_signed)
 !8 = !DIBasicType(name: "long int", size: 64, align: 64, encoding: DW_ATE_signed)
-!9 = distinct !DISubprogram(name: "main", scope: !1, file: !1, line: 7, type: !10, isLocal: false, isDefinition: true, scopeLine: 7, flags: DIFlagPrototyped, isOptimized: false, function: i32 ()* @main, variables: !2)
+!9 = distinct !DISubprogram(name: "main", scope: !1, file: !1, line: 7, type: !10, isLocal: false, isDefinition: true, scopeLine: 7, flags: DIFlagPrototyped, isOptimized: false, variables: !2)
 !10 = !DISubroutineType(types: !11)
 !11 = !{!12}
 !12 = !DIBasicType(name: "int", size: 32, align: 32, encoding: DW_ATE_signed)

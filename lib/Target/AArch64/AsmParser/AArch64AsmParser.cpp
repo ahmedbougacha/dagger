@@ -43,7 +43,6 @@ class AArch64Operand;
 class AArch64AsmParser : public MCTargetAsmParser {
 private:
   StringRef Mnemonic; ///< Instruction mnemonic.
-  MCSubtargetInfo &STI;
 
   // Map of register aliases registers via the .req directive.
   StringMap<std::pair<bool, unsigned> > RegisterReqs;
@@ -115,16 +114,16 @@ public:
 #define GET_OPERAND_DIAGNOSTIC_TYPES
 #include "AArch64GenAsmMatcher.inc"
   };
-  AArch64AsmParser(MCSubtargetInfo &STI, MCAsmParser &Parser,
+  AArch64AsmParser(const MCSubtargetInfo &STI, MCAsmParser &Parser,
                    const MCInstrInfo &MII, const MCTargetOptions &Options)
-      : MCTargetAsmParser(Options), STI(STI) {
+    : MCTargetAsmParser(Options, STI) {
     MCAsmParserExtension::Initialize(Parser);
     MCStreamer &S = getParser().getStreamer();
     if (S.getTargetStreamer() == nullptr)
       new AArch64TargetStreamer(S);
 
     // Initialize the set of available features.
-    setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
+    setAvailableFeatures(ComputeAvailableFeatures(getSTI().getFeatureBits()));
   }
 
   bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
@@ -2043,7 +2042,7 @@ AArch64AsmParser::tryParsePrefetch(OperandVector &Operands) {
     bool Valid;
     auto Mapper = AArch64PRFM::PRFMMapper();
     StringRef Name = 
-        Mapper.toString(MCE->getValue(), STI.getFeatureBits(), Valid);
+        Mapper.toString(MCE->getValue(), getSTI().getFeatureBits(), Valid);
     Operands.push_back(AArch64Operand::CreatePrefetch(prfop, Name,
                                                       S, getContext()));
     return MatchOperand_Success;
@@ -2057,7 +2056,7 @@ AArch64AsmParser::tryParsePrefetch(OperandVector &Operands) {
   bool Valid;
   auto Mapper = AArch64PRFM::PRFMMapper();
   unsigned prfop = 
-      Mapper.fromString(Tok.getString(), STI.getFeatureBits(), Valid);
+      Mapper.fromString(Tok.getString(), getSTI().getFeatureBits(), Valid);
   if (!Valid) {
     TokError("pre-fetch hint expected");
     return MatchOperand_ParseFail;
@@ -2671,7 +2670,7 @@ AArch64AsmParser::tryParseBarrierOperand(OperandVector &Operands) {
     bool Valid;
     auto Mapper = AArch64DB::DBarrierMapper();
     StringRef Name = 
-        Mapper.toString(MCE->getValue(), STI.getFeatureBits(), Valid);
+        Mapper.toString(MCE->getValue(), getSTI().getFeatureBits(), Valid);
     Operands.push_back( AArch64Operand::CreateBarrier(MCE->getValue(), Name,
                                                       ExprLoc, getContext()));
     return MatchOperand_Success;
@@ -2685,7 +2684,7 @@ AArch64AsmParser::tryParseBarrierOperand(OperandVector &Operands) {
   bool Valid;
   auto Mapper = AArch64DB::DBarrierMapper();
   unsigned Opt = 
-      Mapper.fromString(Tok.getString(), STI.getFeatureBits(), Valid);
+      Mapper.fromString(Tok.getString(), getSTI().getFeatureBits(), Valid);
   if (!Valid) {
     TokError("invalid barrier option name");
     return MatchOperand_ParseFail;
@@ -2714,20 +2713,21 @@ AArch64AsmParser::tryParseSysReg(OperandVector &Operands) {
 
   bool IsKnown;
   auto MRSMapper = AArch64SysReg::MRSMapper();
-  uint32_t MRSReg = MRSMapper.fromString(Tok.getString(), STI.getFeatureBits(),
-                                         IsKnown);
+  uint32_t MRSReg = MRSMapper.fromString(Tok.getString(),
+                                         getSTI().getFeatureBits(), IsKnown);
   assert(IsKnown == (MRSReg != -1U) &&
          "register should be -1 if and only if it's unknown");
 
   auto MSRMapper = AArch64SysReg::MSRMapper();
-  uint32_t MSRReg = MSRMapper.fromString(Tok.getString(), STI.getFeatureBits(),
-                                         IsKnown);
+  uint32_t MSRReg = MSRMapper.fromString(Tok.getString(),
+                                         getSTI().getFeatureBits(), IsKnown);
   assert(IsKnown == (MSRReg != -1U) &&
          "register should be -1 if and only if it's unknown");
 
   auto PStateMapper = AArch64PState::PStateMapper();
   uint32_t PStateField = 
-      PStateMapper.fromString(Tok.getString(), STI.getFeatureBits(), IsKnown);
+      PStateMapper.fromString(Tok.getString(),
+                              getSTI().getFeatureBits(), IsKnown);
   assert(IsKnown == (PStateField != -1U) &&
          "register should be -1 if and only if it's unknown");
 
@@ -3178,7 +3178,7 @@ bool AArch64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
 
     if (Operands.size() < 2 ||
         !static_cast<AArch64Operand &>(*Operands[1]).isReg())
-      return true;
+      return Error(Loc, "Only valid when first operand is register");
 
     bool IsXReg =
         AArch64MCRegisterClasses[AArch64::GPR64allRegClassID].contains(
@@ -3210,7 +3210,7 @@ bool AArch64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
     }
     // If it is a label or an imm that cannot fit in a movz, put it into CP.
     const MCExpr *CPLoc =
-        getTargetStreamer().addConstantPoolEntry(SubExprVal, IsXReg ? 8 : 4);
+        getTargetStreamer().addConstantPoolEntry(SubExprVal, IsXReg ? 8 : 4, Loc);
     Operands.push_back(AArch64Operand::CreateImm(CPLoc, S, E, Ctx));
     return false;
   }
@@ -3990,7 +3990,7 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       return true;
 
     Inst.setLoc(IDLoc);
-    Out.EmitInstruction(Inst, STI);
+    Out.EmitInstruction(Inst, getSTI());
     return false;
   }
   case Match_MissingFeature: {
@@ -4131,7 +4131,7 @@ bool AArch64AsmParser::parseDirectiveWord(unsigned Size, SMLoc L) {
       if (getParser().parseExpression(Value))
         return true;
 
-      getParser().getStreamer().EmitValue(Value, Size);
+      getParser().getStreamer().EmitValue(Value, Size, L);
 
       if (getLexer().is(AsmToken::EndOfStatement))
         break;
@@ -4203,7 +4203,7 @@ bool AArch64AsmParser::parseDirectiveTLSDescCall(SMLoc L) {
   Inst.setOpcode(AArch64::TLSDESCCALL);
   Inst.addOperand(MCOperand::createExpr(Expr));
 
-  getParser().getStreamer().EmitInstruction(Inst, STI);
+  getParser().getStreamer().EmitInstruction(Inst, getSTI());
   return false;
 }
 

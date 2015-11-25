@@ -242,14 +242,13 @@ private:
         // Create a callback, associate it with the stub for the function,
         // and set the compile action to compile the partition containing the
         // function.
-        auto CCInfo = CompileCallbackMgr.getCompileCallback(SrcM.getContext());
+        auto CCInfo = CompileCallbackMgr.getCompileCallback();
         StubInits[mangle(F.getName(), DL)] =
           std::make_pair(CCInfo.getAddress(),
                          JITSymbolBase::flagsFromGlobalValue(F));
-        CCInfo.setCompileAction(
-          [this, &LD, LMH, &F]() {
-            return this->extractAndCompile(LD, LMH, F);
-          });
+        CCInfo.setCompileAction([this, &LD, LMH, &F]() {
+          return this->extractAndCompile(LD, LMH, F);
+        });
       }
 
       LMResources.StubsMgr = CreateIndirectStubsManager();
@@ -401,42 +400,42 @@ private:
     M->setDataLayout(SrcM.getDataLayout());
     ValueToValueMapTy VMap;
 
-    auto Materializer = createLambdaMaterializer(
-      [this, &LMResources, &M, &VMap](Value *V) -> Value* {
-        if (auto *GV = dyn_cast<GlobalVariable>(V)) {
-          return cloneGlobalVariableDecl(*M, *GV);
-        } else if (auto *F = dyn_cast<Function>(V)) {
-          // Check whether we want to clone an available_externally definition.
-          if (LMResources.StubsToClone.count(F)) {
-            // Ok - we want an inlinable stub. For that to work we need a decl
-            // for the stub pointer.
-            auto *StubPtr = createImplPointer(*F->getType(), *M,
-                                              F->getName() + "$stub_ptr",
-                                              nullptr);
-            auto *ClonedF = cloneFunctionDecl(*M, *F);
-            makeStub(*ClonedF, *StubPtr);
-            ClonedF->setLinkage(GlobalValue::AvailableExternallyLinkage);
-            ClonedF->addFnAttr(Attribute::AlwaysInline);
-            return ClonedF;
-          }
+    auto Materializer = createLambdaMaterializer([this, &LMResources, &M,
+                                                  &VMap](Value *V) -> Value * {
+      if (auto *GV = dyn_cast<GlobalVariable>(V))
+        return cloneGlobalVariableDecl(*M, *GV);
 
+      if (auto *F = dyn_cast<Function>(V)) {
+        // Check whether we want to clone an available_externally definition.
+        if (!LMResources.StubsToClone.count(F))
           return cloneFunctionDecl(*M, *F);
-        } else if (auto *A = dyn_cast<GlobalAlias>(V)) {
-          auto *PTy = cast<PointerType>(A->getType());
-          if (PTy->getElementType()->isFunctionTy())
-            return Function::Create(cast<FunctionType>(PTy->getElementType()),
-                                    GlobalValue::ExternalLinkage,
-                                    A->getName(), M.get());
-          // else
-          return new GlobalVariable(*M, PTy->getElementType(), false,
-                                    GlobalValue::ExternalLinkage,
-                                    nullptr, A->getName(), nullptr,
-                                    GlobalValue::NotThreadLocal,
-                                    PTy->getAddressSpace());
-        }
-        // Else.
-        return nullptr;
-      });
+
+        // Ok - we want an inlinable stub. For that to work we need a decl
+        // for the stub pointer.
+        auto *StubPtr = createImplPointer(*F->getType(), *M,
+                                          F->getName() + "$stub_ptr", nullptr);
+        auto *ClonedF = cloneFunctionDecl(*M, *F);
+        makeStub(*ClonedF, *StubPtr);
+        ClonedF->setLinkage(GlobalValue::AvailableExternallyLinkage);
+        ClonedF->addFnAttr(Attribute::AlwaysInline);
+        return ClonedF;
+      }
+
+      if (auto *A = dyn_cast<GlobalAlias>(V)) {
+        auto *Ty = A->getValueType();
+        if (Ty->isFunctionTy())
+          return Function::Create(cast<FunctionType>(Ty),
+                                  GlobalValue::ExternalLinkage, A->getName(),
+                                  M.get());
+
+        return new GlobalVariable(*M, Ty, false, GlobalValue::ExternalLinkage,
+                                  nullptr, A->getName(), nullptr,
+                                  GlobalValue::NotThreadLocal,
+                                  A->getType()->getAddressSpace());
+      }
+
+      return nullptr;
+    });
 
     // Create decls in the new module.
     for (auto *F : Part)

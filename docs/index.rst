@@ -86,6 +86,7 @@ representation.
    GetElementPtr
    Frontend/PerformanceTips
    MCJITDesignAndImplementation
+   CompileCudaWithLLVM
 
 :doc:`GettingStarted`
    Discusses how to get up and running quickly with the LLVM infrastructure.
@@ -371,6 +372,10 @@ For API clients and LLVM developers.
 
 :doc:`FaultMaps`
   LLVM support for folding control flow into faulting machine instructions.
+
+:doc:`CompileCudaWithLLVM`
+  LLVM support for CUDA.
+
 
 :doc:`SemanticsEmitterTableGen`
    This document describes the SemanticsEmitter TableGen backend used to

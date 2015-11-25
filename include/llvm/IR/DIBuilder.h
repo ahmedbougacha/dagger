@@ -158,7 +158,9 @@ namespace llvm {
 
     /// Create debugging information entry for a c++
     /// style reference or rvalue reference type.
-    DIDerivedType *createReferenceType(unsigned Tag, DIType *RTy);
+    DIDerivedType *createReferenceType(unsigned Tag, DIType *RTy,
+                                       uint64_t SizeInBits = 0,
+                                       uint64_t AlignInBits = 0);
 
     /// Create debugging information entry for a typedef.
     /// \param Ty          Original type.
@@ -514,15 +516,15 @@ namespace llvm {
     /// \param Flags         e.g. is this function prototyped or not.
     ///                      These flags are used to emit dwarf attributes.
     /// \param isOptimized   True if optimization is ON.
-    /// \param Fn            llvm::Function pointer.
-    /// \param TParam        Function template parameters.
-    DISubprogram *
-    createFunction(DIScope *Scope, StringRef Name, StringRef LinkageName,
-                   DIFile *File, unsigned LineNo, DISubroutineType *Ty,
-                   bool isLocalToUnit, bool isDefinition, unsigned ScopeLine,
-                   unsigned Flags = 0, bool isOptimized = false,
-                   Function *Fn = nullptr, MDNode *TParam = nullptr,
-                   MDNode *Decl = nullptr);
+    /// \param TParams       Function template parameters.
+    DISubprogram *createFunction(DIScope *Scope, StringRef Name,
+                                 StringRef LinkageName, DIFile *File,
+                                 unsigned LineNo, DISubroutineType *Ty,
+                                 bool isLocalToUnit, bool isDefinition,
+                                 unsigned ScopeLine, unsigned Flags = 0,
+                                 bool isOptimized = false,
+                                 DITemplateParameterArray TParams = nullptr,
+                                 DISubprogram *Decl = nullptr);
 
     /// Identical to createFunction,
     /// except that the resulting DbgNode is meant to be RAUWed.
@@ -530,18 +532,19 @@ namespace llvm {
         DIScope *Scope, StringRef Name, StringRef LinkageName, DIFile *File,
         unsigned LineNo, DISubroutineType *Ty, bool isLocalToUnit,
         bool isDefinition, unsigned ScopeLine, unsigned Flags = 0,
-        bool isOptimized = false, Function *Fn = nullptr,
-        MDNode *TParam = nullptr, MDNode *Decl = nullptr);
+        bool isOptimized = false, DITemplateParameterArray TParams = nullptr,
+        DISubprogram *Decl = nullptr);
 
     /// FIXME: this is added for dragonegg. Once we update dragonegg
     /// to call resolve function, this will be removed.
-    DISubprogram *
-    createFunction(DIScopeRef Scope, StringRef Name, StringRef LinkageName,
-                   DIFile *File, unsigned LineNo, DISubroutineType *Ty,
-                   bool isLocalToUnit, bool isDefinition, unsigned ScopeLine,
-                   unsigned Flags = 0, bool isOptimized = false,
-                   Function *Fn = nullptr, MDNode *TParam = nullptr,
-                   MDNode *Decl = nullptr);
+    DISubprogram *createFunction(DIScopeRef Scope, StringRef Name,
+                                 StringRef LinkageName, DIFile *File,
+                                 unsigned LineNo, DISubroutineType *Ty,
+                                 bool isLocalToUnit, bool isDefinition,
+                                 unsigned ScopeLine, unsigned Flags = 0,
+                                 bool isOptimized = false,
+                                 DITemplateParameterArray TParams = nullptr,
+                                 DISubprogram *Decl = nullptr);
 
     /// Create a new descriptor for the specified C++ method.
     /// See comments in \a DISubprogram* for descriptions of these fields.
@@ -560,15 +563,14 @@ namespace llvm {
     /// \param Flags         e.g. is this function prototyped or not.
     ///                      This flags are used to emit dwarf attributes.
     /// \param isOptimized   True if optimization is ON.
-    /// \param Fn            llvm::Function pointer.
-    /// \param TParam        Function template parameters.
+    /// \param TParams       Function template parameters.
     DISubprogram *
     createMethod(DIScope *Scope, StringRef Name, StringRef LinkageName,
                  DIFile *File, unsigned LineNo, DISubroutineType *Ty,
                  bool isLocalToUnit, bool isDefinition, unsigned Virtuality = 0,
                  unsigned VTableIndex = 0, DIType *VTableHolder = nullptr,
                  unsigned Flags = 0, bool isOptimized = false,
-                 Function *Fn = nullptr, MDNode *TParam = nullptr);
+                 DITemplateParameterArray TParams = nullptr);
 
     /// This creates new descriptor for a namespace with the specified
     /// parent scope.

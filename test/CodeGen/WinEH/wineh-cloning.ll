@@ -29,18 +29,16 @@ endcatch:
 ; for the use in entry's copy.
 ; CHECK-LABEL: define void @test1(
 ; CHECK: entry:
-; CHECK:   store i32 %x, i32* [[Slot:%[^ ]+]]
+; CHECK:   %x = call i32 @g()
 ; CHECK:   invoke void @f()
 ; CHECK:     to label %[[EntryCopy:[^ ]+]] unwind label %catch
 ; CHECK: catch:
 ; CHECK:   catchpad []
 ; CHECK-NEXT: to label %[[CatchCopy:[^ ]+]] unwind
 ; CHECK: [[CatchCopy]]:
-; CHECK:   [[LoadX2:%[^ ]+]] = load i32, i32* [[Slot]]
-; CHECK:   call void @h(i32 [[LoadX2]]
+; CHECK:   call void @h(i32 %x)
 ; CHECK: [[EntryCopy]]:
-; CHECK:   [[LoadX1:%[^ ]+]] = load i32, i32* [[Slot]]
-; CHECK:   call void @h(i32 [[LoadX1]]
+; CHECK:   call void @h(i32 %x)
 
 
 define void @test2() personality i32 (...)* @__CxxFrameHandler3 {
@@ -280,7 +278,30 @@ exit:
 ; the dynamic path enters %left, then enters %inner,
 ; then calls @h, and that the call to @h doesn't return.
 ; CHECK-LABEL: define void @test6(
-; TODO: CHECKs
+; CHECK:     left:
+; CHECK:       %x.for.left = call i32 @g()
+; CHECK:       invoke void @f()
+; CHECK:           to label %[[SHARED_CONT_LEFT:.+]] unwind label %[[INNER_LEFT:.+]]
+; CHECK:     right:
+; CHECK:       catchpad
+; CHECK:           to label %right.catch unwind label %right.end
+; CHECK:     right.catch:
+; CHECK:       %x = call i32 @g()
+; CHECK:           to label %shared.cont unwind label %[[INNER_RIGHT:.+]]
+; CHECK:     right.end:
+; CHECK:       catchendpad unwind to caller
+; CHECK:     shared.cont:
+; CHECK:       unreachable
+; CHECK:     [[SHARED_CONT_LEFT]]:
+; CHECK:       unreachable
+; CHECK:     [[INNER_RIGHT]]:
+; CHECK:       [[I_R:\%.+]] = cleanuppad []
+; CHECK:       call void @h(i32 %x)
+; CHECK:       cleanupret [[I_R]] unwind label %right.end
+; CHECK:     [[INNER_LEFT]]:
+; CHECK:       [[I_L:\%.+]] = cleanuppad []
+; CHECK:       call void @h(i32 %x.for.left)
+; CHECK:       unreachable
 
 
 define void @test7() personality i32 (...)* @__CxxFrameHandler3 {
@@ -312,7 +333,32 @@ unreachable:
 ; with the join at the entry itself instead of following a
 ; non-pad join.
 ; CHECK-LABEL: define void @test7(
-; TODO: CHECKs
+; CHECK:     invoke.cont:
+; CHECK:           to label %[[UNREACHABLE_ENTRY:.+]] unwind label %right
+; CHECK:     left:
+; CHECK:           to label %[[UNREACHABLE_LEFT:.+]] unwind label %[[INNER_LEFT:.+]]
+; CHECK:     right:
+; CHECK:           to label %right.catch unwind label %right.end
+; CHECK:     right.catch:
+; CHECK:           to label %unreachable unwind label %[[INNER_RIGHT:.+]]
+; CHECK:     right.end:
+; CHECK:       catchendpad unwind to caller
+; CHECK:     [[INNER_RIGHT]]:
+; CHECK:       [[I_R:\%.+]] = cleanuppad []
+; CHECK:       [[X_R:\%.+]] = call i32 @g()
+; CHECK:       call void @h(i32 [[X_R]])
+; CHECK:       cleanupret [[I_R]] unwind label %right.end
+; CHECK:     [[INNER_LEFT]]:
+; CHECK:       [[I_L:\%.+]] = cleanuppad []
+; CHECK:       [[X_L:\%.+]] = call i32 @g()
+; CHECK:       call void @h(i32 [[X_L]])
+; CHECK:       unreachable
+; CHECK:     unreachable:
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_LEFT]]:
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_ENTRY]]:
+; CHECK:       unreachable
 
 
 define void @test8() personality i32 (...)* @__CxxFrameHandler3 {
@@ -350,7 +396,40 @@ unreachable:
 ; %inner is a two-parent child which itself has a child; need
 ; to make two copies of both the %inner and %inner.child.
 ; CHECK-LABEL: define void @test8(
-; TODO: CHECKs
+; CHECK:     invoke.cont:
+; CHECK:               to label %[[UNREACHABLE_ENTRY:.+]] unwind label %right
+; CHECK:     left:
+; CHECK:               to label %[[UNREACHABLE_LEFT:.+]] unwind label %[[INNER_LEFT:.+]]
+; CHECK:     right:
+; CHECK:               to label %right.catch unwind label %right.end
+; CHECK:     right.catch:
+; CHECK:               to label %[[UNREACHABLE_RIGHT:.+]] unwind label %[[INNER_RIGHT:.+]]
+; CHECK:     right.end:
+; CHECK:       catchendpad unwind to caller
+; CHECK:     [[INNER_RIGHT]]:
+; CHECK:               to label %[[UNREACHABLE_INNER_RIGHT:.+]] unwind label %[[INNER_CHILD_RIGHT:.+]]
+; CHECK:     [[INNER_LEFT]]:
+; CHECK:               to label %[[UNREACHABLE_INNER_LEFT:.+]] unwind label %[[INNER_CHILD_LEFT:.+]]
+; CHECK:     [[INNER_CHILD_RIGHT]]:
+; CHECK:       [[TMP:\%.+]] = cleanuppad []
+; CHECK:       [[X:\%.+]] = call i32 @g()
+; CHECK:       call void @h(i32 [[X]])
+; CHECK:       unreachable
+; CHECK:     [[INNER_CHILD_LEFT]]:
+; CHECK:       [[TMP:\%.+]] = cleanuppad []
+; CHECK:       [[X:\%.+]] = call i32 @g()
+; CHECK:       call void @h(i32 [[X]])
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_INNER_RIGHT]]:
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_INNER_LEFT]]:
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_RIGHT]]:
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_LEFT]]:
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_ENTRY]]:
+; CHECK:       unreachable
 
 
 define void @test9() personality i32 (...)* @__CxxFrameHandler3 {
@@ -383,7 +462,33 @@ unreachable:
 ; of which was which along the way; generating each possibility lets
 ; whichever case was correct execute correctly.
 ; CHECK-LABEL: define void @test9(
-; TODO: CHECKs
+; CHECK:     entry:
+; CHECK:               to label %invoke.cont unwind label %[[LEFT:.+]]
+; CHECK:     invoke.cont:
+; CHECK:               to label %[[UNREACHABLE_ENTRY:.+]] unwind label %[[RIGHT:.+]]
+; CHECK:     [[LEFT_FROM_RIGHT:.+]]:
+; CHECK:       call void @h(i32 1)
+; CHECK:       call void @f()
+; CHECK:       unreachable
+; CHECK:     [[LEFT]]:
+; CHECK:       call void @h(i32 1)
+; CHECK:       invoke void @f()
+; CHECK:               to label %[[UNREACHABLE_LEFT:.+]] unwind label %[[RIGHT_FROM_LEFT:.+]]
+; CHECK:     [[RIGHT]]:
+; CHECK:       call void @h(i32 2)
+; CHECK:       invoke void @f()
+; CHECK:               to label %[[UNREACHABLE_RIGHT:.+]] unwind label %[[LEFT_FROM_RIGHT]]
+; CHECK:     [[RIGHT_FROM_LEFT]]:
+; CHECK:       call void @h(i32 2)
+; CHECK:       call void @f()
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_RIGHT]]:
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_LEFT]]:
+; CHECK:       unreachable
+; CHECK:     [[UNREACHABLE_ENTRY]]:
+; CHECK:       unreachable
+
 
 define void @test10() personality i32 (...)* @__CxxFrameHandler3 {
 entry:
@@ -453,7 +558,7 @@ exit:
 ; CHECK-NEXT: call void @f()
 ; CHECK-NEXT: unreachable
 
-define void @test12() personality i32 (...)* @__CxxFrameHandler3 {
+define void @test12() personality i32 (...)* @__CxxFrameHandler3 !dbg !5 {
 entry:
   invoke void @f()
     to label %cont unwind label %left, !dbg !8
@@ -559,7 +664,7 @@ exit:
 !2 = !DIFile(filename: "test.cpp", directory: ".")
 !3 = !{}
 !4 = !{!5}
-!5 = distinct !DISubprogram(name: "test12", scope: !2, file: !2, type: !6, isLocal: false, isDefinition: true, scopeLine: 3, flags: DIFlagPrototyped, isOptimized: true, function: void ()* @test12, variables: !3)
+!5 = distinct !DISubprogram(name: "test12", scope: !2, file: !2, type: !6, isLocal: false, isDefinition: true, scopeLine: 3, flags: DIFlagPrototyped, isOptimized: true, variables: !3)
 !6 = !DISubroutineType(types: !7)
 !7 = !{null}
 !8 = !DILocation(line: 1, scope: !5)

@@ -1077,6 +1077,22 @@ static void computeKnownBitsFromOperator(Operator *I, APInt &KnownZero,
     KnownOne &= KnownOne2;
     // Output known-0 are known to be clear if zero in either the LHS | RHS.
     KnownZero |= KnownZero2;
+
+    // and(x, add (x, -1)) is a common idiom that always clears the low bit;
+    // here we handle the more general case of adding any odd number by
+    // matching the form add(x, add(x, y)) where y is odd.
+    // TODO: This could be generalized to clearing any bit set in y where the
+    // following bit is known to be unset in y.
+    Value *Y = nullptr;
+    if (match(I->getOperand(0), m_Add(m_Specific(I->getOperand(1)),
+                                      m_Value(Y))) ||
+        match(I->getOperand(1), m_Add(m_Specific(I->getOperand(0)),
+                                      m_Value(Y)))) {
+      APInt KnownZero3(BitWidth, 0), KnownOne3(BitWidth, 0);
+      computeKnownBits(Y, KnownZero3, KnownOne3, DL, Depth + 1, Q);
+      if (KnownOne3.countTrailingOnes() > 0)
+        KnownZero |= APInt::getLowBitsSet(BitWidth, 1);
+    }
     break;
   }
   case Instruction::Or: {
@@ -4082,7 +4098,97 @@ ConstantRange llvm::getConstantRangeFromMetadata(MDNode &Ranges) {
   return CR;
 }
 
-bool llvm::isImpliedCondition(Value *LHS, Value *RHS) {
+/// Return true if "icmp Pred LHS RHS" is always true.
+static bool isTruePredicate(CmpInst::Predicate Pred, Value *LHS, Value *RHS,
+                            const DataLayout &DL, unsigned Depth,
+                            AssumptionCache *AC, const Instruction *CxtI,
+                            const DominatorTree *DT) {
+  assert(!LHS->getType()->isVectorTy() && "TODO: extend to handle vectors!");
+  if (ICmpInst::isTrueWhenEqual(Pred) && LHS == RHS)
+    return true;
+
+  switch (Pred) {
+  default:
+    return false;
+
+  case CmpInst::ICMP_SLE: {
+    const APInt *C;
+
+    // LHS s<= LHS +_{nsw} C   if C >= 0
+    if (match(RHS, m_NSWAdd(m_Specific(LHS), m_APInt(C))))
+      return !C->isNegative();
+    return false;
+  }
+
+  case CmpInst::ICMP_ULE: {
+    const APInt *C;
+
+    // LHS u<= LHS +_{nuw} C   for any C
+    if (match(RHS, m_NUWAdd(m_Specific(LHS), m_APInt(C))))
+      return true;
+
+    // Match A to (X +_{nuw} CA) and B to (X +_{nuw} CB)
+    auto MatchNUWAddsToSameValue = [&](Value *A, Value *B, Value *&X,
+                                       const APInt *&CA, const APInt *&CB) {
+      if (match(A, m_NUWAdd(m_Value(X), m_APInt(CA))) &&
+          match(B, m_NUWAdd(m_Specific(X), m_APInt(CB))))
+        return true;
+
+      // If X & C == 0 then (X | C) == X +_{nuw} C
+      if (match(A, m_Or(m_Value(X), m_APInt(CA))) &&
+          match(B, m_Or(m_Specific(X), m_APInt(CB)))) {
+        unsigned BitWidth = CA->getBitWidth();
+        APInt KnownZero(BitWidth, 0), KnownOne(BitWidth, 0);
+        computeKnownBits(X, KnownZero, KnownOne, DL, Depth + 1, AC, CxtI, DT);
+
+        if ((KnownZero & *CA) == *CA && (KnownZero & *CB) == *CB)
+          return true;
+      }
+
+      return false;
+    };
+
+    Value *X;
+    const APInt *CLHS, *CRHS;
+    if (MatchNUWAddsToSameValue(LHS, RHS, X, CLHS, CRHS))
+      return CLHS->ule(*CRHS);
+
+    return false;
+  }
+  }
+}
+
+/// Return true if "icmp Pred BLHS BRHS" is true whenever "icmp Pred
+/// ALHS ARHS" is true.
+static bool isImpliedCondOperands(CmpInst::Predicate Pred, Value *ALHS,
+                                  Value *ARHS, Value *BLHS, Value *BRHS,
+                                  const DataLayout &DL, unsigned Depth,
+                                  AssumptionCache *AC, const Instruction *CxtI,
+                                  const DominatorTree *DT) {
+  switch (Pred) {
+  default:
+    return false;
+
+  case CmpInst::ICMP_SLT:
+  case CmpInst::ICMP_SLE:
+    return isTruePredicate(CmpInst::ICMP_SLE, BLHS, ALHS, DL, Depth, AC, CxtI,
+                           DT) &&
+           isTruePredicate(CmpInst::ICMP_SLE, ARHS, BRHS, DL, Depth, AC, CxtI,
+                           DT);
+
+  case CmpInst::ICMP_ULT:
+  case CmpInst::ICMP_ULE:
+    return isTruePredicate(CmpInst::ICMP_ULE, BLHS, ALHS, DL, Depth, AC, CxtI,
+                           DT) &&
+           isTruePredicate(CmpInst::ICMP_ULE, ARHS, BRHS, DL, Depth, AC, CxtI,
+                           DT);
+  }
+}
+
+bool llvm::isImpliedCondition(Value *LHS, Value *RHS, const DataLayout &DL,
+                              unsigned Depth, AssumptionCache *AC,
+                              const Instruction *CxtI,
+                              const DominatorTree *DT) {
   assert(LHS->getType() == RHS->getType() && "mismatched type");
   Type *OpTy = LHS->getType();
   assert(OpTy->getScalarType()->isIntegerTy(1));
@@ -4096,28 +4202,16 @@ bool llvm::isImpliedCondition(Value *LHS, Value *RHS) {
   assert(OpTy->isIntegerTy(1) && "implied by above");
 
   ICmpInst::Predicate APred, BPred;
-  Value *I;
-  Value *L;
-  ConstantInt *CI;
-  // i +_{nsw} C_{>0} <s L ==> i <s L
-  if (match(LHS, m_ICmp(APred,
-                        m_NSWAdd(m_Value(I), m_ConstantInt(CI)),
-                        m_Value(L))) &&
-      APred == ICmpInst::ICMP_SLT &&
-      !CI->isNegative() &&
-      match(RHS, m_ICmp(BPred, m_Specific(I), m_Specific(L))) &&
-      BPred == ICmpInst::ICMP_SLT)
-    return true;
+  Value *ALHS, *ARHS;
+  Value *BLHS, *BRHS;
 
-  // i +_{nuw} C_{>0} <u L ==> i <u L
-  if (match(LHS, m_ICmp(APred,
-                        m_NUWAdd(m_Value(I), m_ConstantInt(CI)),
-                        m_Value(L))) &&
-      APred == ICmpInst::ICMP_ULT &&
-      !CI->isNegative() &&
-      match(RHS, m_ICmp(BPred, m_Specific(I), m_Specific(L))) &&
-      BPred == ICmpInst::ICMP_ULT)
-    return true;
+  if (!match(LHS, m_ICmp(APred, m_Value(ALHS), m_Value(ARHS))) ||
+      !match(RHS, m_ICmp(BPred, m_Value(BLHS), m_Value(BRHS))))
+    return false;
+
+  if (APred == BPred)
+    return isImpliedCondOperands(APred, ALHS, ARHS, BLHS, BRHS, DL, Depth, AC,
+                                 CxtI, DT);
 
   return false;
 }

@@ -152,7 +152,7 @@ static void WorkerThread(const std::string &Cmd, std::atomic<int> *Counter,
     std::string ToRun = Cmd + " > " + Log + " 2>&1\n";
     if (Flags.verbosity)
       Printf("%s", ToRun.c_str());
-    int ExitCode = system(ToRun.c_str());
+    int ExitCode = ExecuteCommand(ToRun.c_str());
     if (ExitCode != 0)
       *HasErrors = true;
     std::lock_guard<std::mutex> Lock(Mu);
@@ -184,7 +184,9 @@ static int RunInMultipleProcesses(const std::vector<std::string> &Args,
 
 int RunOneTest(Fuzzer *F, const char *InputFilePath) {
   Unit U = FileToVector(InputFilePath);
-  F->ExecuteCallback(U);
+  Unit PreciseSizedU(U);
+  assert(PreciseSizedU.size() == PreciseSizedU.capacity());
+  F->ExecuteCallback(PreciseSizedU);
   return 0;
 }
 
@@ -243,6 +245,7 @@ int FuzzerDriver(const std::vector<std::string> &Args,
   Options.OnlyASCII = Flags.only_ascii;
   Options.TBMDepth = Flags.tbm_depth;
   Options.TBMWidth = Flags.tbm_width;
+  Options.OutputCSV = Flags.output_csv;
   if (Flags.runs >= 0)
     Options.MaxNumberOfRuns = Flags.runs;
   if (!Inputs->empty())
@@ -253,21 +256,27 @@ int FuzzerDriver(const std::vector<std::string> &Args,
   Options.ReportSlowUnits = Flags.report_slow_units;
   if (Flags.artifact_prefix)
     Options.ArtifactPrefix = Flags.artifact_prefix;
+  std::vector<Unit> Dictionary;
   if (Flags.dict)
-    if (!ParseDictionaryFile(FileToString(Flags.dict), &Options.Dictionary))
+    if (!ParseDictionaryFile(FileToString(Flags.dict), &Dictionary))
       return 1;
-  if (Flags.verbosity > 0 && !Options.Dictionary.empty())
-    Printf("Dictionary: %zd entries\n", Options.Dictionary.size());
+  if (Flags.verbosity > 0 && !Dictionary.empty())
+    Printf("Dictionary: %zd entries\n", Dictionary.size());
   Options.SaveArtifacts = !Flags.test_single_input;
 
   Fuzzer F(USF, Options);
+
+  for (auto &U: Dictionary)
+    USF.GetMD().AddWordToDictionary(U.data(), U.size());
 
   // Timer
   if (Flags.timeout > 0)
     SetTimer(Flags.timeout / 2 + 1);
 
-  if (Flags.test_single_input)
-    return RunOneTest(&F, Flags.test_single_input);
+  if (Flags.test_single_input) {
+    RunOneTest(&F, Flags.test_single_input);
+    exit(0);
+  }
 
   if (Flags.merge) {
     F.Merge(*Inputs);
@@ -292,7 +301,11 @@ int FuzzerDriver(const std::vector<std::string> &Args,
   F.ShuffleAndMinimize();
   if (Flags.save_minimized_corpus)
     F.SaveCorpus();
-  F.Loop();
+  else if (Flags.drill)
+    F.Drill();
+  else
+    F.Loop();
+
   if (Flags.verbosity)
     Printf("Done %d runs in %zd second(s)\n", F.getTotalNumberOfRuns(),
            F.secondsSinceProcessStartUp());

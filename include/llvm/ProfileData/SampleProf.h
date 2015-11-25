@@ -11,6 +11,7 @@
 // sample profile data.
 //
 //===----------------------------------------------------------------------===//
+
 #ifndef LLVM_PROFILEDATA_SAMPLEPROF_H_
 #define LLVM_PROFILEDATA_SAMPLEPROF_H_
 
@@ -74,9 +75,18 @@ static inline uint64_t SPVersion() { return 102; }
 /// (e.g., the two post-increment instructions in "if (p) x++; else y++;").
 struct LineLocation {
   LineLocation(uint32_t L, uint32_t D) : LineOffset(L), Discriminator(D) {}
+  void print(raw_ostream &OS) const;
+  void dump() const;
+  bool operator<(const LineLocation &O) const {
+    return LineOffset < O.LineOffset ||
+           (LineOffset == O.LineOffset && Discriminator < O.Discriminator);
+  }
+
   uint32_t LineOffset;
   uint32_t Discriminator;
 };
+
+raw_ostream &operator<<(raw_ostream &OS, const LineLocation &Loc);
 
 /// Represents the relative location of a callsite.
 ///
@@ -87,8 +97,13 @@ struct LineLocation {
 struct CallsiteLocation : public LineLocation {
   CallsiteLocation(uint32_t L, uint32_t D, StringRef N)
       : LineLocation(L, D), CalleeName(N) {}
+  void print(raw_ostream &OS) const;
+  void dump() const;
+
   StringRef CalleeName;
 };
+
+raw_ostream &operator<<(raw_ostream &OS, const CallsiteLocation &Loc);
 
 } // End namespace sampleprof
 
@@ -162,10 +177,7 @@ public:
   /// Sample counts accumulate using saturating arithmetic, to avoid wrapping
   /// around unsigned integers.
   void addSamples(uint64_t S) {
-    if (NumSamples <= std::numeric_limits<uint64_t>::max() - S)
-      NumSamples += S;
-    else
-      NumSamples = std::numeric_limits<uint64_t>::max();
+    NumSamples = SaturatingAdd(NumSamples, S);
   }
 
   /// Add called function \p F with samples \p S.
@@ -174,10 +186,7 @@ public:
   /// around unsigned integers.
   void addCalledTarget(StringRef F, uint64_t S) {
     uint64_t &TargetSamples = CallTargets[F];
-    if (TargetSamples <= std::numeric_limits<uint64_t>::max() - S)
-      TargetSamples += S;
-    else
-      TargetSamples = std::numeric_limits<uint64_t>::max();
+    TargetSamples = SaturatingAdd(TargetSamples, S);
   }
 
   /// Return true if this sample record contains function calls.
@@ -193,10 +202,15 @@ public:
       addCalledTarget(I.first(), I.second);
   }
 
+  void print(raw_ostream &OS, unsigned Indent) const;
+  void dump() const;
+
 private:
   uint64_t NumSamples;
   CallTargetMap CallTargets;
 };
+
+raw_ostream &operator<<(raw_ostream &OS, const SampleRecord &Sample);
 
 typedef DenseMap<LineLocation, SampleRecord> BodySampleMap;
 class FunctionSamples;
@@ -211,6 +225,7 @@ class FunctionSamples {
 public:
   FunctionSamples() : TotalSamples(0), TotalHeadSamples(0) {}
   void print(raw_ostream &OS = dbgs(), unsigned Indent = 0) const;
+  void dump() const;
   void addTotalSamples(uint64_t Num) { TotalSamples += Num; }
   void addHeadSamples(uint64_t Num) { TotalHeadSamples += Num; }
   void addBodySamples(uint32_t LineOffset, uint32_t Discriminator,
@@ -245,7 +260,7 @@ public:
   findFunctionSamplesAt(const CallsiteLocation &Loc) const {
     auto iter = CallsiteSamples.find(Loc);
     if (iter == CallsiteSamples.end()) {
-      return NULL;
+      return nullptr;
     } else {
       return &iter->second;
     }
@@ -322,8 +337,33 @@ private:
   CallsiteSampleMap CallsiteSamples;
 };
 
-} // End namespace sampleprof
+raw_ostream &operator<<(raw_ostream &OS, const FunctionSamples &FS);
 
-} // End namespace llvm
+/// Sort a LocationT->SampleT map by LocationT.
+///
+/// It produces a sorted list of <LocationT, SampleT> records by ascending
+/// order of LocationT.
+template <class LocationT, class SampleT> class SampleSorter {
+public:
+  typedef detail::DenseMapPair<LocationT, SampleT> SamplesWithLoc;
+  typedef SmallVector<const SamplesWithLoc *, 20> SamplesWithLocList;
+
+  SampleSorter(const DenseMap<LocationT, SampleT> &Samples) {
+    for (const auto &I : Samples)
+      V.push_back(&I);
+    std::stable_sort(V.begin(), V.end(),
+                     [](const SamplesWithLoc *A, const SamplesWithLoc *B) {
+                       return A->first < B->first;
+                     });
+  }
+  const SamplesWithLocList &get() const { return V; }
+
+private:
+  SamplesWithLocList V;
+};
+
+} // end namespace sampleprof
+
+} // end namespace llvm
 
 #endif // LLVM_PROFILEDATA_SAMPLEPROF_H_

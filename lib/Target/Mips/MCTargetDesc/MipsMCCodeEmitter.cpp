@@ -832,7 +832,9 @@ getMemEncodingMMImm4sp(const MCInst &MI, unsigned OpNo,
   default:
     break;
   case Mips::SWM16_MM:
+  case Mips::SWM16_MMR6:
   case Mips::LWM16_MM:
+  case Mips::LWM16_MMR6:
     OpNo = MI.getNumOperands() - 2;
     break;
   }
@@ -869,13 +871,15 @@ MipsMCCodeEmitter::getSizeInsEncoding(const MCInst &MI, unsigned OpNo,
   return Position + Size - 1;
 }
 
+template <unsigned Bits, int Offset>
 unsigned
-MipsMCCodeEmitter::getLSAImmEncoding(const MCInst &MI, unsigned OpNo,
-                                     SmallVectorImpl<MCFixup> &Fixups,
-                                     const MCSubtargetInfo &STI) const {
+MipsMCCodeEmitter::getUImmWithOffsetEncoding(const MCInst &MI, unsigned OpNo,
+                                             SmallVectorImpl<MCFixup> &Fixups,
+                                             const MCSubtargetInfo &STI) const {
   assert(MI.getOperand(OpNo).isImm());
-  // The immediate is encoded as 'immediate - 1'.
-  return getMachineOpValue(MI, MI.getOperand(OpNo), Fixups, STI) - 1;
+  unsigned Value = getMachineOpValue(MI, MI.getOperand(OpNo), Fixups, STI);
+  Value -= Offset;
+  return Value;
 }
 
 unsigned

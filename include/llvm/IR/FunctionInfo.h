@@ -30,7 +30,7 @@ namespace llvm {
 /// This is a separate class from FunctionInfo to enable lazy reading of this
 /// function summary information from the combined index file during imporing.
 class FunctionSummary {
- private:
+private:
   /// \brief Path of module containing function IR, used to locate module when
   /// importing this function.
   ///
@@ -57,7 +57,7 @@ class FunctionSummary {
   /// during the initial compile step when the function index is first built.
   unsigned InstCount;
 
- public:
+public:
   /// Construct a summary object from summary data expected for all
   /// summary records.
   FunctionSummary(unsigned NumInsts) : InstCount(NumInsts) {}
@@ -90,7 +90,7 @@ class FunctionSummary {
 /// record. After parsing the associated summary information from the summary
 /// block the \a FunctionSummary is populated and stored here.
 class FunctionInfo {
- private:
+private:
   /// Function summary information used to help make ThinLTO importing
   /// decisions.
   std::unique_ptr<FunctionSummary> Summary;
@@ -109,7 +109,7 @@ class FunctionInfo {
   /// VST records with the summary records.
   uint64_t BitcodeIndex;
 
- public:
+public:
   /// Constructor used during parsing of VST entries.
   FunctionInfo(uint64_t FuncOffset)
       : Summary(nullptr), BitcodeIndex(FuncOffset) {}
@@ -157,7 +157,7 @@ typedef StringMap<uint64_t> ModulePathStringTableTy;
 /// Class to hold module path string table and function map,
 /// and encapsulate methods for operating on them.
 class FunctionInfoIndex {
- private:
+private:
   /// Map from function name to list of function information instances
   /// for functions of that name (may be duplicates in the COMDAT case, e.g.).
   FunctionInfoMapTy FunctionMap;
@@ -165,8 +165,18 @@ class FunctionInfoIndex {
   /// Holds strings for combined index, mapping to the corresponding module ID.
   ModulePathStringTableTy ModulePathStringTable;
 
- public:
-  FunctionInfoIndex() = default;
+  /// The main module being compiled, that we are importing into, if applicable.
+  /// Used to check if any of its functions are in the index and therefore
+  /// potentially exported.
+  const Module *ExportingModule;
+
+  /// Flag indicating whether the exporting module has any functions in the
+  /// index and therefore potentially exported (imported into another module).
+  bool HasExportedFunctions;
+
+public:
+  FunctionInfoIndex(const Module *M = nullptr)
+      : ExportingModule(M), HasExportedFunctions(false){};
   ~FunctionInfoIndex() = default;
 
   // Disable the copy constructor and assignment operators, so
@@ -184,14 +194,27 @@ class FunctionInfoIndex {
     return FunctionMap[FuncName];
   }
 
+  /// Get the list of function info objects for a given function.
+  const const_funcinfo_iterator findFunctionInfoList(StringRef FuncName) const {
+    return FunctionMap.find(FuncName);
+  }
+
   /// Add a function info for a function of the given name.
   void addFunctionInfo(StringRef FuncName, std::unique_ptr<FunctionInfo> Info) {
+    // Update the HasExportedFunctions flag, but only if we had a function
+    // summary (i.e. we aren't parsing them lazily or have a bitcode file
+    // without a function summary section).
+    if (ExportingModule && Info->functionSummary()) {
+      if (ExportingModule->getModuleIdentifier() ==
+          Info->functionSummary()->modulePath())
+        HasExportedFunctions = true;
+    }
     FunctionMap[FuncName].push_back(std::move(Info));
   }
 
   /// Iterator to allow writer to walk through table during emission.
-  iterator_range<StringMap<uint64_t>::const_iterator> modPathStringEntries()
-      const {
+  iterator_range<StringMap<uint64_t>::const_iterator>
+  modPathStringEntries() const {
     return llvm::make_range(ModulePathStringTable.begin(),
                             ModulePathStringTable.end());
   }
@@ -223,8 +246,16 @@ class FunctionInfoIndex {
     return ModulePathStringTable.insert(std::make_pair(ModPath, ModId))
         .first->first();
   }
+
+  /// Check if the given Module has any functions available for exporting
+  /// in the index.
+  bool hasExportedFunctions(const Module *M) const {
+    assert(M == ExportingModule &&
+           "Checking for exported functions on unexpected module");
+    return HasExportedFunctions;
+  }
 };
 
-}  // End llvm namespace
+} // End llvm namespace
 
 #endif

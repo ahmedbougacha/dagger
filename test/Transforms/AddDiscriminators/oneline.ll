@@ -6,11 +6,11 @@
 ; #3 }
 
 ; i == 3:     discriminator 0
-; i == 5:     discriminator 2
-; return 100: discriminator 1
+; i == 5:     discriminator 1
+; return 100: discriminator 2
 ; return 99:  discriminator 3
 
-define i32 @_Z3fooi(i32 %i) #0 {
+define i32 @_Z3fooi(i32 %i) #0 !dbg !4 {
   %1 = alloca i32, align 4
   %2 = alloca i32, align 4
   store i32 %i, i32* %2, align 4, !tbaa !13
@@ -54,7 +54,11 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata) #1
 attributes #0 = { nounwind uwtable "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
 attributes #1 = { nounwind readnone }
 
-!llvm.dbg.cu = !{!0}
+; We should be able to add discriminators even in the absence of llvm.dbg.cu.
+; When using sample profiles, the front end will generate line tables but it
+; does not generate llvm.dbg.cu to prevent codegen from emitting debug info
+; to the final binary.
+; !llvm.dbg.cu = !{!0}
 !llvm.module.flags = !{!10, !11}
 !llvm.ident = !{!12}
 
@@ -62,7 +66,7 @@ attributes #1 = { nounwind readnone }
 !1 = !DIFile(filename: "a.cc", directory: "/usr/local/google/home/dehao/discr")
 !2 = !{}
 !3 = !{!4}
-!4 = distinct !DISubprogram(name: "foo", linkageName: "_Z3fooi", scope: !1, file: !1, line: 1, type: !5, isLocal: false, isDefinition: true, scopeLine: 1, flags: DIFlagPrototyped, isOptimized: true, function: i32 (i32)* @_Z3fooi, variables: !8)
+!4 = distinct !DISubprogram(name: "foo", linkageName: "_Z3fooi", scope: !1, file: !1, line: 1, type: !5, isLocal: false, isDefinition: true, scopeLine: 1, flags: DIFlagPrototyped, isOptimized: true, variables: !8)
 !5 = !DISubroutineType(types: !6)
 !6 = !{!7, !7}
 !7 = !DIBasicType(name: "int", size: 32, align: 32, encoding: DW_ATE_signed)
@@ -89,10 +93,10 @@ attributes #1 = { nounwind readnone }
 !28 = !DILocation(line: 3, column: 1, scope: !4)
 
 ; CHECK: ![[THEN1]] = !DILocation(line: 2, column: 17, scope: ![[THENBLOCK:[0-9]+]])
-; CHECK: ![[THENBLOCK]] = !DILexicalBlockFile({{.*}} discriminator: 2)
+; CHECK: ![[THENBLOCK]] = !DILexicalBlockFile({{.*}} discriminator: 1)
 ; CHECK: ![[THEN2]] = !DILocation(line: 2, column: 19, scope: ![[THENBLOCK]])
 ; CHECK: ![[THEN3]] = !DILocation(line: 2, column: 7, scope: ![[THENBLOCK]])
 ; CHECK: ![[ELSE]] = !DILocation(line: 2, column: 25, scope: ![[ELSEBLOCK:[0-9]+]])
-; CHECK: ![[ELSEBLOCK]] = !DILexicalBlockFile({{.*}} discriminator: 1)
+; CHECK: ![[ELSEBLOCK]] = !DILexicalBlockFile({{.*}} discriminator: 2)
 ; CHECK: ![[COMBINE]] = !DILocation(line: 2, column: 42, scope: ![[COMBINEBLOCK:[0-9]+]])
 ; CHECK: ![[COMBINEBLOCK]] = !DILexicalBlockFile({{.*}} discriminator: 3)

@@ -519,7 +519,7 @@ public:
 
   /// \brief Emit the abbreviation table \p Abbrevs to the
   /// debug_abbrev section.
-  void emitAbbrevs(const std::vector<DIEAbbrev *> &Abbrevs);
+  void emitAbbrevs(const std::vector<std::unique_ptr<DIEAbbrev>> &Abbrevs);
 
   /// \brief Emit the string table described by \p Pool.
   void emitStrings(const NonRelocatableStringpool &Pool);
@@ -683,7 +683,8 @@ void DwarfStreamer::emitCompileUnitHeader(CompileUnit &Unit) {
 
 /// \brief Emit the \p Abbrevs array as the shared abbreviation table
 /// for the linked Dwarf file.
-void DwarfStreamer::emitAbbrevs(const std::vector<DIEAbbrev *> &Abbrevs) {
+void DwarfStreamer::emitAbbrevs(
+    const std::vector<std::unique_ptr<DIEAbbrev>> &Abbrevs) {
   MS->SwitchSection(MOFI->getDwarfAbbrevSection());
   Asm->emitDwarfAbbrevs(Abbrevs);
 }
@@ -1111,11 +1112,6 @@ public:
       : OutputFilename(OutputFilename), Options(Options),
         BinHolder(Options.Verbose), LastCIEOffset(0) {}
 
-  ~DwarfLinker() {
-    for (auto *Abbrev : Abbreviations)
-      delete Abbrev;
-  }
-
   /// \brief Link the contents of the DebugMap.
   bool link(const DebugMap &);
 
@@ -1379,7 +1375,7 @@ private:
   /// \brief Storage for the unique Abbreviations.
   /// This is passed to AsmPrinter::emitDwarfAbbrevs(), thus it cannot
   /// be changed to a vecot of unique_ptrs.
-  std::vector<DIEAbbrev *> Abbreviations;
+  std::vector<std::unique_ptr<DIEAbbrev>> Abbreviations;
 
   /// \brief Compute and emit debug_ranges section for \p Unit, and
   /// patch the attributes referencing it.
@@ -2195,7 +2191,11 @@ void DwarfLinker::keepDIEAndDependencies(RelocationManager &RelocMgr,
           Info.Ctxt->getCanonicalDIEOffset() && isODRAttribute(AttrSpec.Attr))
         continue;
 
-      Info.Prune = false;
+      // Keep a module forward declaration if there is no definition.
+      if (!(isODRAttribute(AttrSpec.Attr) && Info.Ctxt &&
+            Info.Ctxt->getCanonicalDIEOffset()))
+        Info.Prune = false;
+
       unsigned ODRFlag = UseODR ? TF_ODR : 0;
       lookForDIEsToKeep(RelocMgr, *RefDIE, DMO, *ReferencedCU,
                         TF_Keep | TF_DependencyWalk | ODRFlag);
@@ -2278,10 +2278,10 @@ void DwarfLinker::AssignAbbrev(DIEAbbrev &Abbrev) {
   } else {
     // Add to abbreviation list.
     Abbreviations.push_back(
-        new DIEAbbrev(Abbrev.getTag(), Abbrev.hasChildren()));
+        llvm::make_unique<DIEAbbrev>(Abbrev.getTag(), Abbrev.hasChildren()));
     for (const auto &Attr : Abbrev.getData())
       Abbreviations.back()->AddAttribute(Attr.getAttribute(), Attr.getForm());
-    AbbreviationsSet.InsertNode(Abbreviations.back(), InsertToken);
+    AbbreviationsSet.InsertNode(Abbreviations.back().get(), InsertToken);
     // Assign the unique abbreviation number.
     Abbrev.setNumber(Abbreviations.size());
     Abbreviations.back()->setNumber(Abbreviations.size());
@@ -2767,11 +2767,19 @@ DIE *DwarfLinker::DIECloner::cloneDIE(
     Unit.addTypeAccelerator(Die, AttrInfo.Name, AttrInfo.NameOffset);
   }
 
+  // Determine whether there are any children that we want to keep.
+  bool HasChildren = false;
+  for (auto *Child = InputDIE.getFirstChild(); Child && !Child->isNULL();
+       Child = Child->getSibling()) {
+    unsigned Idx = U.getDIEIndex(Child);
+    if (Unit.getInfo(Idx).Keep) {
+      HasChildren = true;
+      break;
+    }
+  }
+
   DIEAbbrev NewAbbrev = Die->generateAbbrev();
-  // If a scope DIE is kept, we must have kept at least one child. If
-  // it's not the case, we'll just be emitting one wasteful end of
-  // children marker, but things won't break.
-  if (InputDIE.hasChildren())
+  if (HasChildren)
     NewAbbrev.setChildrenFlag(dwarf::DW_CHILDREN_yes);
   // Assign a permanent abbrev number
   Linker.AssignAbbrev(NewAbbrev);
@@ -2780,7 +2788,7 @@ DIE *DwarfLinker::DIECloner::cloneDIE(
   // Add the size of the abbreviation number to the output offset.
   OutOffset += getULEB128Size(Die->getAbbrevNumber());
 
-  if (!Abbrev->hasChildren()) {
+  if (!HasChildren) {
     // Update our size.
     Die->setSize(OutOffset - Die->getOffset());
     return Die;

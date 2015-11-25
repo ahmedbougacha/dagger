@@ -222,19 +222,31 @@ void LiveIntervals::computeRegMasks() {
   RegMaskBlocks.resize(MF->getNumBlockIDs());
 
   // Find all instructions with regmask operands.
-  for (MachineFunction::iterator MBBI = MF->begin(), E = MF->end();
-       MBBI != E; ++MBBI) {
-    MachineBasicBlock *MBB = &*MBBI;
-    std::pair<unsigned, unsigned> &RMB = RegMaskBlocks[MBB->getNumber()];
+  for (MachineBasicBlock &MBB : *MF) {
+    std::pair<unsigned, unsigned> &RMB = RegMaskBlocks[MBB.getNumber()];
     RMB.first = RegMaskSlots.size();
-    for (MachineBasicBlock::iterator MI = MBB->begin(), ME = MBB->end();
-         MI != ME; ++MI)
-      for (const MachineOperand &MO : MI->operands()) {
+
+    // Some block starts, such as EH funclets, create masks.
+    if (const uint32_t *Mask = MBB.getBeginClobberMask(TRI)) {
+      RegMaskSlots.push_back(Indexes->getMBBStartIdx(&MBB));
+      RegMaskBits.push_back(Mask);
+    }
+
+    for (MachineInstr &MI : MBB) {
+      for (const MachineOperand &MO : MI.operands()) {
         if (!MO.isRegMask())
           continue;
-          RegMaskSlots.push_back(Indexes->getInstructionIndex(MI).getRegSlot());
-          RegMaskBits.push_back(MO.getRegMask());
+        RegMaskSlots.push_back(Indexes->getInstructionIndex(&MI).getRegSlot());
+        RegMaskBits.push_back(MO.getRegMask());
       }
+    }
+
+    // Some block ends, such as funclet returns, create masks.
+    if (const uint32_t *Mask = MBB.getEndClobberMask(TRI)) {
+      RegMaskSlots.push_back(Indexes->getMBBEndIdx(&MBB));
+      RegMaskBits.push_back(Mask);
+    }
+
     // Compute the number of register mask instructions in this block.
     RMB.second = RegMaskSlots.size() - RMB.first;
   }
@@ -478,7 +490,7 @@ bool LiveIntervals::computeDeadValues(LiveInterval &LI,
     if (MRI->shouldTrackSubRegLiveness(VReg)) {
       if ((I == LI.begin() || std::prev(I)->end < Def) && !VNI->isPHIDef()) {
         MachineInstr *MI = getInstructionFromIndex(Def);
-        MI->addRegisterDefReadUndef(VReg);
+        MI->setRegisterDefReadUndef(VReg);
         DeadBeforeDef = true;
       }
     }

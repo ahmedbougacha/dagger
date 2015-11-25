@@ -1114,12 +1114,39 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(CmpInst, Value)
 /// \brief A lightweight accessor for an operand bundle meant to be passed
 /// around by value.
 struct OperandBundleUse {
-  StringRef Tag;
   ArrayRef<Use> Inputs;
 
   OperandBundleUse() {}
-  explicit OperandBundleUse(StringRef Tag, ArrayRef<Use> Inputs)
-      : Tag(Tag), Inputs(Inputs) {}
+  explicit OperandBundleUse(StringMapEntry<uint32_t> *Tag, ArrayRef<Use> Inputs)
+      : Inputs(Inputs), Tag(Tag) {}
+
+  /// \brief Return true if all the operands in this operand bundle have the
+  /// attribute A.
+  ///
+  /// Currently there is no way to have attributes on operand bundles differ on
+  /// a per operand granularity.
+  bool operandsHaveAttr(Attribute::AttrKind A) const {
+    // Conservative answer:  no operands have any attributes.
+    return false;
+  };
+
+  /// \brief Return the tag of this operand bundle as a string.
+  StringRef getTagName() const {
+    return Tag->getKey();
+  }
+
+  /// \brief Return the tag of this operand bundle as an integer.
+  ///
+  /// Operand bundle tags are interned by LLVMContextImpl::getOrInsertBundleTag,
+  /// and this function returns the unique integer getOrInsertBundleTag
+  /// associated the tag of this operand bundle to.
+  uint32_t getTagID() const {
+    return Tag->getValue();
+  }
+
+private:
+  /// \brief Pointer to an entry in LLVMContextImpl::getOrInsertBundleTag.
+  StringMapEntry<uint32_t> *Tag;
 };
 
 /// \brief A container for an operand bundle being viewed as a set of values
@@ -1128,13 +1155,30 @@ struct OperandBundleUse {
 /// Unlike OperandBundleUse, OperandBundleDefT owns the memory it carries, and
 /// so it is possible to create and pass around "self-contained" instances of
 /// OperandBundleDef and ConstOperandBundleDef.
-template <typename InputTy> struct OperandBundleDefT {
+template <typename InputTy> class OperandBundleDefT {
   std::string Tag;
   std::vector<InputTy> Inputs;
 
-  OperandBundleDefT() {}
-  explicit OperandBundleDefT(StringRef Tag, const std::vector<InputTy> &Inputs)
-      : Tag(Tag), Inputs(Inputs) {}
+public:
+  explicit OperandBundleDefT(StringRef Tag, std::vector<InputTy> Inputs)
+      : Tag(Tag), Inputs(std::move(Inputs)) {}
+
+  explicit OperandBundleDefT(std::string Tag, std::vector<InputTy> Inputs)
+      : Tag(std::move(Tag)), Inputs(std::move(Inputs)) {}
+
+  explicit OperandBundleDefT(const OperandBundleUse &OBU) {
+    Tag = OBU.getTagName();
+    Inputs.insert(Inputs.end(), OBU.Inputs.begin(), OBU.Inputs.end());
+  }
+
+  ArrayRef<InputTy> inputs() const { return Inputs; }
+
+  typedef typename std::vector<InputTy>::const_iterator input_iterator;
+  size_t input_size() const { return Inputs.size(); }
+  input_iterator input_begin() const { return Inputs.begin(); }
+  input_iterator input_end() const { return Inputs.end(); }
+
+  StringRef getTag() const { return Tag; }
 };
 
 typedef OperandBundleDefT<Value *> OperandBundleDef;
@@ -1196,27 +1240,35 @@ public:
   /// \brief Return true if this User has any operand bundles.
   bool hasOperandBundles() const { return getNumOperandBundles() != 0; }
 
+  /// \brief Return the index of the first bundle operand in the Use array.
+  unsigned getBundleOperandsStartIndex() const {
+    assert(hasOperandBundles() && "Don't call otherwise!");
+    return bundle_op_info_begin()->Begin;
+  }
+
+  /// \brief Return the index of the last bundle operand in the Use array.
+  unsigned getBundleOperandsEndIndex() const {
+    assert(hasOperandBundles() && "Don't call otherwise!");
+    return bundle_op_info_end()[-1].End;
+  }
+
   /// \brief Return the total number operands (not operand bundles) used by
   /// every operand bundle in this OperandBundleUser.
   unsigned getNumTotalBundleOperands() const {
     if (!hasOperandBundles())
       return 0;
 
-    auto *Begin = bundle_op_info_begin();
-    auto *Back = bundle_op_info_end() - 1;
+    unsigned Begin = getBundleOperandsStartIndex();
+    unsigned End = getBundleOperandsEndIndex();
 
-    assert(Begin <= Back && "hasOperandBundles() returned true!");
-
-    return Back->End - Begin->Begin;
+    assert(Begin <= End && "Should be!");
+    return End - Begin;
   }
 
   /// \brief Return the operand bundle at a specific index.
-  OperandBundleUse getOperandBundle(unsigned Index) const {
+  OperandBundleUse getOperandBundleAt(unsigned Index) const {
     assert(Index < getNumOperandBundles() && "Index out of bounds!");
-    auto *BOI = bundle_op_info_begin() + Index;
-    auto op_begin = static_cast<const InstrTy *>(this)->op_begin();
-    ArrayRef<Use> Inputs(op_begin + BOI->Begin, op_begin + BOI->End);
-    return OperandBundleUse(BOI->Tag->getKey(), Inputs);
+    return operandBundleFromBundleOpInfo(*(bundle_op_info_begin() + Index));
   }
 
   /// \brief Return the number of operand bundles with the tag Name attached to
@@ -1224,7 +1276,18 @@ public:
   unsigned countOperandBundlesOfType(StringRef Name) const {
     unsigned Count = 0;
     for (unsigned i = 0, e = getNumOperandBundles(); i != e; ++i)
-      if (getOperandBundle(i).Tag == Name)
+      if (getOperandBundleAt(i).getTagName() == Name)
+        Count++;
+
+    return Count;
+  }
+
+  /// \brief Return the number of operand bundles with the tag ID attached to
+  /// this instruction.
+  unsigned countOperandBundlesOfType(uint32_t ID) const {
+    unsigned Count = 0;
+    for (unsigned i = 0, e = getNumOperandBundles(); i != e; ++i)
+      if (getOperandBundleAt(i).getTagID() == ID)
         Count++;
 
     return Count;
@@ -1238,12 +1301,52 @@ public:
     assert(countOperandBundlesOfType(Name) < 2 && "Precondition violated!");
 
     for (unsigned i = 0, e = getNumOperandBundles(); i != e; ++i) {
-      OperandBundleUse U = getOperandBundle(i);
-      if (U.Tag == Name)
+      OperandBundleUse U = getOperandBundleAt(i);
+      if (U.getTagName() == Name)
         return U;
     }
 
     return None;
+  }
+
+  /// \brief Return an operand bundle by tag ID, if present.
+  ///
+  /// It is an error to call this for operand bundle types that may have
+  /// multiple instances of them on the same instruction.
+  Optional<OperandBundleUse> getOperandBundle(uint32_t ID) const {
+    assert(countOperandBundlesOfType(ID) < 2 && "Precondition violated!");
+
+    for (unsigned i = 0, e = getNumOperandBundles(); i != e; ++i) {
+      OperandBundleUse U = getOperandBundleAt(i);
+      if (U.getTagID() == ID)
+        return U;
+    }
+
+    return None;
+  }
+
+  /// \brief Return the list of operand bundles attached to this instruction as
+  /// a vector of OperandBundleDefs.
+  ///
+  /// This function copies the OperandBundeUse instances associated with this
+  /// OperandBundleUser to a vector of OperandBundleDefs.  Note:
+  /// OperandBundeUses and OperandBundleDefs are non-trivially *different*
+  /// representations of operand bundles (see documentation above).
+  void getOperandBundlesAsDefs(SmallVectorImpl<OperandBundleDef> &Defs) const {
+    for (unsigned i = 0, e = getNumOperandBundles(); i != e; ++i)
+      Defs.emplace_back(getOperandBundleAt(i));
+  }
+
+  /// \brief Return the operand bundle for the operand at index OpIdx.
+  ///
+  /// It is an error to call this with an OpIdx that does not correspond to an
+  /// bundle operand.
+  OperandBundleUse getOperandBundleForOperand(unsigned OpIdx) const {
+    for (auto &BOI : bundle_op_infos())
+      if (BOI.Begin <= OpIdx && OpIdx < BOI.End)
+        return operandBundleFromBundleOpInfo(BOI);
+
+    llvm_unreachable("Did not find operand bundle for operand!");
   }
 
   /// \brief Return true if this operand bundle user has operand bundles that
@@ -1309,6 +1412,15 @@ protected:
     uint32_t End;
   };
 
+  /// \brief Simple helper function to map a BundleOpInfo to an
+  /// OperandBundleUse.
+  OperandBundleUse
+  operandBundleFromBundleOpInfo(const BundleOpInfo &BOI) const {
+    auto op_begin = static_cast<const InstrTy *>(this)->op_begin();
+    ArrayRef<Use> Inputs(op_begin + BOI.Begin, op_begin + BOI.End);
+    return OperandBundleUse(BOI.Tag, Inputs);
+  }
+
   typedef BundleOpInfo *bundle_op_iterator;
   typedef const BundleOpInfo *const_bundle_op_iterator;
 
@@ -1370,7 +1482,7 @@ protected:
                                           const unsigned BeginIndex) {
     auto It = static_cast<InstrTy *>(this)->op_begin() + BeginIndex;
     for (auto &B : Bundles)
-      It = std::copy(B.Inputs.begin(), B.Inputs.end(), It);
+      It = std::copy(B.input_begin(), B.input_end(), It);
 
     auto *ContextImpl = static_cast<InstrTy *>(this)->getContext().pImpl;
     auto BI = Bundles.begin();
@@ -1379,9 +1491,9 @@ protected:
     for (auto &BOI : bundle_op_infos()) {
       assert(BI != Bundles.end() && "Incorrect allocation?");
 
-      BOI.Tag = ContextImpl->getOrInsertBundleTag(BI->Tag);
+      BOI.Tag = ContextImpl->getOrInsertBundleTag(BI->getTag());
       BOI.Begin = CurrentIndex;
-      BOI.End = CurrentIndex + BI->Inputs.size();
+      BOI.End = CurrentIndex + BI->input_size();
       CurrentIndex = BOI.End;
       BI++;
     }
@@ -1395,7 +1507,7 @@ protected:
   static unsigned CountBundleInputs(ArrayRef<OperandBundleDef> Bundles) {
     unsigned Total = 0;
     for (auto &B : Bundles)
-      Total += B.Inputs.size();
+      Total += B.input_size();
     return Total;
   }
 };

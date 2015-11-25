@@ -509,11 +509,13 @@ public:
   /// necessary.
   void EmitValueImpl(const MCExpr *Value, unsigned Size, SMLoc Loc) override {
     if (const MCSymbolRefExpr *SRE = dyn_cast_or_null<MCSymbolRefExpr>(Value))
-      if (SRE->getKind() == MCSymbolRefExpr::VK_ARM_SBREL && !(Size == 4))
-        getContext().reportFatalError(Loc, "relocated expression must be 32-bit");
+      if (SRE->getKind() == MCSymbolRefExpr::VK_ARM_SBREL && !(Size == 4)) {
+        getContext().reportError(Loc, "relocated expression must be 32-bit");
+        return;
+      }
 
     EmitDataMappingSymbol();
-    MCELFStreamer::EmitValueImpl(Value, Size);
+    MCELFStreamer::EmitValueImpl(Value, Size, Loc);
   }
 
   void EmitAssemblerFlag(MCAssemblerFlag Flag) override {
@@ -701,7 +703,6 @@ void ARMTargetELFStreamer::emitArchDefaultAttributes() {
   case ARM::AK_ARMV3:
   case ARM::AK_ARMV3M:
   case ARM::AK_ARMV4:
-  case ARM::AK_ARMV5:
     setAttributeItem(ARM_ISA_use, Allowed, false);
     break;
 
@@ -709,7 +710,6 @@ void ARMTargetELFStreamer::emitArchDefaultAttributes() {
   case ARM::AK_ARMV5T:
   case ARM::AK_ARMV5TE:
   case ARM::AK_ARMV6:
-  case ARM::AK_ARMV6J:
     setAttributeItem(ARM_ISA_use, Allowed, false);
     setAttributeItem(THUMB_ISA_use, Allowed, false);
     break;
@@ -720,8 +720,7 @@ void ARMTargetELFStreamer::emitArchDefaultAttributes() {
     break;
 
   case ARM::AK_ARMV6K:
-  case ARM::AK_ARMV6Z:
-  case ARM::AK_ARMV6ZK:
+  case ARM::AK_ARMV6KZ:
     setAttributeItem(ARM_ISA_use, Allowed, false);
     setAttributeItem(THUMB_ISA_use, Allowed, false);
     setAttributeItem(Virtualization_use, AllowTZ, false);
@@ -729,10 +728,6 @@ void ARMTargetELFStreamer::emitArchDefaultAttributes() {
 
   case ARM::AK_ARMV6M:
     setAttributeItem(THUMB_ISA_use, Allowed, false);
-    break;
-
-  case ARM::AK_ARMV7:
-    setAttributeItem(THUMB_ISA_use, AllowThumb32, false);
     break;
 
   case ARM::AK_ARMV7A:
@@ -1083,19 +1078,14 @@ inline void ARMELFStreamer::SwitchToEHSection(const char *Prefix,
 }
 
 inline void ARMELFStreamer::SwitchToExTabSection(const MCSymbol &FnStart) {
-  SwitchToEHSection(".ARM.extab",
-                    ELF::SHT_PROGBITS,
-                    ELF::SHF_ALLOC,
-                    SectionKind::getDataRel(),
-                    FnStart);
+  SwitchToEHSection(".ARM.extab", ELF::SHT_PROGBITS, ELF::SHF_ALLOC,
+                    SectionKind::getData(), FnStart);
 }
 
 inline void ARMELFStreamer::SwitchToExIdxSection(const MCSymbol &FnStart) {
-  SwitchToEHSection(".ARM.exidx",
-                    ELF::SHT_ARM_EXIDX,
+  SwitchToEHSection(".ARM.exidx", ELF::SHT_ARM_EXIDX,
                     ELF::SHF_ALLOC | ELF::SHF_LINK_ORDER,
-                    SectionKind::getDataRel(),
-                    FnStart);
+                    SectionKind::getData(), FnStart);
 }
 void ARMELFStreamer::EmitFixup(const MCExpr *Expr, MCFixupKind Kind) {
   MCDataFragment *Frag = getOrCreateDataFragment();

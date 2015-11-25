@@ -34,7 +34,22 @@ void WebAssemblyInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                        MachineBasicBlock::iterator I,
                                        DebugLoc DL, unsigned DestReg,
                                        unsigned SrcReg, bool KillSrc) const {
-  BuildMI(MBB, I, DL, get(WebAssembly::COPY), DestReg)
+  const TargetRegisterClass *RC =
+      MBB.getParent()->getRegInfo().getRegClass(SrcReg);
+
+  unsigned CopyLocalOpcode;
+  if (RC == &WebAssembly::I32RegClass)
+    CopyLocalOpcode = WebAssembly::COPY_LOCAL_I32;
+  else if (RC == &WebAssembly::I64RegClass)
+    CopyLocalOpcode = WebAssembly::COPY_LOCAL_I64;
+  else if (RC == &WebAssembly::F32RegClass)
+    CopyLocalOpcode = WebAssembly::COPY_LOCAL_F32;
+  else if (RC == &WebAssembly::F64RegClass)
+    CopyLocalOpcode = WebAssembly::COPY_LOCAL_F64;
+  else
+    llvm_unreachable("Unexpected register class");
+
+  BuildMI(MBB, I, DL, get(CopyLocalOpcode), DestReg)
       .addReg(SrcReg, KillSrc ? RegState::Kill : 0);
 }
 
@@ -51,11 +66,11 @@ bool WebAssemblyInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
     default:
       // Unhandled instruction; bail out.
       return true;
-    case WebAssembly::BR_IF_:
+    case WebAssembly::BR_IF:
       if (HaveCond)
         return true;
-      Cond.push_back(MI.getOperand(1));
-      TBB = MI.getOperand(0).getMBB();
+      Cond.push_back(MI.getOperand(0));
+      TBB = MI.getOperand(1).getMBB();
       HaveCond = true;
       break;
     case WebAssembly::BR:
@@ -104,9 +119,9 @@ unsigned WebAssemblyInstrInfo::InsertBranch(
     return 1;
   }
 
-  BuildMI(&MBB, DL, get(WebAssembly::BR_IF_))
-      .addMBB(TBB)
-      .addOperand(Cond[0]);
+  BuildMI(&MBB, DL, get(WebAssembly::BR_IF))
+      .addOperand(Cond[0])
+      .addMBB(TBB);
   if (!FBB)
     return 1;
 

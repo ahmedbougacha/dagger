@@ -344,3 +344,88 @@ define <16 x i16> @shuffle_v16i16_00_00_00_00_00_00_00_00_00_00_00_00_00_00_00_0
   ret <16 x i16> %shuffle
 }
 
+define <8 x float> @shuffle_v8f32_11335577(<8 x float> %a, <8 x float> %b) {
+; vmovshdup 256 test
+  %shuffle = shufflevector <8 x float> %a, <8 x float> %b, <8 x i32> <i32 1, i32 1, i32 3, i32 3, i32 5, i32 5, i32 7, i32 7>
+  ret <8 x float> %shuffle
+}
+
+define <4 x float> @shuffle_v4f32_1133(<4 x float> %a, <4 x float> %b) {
+; vmovshdup 128 test 
+  %shuffle = shufflevector <4 x float> %a, <4 x float> %b, <4 x i32> <i32 1, i32 1, i32 3, i32 3>
+  ret <4 x float> %shuffle
+}
+
+define <8 x float> @shuffle_v8f32_00224466(<8 x float> %a, <8 x float> %b) {
+; vmovsldup 256 test
+  %shuffle = shufflevector <8 x float> %a, <8 x float> %b, <8 x i32> <i32 0, i32 0, i32 2, i32 2, i32 4, i32 4, i32 6, i32 6>
+  ret <8 x float> %shuffle
+}
+
+define <4 x float> @shuffle_v4f32_0022(<4 x float> %a, <4 x float> %b) {
+; vmovsldup 128 test
+  %shuffle = shufflevector <4 x float> %a, <4 x float> %b, <4 x i32> <i32 0, i32 0, i32 2, i32 2>
+  ret <4 x float> %shuffle
+}
+
+define <2 x double> @insert_mem_lo_v2f64(double* %ptr, <2 x double> %b) {
+  %a = load double, double* %ptr
+  %v = insertelement <2 x double> undef, double %a, i32 0
+  %shuffle = shufflevector <2 x double> %v, <2 x double> %b, <2 x i32> <i32 0, i32 3>
+  ret <2 x double> %shuffle
+}
+
+define <2 x double> @insert_mem_hi_v2f64(double* %ptr, <2 x double> %b) {
+  %a = load double, double* %ptr
+  %v = insertelement <2 x double> undef, double %a, i32 0
+  %shuffle = shufflevector <2 x double> %v, <2 x double> %b, <2 x i32> <i32 2, i32 0>
+  ret <2 x double> %shuffle
+}
+
+define void @store_floats(<4 x float> %x, i64* %p) {
+  %a = fadd <4 x float> %x, %x
+  %b = shufflevector <4 x float> %a, <4 x float> undef, <2 x i32> <i32 0, i32 1>
+  %c = bitcast <2 x float> %b to i64
+  store i64 %c, i64* %p
+  ret void
+}
+
+define void @store_double(<2 x double> %x, i64* %p) {
+  %a = fadd <2 x double> %x, %x
+  %b = extractelement <2 x double> %a, i32 0
+  %c = bitcast double %b to i64
+  store i64 %c, i64* %p
+  ret void
+}
+
+define void @store_h_double(<2 x double> %x, i64* %p) {
+  %a = fadd <2 x double> %x, %x
+  %b = extractelement <2 x double> %a, i32 1
+  %c = bitcast double %b to i64
+  store i64 %c, i64* %p
+  ret void
+}
+
+define <2 x double> @test39(double* %ptr) nounwind {
+  %a = load double, double* %ptr
+  %v = insertelement <2 x double> undef, double %a, i32 0
+  %shuffle = shufflevector <2 x double> %v, <2 x double> undef, <2 x i32> <i32 0, i32 0>
+  ret <2 x double> %shuffle
+  }
+
+define <2 x double> @test40(<2 x double>* %ptr) nounwind {
+  %v = load  <2 x double>,  <2 x double>* %ptr
+  %shuffle = shufflevector <2 x double> %v, <2 x double> undef, <2 x i32> <i32 0, i32 0>
+  ret <2 x double> %shuffle
+  }
+
+define <2 x double> @shuffle_v2f64_00(<2 x double> %a, <2 x double> %b) {
+  %shuffle = shufflevector <2 x double> %a, <2 x double> %b, <2 x i32> <i32 0, i32 0>
+  ret <2 x double> %shuffle
+}
+
+define <4 x double> @shuffle_v4f64_0022(<4 x double> %a, <4 x double> %b) {
+  %shuffle = shufflevector <4 x double> %a, <4 x double> %b, <4 x i32> <i32 0, i32 0, i32 2, i32 2>
+  ret <4 x double> %shuffle
+}
+

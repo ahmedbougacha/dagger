@@ -177,17 +177,22 @@ X86RegisterInfo::getPointerRegClass(const MachineFunction &MF,
       return &X86::GR64_NOREX_NOSPRegClass;
     return &X86::GR32_NOREX_NOSPRegClass;
   case 4: // Available for tailcall (not callee-saved GPRs).
-    const Function *F = MF.getFunction();
-    if (IsWin64 || (F && F->getCallingConv() == CallingConv::X86_64_Win64))
-      return &X86::GR64_TCW64RegClass;
-    else if (Is64Bit)
-      return &X86::GR64_TCRegClass;
-
-    bool hasHipeCC = (F ? F->getCallingConv() == CallingConv::HiPE : false);
-    if (hasHipeCC)
-      return &X86::GR32RegClass;
-    return &X86::GR32_TCRegClass;
+    return getGPRsForTailCall(MF);
   }
+}
+
+const TargetRegisterClass *
+X86RegisterInfo::getGPRsForTailCall(const MachineFunction &MF) const {
+  const Function *F = MF.getFunction();
+  if (IsWin64 || (F && F->getCallingConv() == CallingConv::X86_64_Win64))
+    return &X86::GR64_TCW64RegClass;
+  else if (Is64Bit)
+    return &X86::GR64_TCRegClass;
+
+  bool hasHipeCC = (F ? F->getCallingConv() == CallingConv::HiPE : false);
+  if (hasHipeCC)
+    return &X86::GR32RegClass;
+  return &X86::GR32_TCRegClass;
 }
 
 const TargetRegisterClass *
@@ -345,6 +350,10 @@ X86RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
 const uint32_t*
 X86RegisterInfo::getNoPreservedMask() const {
   return CSR_NoRegs_RegMask;
+}
+
+const uint32_t *X86RegisterInfo::getDarwinTLSCallPreservedMask() const {
+  return CSR_64_TLS_Darwin_RegMask;
 }
 
 BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
