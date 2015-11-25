@@ -107,8 +107,8 @@ Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
   Value *StackPtr = Builder->CreateInBoundsGEP(Stack, Idx);
 
   Function::arg_iterator ArgI = IRMain->getArgumentList().begin();
-  Value *ArgC = ArgI++;
-  Value *ArgV = ArgI++;
+  Value *ArgC = &*ArgI++;
+  Value *ArgV = &*ArgI++;
 
   Function *InitFn = getOrCreateInitRegSetFunction();
   Function *FiniFn = getOrCreateFiniRegSetFunction();

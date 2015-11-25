@@ -329,11 +329,11 @@ void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
   Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", InitFn));
 
   Function::arg_iterator ArgI = InitFn->getArgumentList().begin();
-  Value *RegSet = ArgI++;
-  Value *StackPtr = ArgI++;
-  Value *StackSize = ArgI++;
-  Value *ArgC = ArgI++;
-  Value *ArgV = ArgI++;
+  Value *RegSet = &*ArgI++;
+  Value *StackPtr = &*ArgI++;
+  Value *StackSize = &*ArgI++;
+  Value *ArgC = &*ArgI++;
+  Value *ArgV = &*ArgI++;
 
   // Initialize RSP to point to the end of the stack
   Value *RSP = Builder->CreatePtrToInt(StackPtr, I64Ty);
@@ -372,7 +372,7 @@ void X86RegisterSema::insertFiniRegSetCode(Function *FiniFn) {
   Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", FiniFn));
 
   Function::arg_iterator ArgI = FiniFn->getArgumentList().begin();
-  Value *RegSet = ArgI;
+  Value *RegSet = &*ArgI;
 
   // Result comes out of EAX
   Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::EAX]]);
@@ -451,6 +451,6 @@ void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
      "~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{xmm6},~{xmm7}",
      /*hasSideEffects=*/true, /*isAlignStack=*/false);
 
-   Value *RegSetPtr = WrapperBB->getParent()->getArgumentList().begin();
+   Value *RegSetPtr = &*WrapperBB->getParent()->getArgumentList().begin();
    WBuilder.CreateCall(IA, {RegSetPtr, ExtFn});
 }

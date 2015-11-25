@@ -137,7 +137,7 @@ void DCRegisterSema::restoreLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
 }
 
 void DCRegisterSema::FinalizeFunction(BasicBlock *ExitBB) {
-  saveAllLocalRegs(ExitBB, ExitBB->getTerminator());
+  saveAllLocalRegs(ExitBB, ExitBB->getTerminator()->getIterator());
 
   for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
     RegAllocas[RI] = 0;
@@ -212,12 +212,12 @@ void DCRegisterSema::createLocalValueForReg(unsigned RegNo) {
     // If the reg has a super-register, extract from it.
     RV = extractSubRegFromSuper(LargestSuper, RegNo);
     // Also extract from the super reg to initialize the alloca.
-    Builder->SetInsertPoint(EntryBB, EntryBB->getTerminator());
+    Builder->SetInsertPoint(EntryBB->getTerminator());
     assert(RegInits[LargestSuper] != 0 && "Super-register non initialized!");
     RI = extractSubRegFromSuper(LargestSuper, RegNo, RegInits[LargestSuper]);
   } else {
     // Else, it should be in the regset, load it from there.
-    Builder->SetInsertPoint(EntryBB, EntryBB->getTerminator());
+    Builder->SetInsertPoint(EntryBB->getTerminator());
     // First, extract the register's value from the incoming regset.
     Value *RegSetArg = &TheFunction->getArgumentList().front();
     int OffsetInRegSet = RegOffsetsInSet[RegNo];
@@ -383,9 +383,9 @@ Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
 
   // Get the argument regset pointers.
   Function::arg_iterator ArgI = RSDiffFn->getArgumentList().begin();
-  Value *FnAddr = ArgI++;
-  Value *RS1 = ArgI++;
-  Value *RS2 = ArgI++;
+  Value *FnAddr = &*ArgI++;
+  Value *RS1 = &*ArgI++;
+  Value *RS2 = &*ArgI++;
 
   // We use a C++ helper function to print the header with the function info:
   //   __llvm_dc_print_reg_diff_fn (defined above).
