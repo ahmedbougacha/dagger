@@ -6,6 +6,7 @@ set(LLVM_LINK_COMPONENTS
   CodeGen
   DebugInfoDWARF
   MC
+  MCAnalysis
   MCDisassembler
   Object
   Support
