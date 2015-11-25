@@ -68,7 +68,7 @@ set(LLVM_TEST_DEPENDS
         )
 
 if(APPLE)
-  set(LLVM_TEST_DEPENDS  DYN)
+  set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS} DYN)
 endif()
 
 # If Intel JIT events are supported, depend on a tool that tests the listener.
