@@ -341,26 +341,6 @@ static void DumpObject(const ObjectFile *Obj) {
   mcmodule2yaml(outs(), *Mod, *MII, *MRI);
 }
 
-/// @brief Dump each object file in \a a;
-static void DumpArchive(const Archive *a) {
-  for (Archive::child_iterator i = a->child_begin(), e = a->child_end(); i != e;
-       ++i) {
-    ErrorOr<std::unique_ptr<Binary>> ChildOrErr = i->getAsBinary();
-    if (std::error_code EC = ChildOrErr.getError()) {
-      // Ignore non-object files.
-      if (EC != object_error::invalid_file_type)
-        errs() << ToolName << ": '" << a->getFileName() << "': " << EC.message()
-               << ".\n";
-      continue;
-    }
-    if (ObjectFile *o = dyn_cast<ObjectFile>(&*ChildOrErr.get()))
-      DumpObject(o);
-    else
-      errs() << ToolName << ": '" << a->getFileName() << "': "
-              << "Unrecognized file type.\n";
-  }
-}
-
 /// @brief Open file and figure out how to dump it.
 static void DumpInput(StringRef file) {
   // If file isn't stdin, check that it exists.
@@ -377,9 +357,7 @@ static void DumpInput(StringRef file) {
   }
   Binary &Binary = *BinaryOrErr.get().getBinary();
 
-  if (Archive *a = dyn_cast<Archive>(&Binary))
-    DumpArchive(a);
-  else if (ObjectFile *o = dyn_cast<ObjectFile>(&Binary))
+  if (ObjectFile *o = dyn_cast<ObjectFile>(&Binary))
     DumpObject(o);
   else
     errs() << ToolName << ": '" << file << "': " << "Unrecognized file type.\n";
