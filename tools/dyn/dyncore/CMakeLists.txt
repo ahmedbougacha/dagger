@@ -6,3 +6,4 @@ set(SOURCES
   )
 
 add_llvm_library(LLVMDYNCore ${SOURCES})
+add_dependencies(LLVMDYNCore intrinsics_gen)
