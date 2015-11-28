@@ -156,6 +156,10 @@ void DCTranslator::translateFunction(
   AddrPrettyStackTraceEntry X(MCFN->getEntryBlock()->getStartAddr(),
                               "Function");
 
+  // If we already translated this function, bail out.
+  if (!DIS.getFunction(MCFN->getEntryBlock()->getStartAddr())->empty())
+    return;
+
   DIS.SwitchToFunction(MCFN);
 
   // First, make sure all basic blocks are created, and sorted.

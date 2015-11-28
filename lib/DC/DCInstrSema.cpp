@@ -199,6 +199,8 @@ void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
   TheFunction->setDoesNotAlias(1);
   TheFunction->setDoesNotCapture(1);
 
+  assert(TheFunction->empty() && "Translating into non-empty function!");
+
   // Create the entry and exit basic blocks.
   TheBB =
       BasicBlock::Create(Ctx, "entry_fn_" + utohexstr(StartAddr), TheFunction);
