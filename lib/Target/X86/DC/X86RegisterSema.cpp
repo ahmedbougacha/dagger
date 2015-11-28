@@ -28,10 +28,9 @@ static void X86InitSpecialRegSizes(DCRegisterSema::RegSizeTy &RegSizes) {
   RegSizes[X86::RIP] = 64;
 }
 
-X86RegisterSema::X86RegisterSema(const MCRegisterInfo &MRI,
-                                 const MCInstrInfo &MII,
-                                 const DataLayout &DL)
-    : DCRegisterSema(MRI, MII, DL, X86InitSpecialRegSizes),
+X86RegisterSema::X86RegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
+                                 const MCInstrInfo &MII, const DataLayout &DL)
+    : DCRegisterSema(Ctx, MRI, MII, DL, X86InitSpecialRegSizes),
       LastEFLAGSChangingDef(0), LastEFLAGSDef(0),
       LastEFLAGSDefWasPartialINCDEC(false), SFVals(X86::MAX_FLAGS + 1),
       SFAssignments(X86::MAX_FLAGS + 1), CCVals(X86::COND_INVALID),
@@ -326,7 +325,7 @@ void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
   IRBuilderBase::InsertPointGuard IPG(*Builder);
   Type *I64Ty = Builder->getInt64Ty();
   Value *Idx[] = {Builder->getInt32(0), 0};
-  Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", InitFn));
+  Builder->SetInsertPoint(BasicBlock::Create(Ctx, "", InitFn));
 
   Function::arg_iterator ArgI = InitFn->getArgumentList().begin();
   Value *RegSet = &*ArgI++;
@@ -369,7 +368,7 @@ void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
 void X86RegisterSema::insertFiniRegSetCode(Function *FiniFn) {
   IRBuilderBase::InsertPointGuard IPG(*Builder);
   Value *Idx[] = {Builder->getInt32(0), 0};
-  Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", FiniFn));
+  Builder->SetInsertPoint(BasicBlock::Create(Ctx, "", FiniFn));
 
   Function::arg_iterator ArgI = FiniFn->getArgumentList().begin();
   Value *RegSet = &*ArgI;

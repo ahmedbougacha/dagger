@@ -42,10 +42,10 @@ DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
                          const unsigned *SemanticsArray,
                          const uint64_t *ConstantArray, DCRegisterSema &DRS)
     : OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
-      ConstantArray(ConstantArray), DynTranslateAtCBPtr(0),
-      Ctx(0), TheModule(0), DRS(DRS), FuncType(0),
-      TheFunction(0), TheMCFunction(0), BBByAddr(), ExitBB(0), CallBBs(),
-      TheBB(0), TheMCBB(0), Builder(), Idx(0), ResEVT(), Opcode(0), Vals(),
+      ConstantArray(ConstantArray), DynTranslateAtCBPtr(0), Ctx(DRS.Ctx),
+      TheModule(0), DRS(DRS), FuncType(0), TheFunction(0), TheMCFunction(0),
+      BBByAddr(), ExitBB(0), CallBBs(), TheBB(0), TheMCBB(0),
+      Builder(new DCIRBuilder(Ctx)), Idx(0), ResEVT(), Opcode(0), Vals(),
       CurrentInst(0) {}
 
 DCInstrSema::~DCInstrSema() {}
@@ -92,7 +92,7 @@ Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
     return IRMain;
 
   IRBuilderBase::InsertPointGuard IPG(*Builder);
-  Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", IRMain));
+  Builder->SetInsertPoint(BasicBlock::Create(Ctx, "", IRMain));
 
   AllocaInst *Regset = Builder->CreateAlloca(DRS.getRegSetType());
 
@@ -166,9 +166,9 @@ void DCInstrSema::createExternalWrapperFunction(uint64_t Addr, StringRef Name) {
   if (!Fn->isDeclaration())
     return;
 
-  BasicBlock *BB = BasicBlock::Create(*Ctx, "", Fn);
+  BasicBlock *BB = BasicBlock::Create(Ctx, "", Fn);
   DRS.insertExternalWrapperAsm(BB, ExtFn);
-  ReturnInst::Create(*Ctx, BB);
+  ReturnInst::Create(Ctx, BB);
 }
 
 void DCInstrSema::createExternalTailCallBB(uint64_t Addr) {
@@ -182,11 +182,9 @@ void DCInstrSema::createExternalTailCallBB(uint64_t Addr) {
 
 void DCInstrSema::SwitchToModule(Module *M) {
   TheModule = M;
-  Ctx = &TheModule->getContext();
   DRS.SwitchToModule(TheModule);
-  FuncType = FunctionType::get(Type::getVoidTy(*Ctx),
+  FuncType = FunctionType::get(Type::getVoidTy(Ctx),
                                DRS.getRegSetType()->getPointerTo(), false);
-  Builder.reset(new DCIRBuilder(*Ctx));
 }
 
 extern "C" uintptr_t __llvm_dc_current_fn = 0;
@@ -203,9 +201,9 @@ void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
 
   // Create the entry and exit basic blocks.
   TheBB =
-      BasicBlock::Create(*Ctx, "entry_fn_" + utohexstr(StartAddr), TheFunction);
+      BasicBlock::Create(Ctx, "entry_fn_" + utohexstr(StartAddr), TheFunction);
   ExitBB =
-      BasicBlock::Create(*Ctx, "exit_fn_" + utohexstr(StartAddr), TheFunction);
+      BasicBlock::Create(Ctx, "exit_fn_" + utohexstr(StartAddr), TheFunction);
 
   // From now on we insert in the entry basic block.
   Builder->SetInsertPoint(TheBB);
@@ -220,7 +218,7 @@ void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
     // Second, insert a call to the diff function, in a separate exit block.
     // Move the return to that block, and branch to it from ExitBB.
     BasicBlock *DiffExitBB = BasicBlock::Create(
-        *Ctx, "diff_exit_fn_" + utohexstr(StartAddr), TheFunction);
+        Ctx, "diff_exit_fn_" + utohexstr(StartAddr), TheFunction);
 
     DCIRBuilder ExitBBBuilder(DiffExitBB);
 
@@ -230,11 +228,11 @@ void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
 
     ExitBBBuilder.CreateCall(DRS.getOrCreateRegSetDiffFunction(),
                              {FnAddr, SavedRegSet, RegSetArg});
-    ReturnInst::Create(*Ctx, DiffExitBB);
+    ReturnInst::Create(Ctx, DiffExitBB);
     BranchInst::Create(DiffExitBB, ExitBB);
   } else {
     // Create a ret void in the exit basic block.
-    ReturnInst::Create(*Ctx, ExitBB);
+    ReturnInst::Create(Ctx, ExitBB);
   }
 
   // Create a br from the entry basic block to the first basic block, at StartAddr.
@@ -288,7 +286,7 @@ Function *DCInstrSema::getFunction(uint64_t Addr) {
 BasicBlock *DCInstrSema::getOrCreateBasicBlock(uint64_t Addr) {
   BasicBlock *&BB = BBByAddr[Addr];
   if (!BB) {
-    BB = BasicBlock::Create(*Ctx, "bb_" + utohexstr(Addr), TheFunction);
+    BB = BasicBlock::Create(Ctx, "bb_" + utohexstr(Addr), TheFunction);
     DCIRBuilder BBBuilder(BB);
     BBBuilder
         .CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
@@ -299,7 +297,7 @@ BasicBlock *DCInstrSema::getOrCreateBasicBlock(uint64_t Addr) {
 
 BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
   BasicBlock *CallBB =
-      BasicBlock::Create(*Ctx, TheBB->getName() + "_call", TheFunction);
+      BasicBlock::Create(Ctx, TheBB->getName() + "_call", TheFunction);
   Value *RegSetArg = &TheFunction->getArgumentList().front();
   DCIRBuilder CallBuilder(CallBB);
   CallBuilder.CreateCall(Target, {RegSetArg});
@@ -309,7 +307,7 @@ BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
   StringRef BBName = TheBB->getName();
   BBName = BBName.substr(0, BBName.find_first_of("_c"));
   TheBB = BasicBlock::Create(
-      *Ctx, BBName + "_c" + utohexstr(CurrentInst->Address), TheFunction);
+      Ctx, BBName + "_c" + utohexstr(CurrentInst->Address), TheFunction);
   DRS.FinalizeBasicBlock();
   DRS.SwitchToBasicBlock(TheBB);
   Builder->SetInsertPoint(TheBB);
@@ -358,7 +356,7 @@ void DCInstrSema::translateBinOp(Instruction::BinaryOps Opc) {
 }
 
 void DCInstrSema::translateCastOp(Instruction::CastOps Opc) {
-  Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+  Type *ResType = ResEVT.getTypeForEVT(Ctx);
   Value *Val = getNextOperand();
   registerResult(Builder->CreateCast(Opc, Val, ResType));
 }
@@ -464,10 +462,10 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
 
   case ISD::SMUL_LOHI: {
     EVT Re2EVT = NextVT();
-    IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(*Ctx));
-    IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(*Ctx));
+    IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(Ctx));
+    IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(Ctx));
     IntegerType *ResType = IntegerType::get(
-        *Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
+        Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
     Value *Full = Builder->CreateMul(Builder->CreateSExt(Op1, ResType),
                                      Builder->CreateSExt(Op2, ResType));
@@ -479,10 +477,10 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   }
   case ISD::UMUL_LOHI: {
     EVT Re2EVT = NextVT();
-    IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(*Ctx));
-    IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(*Ctx));
+    IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(Ctx));
+    IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(Ctx));
     IntegerType *ResType = IntegerType::get(
-        *Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
+        Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
     Value *Full = Builder->CreateMul(Builder->CreateZExt(Op1, ResType),
                                      Builder->CreateZExt(Op2, ResType));
@@ -493,7 +491,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::LOAD: {
-    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Type *ResType = ResEVT.getTypeForEVT(Ctx);
     Value *Ptr = getNextOperand();
     if (!Ptr->getType()->isPointerTy())
       Ptr = Builder->CreateIntToPtr(Ptr, ResType->getPointerTo());
@@ -542,7 +540,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     if (!Res->getType()->isIntegerTy())
       Res = Builder->CreateBitCast(
           Res,
-          IntegerType::get(*Ctx, Res->getType()->getPrimitiveSizeInBits()));
+          IntegerType::get(Ctx, Res->getType()->getPrimitiveSizeInBits()));
     if (Res->getType()->getPrimitiveSizeInBits() <
         RegType->getPrimitiveSizeInBits())
       Res = DRS.insertBitsInValue(getReg(RegNo), Res);
@@ -560,12 +558,12 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   }
   case DCINS::GET_RC: {
     unsigned MIOperandNo = Next();
-    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Type *ResType = ResEVT.getTypeForEVT(Ctx);
     Value *Reg = getReg(getRegOp(MIOperandNo));
     if (ResType->getPrimitiveSizeInBits() <
         Reg->getType()->getPrimitiveSizeInBits())
       Reg = Builder->CreateTrunc(
-          Reg, IntegerType::get(*Ctx, ResType->getPrimitiveSizeInBits()));
+          Reg, IntegerType::get(Ctx, ResType->getPrimitiveSizeInBits()));
     if (!ResType->isIntegerTy())
       Reg = Builder->CreateBitCast(Reg, ResType);
     registerResult(Reg);
@@ -587,7 +585,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   }
   case DCINS::CONSTANT_OP: {
     unsigned MIOperandNo = Next();
-    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Type *ResType = ResEVT.getTypeForEVT(Ctx);
     Value *Cst =
         ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOperandNo));
     registerResult(Cst);
@@ -601,7 +599,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
       // FIXME: what should we do here? Maybe use DL's intptr type?
       ResType = Builder->getInt64Ty();
     else
-      ResType = ResEVT.getTypeForEVT(*Ctx);
+      ResType = ResEVT.getTypeForEVT(Ctx);
     registerResult(ConstantInt::get(ResType, ConstantArray[ValIdx]));
     break;
   }
@@ -624,7 +622,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::BSWAP: {
-    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Type *ResType = ResEVT.getTypeForEVT(Ctx);
     Value *Op = getNextOperand();
     Value *IntDecl =
           Intrinsic::getDeclaration(TheModule, Intrinsic::bswap, ResType);

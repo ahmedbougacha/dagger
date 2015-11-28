@@ -14,10 +14,11 @@ DCInstrSema *createX86DCInstrSema(StringRef TT,
 }
 
 DCRegisterSema *createX86DCRegisterSema(StringRef TT,
+                                        LLVMContext &Ctx,
                                         const MCRegisterInfo &MRI,
                                         const MCInstrInfo &MII,
                                         const DataLayout &DL) {
-  return new X86RegisterSema(MRI, MII, DL);
+  return new X86RegisterSema(Ctx, MRI, MII, DL);
 }
 
 // Force static initialization.

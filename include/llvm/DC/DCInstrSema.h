@@ -86,9 +86,9 @@ protected:
 
   // Following members are always valid.
   void *DynTranslateAtCBPtr;
+  LLVMContext &Ctx;
 
   // Following members are valid only inside a Module.
-  LLVMContext *Ctx;
   Module *TheModule;
   DCRegisterSema &DRS;
   FunctionType *FuncType;
@@ -103,6 +103,7 @@ protected:
   // Following members are valid only inside a Basic Block
   BasicBlock *TheBB;
   const MCBasicBlock *TheMCBB;
+  // FIXME: This doesn't need to be a pointer.
   typedef IRBuilder<true, NoFolder> DCIRBuilder;
   std::unique_ptr<DCIRBuilder> Builder;
 

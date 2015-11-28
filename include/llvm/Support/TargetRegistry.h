@@ -32,6 +32,7 @@ class AsmPrinter;
 class DataLayout;
 class DCInstrSema;
 class DCRegisterSema;
+class LLVMContext;
 class MCAsmBackend;
 class MCAsmInfo;
 class MCAsmParser;
@@ -171,6 +172,7 @@ public:
 
 
   typedef DCRegisterSema *(*DCRegisterSemaCtorTy)(StringRef TT,
+                                                  LLVMContext &Ctx,
                                                   const MCRegisterInfo &MRI,
                                                   const MCInstrInfo &MII,
                                                   const DataLayout &DL);
@@ -579,11 +581,12 @@ public:
   /// \param TT The target triple.
   DCRegisterSema *
   createDCRegisterSema(StringRef TT,
+                       LLVMContext &Ctx,
                        const MCRegisterInfo &MRI,
                        const MCInstrInfo &MII,
                        const DataLayout &DL) const {
     if (DCRegisterSemaCtorFn)
-      return DCRegisterSemaCtorFn(TT, MRI, MII, DL);
+      return DCRegisterSemaCtorFn(TT, Ctx, MRI, MII, DL);
     return nullptr;
   }
 

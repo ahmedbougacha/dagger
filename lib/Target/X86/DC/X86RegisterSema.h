@@ -32,9 +32,8 @@ class Function;
 
 class X86RegisterSema : public DCRegisterSema {
 public:
-  X86RegisterSema(const MCRegisterInfo &MRI,
-                  const MCInstrInfo &MII,
-                  const DataLayout &DL);
+  X86RegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
+                  const MCInstrInfo &MII, const DataLayout &DL);
 
   // Update EFLAGS with the result of comparing LHS to RHS.
   // If they are float values, this is an unordered comparison (UCOMI).

@@ -319,7 +319,7 @@ void X86InstrSema::translateTargetOpcode() {
     Type *EFLAGSTy = OldEFLAGS->getType();
     APInt Mask = APInt::getAllOnesValue(EFLAGSTy->getPrimitiveSizeInBits());
     Mask.clearBit(X86::CF);
-    OldEFLAGS = Builder->CreateAnd(OldEFLAGS, ConstantInt::get(*Ctx, Mask));
+    OldEFLAGS = Builder->CreateAnd(OldEFLAGS, ConstantInt::get(Ctx, Mask));
 
     Bit = Builder->CreateZExt(Bit, EFLAGSTy);
     Bit = Builder->CreateLShr(Bit, X86::CF);
@@ -407,7 +407,7 @@ void X86InstrSema::translateTargetOpcode() {
   case X86ISD::MOVSS: {
     Value *Src1 = getNextOperand();
     Value *Src2 = getNextOperand();
-    Type *VecTy = ResEVT.getTypeForEVT(*Ctx);
+    Type *VecTy = ResEVT.getTypeForEVT(Ctx);
     assert(VecTy->isVectorTy() && VecTy == Src1->getType() &&
            VecTy == Src2->getType() &&
            "Operands to MOV/UNPCK shuffle aren't vectors!");
@@ -536,7 +536,7 @@ void X86InstrSema::translateCustomOperand(unsigned OperandType,
   case X86::OpTypes::i64i32imm:
   case X86::OpTypes::i64imm: {
     // FIXME: Is there anything special to do with the sext/zext?
-    Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+    Type *ResType = ResEVT.getTypeForEVT(Ctx);
     Value *Cst =
         ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOpNo));
     registerResult(Cst);
@@ -599,7 +599,7 @@ void X86InstrSema::translateAddr(unsigned MIOperandNo,
     Res = (Res ? Builder->CreateAdd(Base, Res) : Base);
 
   if (VT != MVT::iPTRAny) {
-    Type *PtrTy = EVT(VT).getTypeForEVT(*Ctx)->getPointerTo();
+    Type *PtrTy = EVT(VT).getTypeForEVT(Ctx)->getPointerTo();
     Res = Builder->CreateIntToPtr(Res, PtrTy);
   }
 
@@ -613,7 +613,7 @@ void X86InstrSema::translatePush(Value *Val) {
   Value *OldSP = getReg(X86::RSP);
 
   Value *OpSizeVal = ConstantInt::get(
-      IntegerType::get(*Ctx, OldSP->getType()->getIntegerBitWidth()), OpSize);
+      IntegerType::get(Ctx, OldSP->getType()->getIntegerBitWidth()), OpSize);
   Value *NewSP = Builder->CreateSub(OldSP, OpSizeVal);
   Value *SPPtr = Builder->CreateIntToPtr(NewSP, Val->getType()->getPointerTo());
   Builder->CreateStore(Val, SPPtr);
@@ -625,9 +625,9 @@ Value *X86InstrSema::translatePop(unsigned OpSize) {
   // FIXME: again assumes that we are in 64bit mode.
   Value *OldSP = getReg(X86::RSP);
 
-  Type *OpTy = IntegerType::get(*Ctx, OpSize * 8);
+  Type *OpTy = IntegerType::get(Ctx, OpSize * 8);
   Value *OpSizeVal = ConstantInt::get(
-      IntegerType::get(*Ctx, OldSP->getType()->getIntegerBitWidth()), OpSize);
+      IntegerType::get(Ctx, OldSP->getType()->getIntegerBitWidth()), OpSize);
   Value *NewSP = Builder->CreateAdd(OldSP, OpSizeVal);
   Value *SPPtr = Builder->CreateIntToPtr(OldSP, OpTy->getPointerTo());
   Value *Val = Builder->CreateLoad(SPPtr);
@@ -638,7 +638,7 @@ Value *X86InstrSema::translatePop(unsigned OpSize) {
 
 void X86InstrSema::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
   Value *Src1 = getNextOperand(), *Src2 = getNextOperand();
-  Type *VecTy = ResEVT.getTypeForEVT(*Ctx);
+  Type *VecTy = ResEVT.getTypeForEVT(Ctx);
   assert(VecTy->isVectorTy());
   assert(VecTy == Src1->getType() && VecTy == Src2->getType());
   unsigned NumElt = VecTy->getVectorNumElements();
@@ -660,7 +660,7 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
   EVT Re2EVT = NextVT();
   assert(Re2EVT == ResEVT && "X86 division result type mismatch!");
   (void)Re2EVT;
-  Type *ResType = ResEVT.getTypeForEVT(*Ctx);
+  Type *ResType = ResEVT.getTypeForEVT(Ctx);
 
   Instruction::CastOps ExtOp;
   Instruction::BinaryOps DivOp, RemOp;
@@ -679,7 +679,7 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
     IntegerType *HalfType = cast<IntegerType>(ResType);
     unsigned HalfBits = HalfType->getPrimitiveSizeInBits();
-    IntegerType *FullType = IntegerType::get(*Ctx, HalfBits * 2);
+    IntegerType *FullType = IntegerType::get(Ctx, HalfBits * 2);
     Value *DivHi = Builder->CreateCast(Instruction::ZExt, Op1, FullType);
     Value *DivLo = Builder->CreateCast(Instruction::ZExt, Op2, FullType);
     Dividend = Builder->CreateOr(

@@ -208,8 +208,8 @@ int main(int argc, char **argv) {
   // FIXME: should we have a non-default datalayout?
   DataLayout DL("");
 
-  std::unique_ptr<DCRegisterSema> DRS(
-      TheTarget->createDCRegisterSema(TripleName, *MRI, *MII, DL));
+  std::unique_ptr<DCRegisterSema> DRS(TheTarget->createDCRegisterSema(
+      TripleName, getGlobalContext(), *MRI, *MII, DL));
   if (!DRS) {
     errs() << "error: no dc register sema for target " << TripleName << "\n";
     return 1;

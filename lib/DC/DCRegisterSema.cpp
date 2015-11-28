@@ -22,16 +22,15 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dc-regsema"
 
-DCRegisterSema::DCRegisterSema(const MCRegisterInfo &MRI,
-                               const MCInstrInfo &MII,
-                               const DataLayout &DL,
+DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
+                               const MCInstrInfo &MII, const DataLayout &DL,
                                InitSpecialRegSizesFnTy InitSpecialRegSizesFn)
-    : MRI(MRI), MII(MII), DL(DL), NumRegs(MRI.getNumRegs()), NumLargest(0),
-      RegSizes(NumRegs), RegLargestSupers(NumRegs),
-      RegOffsetsInSet(NumRegs, -1), LargestRegs(), TheModule(0), Ctx(0),
-      RegSetType(0), Builder(), RegPtrs(NumRegs), RegAllocas(NumRegs),
-      RegInits(NumRegs), RegAssignments(NumRegs), TheFunction(0),
-      RegVals(NumRegs), CurrentInst(0) {
+    : MRI(MRI), MII(MII), DL(DL), Ctx(Ctx), RegSetType(0),
+      NumRegs(MRI.getNumRegs()), NumLargest(0), RegSizes(NumRegs),
+      RegLargestSupers(NumRegs), RegOffsetsInSet(NumRegs, -1), LargestRegs(),
+      TheModule(0), Builder(new DCIRBuilder(Ctx)), RegPtrs(NumRegs),
+      RegAllocas(NumRegs), RegInits(NumRegs), RegAssignments(NumRegs),
+      TheFunction(0), RegVals(NumRegs), CurrentInst(0) {
 
   // First, determine the (spill) size of each register, in bits.
   // FIXME: the best (only) way to know the size of a reg is to find a
@@ -79,20 +78,18 @@ DCRegisterSema::DCRegisterSema(const MCRegisterInfo &MRI,
            "Largest super-register doesn't have a type!");
     RegOffsetsInSet[LargestRegs[I]] = I - 1;
   }
-}
-
-DCRegisterSema::~DCRegisterSema() {}
-
-void DCRegisterSema::SwitchToModule(Module *Mod) {
-  TheModule = Mod;
-  Ctx = &TheModule->getContext();
-  Builder.reset(new DCIRBuilder(*Ctx));
 
   std::vector<Type *> LargestRegTypes(getNumLargest() - 1);
   for (unsigned I = 1, E = getNumLargest(); I != E; ++I)
     LargestRegTypes[I - 1] = getRegType(LargestRegs[I]);
 
   RegSetType = StructType::create(LargestRegTypes, "regset");
+}
+
+DCRegisterSema::~DCRegisterSema() {}
+
+void DCRegisterSema::SwitchToModule(Module *Mod) {
+  TheModule = Mod;
 }
 
 void DCRegisterSema::SwitchToFunction(Function *Fn) { TheFunction = Fn; }
@@ -245,7 +242,7 @@ Value *DCRegisterSema::extractBitsFromValue(unsigned LoBit, unsigned NumBits,
   Value *LShr =
       (LoBit == 0 ? Val : Builder->CreateLShr(
                               Val, ConstantInt::get(Val->getType(), LoBit)));
-  return Builder->CreateTruncOrBitCast(LShr, IntegerType::get(*Ctx, NumBits));
+  return Builder->CreateTruncOrBitCast(LShr, IntegerType::get(Ctx, NumBits));
 }
 
 Value *DCRegisterSema::insertBitsInValue(Value *FullVal, Value *ToInsert,
@@ -320,7 +317,7 @@ void DCRegisterSema::setReg(unsigned RegNo, Value *Val) {
 }
 
 Type *DCRegisterSema::getRegType(unsigned RegNo) {
-  return IntegerType::get(*Ctx, RegSizes[RegNo]);
+  return IntegerType::get(Ctx, RegSizes[RegNo]);
 }
 
 std::pair<size_t, size_t>
@@ -383,7 +380,7 @@ Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
     return RSDiffFn;
 
   IRBuilderBase::InsertPointGuard IPG(*Builder);
-  Builder->SetInsertPoint(BasicBlock::Create(*Ctx, "", RSDiffFn));
+  Builder->SetInsertPoint(BasicBlock::Create(Ctx, "", RSDiffFn));
 
   // Get the argument regset pointers.
   Function::arg_iterator ArgI = RSDiffFn->getArgumentList().begin();

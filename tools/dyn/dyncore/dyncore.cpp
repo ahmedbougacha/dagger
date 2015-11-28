@@ -345,8 +345,8 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   const DataLayout DL = TM->createDataLayout();
 
-  std::unique_ptr<DCRegisterSema> DRS(
-      TheTarget->createDCRegisterSema(TripleName, *MRI, *MII, DL));
+  std::unique_ptr<DCRegisterSema> DRS(TheTarget->createDCRegisterSema(
+      TripleName, getGlobalContext(), *MRI, *MII, DL));
   if (!DRS) {
     errs() << "error: no dc register sema for target " << TripleName << "\n";
     exit(1);

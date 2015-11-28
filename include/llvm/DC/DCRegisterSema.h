@@ -56,8 +56,8 @@ public:
   typedef std::vector<unsigned> RegSizeTy;
   typedef void (*InitSpecialRegSizesFnTy)(RegSizeTy &RegSizes);
 
-  DCRegisterSema(const MCRegisterInfo &MRI, const MCInstrInfo &MII,
-                 const DataLayout &DL,
+  DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
+                 const MCInstrInfo &MII, const DataLayout &DL,
                  InitSpecialRegSizesFnTy InitSpecialRegSizesFn = 0);
   virtual ~DCRegisterSema();
 
@@ -65,6 +65,8 @@ public:
   const MCInstrInfo &MII;
 
   const DataLayout &DL;
+  LLVMContext &Ctx;
+  StructType *RegSetType;
 
 private:
   // Reg* vectors contain all MRI.getNumRegs() registers.
@@ -91,9 +93,8 @@ protected:
 
   // Valid only inside a Module.
   Module *TheModule;
-  LLVMContext *Ctx;
-  StructType *RegSetType;
   typedef IRBuilder<true, NoFolder> DCIRBuilder;
+  // FIXME: This doesn't need to be a pointer.
   std::unique_ptr<DCIRBuilder> Builder;
 
   // Valid only inside a Function.
@@ -185,8 +186,6 @@ public:
   // Get a constant expression expressing \p FPtr as a \p FTy value.
   template <typename T>
   Value *getCallTargetForExtFn(FunctionType *FTy, T FPtr) {
-    LLVMContext &Ctx = FTy->getContext();
-
     // FIXME: bitness
     ConstantInt *FnPtrInt = ConstantInt::get(Type::getInt64Ty(Ctx),
                                              reinterpret_cast<uint64_t>(FPtr));
