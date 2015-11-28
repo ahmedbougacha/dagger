@@ -22,6 +22,7 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include <algorithm>
+#include <memory>
 #include <vector>
 using namespace llvm;
 
@@ -33,19 +34,28 @@ DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                            const MCSubtargetInfo &STI, MCModule &MCM,
                            MCObjectDisassembler *MCOD, bool EnableIRAnnotation)
     : Ctx(Ctx), DL(DL), ModuleSet(), MCOD(MCOD), MCM(MCM),
-      CurrentModule(nullptr), CurrentFPM(), DTIT(), AnnotWriter(), DIS(DIS),
+      CurrentModule(nullptr), CurrentFPM(),
+      EnableIRAnnotation(EnableIRAnnotation), DTIT(), DIS(DIS),
       OptLevel(TransOptLevel) {
 
-  // FIXME: now this can move to print, we don't need to keep it around
-  if (EnableIRAnnotation)
-    AnnotWriter.reset(new DCAnnotationWriter(DTIT, DRS.MRI, IP, STI));
 
-  finalizeTranslationModule();
+  initializeTranslationModule();
 }
 
-Module *DCTranslator::finalizeTranslationModule() {
+Module *DCTranslator::finalizeTranslationModule(
+    std::unique_ptr<DCTranslatedInstTracker> *OldDTIT) {
   Module *OldModule = CurrentModule;
+  assert(OldModule);
 
+  // If we have IR annotation enabled, return the old tracker if needed.
+  if (EnableIRAnnotation && OldDTIT)
+    *OldDTIT = std::move(DTIT);
+
+  initializeTranslationModule();
+  return OldModule;
+}
+
+void DCTranslator::initializeTranslationModule() {
   ModuleSet.emplace_back(
       CurrentModule = new Module(
           (Twine("dct module #") + utohexstr(ModuleSet.size())).str(), Ctx));
@@ -60,7 +70,9 @@ Module *DCTranslator::finalizeTranslationModule() {
     CurrentFPM->add(createInstructionCombiningPass());
 
   DIS.SwitchToModule(CurrentModule);
-  return OldModule;
+
+  if (EnableIRAnnotation)
+    DTIT.reset(new DCTranslatedInstTracker);
 }
 
 void DCTranslator::translateAllKnownFunctions() {
@@ -168,8 +180,8 @@ void DCTranslator::translateFunction(
         errs() << I.Inst << "\n";
         llvm_unreachable("Couldn't translate instruction\n");
       }
-      if (AnnotWriter)
-        DTIT.trackInst(TI);
+      if (EnableIRAnnotation)
+        DTIT->trackInst(TI);
     }
     DIS.FinalizeBasicBlock();
   }
@@ -185,8 +197,4 @@ void DCTranslator::translateFunction(
     // CurrentModule->getFunctionList().push_back(OrigFn);
     CurrentFPM->run(*Fn);
   }
-}
-
-void DCTranslator::printCurrentModule(raw_ostream &OS) {
-  CurrentModule->print(OS, AnnotWriter.get());
 }

@@ -231,6 +231,17 @@ int main(int argc, char **argv) {
 
   DT->createMainFunctionWrapper(
       DT->translateRecursivelyAt(TranslationEntrypoint));
-  DT->printCurrentModule(outs());
+
+  DT->translateAllKnownFunctions();
+
+  std::unique_ptr<DCTranslatedInstTracker> DTIT;
+  Module *M = DT->finalizeTranslationModule(&DTIT);
+  std::unique_ptr<DCAnnotationWriter> AnnotWriter;
+  if (AnnotateIROutput) {
+    assert(DTIT.get() && "Unexpected missing translated inst tracker!");
+    AnnotWriter.reset(new DCAnnotationWriter(*DTIT, *MRI, *MIP, *STI));
+  }
+  M->print(outs(), AnnotWriter.get());
+
   return 0;
 }

@@ -61,9 +61,8 @@ class DCTranslator {
   Module *CurrentModule;
   std::unique_ptr<legacy::FunctionPassManager> CurrentFPM;
 
-  DCTranslatedInstTracker DTIT;
-
-  std::unique_ptr<DCAnnotationWriter> AnnotWriter;
+  const bool EnableIRAnnotation;
+  std::unique_ptr<DCTranslatedInstTracker> DTIT;
 
   DCInstrSema &DIS;
 
@@ -80,19 +79,27 @@ public:
   Function *getFiniRegSetFunction();
   Function *createMainFunctionWrapper(Function *Entrypoint);
 
-  Module *finalizeTranslationModule();
-  Module *getCurrentTranslationModule() { return CurrentModule; }
+  // Finalize the current translation module for usage. This does a number of
+  // things, including running optimizations.
+  // The DCTranslator retains ownership of the module, but it will not be used
+  // for translation anymore.  A new module will be created to be used for
+  // future translation.
+  // If EnableIRAnnotation was true and \p OldDTIT is non-null, the translation
+  // tracker for the module is returned in \p OldDTIT.
+  Module *finalizeTranslationModule(
+      std::unique_ptr<DCTranslatedInstTracker> *OldDTIT = nullptr);
 
   Function *translateRecursivelyAt(uint64_t Addr);
 
   void translateAllKnownFunctions();
 
-  void printCurrentModule(raw_ostream &OS);
-
 private:
   void
   translateFunction(MCFunction *MCFN,
                     const MCObjectDisassembler::AddressSetTy &TailCallTargets);
+
+  // Create and setup a new module for translation.
+  void initializeTranslationModule();
 };
 
 } // end namespace llvm

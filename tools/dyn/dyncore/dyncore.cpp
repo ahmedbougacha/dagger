@@ -418,10 +418,11 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     for (auto FnAddr : Fns)
       TranslatedFns.push_back(
           DT->translateRecursivelyAt(MOS->getEffectiveLoadAddr(FnAddr)));
-    DEBUG(DT->printCurrentModule(dbgs()));
 
     // Add these to the JIT, and run them.
-    J.addModule(DT->finalizeTranslationModule());
+    Module *M = DT->finalizeTranslationModule();
+    DEBUG(M->print(dbgs(), nullptr));
+    J.addModule(M);
     for (auto Fn : TranslatedFns) {
       DEBUG(dbgs() << "Executing static init/fini function " << Fn->getName()
                    << "\n");
