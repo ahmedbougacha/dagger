@@ -373,7 +373,8 @@ Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
   Type *RSDiffArgTys[] = {I8PtrTy, RegSetPtrTy, RegSetPtrTy};
   Function *RSDiffFn = cast<Function>(TheModule->getOrInsertFunction(
       "__llvm_dc_print_regset_diff",
-      FunctionType::get(Builder->getVoidTy(), RSDiffArgTys, false)));
+      FunctionType::get(Builder->getVoidTy(), RSDiffArgTys,
+                        /*isVarArg=*/false)));
 
   // If we were just asked for a declaration, return it.
   if (!Definition)
@@ -391,8 +392,8 @@ Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
   // We use a C++ helper function to print the header with the function info:
   //   __llvm_dc_print_reg_diff_fn (defined above).
   Type *PrintFnArgTys[] = {I8PtrTy};
-  FunctionType *PrintFnType =
-      FunctionType::get(Builder->getVoidTy(), PrintFnArgTys, false);
+  FunctionType *PrintFnType = FunctionType::get(
+      Builder->getVoidTy(), PrintFnArgTys, /*isVarArg=*/false);
 
   Builder->CreateCall(
       getCallTargetForExtFn(PrintFnType, &__llvm_dc_print_reg_diff_fn), FnAddr);
@@ -400,8 +401,8 @@ Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
   // We use a C++ helper function to diff and print each individual register:
   //   __llvm_dc_print_reg_diff (defined above).
   Type *RegDiffArgTys[] = {I8PtrTy, I8PtrTy, I8PtrTy, Builder->getInt32Ty()};
-  FunctionType *RegDiffFnType =
-      FunctionType::get(Builder->getVoidTy(), RegDiffArgTys, false);
+  FunctionType *RegDiffFnType = FunctionType::get(
+      Builder->getVoidTy(), RegDiffArgTys, /*isVarArg=*/false);
 
   Value *RegDiffFnPtr =
       getCallTargetForExtFn(RegDiffFnType, &__llvm_dc_print_reg_diff);

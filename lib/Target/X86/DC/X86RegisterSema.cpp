@@ -442,13 +442,13 @@ void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
       // restore old_sp
       << "mov %r14, %rsp\n";
 
-   InlineAsm *IA = InlineAsm::get(
-     FunctionType::get(Type::getVoidTy(*Ctx), IAArgTypes, false), IAStr,
-     "r,r,"
-     "~{rax},~{rdi},~{rsi},~{rdx},~{rcx},~{r8},"
-     "~{r9},~{r10},~{r11},~{r12},~{r13},~{r14},"
-     "~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{xmm6},~{xmm7}",
-     /*hasSideEffects=*/true, /*isAlignStack=*/false);
+  InlineAsm *IA = InlineAsm::get(
+      FunctionType::get(Type::getVoidTy(Ctx), IAArgTypes, /*isVarArg=*/false),
+      IAStr, "r,r,"
+             "~{rax},~{rdi},~{rsi},~{rdx},~{rcx},~{r8},"
+             "~{r9},~{r10},~{r11},~{r12},~{r13},~{r14},"
+             "~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{xmm6},~{xmm7}",
+      /*hasSideEffects=*/true, /*isAlignStack=*/false);
 
    Value *RegSetPtr = &*WrapperBB->getParent()->getArgumentList().begin();
    WBuilder.CreateCall(IA, {RegSetPtr, ExtFn});

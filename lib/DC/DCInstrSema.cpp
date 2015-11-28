@@ -84,9 +84,9 @@ void DCInstrSema::FinalizeBasicBlock() {
 Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
   Type *MainArgs[] = { Builder->getInt32Ty(),
                        Builder->getInt8PtrTy()->getPointerTo() };
-  Function *IRMain = cast<Function>(
-      TheModule->getOrInsertFunction(
-          "main", FunctionType::get(Builder->getInt32Ty(), MainArgs, false)));
+  Function *IRMain = cast<Function>(TheModule->getOrInsertFunction(
+      "main",
+      FunctionType::get(Builder->getInt32Ty(), MainArgs, /*isVarArg=*/false)));
 
   if (!IRMain->empty())
     return IRMain;
@@ -132,7 +132,7 @@ Function *DCInstrSema::getOrCreateInitRegSetFunction() {
                       Builder->getInt8PtrTy()->getPointerTo()};
   Function *InitFn = cast<Function>(TheModule->getOrInsertFunction(
       "main_init_regset",
-      FunctionType::get(Builder->getVoidTy(), InitArgs, false)));
+      FunctionType::get(Builder->getVoidTy(), InitArgs, /*isVarArg=*/false)));
   if (InitFn->empty())
     DRS.insertInitRegSetCode(InitFn);
 
@@ -150,7 +150,7 @@ Function *DCInstrSema::getOrCreateFiniRegSetFunction() {
   Type *FiniArgs[] = {RegSetType->getPointerTo()};
   Function *FiniFn = cast<Function>(TheModule->getOrInsertFunction(
       "main_fini_regset",
-      FunctionType::get(Builder->getInt32Ty(), FiniArgs, false)));
+      FunctionType::get(Builder->getInt32Ty(), FiniArgs, /*isVarArg=*/false)));
 
   if (FiniFn->empty())
     DRS.insertFiniRegSetCode(FiniFn);
@@ -158,10 +158,8 @@ Function *DCInstrSema::getOrCreateFiniRegSetFunction() {
 }
 
 void DCInstrSema::createExternalWrapperFunction(uint64_t Addr, StringRef Name) {
-  Function *ExtFn =
-      cast<Function>(TheModule->getOrInsertFunction(
-                         Name, FunctionType::get(Builder->getVoidTy(), false)));
-
+  Function *ExtFn = cast<Function>(TheModule->getOrInsertFunction(
+      Name, FunctionType::get(Builder->getVoidTy(), /*isVarArg=*/false)));
   Function *Fn = getFunction(Addr);
   if (!Fn->isDeclaration())
     return;
@@ -184,7 +182,8 @@ void DCInstrSema::SwitchToModule(Module *M) {
   TheModule = M;
   DRS.SwitchToModule(TheModule);
   FuncType = FunctionType::get(Type::getVoidTy(Ctx),
-                               DRS.getRegSetType()->getPointerTo(), false);
+                               DRS.getRegSetType()->getPointerTo(),
+                               /*isVarArg=*/false);
 }
 
 extern "C" uintptr_t __llvm_dc_current_fn = 0;
@@ -332,7 +331,7 @@ Value *DCInstrSema::insertTranslateAt(Value *OrigTarget) {
   }
 
   FunctionType *CallbackType = FunctionType::get(
-      FuncType->getPointerTo(), Builder->getInt8PtrTy(), false);
+      FuncType->getPointerTo(), Builder->getInt8PtrTy(), /*isVarArg=*/false);
   return Builder->CreateCall(
       DRS.getCallTargetForExtFn(CallbackType, CBPtr),
       {Builder->CreateIntToPtr(OrigTarget, Builder->getInt8PtrTy())});
