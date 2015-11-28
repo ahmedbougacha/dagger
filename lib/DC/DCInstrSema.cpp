@@ -242,7 +242,7 @@ void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
 }
 
 void DCInstrSema::prepareBasicBlockForInsertion(BasicBlock *BB) {
-  assert((BB->size() == 2 && isa<UnreachableInst>(++BB->begin())) &&
+  assert((BB->size() == 2 && isa<UnreachableInst>(std::next(BB->begin()))) &&
          "Several BBs at the same address?");
   BB->begin()->eraseFromParent();
   BB->begin()->eraseFromParent();
