@@ -281,8 +281,7 @@ uint64_t DCInstrSema::getBasicBlockEndAddress() const {
 
 Function *DCInstrSema::getFunction(uint64_t Addr) {
   std::string Name = "fn_" + utohexstr(Addr);
-  TheModule->getOrInsertFunction(Name, FuncType);
-  return TheModule->getFunction(Name);
+  return cast<Function>(TheModule->getOrInsertFunction(Name, FuncType));
 }
 
 BasicBlock *DCInstrSema::getOrCreateBasicBlock(uint64_t Addr) {
