@@ -19,11 +19,12 @@
 #ifndef LLVM_DC_DCTRANSLATOR_H
 #define LLVM_DC_DCTRANSLATOR_H
 
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/DC/DCAnnotationWriter.h"
 #include "llvm/DC/DCTranslatedInstTracker.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCObjectDisassembler.h"
