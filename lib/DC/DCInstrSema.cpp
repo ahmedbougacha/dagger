@@ -306,8 +306,8 @@ BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
          "Call basic blocks can't be inserted at the middle of a basic block!");
   StringRef BBName = TheBB->getName();
   BBName = BBName.substr(0, BBName.find_first_of("_c"));
-  TheBB = BasicBlock::Create(
-      Ctx, BBName + "_c" + utohexstr(CurrentInst->Address), TheFunction);
+  std::string CallInstAddr = CurrentInst ? utohexstr(CurrentInst->Address) : "";
+  TheBB = BasicBlock::Create(Ctx, BBName + "_c" + CallInstAddr, TheFunction);
   DRS.FinalizeBasicBlock();
   DRS.SwitchToBasicBlock(TheBB);
   Builder->SetInsertPoint(TheBB);
