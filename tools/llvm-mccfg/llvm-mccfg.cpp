@@ -369,10 +369,9 @@ int main(int argc, char **argv) {
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
 
-  // Initialize targets and assembly printers/parsers.
+  // Initialize targets and assembly printers.
   llvm::InitializeAllTargetInfos();
   llvm::InitializeAllTargetMCs();
-  llvm::InitializeAllAsmParsers();
   llvm::InitializeAllDisassemblers();
 
   // Register the target printer for --version.
