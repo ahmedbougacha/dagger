@@ -98,10 +98,14 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t Addr) {
   WorkList.insert(Addr);
   for (size_t i = 0; i < WorkList.size(); ++i) {
     uint64_t Addr = WorkList[i];
-    // FIXME: look up in other modules
-    Function *F = CurrentModule->getFunction("fn_" + utohexstr(Addr));
+    Function *F = DIS.getFunction(Addr);
     if (F && !F->isDeclaration())
       continue;
+#ifndef NDEBUG
+    for (std::unique_ptr<Module> &M : ModuleSet)
+      assert((M.get() == CurrentModule || !M->getFunction(F->getName())) &&
+             "Found function to translate in another module!");
+#endif /* NDEBUG */
 
     DEBUG(dbgs() << "Translating function at " << utohexstr(Addr) << "\n");
 
@@ -127,7 +131,7 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t Addr) {
     for (auto CallTarget : CallTargets)
       WorkList.insert(CallTarget);
   }
-  return CurrentModule->getFunction("fn_" + utohexstr(Addr));
+  return DIS.getFunction(Addr);
 }
 
 namespace {

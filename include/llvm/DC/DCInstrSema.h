@@ -56,6 +56,7 @@ public:
   void FinalizeBasicBlock();
 
   BasicBlock *getOrCreateBasicBlock(uint64_t StartAddress);
+  Function *getFunction(uint64_t Addr);
 
   Function *getOrCreateMainFunction(Function *EntryFn);
   Function *getOrCreateInitRegSetFunction();
@@ -137,8 +138,6 @@ protected:
 
   Value *getReg(unsigned RegNo) { return DRS.getReg(RegNo); }
   void setReg(unsigned RegNo, Value *Val) { DRS.setReg(RegNo, Val); }
-
-  Function *getFunction(uint64_t Addr);
 
   void insertCall(Value *CallTarget);
   Value *insertTranslateAt(Value *OrigTarget);
