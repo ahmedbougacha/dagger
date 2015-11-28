@@ -117,3 +117,5 @@ while process.GetState() == lldb.eStateStopped:
         new_reglist = get_reglist(regset)
         print_regs_diff(symbol, saved_reglist, new_reglist)
     process.Continue()
+
+debugger.Destroy(debugger)
