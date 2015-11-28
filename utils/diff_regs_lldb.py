@@ -87,8 +87,7 @@ for seg in module.section_iter():
         for sec in seg:
             if sec.GetName() == "__text":
                 for sym in module.symbol_in_section_iter(sec):
-                    if sym.GetName().startswith("test_"):
-                        create_breakpoint(sym.GetName())
+                    create_breakpoint(sym.GetName())
                 break
         break
 
