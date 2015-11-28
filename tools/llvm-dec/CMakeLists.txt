@@ -1,8 +1,23 @@
 set(LLVM_LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
+  Analysis
+  AsmPrinter
+  CodeGen
+  Core
+  DC
+  IPO
+  InstCombine
+  Instrumentation
+  MC
   MCAnalysis
   MCDisassembler
-  DC
+  Object
+  ScalarOpts
+  SelectionDAG
+  Support
+  Target
+  TransformUtils
+  Vectorize
   )
 
 add_llvm_tool(llvm-dec
