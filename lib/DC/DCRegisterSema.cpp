@@ -143,7 +143,10 @@ void DCRegisterSema::FinalizeFunction(BasicBlock *ExitBB) {
     RegAllocas[RI] = 0;
     RegPtrs[RI] = 0;
     RegInits[RI] = 0;
+    RegAssignments[RI] = 0;
   }
+  TheFunction = nullptr;
+  Builder->ClearInsertionPoint();
 }
 
 void DCRegisterSema::FinalizeBasicBlock() {
@@ -157,6 +160,7 @@ void DCRegisterSema::FinalizeBasicBlock() {
       Builder->CreateStore(RegVals[RI], RegAllocas[RI]);
     RegVals[RI] = 0;
   }
+  CurrentInst = nullptr;
 }
 
 Value *DCRegisterSema::getReg(unsigned RegNo) {

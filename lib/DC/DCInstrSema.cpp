@@ -59,11 +59,16 @@ Function *DCInstrSema::FinalizeFunction() {
     DRS.restoreLocalRegs(CallBB, ++CallI);
   }
   DRS.FinalizeFunction(ExitBB);
+
   CallBBs.clear();
   BBByAddr.clear();
+  Builder->ClearInsertionPoint();
   Function *Fn = TheFunction;
   TheFunction = nullptr;
   TheMCFunction = nullptr;
+  TheBB = nullptr;
+  TheMCBB = nullptr;
+  ExitBB = nullptr;
   return Fn;
 }
 
