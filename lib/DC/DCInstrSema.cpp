@@ -35,8 +35,8 @@ using namespace llvm;
 static cl::opt<bool>
 EnableRegSetDiff("enable-dc-regset-diff", cl::desc(""), cl::init(false));
 
-static cl::opt<bool>
-EnableInstAddrSave("enable-dc-pc-save", cl::desc(""), cl::init(false));
+static cl::opt<bool> EnableInstAddrSave("enable-dc-pc-save", cl::desc(""),
+                                        cl::init(false));
 
 DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
                          const unsigned *SemanticsArray,
