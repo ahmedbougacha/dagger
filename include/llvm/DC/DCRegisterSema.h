@@ -27,9 +27,9 @@
 #ifndef LLVM_DC_DCREGISTERSEMA_H
 #define LLVM_DC_DCREGISTERSEMA_H
 
-#include "llvm/Support/Compiler.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/NoFolder.h"
+#include "llvm/Support/Compiler.h"
 #include <vector>
 
 namespace llvm {
