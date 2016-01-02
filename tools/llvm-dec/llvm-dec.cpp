@@ -55,6 +55,7 @@ TransOptLevel("O",
                        "(default = '-O0')"),
               cl::Prefix,
               cl::init(0u));
+
 static cl::opt<bool>
 EnableDisassemblyCache("enable-mcod-disass-cache",
     cl::desc("Enable the MC Object disassembly instruction cache"),
