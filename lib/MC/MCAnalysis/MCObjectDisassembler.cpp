@@ -53,8 +53,7 @@ MCObjectDisassembler::getRegionFor(uint64_t Addr) {
 }
 
 MCModule *MCObjectDisassembler::buildEmptyModule() {
-  MCModule *Module = new MCModule;
-  return Module;
+  return new MCModule;
 }
 
 MCModule *MCObjectDisassembler::buildModule() {
