@@ -46,6 +46,7 @@ Module *DCTranslator::finalizeTranslationModule(
     std::unique_ptr<DCTranslatedInstTracker> *OldDTIT) {
   Module *OldModule = CurrentModule;
   assert(OldModule);
+  DEBUG(OldModule->dump());
 
   // If we have IR annotation enabled, return the old tracker if needed.
   if (EnableIRAnnotation && OldDTIT)
