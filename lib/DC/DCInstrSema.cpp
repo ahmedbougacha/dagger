@@ -175,6 +175,7 @@ void DCInstrSema::createExternalTailCallBB(uint64_t Addr) {
   SwitchToBasicBlock(Addr);
   // Now do the call to that function.
   insertCallBB(getFunction(Addr));
+  // FIXME: should this still insert a regset diffing call?
   // Finally, return directly, bypassing the ExitBB.
   Builder->CreateRetVoid();
 }
