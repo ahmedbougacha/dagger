@@ -1,6 +1,7 @@
-; RUN: llc < %s -asm-verbose=false | FileCheck %s
+; RUN: llc < %s -asm-verbose=false -disable-block-placement -verify-machineinstrs | FileCheck %s
 
-; Test switch instructions.
+; Test switch instructions. Block placement is disabled because it reorders
+; the blocks in a way that isn't interesting here.
 
 target datalayout = "e-p:32:32-i64:64-n32:64-S128"
 target triple = "wasm32-unknown-unknown"
@@ -20,7 +21,7 @@ declare void @foo5()
 ; CHECK: block BB0_4{{$}}
 ; CHECK: block BB0_3{{$}}
 ; CHECK: block BB0_2{{$}}
-; CHECK: tableswitch {{.*}}, BB0_2, BB0_2, BB0_2, BB0_2, BB0_2, BB0_2, BB0_2, BB0_2, BB0_3, BB0_3, BB0_3, BB0_3, BB0_3, BB0_3, BB0_3, BB0_3, BB0_4, BB0_4, BB0_4, BB0_4, BB0_4, BB0_4, BB0_5, BB0_6, BB0_7{{$}}
+; CHECK: tableswitch {{[^,]*}}, BB0_2, BB0_2, BB0_2, BB0_2, BB0_2, BB0_2, BB0_2, BB0_2, BB0_3, BB0_3, BB0_3, BB0_3, BB0_3, BB0_3, BB0_3, BB0_3, BB0_4, BB0_4, BB0_4, BB0_4, BB0_4, BB0_4, BB0_5, BB0_6, BB0_7{{$}}
 ; CHECK: BB0_2:
 ; CHECK:   call foo0
 ; CHECK: BB0_3:
@@ -100,7 +101,7 @@ sw.epilog:                                        ; preds = %entry, %sw.bb.5, %s
 ; CHECK: block BB1_4{{$}}
 ; CHECK: block BB1_3{{$}}
 ; CHECK: block BB1_2{{$}}
-; CHECK: tableswitch {{.*}}, BB1_2, BB1_2, BB1_2, BB1_2, BB1_2, BB1_2, BB1_2, BB1_2, BB1_3, BB1_3, BB1_3, BB1_3, BB1_3, BB1_3, BB1_3, BB1_3, BB1_4, BB1_4, BB1_4, BB1_4, BB1_4, BB1_4, BB1_5, BB1_6, BB1_7{{$}}
+; CHECK: tableswitch {{[^,]*}}, BB1_2, BB1_2, BB1_2, BB1_2, BB1_2, BB1_2, BB1_2, BB1_2, BB1_3, BB1_3, BB1_3, BB1_3, BB1_3, BB1_3, BB1_3, BB1_3, BB1_4, BB1_4, BB1_4, BB1_4, BB1_4, BB1_4, BB1_5, BB1_6, BB1_7{{$}}
 ; CHECK: BB1_2:
 ; CHECK:   call foo0
 ; CHECK: BB1_3:

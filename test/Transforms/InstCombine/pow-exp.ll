@@ -9,9 +9,18 @@ entry:
 
 ; CHECK-LABEL: define double @mypow(
 ; CHECK:   %mul = fmul fast double %x, %y
-; CHECK:   %exp = call double @exp(double %mul) #0
+; CHECK:   %exp = call fast double @exp(double %mul) #0
 ; CHECK:   ret double %exp
 ; CHECK: }
+
+define double @test2(double ()* %fptr, double %p1) #0 {
+  %call1 = call double %fptr()
+  %pow = call double @llvm.pow.f64(double %call1, double %p1)
+  ret double %pow
+}
+
+; CHECK-LABEL: @test2
+; CHECK: llvm.pow.f64
 
 declare double @exp(double) #1
 declare double @llvm.pow.f64(double, double)

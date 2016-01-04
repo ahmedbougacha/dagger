@@ -38,8 +38,8 @@ namespace orc {
 /// of the function body from the original module. The extracted body is then
 /// compiled and executed.
 template <typename BaseLayerT,
-          typename CompileCallbackMgrT = JITCompileCallbackManagerBase,
-          typename IndirectStubsMgrT = IndirectStubsManagerBase>
+          typename CompileCallbackMgrT = JITCompileCallbackManager,
+          typename IndirectStubsMgrT = IndirectStubsManager>
 class CompileOnDemandLayer {
 private:
 
@@ -47,9 +47,8 @@ private:
   class LambdaMaterializer final : public ValueMaterializer {
   public:
     LambdaMaterializer(MaterializerFtor M) : M(std::move(M)) {}
-    Value* materializeValueFor(Value *V) final {
-      return M(V);
-    }
+    Value *materializeDeclFor(Value *V) final { return M(V); }
+
   private:
     MaterializerFtor M;
   };

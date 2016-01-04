@@ -1838,43 +1838,22 @@ def: LogLogNot_pat<or,  or,  C4_or_orn>;
 // below are needed to support code generation for PIC
 //===----------------------------------------------------------------------===//
 
-def SDT_HexagonPICAdd
+def SDT_HexagonAtGot
+  : SDTypeProfile<1, 3, [SDTCisVT<0, i32>, SDTCisVT<1, i32>, SDTCisVT<2, i32>]>;
+def SDT_HexagonAtPcrel
   : SDTypeProfile<1, 1, [SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
-def SDT_HexagonGOTAdd
-  : SDTypeProfile<1, 2, [SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 
-def SDT_HexagonGOTAddInternal   : SDTypeProfile<1, 1, [SDTCisVT<0, i32>]>;
-def SDT_HexagonGOTAddInternalJT : SDTypeProfile<1, 1, [SDTCisVT<0, i32>]>;
-def SDT_HexagonGOTAddInternalBA : SDTypeProfile<1, 1, [SDTCisVT<0, i32>]>;
+// AT_GOT address-of-GOT, address-of-global, offset-in-global
+def HexagonAtGot       : SDNode<"HexagonISD::AT_GOT", SDT_HexagonAtGot>;
+// AT_PCREL address-of-global
+def HexagonAtPcrel     : SDNode<"HexagonISD::AT_PCREL", SDT_HexagonAtPcrel>;
 
-def Hexagonpic_add      : SDNode<"HexagonISD::PIC_ADD", SDT_HexagonPICAdd>;
-def Hexagonat_got       : SDNode<"HexagonISD::AT_GOT", SDT_HexagonGOTAdd>;
-def Hexagongat_pcrel    : SDNode<"HexagonISD::AT_PCREL",
-                                 SDT_HexagonGOTAddInternal>;
-def Hexagongat_pcrel_jt : SDNode<"HexagonISD::AT_PCREL",
-                                 SDT_HexagonGOTAddInternalJT>;
-def Hexagongat_pcrel_ba : SDNode<"HexagonISD::AT_PCREL",
-                                 SDT_HexagonGOTAddInternalBA>;
-
-// PIC: Map from a block address computation to a PC-relative add
-def: Pat<(Hexagongat_pcrel_ba tblockaddress:$src1),
-         (C4_addipc u32ImmPred:$src1)>;
-
-// PIC: Map from the computation to generate a GOT pointer to a PC-relative add
-def: Pat<(Hexagonpic_add texternalsym:$src1),
-         (C4_addipc u32ImmPred:$src1)>;
-
-// PIC: Map from a jump table address computation to a PC-relative add
-def: Pat<(Hexagongat_pcrel_jt tjumptable:$src1),
-         (C4_addipc u32ImmPred:$src1)>;
-
-// PIC: Map from a GOT-relative symbol reference to a load
-def: Pat<(Hexagonat_got (i32 IntRegs:$src1), tglobaladdr:$src2),
-         (L2_loadri_io IntRegs:$src1, s30_2ImmPred:$src2)>;
-
-// PIC: Map from a static symbol reference to a PC-relative add
-def: Pat<(Hexagongat_pcrel tglobaladdr:$src1),
-         (C4_addipc u32ImmPred:$src1)>;
+def: Pat<(HexagonAtGot I32:$got, I32:$addr, (i32 0)),
+         (L2_loadri_io I32:$got, imm:$addr)>;
+def: Pat<(HexagonAtGot I32:$got, I32:$addr, s30_2ImmPred:$off),
+         (A2_addi (L2_loadri_io I32:$got, imm:$addr), imm:$off)>;
+def: Pat<(HexagonAtPcrel I32:$addr),
+         (C4_addipc imm:$addr)>;
 
 //===----------------------------------------------------------------------===//
 // CR -
@@ -3863,26 +3842,6 @@ let AddedComplexity = 100 in {
 
   def: Stoream_pat<truncstorei32, I64, addrga, LoReg, S2_storeriabs>;
 }
-
-// Map from Pd = load(globaladdress) -> Rd = memb(globaladdress), Pd = Rd
-let AddedComplexity = 100 in
-def : Pat <(i1 (load (HexagonCONST32_GP tglobaladdr:$global))),
-           (i1 (C2_tfrrp (i32 (L2_loadrbgp tglobaladdr:$global))))>;
-
-// Transfer global address into a register
-let isExtended = 1, opExtendable = 1, AddedComplexity=50, isMoveImm = 1,
-isAsCheapAsAMove = 1, isReMaterializable = 1, isCodeGenOnly = 1 in
-def TFRI_V4 : ALU32_ri<(outs IntRegs:$dst), (ins s16Ext:$src1),
-           "$dst = #$src1",
-           [(set IntRegs:$dst, (HexagonCONST32 tglobaladdr:$src1))]>;
-
-// Transfer a block address into a register
-def : Pat<(HexagonCONST32_GP tblockaddress:$src1),
-          (TFRI_V4 tblockaddress:$src1)>;
-
-let AddedComplexity = 50 in
-def : Pat<(HexagonCONST32_GP tglobaladdr:$src1),
-           (TFRI_V4 tglobaladdr:$src1)>;
 
 // i8/i16/i32 -> i64 loads
 // We need a complexity of 120 here to override preceding handling of

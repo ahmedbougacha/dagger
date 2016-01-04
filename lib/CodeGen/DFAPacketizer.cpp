@@ -149,31 +149,35 @@ namespace llvm {
 // DefaultVLIWScheduler - This class extends ScheduleDAGInstrs and overrides
 // Schedule method to build the dependence graph.
 class DefaultVLIWScheduler : public ScheduleDAGInstrs {
+private:
+  AliasAnalysis *AA;
 public:
-  DefaultVLIWScheduler(MachineFunction &MF, MachineLoopInfo &MLI);
+  DefaultVLIWScheduler(MachineFunction &MF, MachineLoopInfo &MLI,
+                       AliasAnalysis *AA);
   // Schedule - Actual scheduling work.
   void schedule() override;
 };
 }
 
 DefaultVLIWScheduler::DefaultVLIWScheduler(MachineFunction &MF,
-                                           MachineLoopInfo &MLI)
-    : ScheduleDAGInstrs(MF, &MLI) {
+                                           MachineLoopInfo &MLI,
+                                           AliasAnalysis *AA)
+    : ScheduleDAGInstrs(MF, &MLI), AA(AA) {
   CanHandleTerminators = true;
 }
 
 void DefaultVLIWScheduler::schedule() {
   // Build the scheduling graph.
-  buildSchedGraph(nullptr);
+  buildSchedGraph(AA);
 }
 
 // VLIWPacketizerList Ctor
 VLIWPacketizerList::VLIWPacketizerList(MachineFunction &MF,
-                                       MachineLoopInfo &MLI)
-    : MF(MF) {
+                                       MachineLoopInfo &MLI, AliasAnalysis *AA)
+    : MF(MF), AA(AA) {
   TII = MF.getSubtarget().getInstrInfo();
   ResourceTracker = TII->CreateTargetScheduleState(MF.getSubtarget());
-  VLIWScheduler = new DefaultVLIWScheduler(MF, MLI);
+  VLIWScheduler = new DefaultVLIWScheduler(MF, MLI, AA);
 }
 
 // VLIWPacketizerList Dtor
@@ -235,7 +239,7 @@ void VLIWPacketizerList::PacketizeMIs(MachineBasicBlock *MBB,
 
     // Ask DFA if machine resource is available for MI.
     bool ResourceAvail = ResourceTracker->canReserveResources(MI);
-    if (ResourceAvail) {
+    if (ResourceAvail && shouldAddToPacket(MI)) {
       // Dependency check for MI with instructions in CurrentPacketMIs.
       for (std::vector<MachineInstr*>::iterator VI = CurrentPacketMIs.begin(),
            VE = CurrentPacketMIs.end(); VI != VE; ++VI) {
@@ -254,7 +258,8 @@ void VLIWPacketizerList::PacketizeMIs(MachineBasicBlock *MBB,
         } // !isLegalToPacketizeTogether.
       } // For all instructions in CurrentPacketMIs.
     } else {
-      // End the packet if resource is not available.
+      // End the packet if resource is not available, or if the instruction
+      // shoud not be added to the current packet.
       endPacket(MBB, MI);
     }
 

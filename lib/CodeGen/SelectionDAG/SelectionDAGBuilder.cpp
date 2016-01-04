@@ -950,14 +950,12 @@ void SelectionDAGBuilder::resolveDanglingDebugInfo(const Value *V,
     assert(Variable->isValidLocationForIntrinsic(dl) &&
            "Expected inlined-at fields to agree");
     uint64_t Offset = DI->getOffset();
-    // A dbg.value for an alloca is always indirect.
-    bool IsIndirect = isa<AllocaInst>(V) || Offset != 0;
     SDDbgValue *SDV;
     if (Val.getNode()) {
-      if (!EmitFuncArgumentDbgValue(V, Variable, Expr, dl, Offset, IsIndirect,
+      if (!EmitFuncArgumentDbgValue(V, Variable, Expr, dl, Offset, false,
                                     Val)) {
         SDV = DAG.getDbgValue(Variable, Expr, Val.getNode(), Val.getResNo(),
-                              IsIndirect, Offset, dl, DbgSDNodeOrder);
+                              false, Offset, dl, DbgSDNodeOrder);
         DAG.AddDbgValue(SDV, Val.getNode(), false);
       }
     } else
@@ -1184,21 +1182,7 @@ void SelectionDAGBuilder::visitCatchPad(const CatchPadInst &I) {
   if (IsMSVCCXX || IsCoreCLR)
     CatchPadMBB->setIsEHFuncletEntry();
 
-  MachineBasicBlock *NormalDestMBB = FuncInfo.MBBMap[I.getNormalDest()];
-
-  // Update machine-CFG edge.
-  FuncInfo.MBB->addSuccessor(NormalDestMBB);
-
-  SDValue Chain =
-      DAG.getNode(ISD::CATCHPAD, getCurSDLoc(), MVT::Other, getControlRoot());
-
-  // If this is not a fall-through branch or optimizations are switched off,
-  // emit the branch.
-  if (NormalDestMBB != NextBlock(CatchPadMBB) ||
-      TM.getOptLevel() == CodeGenOpt::None)
-    Chain = DAG.getNode(ISD::BR, getCurSDLoc(), MVT::Other, Chain,
-                        DAG.getBasicBlock(NormalDestMBB));
-  DAG.setRoot(Chain);
+  DAG.setRoot(DAG.getNode(ISD::CATCHPAD, getCurSDLoc(), MVT::Other, getControlRoot()));
 }
 
 void SelectionDAGBuilder::visitCatchRet(const CatchReturnInst &I) {
@@ -1234,10 +1218,6 @@ void SelectionDAGBuilder::visitCatchRet(const CatchReturnInst &I) {
   DAG.setRoot(Ret);
 }
 
-void SelectionDAGBuilder::visitCatchEndPad(const CatchEndPadInst &I) {
-  llvm_unreachable("should never codegen catchendpads");
-}
-
 void SelectionDAGBuilder::visitCleanupPad(const CleanupPadInst &CPI) {
   // Don't emit any special code for the cleanuppad instruction. It just marks
   // the start of a funclet.
@@ -1248,8 +1228,8 @@ void SelectionDAGBuilder::visitCleanupPad(const CleanupPadInst &CPI) {
 /// When an invoke or a cleanupret unwinds to the next EH pad, there are
 /// many places it could ultimately go. In the IR, we have a single unwind
 /// destination, but in the machine CFG, we enumerate all the possible blocks.
-/// This function skips over imaginary basic blocks that hold catchpad,
-/// terminatepad, or catchendpad instructions, and finds all the "real" machine
+/// This function skips over imaginary basic blocks that hold catchswitch
+/// instructions, and finds all the "real" machine
 /// basic block destinations. As those destinations may not be successors of
 /// EHPadBB, here we also calculate the edge probability to those destinations.
 /// The passed-in Prob is the edge probability to EHPadBB.
@@ -1276,19 +1256,18 @@ static void findUnwindDestinations(
       UnwindDests.emplace_back(FuncInfo.MBBMap[EHPadBB], Prob);
       UnwindDests.back().first->setIsEHFuncletEntry();
       break;
-    } else if (const auto *CPI = dyn_cast<CatchPadInst>(Pad)) {
-      // Add the catchpad handler to the possible destinations.
-      UnwindDests.emplace_back(FuncInfo.MBBMap[EHPadBB], Prob);
-      // In MSVC C++, catchblocks are funclets and need prologues.
-      if (IsMSVCCXX || IsCoreCLR)
-        UnwindDests.back().first->setIsEHFuncletEntry();
-      NewEHPadBB = CPI->getUnwindDest();
-    } else if (const auto *CEPI = dyn_cast<CatchEndPadInst>(Pad))
-      NewEHPadBB = CEPI->getUnwindDest();
-    else if (const auto *CEPI = dyn_cast<CleanupEndPadInst>(Pad))
-      NewEHPadBB = CEPI->getUnwindDest();
-    else
+    } else if (auto *CatchSwitch = dyn_cast<CatchSwitchInst>(Pad)) {
+      // Add the catchpad handlers to the possible destinations.
+      for (const BasicBlock *CatchPadBB : CatchSwitch->handlers()) {
+        UnwindDests.emplace_back(FuncInfo.MBBMap[CatchPadBB], Prob);
+        // For MSVC++ and the CLR, catchblocks are funclets and need prologues.
+        if (IsMSVCCXX || IsCoreCLR)
+          UnwindDests.back().first->setIsEHFuncletEntry();
+      }
+      NewEHPadBB = CatchSwitch->getUnwindDest();
+    } else {
       continue;
+    }
 
     BranchProbabilityInfo *BPI = FuncInfo.BPI;
     if (BPI && NewEHPadBB)
@@ -1319,12 +1298,8 @@ void SelectionDAGBuilder::visitCleanupRet(const CleanupReturnInst &I) {
   DAG.setRoot(Ret);
 }
 
-void SelectionDAGBuilder::visitCleanupEndPad(const CleanupEndPadInst &I) {
-  report_fatal_error("visitCleanupEndPad not yet implemented!");
-}
-
-void SelectionDAGBuilder::visitTerminatePad(const TerminatePadInst &TPI) {
-  report_fatal_error("visitTerminatePad not yet implemented!");
+void SelectionDAGBuilder::visitCatchSwitch(const CatchSwitchInst &CSI) {
+  report_fatal_error("visitCatchSwitch not yet implemented!");
 }
 
 void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
@@ -2124,8 +2099,8 @@ void SelectionDAGBuilder::visitBitTestCase(BitTestBlock &BB,
 void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
   MachineBasicBlock *InvokeMBB = FuncInfo.MBB;
 
-  // Retrieve successors. Look through artificial IR level blocks like catchpads
-  // and catchendpads for successors.
+  // Retrieve successors. Look through artificial IR level blocks like
+  // catchswitch for successors.
   MachineBasicBlock *Return = FuncInfo.MBBMap[I.getSuccessor(0)];
   const BasicBlock *EHPadBB = I.getSuccessor(1);
 
@@ -2198,6 +2173,13 @@ void SelectionDAGBuilder::visitLandingPad(const LandingPadInst &LP) {
   const Constant *PersonalityFn = FuncInfo.Fn->getPersonalityFn();
   if (TLI.getExceptionPointerRegister(PersonalityFn) == 0 &&
       TLI.getExceptionSelectorRegister(PersonalityFn) == 0)
+    return;
+
+  // If landingpad's return type is token type, we don't create DAG nodes
+  // for its exception pointer and selector value. The extraction of exception
+  // pointer or selector value from token type landingpads is not currently
+  // supported.
+  if (LP.getType()->isTokenTy())
     return;
 
   SmallVector<EVT, 2> ValueVTs;
@@ -2289,6 +2271,7 @@ void SelectionDAGBuilder::visitIndirectBr(const IndirectBrInst &I) {
     MachineBasicBlock *Succ = FuncInfo.MBBMap[BB];
     addSuccessorWithProb(IndirectBrMBB, Succ);
   }
+  IndirectBrMBB->normalizeSuccProbs();
 
   DAG.setRoot(DAG.getNode(ISD::BRIND, getCurSDLoc(),
                           MVT::Other, getControlRoot(),
@@ -2470,8 +2453,18 @@ void SelectionDAGBuilder::visitSelect(const User &I) {
     EVT VT = ValueVTs[0];
     LLVMContext &Ctx = *DAG.getContext();
     auto &TLI = DAG.getTargetLoweringInfo();
-    while (TLI.getTypeAction(Ctx, VT) == TargetLoweringBase::TypeSplitVector)
+
+    // We care about the legality of the operation after it has been type
+    // legalized.
+    while (TLI.getTypeAction(Ctx, VT) != TargetLoweringBase::TypeLegal &&
+           VT != TLI.getTypeToTransformTo(Ctx, VT))
       VT = TLI.getTypeToTransformTo(Ctx, VT);
+
+    // If the vselect is legal, assume we want to leave this as a vector setcc +
+    // vselect. Otherwise, if this is going to be scalarized, we want to see if
+    // min/max is legal on the scalar type.
+    bool UseScalarMinMax = VT.isVector() &&
+      !TLI.isOperationLegalOrCustom(ISD::VSELECT, VT);
 
     Value *LHS, *RHS;
     auto SPR = matchSelectPattern(const_cast<User*>(&I), LHS, RHS);
@@ -2486,10 +2479,16 @@ void SelectionDAGBuilder::visitSelect(const User &I) {
       case SPNB_NA: llvm_unreachable("No NaN behavior for FP op?");
       case SPNB_RETURNS_NAN:   Opc = ISD::FMINNAN; break;
       case SPNB_RETURNS_OTHER: Opc = ISD::FMINNUM; break;
-      case SPNB_RETURNS_ANY:
-        Opc = TLI.isOperationLegalOrCustom(ISD::FMINNUM, VT) ? ISD::FMINNUM
-          : ISD::FMINNAN;
+      case SPNB_RETURNS_ANY: {
+        if (TLI.isOperationLegalOrCustom(ISD::FMINNUM, VT))
+          Opc = ISD::FMINNUM;
+        else if (TLI.isOperationLegalOrCustom(ISD::FMINNAN, VT))
+          Opc = ISD::FMINNAN;
+        else if (UseScalarMinMax)
+          Opc = TLI.isOperationLegalOrCustom(ISD::FMINNUM, VT.getScalarType()) ?
+            ISD::FMINNUM : ISD::FMINNAN;
         break;
+      }
       }
       break;
     case SPF_FMAXNUM:
@@ -2498,18 +2497,27 @@ void SelectionDAGBuilder::visitSelect(const User &I) {
       case SPNB_RETURNS_NAN:   Opc = ISD::FMAXNAN; break;
       case SPNB_RETURNS_OTHER: Opc = ISD::FMAXNUM; break;
       case SPNB_RETURNS_ANY:
-        Opc = TLI.isOperationLegalOrCustom(ISD::FMAXNUM, VT) ? ISD::FMAXNUM
-          : ISD::FMAXNAN;
+
+        if (TLI.isOperationLegalOrCustom(ISD::FMAXNUM, VT))
+          Opc = ISD::FMAXNUM;
+        else if (TLI.isOperationLegalOrCustom(ISD::FMAXNAN, VT))
+          Opc = ISD::FMAXNAN;
+        else if (UseScalarMinMax)
+          Opc = TLI.isOperationLegalOrCustom(ISD::FMAXNUM, VT.getScalarType()) ?
+            ISD::FMAXNUM : ISD::FMAXNAN;
         break;
       }
       break;
     default: break;
     }
 
-    if (Opc != ISD::DELETED_NODE && TLI.isOperationLegalOrCustom(Opc, VT) &&
-        // If the underlying comparison instruction is used by any other instruction,
-        // the consumed instructions won't be destroyed, so it is not profitable
-        // to convert to a min/max.
+    if (Opc != ISD::DELETED_NODE &&
+        (TLI.isOperationLegalOrCustom(Opc, VT) ||
+         (UseScalarMinMax &&
+          TLI.isOperationLegalOrCustom(Opc, VT.getScalarType()))) &&
+        // If the underlying comparison instruction is used by any other
+        // instruction, the consumed instructions won't be destroyed, so it is
+        // not profitable to convert to a min/max.
         cast<SelectInst>(&I)->getCondition()->hasOneUse()) {
       OpCode = Opc;
       LHSVal = getValue(LHS);
@@ -3301,18 +3309,18 @@ void SelectionDAGBuilder::visitMaskedStore(const CallInst &I) {
 // extract the spalt value and use it as a uniform base.
 // In all other cases the function returns 'false'.
 //
-static bool getUniformBase(Value *& Ptr, SDValue& Base, SDValue& Index,
+static bool getUniformBase(const Value *& Ptr, SDValue& Base, SDValue& Index,
                            SelectionDAGBuilder* SDB) {
 
   SelectionDAG& DAG = SDB->DAG;
   LLVMContext &Context = *DAG.getContext();
 
   assert(Ptr->getType()->isVectorTy() && "Uexpected pointer type");
-  GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Ptr);
+  const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Ptr);
   if (!GEP || GEP->getNumOperands() > 2)
     return false;
 
-  Value *GEPPtr = GEP->getPointerOperand();
+  const Value *GEPPtr = GEP->getPointerOperand();
   if (!GEPPtr->getType()->isVectorTy())
     Ptr = GEPPtr;
   else if (!(Ptr = getSplatValue(GEPPtr)))
@@ -3348,7 +3356,7 @@ void SelectionDAGBuilder::visitMaskedScatter(const CallInst &I) {
   SDLoc sdl = getCurSDLoc();
 
   // llvm.masked.scatter.*(Src0, Ptrs, alignemt, Mask)
-  Value  *Ptr = I.getArgOperand(1);
+  const Value *Ptr = I.getArgOperand(1);
   SDValue Src0 = getValue(I.getArgOperand(0));
   SDValue Mask = getValue(I.getArgOperand(3));
   EVT VT = Src0.getValueType();
@@ -3362,10 +3370,10 @@ void SelectionDAGBuilder::visitMaskedScatter(const CallInst &I) {
 
   SDValue Base;
   SDValue Index;
-  Value *BasePtr = Ptr;
+  const Value *BasePtr = Ptr;
   bool UniformBase = getUniformBase(BasePtr, Base, Index, this);
 
-  Value *MemOpBasePtr = UniformBase ? BasePtr : nullptr;
+  const Value *MemOpBasePtr = UniformBase ? BasePtr : nullptr;
   MachineMemOperand *MMO = DAG.getMachineFunction().
     getMachineMemOperand(MachinePointerInfo(MemOpBasePtr),
                          MachineMemOperand::MOStore,  VT.getStoreSize(),
@@ -3425,7 +3433,7 @@ void SelectionDAGBuilder::visitMaskedGather(const CallInst &I) {
   SDLoc sdl = getCurSDLoc();
 
   // @llvm.masked.gather.*(Ptrs, alignment, Mask, Src0)
-  Value  *Ptr = I.getArgOperand(0);
+  const Value *Ptr = I.getArgOperand(0);
   SDValue Src0 = getValue(I.getArgOperand(3));
   SDValue Mask = getValue(I.getArgOperand(2));
 
@@ -3442,7 +3450,7 @@ void SelectionDAGBuilder::visitMaskedGather(const CallInst &I) {
   SDValue Root = DAG.getRoot();
   SDValue Base;
   SDValue Index;
-  Value *BasePtr = Ptr;
+  const Value *BasePtr = Ptr;
   bool UniformBase = getUniformBase(BasePtr, Base, Index, this);
   bool ConstantMemory = false;
   if (UniformBase &&
@@ -4369,14 +4377,6 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
   case Intrinsic::longjmp:
     return &"_longjmp"[!TLI.usesUnderscoreLongJmp()];
   case Intrinsic::memcpy: {
-    // FIXME: this definition of "user defined address space" is x86-specific
-    // Assert for address < 256 since we support only user defined address
-    // spaces.
-    assert(cast<PointerType>(I.getArgOperand(0)->getType())->getAddressSpace()
-           < 256 &&
-           cast<PointerType>(I.getArgOperand(1)->getType())->getAddressSpace()
-           < 256 &&
-           "Unknown address space");
     SDValue Op1 = getValue(I.getArgOperand(0));
     SDValue Op2 = getValue(I.getArgOperand(1));
     SDValue Op3 = getValue(I.getArgOperand(2));
@@ -4393,12 +4393,6 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     return nullptr;
   }
   case Intrinsic::memset: {
-    // FIXME: this definition of "user defined address space" is x86-specific
-    // Assert for address < 256 since we support only user defined address
-    // spaces.
-    assert(cast<PointerType>(I.getArgOperand(0)->getType())->getAddressSpace()
-           < 256 &&
-           "Unknown address space");
     SDValue Op1 = getValue(I.getArgOperand(0));
     SDValue Op2 = getValue(I.getArgOperand(1));
     SDValue Op3 = getValue(I.getArgOperand(2));
@@ -4413,14 +4407,6 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     return nullptr;
   }
   case Intrinsic::memmove: {
-    // FIXME: this definition of "user defined address space" is x86-specific
-    // Assert for address < 256 since we support only user defined address
-    // spaces.
-    assert(cast<PointerType>(I.getArgOperand(0)->getType())->getAddressSpace()
-           < 256 &&
-           cast<PointerType>(I.getArgOperand(1)->getType())->getAddressSpace()
-           < 256 &&
-           "Unknown address space");
     SDValue Op1 = getValue(I.getArgOperand(0));
     SDValue Op2 = getValue(I.getArgOperand(1));
     SDValue Op3 = getValue(I.getArgOperand(2));
@@ -4463,22 +4449,17 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
         Address = BCI->getOperand(0);
       // Parameters are handled specially.
       bool isParameter = Variable->isParameter() || isa<Argument>(Address);
-
-      const AllocaInst *AI = dyn_cast<AllocaInst>(Address);
-
-      if (isParameter && !AI) {
-        FrameIndexSDNode *FINode = dyn_cast<FrameIndexSDNode>(N.getNode());
-        if (FINode)
-          // Byval parameter.  We have a frame index at this point.
-          SDV = DAG.getFrameIndexDbgValue(
-              Variable, Expression, FINode->getIndex(), 0, dl, SDNodeOrder);
-        else {
-          // Address is an argument, so try to emit its dbg value using
-          // virtual register info from the FuncInfo.ValueMap.
-          EmitFuncArgumentDbgValue(Address, Variable, Expression, dl, 0, false,
-                                   N);
-          return nullptr;
-        }
+      auto FINode = dyn_cast<FrameIndexSDNode>(N.getNode());
+      if (isParameter && FINode) {
+        // Byval parameter. We have a frame index at this point.
+        SDV = DAG.getFrameIndexDbgValue(Variable, Expression,
+                                        FINode->getIndex(), 0, dl, SDNodeOrder);
+      } else if (isa<Argument>(Address)) {
+        // Address is an argument, so try to emit its dbg value using
+        // virtual register info from the FuncInfo.ValueMap.
+        EmitFuncArgumentDbgValue(Address, Variable, Expression, dl, 0, false,
+                                 N);
+        return nullptr;
       } else {
         SDV = DAG.getDbgValue(Variable, Expression, N.getNode(), N.getResNo(),
                               true, 0, dl, SDNodeOrder);
@@ -4532,12 +4513,10 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
         // Check unused arguments map.
         N = UnusedArgNodeMap[V];
       if (N.getNode()) {
-        // A dbg.value for an alloca is always indirect.
-        bool IsIndirect = isa<AllocaInst>(V) || Offset != 0;
         if (!EmitFuncArgumentDbgValue(V, Variable, Expression, dl, Offset,
-                                      IsIndirect, N)) {
+                                      false, N)) {
           SDV = DAG.getDbgValue(Variable, Expression, N.getNode(), N.getResNo(),
-                                IsIndirect, Offset, dl, SDNodeOrder);
+                                false, Offset, dl, SDNodeOrder);
           DAG.AddDbgValue(SDV, N.getNode(), false);
         }
       } else if (!V->use_empty() ) {
@@ -4885,18 +4864,6 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
                              getValue(I.getArgOperand(0)).getValueType(),
                              getValue(I.getArgOperand(0))));
     return nullptr;
-  case Intrinsic::uabsdiff:
-    setValue(&I, DAG.getNode(ISD::UABSDIFF, sdl,
-                             getValue(I.getArgOperand(0)).getValueType(),
-                             getValue(I.getArgOperand(0)),
-                             getValue(I.getArgOperand(1))));
-    return nullptr;
-  case Intrinsic::sabsdiff:
-    setValue(&I, DAG.getNode(ISD::SABSDIFF, sdl,
-                             getValue(I.getArgOperand(0)).getValueType(),
-                             getValue(I.getArgOperand(0)),
-                             getValue(I.getArgOperand(1))));
-    return nullptr;
   case Intrinsic::cttz: {
     SDValue Arg = getValue(I.getArgOperand(0));
     ConstantInt *CI = cast<ConstantInt>(I.getArgOperand(1));
@@ -4931,6 +4898,21 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
   case Intrinsic::stackrestore: {
     Res = getValue(I.getArgOperand(0));
     DAG.setRoot(DAG.getNode(ISD::STACKRESTORE, sdl, MVT::Other, getRoot(), Res));
+    return nullptr;
+  }
+  case Intrinsic::get_dynamic_area_offset: {
+    SDValue Op = getRoot();
+    EVT PtrTy = TLI.getPointerTy(DAG.getDataLayout());
+    EVT ResTy = TLI.getValueType(DAG.getDataLayout(), I.getType());
+    // Result type for @llvm.get.dynamic.area.offset should match PtrTy for
+    // target.
+    if (PtrTy != ResTy)
+      report_fatal_error("Wrong result type for @llvm.get.dynamic.area.offset"
+                         " intrinsic!");
+    Res = DAG.getNode(ISD::GET_DYNAMIC_AREA_OFFSET, sdl, DAG.getVTList(ResTy),
+                      Op);
+    DAG.setRoot(Op);
+    setValue(&I, Res);
     return nullptr;
   }
   case Intrinsic::stackprotector: {
@@ -5202,9 +5184,6 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     visitStatepoint(I);
     return nullptr;
   }
-  case Intrinsic::experimental_gc_result_int:
-  case Intrinsic::experimental_gc_result_float:
-  case Intrinsic::experimental_gc_result_ptr:
   case Intrinsic::experimental_gc_result: {
     visitGCResult(I);
     return nullptr;
@@ -5345,8 +5324,10 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
 
     // Inform MachineModuleInfo of range.
     if (MMI.hasEHFunclets()) {
+      assert(CLI.CS);
       WinEHFuncInfo *EHInfo = DAG.getMachineFunction().getWinEHFuncInfo();
-      EHInfo->addIPToStateRange(EHPadBB, BeginLabel, EndLabel);
+      EHInfo->addIPToStateRange(cast<InvokeInst>(CLI.CS->getInstruction()),
+                                BeginLabel, EndLabel);
     } else {
       MMI.addInvoke(FuncInfo.MBBMap[EHPadBB], BeginLabel, EndLabel);
     }
@@ -7164,8 +7145,11 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
                                i, j*Parts[j].getValueType().getStoreSize());
         if (NumParts > 1 && j == 0)
           MyFlags.Flags.setSplit();
-        else if (j != 0)
+        else if (j != 0) {
           MyFlags.Flags.setOrigAlign(1);
+          if (j == NumParts - 1)
+            MyFlags.Flags.setSplitEnd();
+        }
 
         CLI.Outs.push_back(MyFlags);
         CLI.OutVals.push_back(Parts[j]);
@@ -7377,6 +7361,11 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
         // in the various CC lowering callbacks.
         Flags.setByVal();
       }
+      if (F.getCallingConv() == CallingConv::X86_INTR) {
+        // IA Interrupt passes frame (1st parameter) by value in the stack.
+        if (Idx == 1)
+          Flags.setByVal();
+      }
       if (Flags.isByVal() || Flags.isInAlloca()) {
         PointerType *Ty = cast<PointerType>(I->getType());
         Type *ElementTy = Ty->getElementType();
@@ -7404,8 +7393,11 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
         if (NumRegs > 1 && i == 0)
           MyFlags.Flags.setSplit();
         // if it isn't first piece, alignment must be 1
-        else if (i > 0)
+        else if (i > 0) {
           MyFlags.Flags.setOrigAlign(1);
+          if (i == NumRegs - 1)
+            MyFlags.Flags.setSplitEnd();
+        }
         Ins.push_back(MyFlags);
       }
       if (NeedsRegBlock && Value == NumValues - 1)
@@ -8249,12 +8241,14 @@ void SelectionDAGBuilder::lowerWorkItem(SwitchWorkListItem W, Value *Cond,
             JumpProb += DefaultProb / 2;
             FallthroughProb -= DefaultProb / 2;
             JumpMBB->setSuccProbability(SI, DefaultProb / 2);
+            JumpMBB->normalizeSuccProbs();
             break;
           }
         }
 
         addSuccessorWithProb(CurMBB, Fallthrough, FallthroughProb);
         addSuccessorWithProb(CurMBB, JumpMBB, JumpProb);
+        CurMBB->normalizeSuccProbs();
 
         // The jump table header will be inserted in our current block, do the
         // range check, and fall through to our fallthrough block.

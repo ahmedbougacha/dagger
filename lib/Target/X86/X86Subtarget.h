@@ -152,6 +152,9 @@ protected:
   /// Processor has RDSEED instructions.
   bool HasRDSEED;
 
+  /// Processor has LAHF/SAHF instructions.
+  bool HasLAHFSAHF;
+
   /// True if BT (bit test) of memory instructions are slow.
   bool IsBTMemSlow;
 
@@ -219,6 +222,9 @@ protected:
 
   /// Processor has AVX-512 Vector Length eXtenstions
   bool HasVLX;
+
+  /// Processor has PKU extenstions
+  bool HasPKU;
 
   /// Processot supports MPX - Memory Protection Extensions
   bool HasMPX;
@@ -354,9 +360,11 @@ public:
   bool hasXSAVEC() const { return HasXSAVEC; }
   bool hasXSAVES() const { return HasXSAVES; }
   bool hasPCLMUL() const { return HasPCLMUL; }
-  bool hasFMA() const { return HasFMA; }
-  // FIXME: Favor FMA when both are enabled. Is this the right thing to do?
-  bool hasFMA4() const { return HasFMA4 && !HasFMA; }
+  // Prefer FMA4 to FMA - its better for commutation/memory folding and
+  // has equal or better performance on all supported targets.
+  bool hasFMA() const { return HasFMA && !HasFMA4; }
+  bool hasFMA4() const { return HasFMA4; }
+  bool hasAnyFMA() const { return hasFMA() || hasFMA4() || hasAVX512(); }
   bool hasXOP() const { return HasXOP; }
   bool hasTBM() const { return HasTBM; }
   bool hasMOVBE() const { return HasMOVBE; }
@@ -372,6 +380,7 @@ public:
   bool hasSHA() const { return HasSHA; }
   bool hasPRFCHW() const { return HasPRFCHW; }
   bool hasRDSEED() const { return HasRDSEED; }
+  bool hasLAHFSAHF() const { return HasLAHFSAHF; }
   bool isBTMemSlow() const { return IsBTMemSlow; }
   bool isSHLDSlow() const { return IsSHLDSlow; }
   bool isUnalignedMem16Slow() const { return IsUAMem16Slow; }
@@ -392,6 +401,7 @@ public:
   bool hasDQI() const { return HasDQI; }
   bool hasBWI() const { return HasBWI; }
   bool hasVLX() const { return HasVLX; }
+  bool hasPKU() const { return HasPKU; }
   bool hasMPX() const { return HasMPX; }
 
   bool isAtom() const { return X86ProcFamily == IntelAtom; }

@@ -39,7 +39,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/Linker/Linker.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include <string>
@@ -49,6 +48,7 @@ namespace llvm {
   class LLVMContext;
   class DiagnosticInfo;
   class GlobalValue;
+  class Linker;
   class Mangler;
   class MemoryBuffer;
   class TargetLibraryInfo;
@@ -62,8 +62,7 @@ namespace llvm {
 struct LTOCodeGenerator {
   static const char *getVersionString();
 
-  LTOCodeGenerator();
-  LTOCodeGenerator(std::unique_ptr<LLVMContext> Context);
+  LTOCodeGenerator(LLVMContext &Context);
   ~LTOCodeGenerator();
 
   /// Merge given module.  Return true on success.
@@ -149,6 +148,8 @@ struct LTOCodeGenerator {
 
   LLVMContext &getContext() { return Context; }
 
+  void resetMergedModule() { MergedModule.reset(); }
+
 private:
   void initializeLTOPasses();
 
@@ -168,10 +169,9 @@ private:
 
   typedef StringMap<uint8_t> StringSet;
 
-  std::unique_ptr<LLVMContext> OwnedContext;
   LLVMContext &Context;
   std::unique_ptr<Module> MergedModule;
-  Linker IRLinker;
+  std::unique_ptr<Linker> TheLinker;
   std::unique_ptr<TargetMachine> TargetMach;
   bool EmitDwarfDebugInfo = false;
   bool ScopeRestrictionsDone = false;

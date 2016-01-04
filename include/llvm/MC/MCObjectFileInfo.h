@@ -116,6 +116,10 @@ protected:
   MCSection *DwarfStrOffDWOSection;
   MCSection *DwarfAddrSection;
 
+  // These are for Fission DWP files.
+  MCSection *DwarfCUIndexSection;
+  MCSection *DwarfTUIndexSection;
+
   /// Section for newer gnu pubnames.
   MCSection *DwarfGnuPubNamesSection;
   /// Section for newer gnu pubtypes.
@@ -262,6 +266,8 @@ public:
   MCSection *getDwarfLocDWOSection() const { return DwarfLocDWOSection; }
   MCSection *getDwarfStrOffDWOSection() const { return DwarfStrOffDWOSection; }
   MCSection *getDwarfAddrSection() const { return DwarfAddrSection; }
+  MCSection *getDwarfCUIndexSection() const { return DwarfCUIndexSection; }
+  MCSection *getDwarfTUIndexSection() const { return DwarfTUIndexSection; }
 
   MCSection *getCOFFDebugSymbolsSection() const {
     return COFFDebugSymbolsSection;

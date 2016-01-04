@@ -229,6 +229,13 @@ static DecodeStatus DecodeBranchTargetMM(MCInst &Inst,
                                          uint64_t Address,
                                          const void *Decoder);
 
+// DecodeBranchTarget26MM - Decode microMIPS branch offset, which is
+// shifted left by 1 bit.
+static DecodeStatus DecodeBranchTarget26MM(MCInst &Inst,
+                                           unsigned Offset,
+                                           uint64_t Address,
+                                           const void *Decoder);
+
 // DecodeJumpTargetMM - Decode microMIPS jump target, which is
 // shifted left by 1 bit.
 static DecodeStatus DecodeJumpTargetMM(MCInst &Inst,
@@ -385,11 +392,6 @@ static DecodeStatus DecodeUImmWithOffset(MCInst &Inst, unsigned Value,
                                          uint64_t Address, const void *Decoder);
 
 static DecodeStatus DecodeInsSize(MCInst &Inst,
-                                  unsigned Insn,
-                                  uint64_t Address,
-                                  const void *Decoder);
-
-static DecodeStatus DecodeExtSize(MCInst &Inst,
                                   unsigned Insn,
                                   uint64_t Address,
                                   const void *Decoder);
@@ -1863,6 +1865,16 @@ static DecodeStatus DecodeBranchTargetMM(MCInst &Inst,
   return MCDisassembler::Success;
 }
 
+static DecodeStatus DecodeBranchTarget26MM(MCInst &Inst,
+  unsigned Offset,
+  uint64_t Address,
+  const void *Decoder) {
+  int32_t BranchOffset = SignExtend32<26>(Offset) << 1;
+
+  Inst.addOperand(MCOperand::createImm(BranchOffset));
+  return MCDisassembler::Success;
+}
+
 static DecodeStatus DecodeJumpTargetMM(MCInst &Inst,
                                        unsigned Insn,
                                        uint64_t Address,
@@ -1944,15 +1956,6 @@ static DecodeStatus DecodeInsSize(MCInst &Inst,
   // First we need to grab the pos(lsb) from MCInst.
   int Pos = Inst.getOperand(2).getImm();
   int Size = (int) Insn - Pos + 1;
-  Inst.addOperand(MCOperand::createImm(SignExtend32<16>(Size)));
-  return MCDisassembler::Success;
-}
-
-static DecodeStatus DecodeExtSize(MCInst &Inst,
-                                  unsigned Insn,
-                                  uint64_t Address,
-                                  const void *Decoder) {
-  int Size = (int) Insn  + 1;
   Inst.addOperand(MCOperand::createImm(SignExtend32<16>(Size)));
   return MCDisassembler::Success;
 }

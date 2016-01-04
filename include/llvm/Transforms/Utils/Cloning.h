@@ -48,16 +48,16 @@ class AllocaInst;
 class AssumptionCacheTracker;
 class DominatorTree;
 
-/// CloneModule - Return an exact copy of the specified module
+/// Return an exact copy of the specified module
 ///
-Module *CloneModule(const Module *M);
-Module *CloneModule(const Module *M, ValueToValueMapTy &VMap);
+std::unique_ptr<Module> CloneModule(const Module *M);
+std::unique_ptr<Module> CloneModule(const Module *M, ValueToValueMapTy &VMap);
 
 /// Return a copy of the specified module. The ShouldCloneDefinition function
 /// controls whether a specific GlobalValue's definition is cloned. If the
 /// function returns false, the module copy will contain an external reference
 /// in place of the global definition.
-Module *
+std::unique_ptr<Module>
 CloneModule(const Module *M, ValueToValueMapTy &VMap,
             std::function<bool(const GlobalValue *)> ShouldCloneDefinition);
 
@@ -75,8 +75,9 @@ struct ClonedCodeInfo {
   bool ContainsDynamicAllocas;
 
   /// All cloned call sites that have operand bundles attached are appended to
-  /// this vector.
-  std::vector<AssertingVH<Instruction>> OperandBundleCallSites;
+  /// this vector.  This vector may contain nulls or undefs if some of the
+  /// originally inserted callsites were DCE'ed after they were cloned.
+  std::vector<WeakVH> OperandBundleCallSites;
 
   ClonedCodeInfo() : ContainsCalls(false), ContainsDynamicAllocas(false) {}
 };

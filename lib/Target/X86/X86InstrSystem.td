@@ -60,12 +60,6 @@ def SYSEXIT   : I<0x35, RawFrm, (outs), (ins), "sysexit{l}", [],
                  IIC_SYS_ENTER_EXIT>, TB;
 def SYSEXIT64 :RI<0x35, RawFrm, (outs), (ins), "sysexit{q}", [],
                  IIC_SYS_ENTER_EXIT>, TB, Requires<[In64BitMode]>;
-
-def IRET16 : I<0xcf, RawFrm, (outs), (ins), "iret{w}", [], IIC_IRET>, OpSize16;
-def IRET32 : I<0xcf, RawFrm, (outs), (ins), "iret{l|d}", [], IIC_IRET>,
-             OpSize32;
-def IRET64 : RI<0xcf, RawFrm, (outs), (ins), "iretq", [], IIC_IRET>,
-             Requires<[In64BitMode]>;
 } // SchedRW
 
 def : Pat<(debugtrap),
@@ -555,6 +549,19 @@ let Defs = [RAX, RSI, RDI], Uses = [RAX, RSI, RDI] in {
 }
 let Defs = [RAX, RDX, RSI], Uses = [RAX, RSI] in
   def MONTMUL : I<0xa6, MRM_C0, (outs), (ins), "montmul", []>, TB;
+//==-----------------------------------------------------------------------===//
+// PKU  - enable protection key
+let usesCustomInserter = 1 in {
+  def WRPKRU : PseudoI<(outs), (ins GR32:$src),
+                [(int_x86_wrpkru GR32:$src)]>;
+  def RDPKRU : PseudoI<(outs GR32:$dst), (ins),
+                [(set GR32:$dst, (int_x86_rdpkru))]>;
+}
+
+let Defs = [EAX, EDX], Uses = [ECX] in 
+  def RDPKRUr : I<0x01, MRM_EE, (outs), (ins), "rdpkru", []>, TB;
+let Uses = [EAX, ECX, EDX] in
+  def WRPKRUr : I<0x01, MRM_EF, (outs), (ins), "wrpkru", []>, TB;
 
 //===----------------------------------------------------------------------===//
 // FS/GS Base Instructions

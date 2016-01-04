@@ -17,6 +17,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/FunctionLoweringInfo.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/GCMetadata.h"
 #include "llvm/CodeGen/GCStrategy.h"
 #include "llvm/CodeGen/SelectionDAG.h"
@@ -95,6 +96,9 @@ StatepointLoweringState::allocateStackSlot(EVT ValueType,
 
       SDValue SpillSlot = Builder.DAG.CreateStackTemporary(ValueType);
       const unsigned FI = cast<FrameIndexSDNode>(SpillSlot)->getIndex();
+      auto *MFI = Builder.DAG.getMachineFunction().getFrameInfo();
+      MFI->markAsStatepointSpillSlotObjectIndex(FI);
+
       Builder.FuncInfo.StatepointStackSlots.push_back(FI);
       AllocatedStackSlots.push_back(true);
       return SpillSlot;
@@ -509,21 +513,21 @@ static void lowerStatepointMetaArgs(SmallVectorImpl<SDValue> &Ops,
   // to the GCStrategy from there (yet).
   GCStrategy &S = Builder.GFI->getStrategy();
   for (const Value *V : Bases) {
-    auto Opt = S.isGCManagedPointer(V);
+    auto Opt = S.isGCManagedPointer(V->getType());
     if (Opt.hasValue()) {
       assert(Opt.getValue() &&
              "non gc managed base pointer found in statepoint");
     }
   }
   for (const Value *V : Ptrs) {
-    auto Opt = S.isGCManagedPointer(V);
+    auto Opt = S.isGCManagedPointer(V->getType());
     if (Opt.hasValue()) {
       assert(Opt.getValue() &&
              "non gc managed derived pointer found in statepoint");
     }
   }
   for (const Value *V : Relocations) {
-    auto Opt = S.isGCManagedPointer(V);
+    auto Opt = S.isGCManagedPointer(V->getType());
     if (Opt.hasValue()) {
       assert(Opt.getValue() && "non gc managed pointer relocated");
     }

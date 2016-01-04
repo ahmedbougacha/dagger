@@ -22,6 +22,7 @@
 namespace llvm {
 class AllocaInst;
 class BasicBlock;
+class CatchReturnInst;
 class Constant;
 class Function;
 class GlobalVariable;
@@ -88,9 +89,11 @@ struct ClrEHUnwindMapEntry {
 
 struct WinEHFuncInfo {
   DenseMap<const Instruction *, int> EHPadStateMap;
+  DenseMap<const FuncletPadInst *, int> FuncletBaseStateMap;
+  DenseMap<const InvokeInst *, int> InvokeStateMap;
   DenseMap<const CatchReturnInst *, const BasicBlock *>
       CatchRetSuccessorColorMap;
-  DenseMap<MCSymbol *, std::pair<int, MCSymbol *>> InvokeToStateMap;
+  DenseMap<MCSymbol *, std::pair<int, MCSymbol *>> LabelToStateMap;
   SmallVector<CxxUnwindMapEntry, 4> CxxUnwindMap;
   SmallVector<WinEHTryBlockMapEntry, 4> TryBlockMap;
   SmallVector<SEHUnwindMapEntry, 4> SEHUnwindMap;
@@ -100,13 +103,14 @@ struct WinEHFuncInfo {
 
   int getLastStateNumber() const { return CxxUnwindMap.size() - 1; }
 
-  void addIPToStateRange(const BasicBlock *PadBB, MCSymbol *InvokeBegin,
+  void addIPToStateRange(const InvokeInst *II, MCSymbol *InvokeBegin,
                          MCSymbol *InvokeEnd);
 
   int EHRegNodeFrameIndex = INT_MAX;
   int EHRegNodeEndOffset = INT_MAX;
+  int SEHSetFrameOffset = INT_MAX;
 
-  WinEHFuncInfo() {}
+  WinEHFuncInfo();
 };
 
 /// Analyze the IR in ParentFn and it's handlers to build WinEHFuncInfo, which

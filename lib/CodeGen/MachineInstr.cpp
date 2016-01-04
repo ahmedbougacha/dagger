@@ -631,10 +631,12 @@ void MachineMemOperand::print(raw_ostream &OS, ModuleSlotTracker &MST) const {
 
 void MachineInstr::addImplicitDefUseOperands(MachineFunction &MF) {
   if (MCID->ImplicitDefs)
-    for (const uint16_t *ImpDefs = MCID->getImplicitDefs(); *ImpDefs; ++ImpDefs)
+    for (const MCPhysReg *ImpDefs = MCID->getImplicitDefs(); *ImpDefs;
+           ++ImpDefs)
       addOperand(MF, MachineOperand::CreateReg(*ImpDefs, true, true));
   if (MCID->ImplicitUses)
-    for (const uint16_t *ImpUses = MCID->getImplicitUses(); *ImpUses; ++ImpUses)
+    for (const MCPhysReg *ImpUses = MCID->getImplicitUses(); *ImpUses;
+           ++ImpUses)
       addOperand(MF, MachineOperand::CreateReg(*ImpUses, false, true));
 }
 
@@ -1736,7 +1738,10 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
   bool HaveSemi = false;
   const unsigned PrintableFlags = FrameSetup | FrameDestroy;
   if (Flags & PrintableFlags) {
-    if (!HaveSemi) OS << ";"; HaveSemi = true;
+    if (!HaveSemi) {
+      OS << ";";
+      HaveSemi = true;
+    }
     OS << " flags: ";
 
     if (Flags & FrameSetup)
@@ -1747,7 +1752,10 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
   }
 
   if (!memoperands_empty()) {
-    if (!HaveSemi) OS << ";"; HaveSemi = true;
+    if (!HaveSemi) {
+      OS << ";";
+      HaveSemi = true;
+    }
 
     OS << " mem:";
     for (mmo_iterator i = memoperands_begin(), e = memoperands_end();
@@ -1760,7 +1768,10 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
 
   // Print the regclass of any virtual registers encountered.
   if (MRI && !VirtRegs.empty()) {
-    if (!HaveSemi) OS << ";"; HaveSemi = true;
+    if (!HaveSemi) {
+      OS << ";";
+      HaveSemi = true;
+    }
     for (unsigned i = 0; i != VirtRegs.size(); ++i) {
       const TargetRegisterClass *RC = MRI->getRegClass(VirtRegs[i]);
       OS << " " << TRI->getRegClassName(RC)
@@ -1779,7 +1790,8 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
 
   // Print debug location information.
   if (isDebugValue() && getOperand(e - 2).isMetadata()) {
-    if (!HaveSemi) OS << ";";
+    if (!HaveSemi)
+      OS << ";";
     auto *DV = cast<DILocalVariable>(getOperand(e - 2).getMetadata());
     OS << " line no:" <<  DV->getLine();
     if (auto *InlinedAt = debugLoc->getInlinedAt()) {
@@ -1793,7 +1805,8 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
     if (isIndirectDebugValue())
       OS << " indirect";
   } else if (debugLoc && MF) {
-    if (!HaveSemi) OS << ";";
+    if (!HaveSemi)
+      OS << ";";
     OS << " dbg:";
     debugLoc.print(OS);
   }

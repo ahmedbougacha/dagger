@@ -64,7 +64,7 @@ private:
    * bit 0      : HasLazyArguments
    * bit 1      : HasPrefixData
    * bit 2      : HasPrologueData
-   * bit 3      : [reserved]
+   * bit 3      : HasPersonalityFn
    * bits 4-13  : CallingConvention
    * bits 14-15 : [reserved]
    */
@@ -110,21 +110,13 @@ private:
 public:
   static Function *Create(FunctionType *Ty, LinkageTypes Linkage,
                           const Twine &N = "", Module *M = nullptr) {
-    return new(1) Function(Ty, Linkage, N, M);
+    return new Function(Ty, Linkage, N, M);
   }
 
   ~Function() override;
 
   /// \brief Provide fast operand accessors
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
-
-  /// \brief Get the personality function associated with this function.
-  bool hasPersonalityFn() const { return getNumOperands() != 0; }
-  Constant *getPersonalityFn() const {
-    assert(hasPersonalityFn());
-    return cast<Constant>(Op<0>());
-  }
-  void setPersonalityFn(Constant *C);
 
   Type *getReturnType() const;           // Return the type of the ret val
   FunctionType *getFunctionType() const; // Return the FunctionType for me
@@ -292,6 +284,26 @@ public:
                                       Attribute::ArgMemOnly);
   }
   void setOnlyAccessesArgMemory() { addFnAttr(Attribute::ArgMemOnly); }
+
+  /// @brief Determine if the function may only access memory that is 
+  ///  inaccessible from the IR.
+  bool onlyAccessesInaccessibleMemory() const {
+    return AttributeSets.hasAttribute(AttributeSet::FunctionIndex,
+                                      Attribute::InaccessibleMemOnly);
+  }
+  void setOnlyAccessesInaccessibleMemory() {
+    addFnAttr(Attribute::InaccessibleMemOnly);
+  }
+
+  /// @brief Determine if the function may only access memory that is
+  //  either inaccessible from the IR or pointed to by its arguments.
+  bool onlyAccessesInaccessibleMemOrArgMem() const {
+    return AttributeSets.hasAttribute(AttributeSet::FunctionIndex,
+                                      Attribute::InaccessibleMemOrArgMemOnly);
+  }
+  void setOnlyAccessesInaccessibleMemOrArgMem() {
+    addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+  }
 
   /// @brief Determine if the function cannot return.
   bool doesNotReturn() const {
@@ -493,11 +505,11 @@ public:
   }
 
   iterator_range<arg_iterator> args() {
-    return iterator_range<arg_iterator>(arg_begin(), arg_end());
+    return make_range(arg_begin(), arg_end());
   }
 
   iterator_range<const_arg_iterator> args() const {
-    return iterator_range<const_arg_iterator>(arg_begin(), arg_end());
+    return make_range(arg_begin(), arg_end());
   }
 
 /// @}
@@ -505,17 +517,30 @@ public:
   size_t arg_size() const;
   bool arg_empty() const;
 
+  /// \brief Check whether this function has a personality function.
+  bool hasPersonalityFn() const {
+    return getSubclassDataFromValue() & (1<<3);
+  }
+
+  /// \brief Get the personality function associated with this function.
+  Constant *getPersonalityFn() const;
+  void setPersonalityFn(Constant *Fn);
+
+  /// \brief Check whether this function has prefix data.
   bool hasPrefixData() const {
     return getSubclassDataFromValue() & (1<<1);
   }
 
+  /// \brief Get the prefix data associated with this function.
   Constant *getPrefixData() const;
   void setPrefixData(Constant *PrefixData);
 
+  /// \brief Check whether this function has prologue data.
   bool hasPrologueData() const {
     return getSubclassDataFromValue() & (1<<2);
   }
 
+  /// \brief Get the prologue data associated with this function.
   Constant *getPrologueData() const;
   void setPrologueData(Constant *PrologueData);
 
@@ -610,11 +635,15 @@ public:
   DISubprogram *getSubprogram() const;
 
 private:
+  void allocHungoffUselist();
+  template<int Idx> void setHungoffOperand(Constant *C);
+
   // Shadow Value::setValueSubclassData with a private forwarding method so that
   // subclasses cannot accidentally use it.
   void setValueSubclassData(unsigned short D) {
     Value::setValueSubclassData(D);
   }
+  void setValueSubclassDataBit(unsigned Bit, bool On);
 
   bool hasMetadataHashEntry() const {
     return getGlobalObjectSubClassData() & HasMetadataHashEntryBit;
@@ -627,7 +656,7 @@ private:
 };
 
 template <>
-struct OperandTraits<Function> : public OptionalOperandTraits<Function> {};
+struct OperandTraits<Function> : public HungoffOperandTraits<3> {};
 
 DEFINE_TRANSPARENT_OPERAND_ACCESSORS(Function, Value)
 

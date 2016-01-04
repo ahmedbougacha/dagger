@@ -461,7 +461,7 @@ static Value *SimplifyX86extrq(IntrinsicInst &II, Value *Op0,
     // If we were an EXTRQ call, we'll save registers if we convert to EXTRQI.
     if (II.getIntrinsicID() == Intrinsic::x86_sse4a_extrq) {
       Value *Args[] = {Op0, CILength, CIIndex};
-      Module *M = II.getParent()->getParent()->getParent();
+      Module *M = II.getModule();
       Value *F = Intrinsic::getDeclaration(M, Intrinsic::x86_sse4a_extrqi);
       return Builder.CreateCall(F, Args);
     }
@@ -563,7 +563,7 @@ static Value *SimplifyX86insertq(IntrinsicInst &II, Value *Op0, Value *Op1,
     Constant *CIIndex = ConstantInt::get(IntTy8, Index, false);
 
     Value *Args[] = {Op0, Op1, CILength, CIIndex};
-    Module *M = II.getParent()->getParent()->getParent();
+    Module *M = II.getModule();
     Value *F = Intrinsic::getDeclaration(M, Intrinsic::x86_sse4a_insertqi);
     return Builder.CreateCall(F, Args);
   }
@@ -725,7 +725,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     if (MemMoveInst *MMI = dyn_cast<MemMoveInst>(MI)) {
       if (GlobalVariable *GVSrc = dyn_cast<GlobalVariable>(MMI->getSource()))
         if (GVSrc->isConstant()) {
-          Module *M = CI.getParent()->getParent()->getParent();
+          Module *M = CI.getModule();
           Intrinsic::ID MemCpyID = Intrinsic::memcpy;
           Type *Tys[3] = { CI.getArgOperand(0)->getType(),
                            CI.getArgOperand(1)->getType(),
@@ -1942,19 +1942,26 @@ Instruction *InstCombiner::visitCallSite(CallSite CS) {
   // Mark any parameters that are known to be non-null with the nonnull
   // attribute.  This is helpful for inlining calls to functions with null
   // checks on their arguments.
+  SmallVector<unsigned, 4> Indices;
   unsigned ArgNo = 0;
+
   for (Value *V : CS.args()) {
     if (V->getType()->isPointerTy() && !CS.paramHasAttr(ArgNo+1, Attribute::NonNull) &&
-        isKnownNonNullAt(V, CS.getInstruction(), DT, TLI)) {
-      AttributeSet AS = CS.getAttributes();
-      AS = AS.addAttribute(CS.getInstruction()->getContext(), ArgNo+1,
-                           Attribute::NonNull);
-      CS.setAttributes(AS);
-      Changed = true;
-    }
+        isKnownNonNullAt(V, CS.getInstruction(), DT, TLI))
+      Indices.push_back(ArgNo + 1);
     ArgNo++;
   }
+
   assert(ArgNo == CS.arg_size() && "sanity check");
+
+  if (!Indices.empty()) {
+    AttributeSet AS = CS.getAttributes();
+    LLVMContext &Ctx = CS.getInstruction()->getContext();
+    AS = AS.addAttribute(Ctx, Indices,
+                         Attribute::get(Ctx, Attribute::NonNull));
+    CS.setAttributes(AS);
+    Changed = true;
+  }
 
   // If the callee is a pointer to a function, attempt to move any casts to the
   // arguments of the call/invoke.

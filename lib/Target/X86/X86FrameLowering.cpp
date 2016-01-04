@@ -18,7 +18,7 @@
 #include "X86Subtarget.h"
 #include "X86TargetMachine.h"
 #include "llvm/ADT/SmallSet.h"
-#include "llvm/Analysis/LibCallSemantics.h"
+#include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -78,6 +78,23 @@ X86FrameLowering::needsFrameIndexResolution(const MachineFunction &MF) const {
          MF.getInfo<X86MachineFunctionInfo>()->getHasPushSequences();
 }
 
+/// usesTheStack - This function checks if any of the users of EFLAGS
+/// copies the EFLAGS. We know that the code that lowers COPY of EFLAGS has
+/// to use the stack, and if we don't adjust the stack we clobber the first
+/// frame index.
+/// See X86InstrInfo::copyPhysReg.
+static bool usesTheStack(const MachineFunction &MF) {
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+
+  return any_of(MRI.reg_instructions(X86::EFLAGS),
+                [](const MachineInstr &RI) { return RI.isCopy(); });
+}
+
+static bool doesStackUseImplyFP(const MachineFunction &MF) {
+  bool IsWin64Prologue = MF.getTarget().getMCAsmInfo()->usesWindowsCFI();
+  return IsWin64Prologue && usesTheStack(MF);
+}
+
 /// hasFP - Return true if the specified function should have a dedicated frame
 /// pointer register.  This is true if the function has variable sized allocas
 /// or if frame pointer elimination is disabled.
@@ -91,7 +108,8 @@ bool X86FrameLowering::hasFP(const MachineFunction &MF) const {
           MFI->isFrameAddressTaken() || MFI->hasOpaqueSPAdjustment() ||
           MF.getInfo<X86MachineFunctionInfo>()->getForceFramePointer() ||
           MMI.callsUnwindInit() || MMI.hasEHFunclets() || MMI.callsEHReturn() ||
-          MFI->hasStackMap() || MFI->hasPatchPoint());
+          MFI->hasStackMap() || MFI->hasPatchPoint() ||
+          doesStackUseImplyFP(MF));
 }
 
 static unsigned getSUBriOpcode(unsigned IsLP64, int64_t Imm) {
@@ -204,8 +222,12 @@ static bool isEAXLiveIn(MachineFunction &MF) {
   return false;
 }
 
-/// Check whether or not the terminators of \p MBB needs to read EFLAGS.
-static bool terminatorsNeedFlagsAsInput(const MachineBasicBlock &MBB) {
+/// Check if the flags need to be preserved before the terminators.
+/// This would be the case, if the eflags is live-in of the region
+/// composed by the terminators or live-out of that region, without
+/// being defined by a terminator.
+static bool
+flagsNeedToBePreservedBeforeTheTerminators(const MachineBasicBlock &MBB) {
   for (const MachineInstr &MI : MBB.terminators()) {
     bool BreakNext = false;
     for (const MachineOperand &MO : MI.operands()) {
@@ -215,15 +237,27 @@ static bool terminatorsNeedFlagsAsInput(const MachineBasicBlock &MBB) {
       if (Reg != X86::EFLAGS)
         continue;
 
-      // This terminator needs an eflag that is not defined
-      // by a previous terminator.
+      // This terminator needs an eflags that is not defined
+      // by a previous another terminator:
+      // EFLAGS is live-in of the region composed by the terminators.
       if (!MO.isDef())
         return true;
+      // This terminator defines the eflags, i.e., we don't need to preserve it.
+      // However, we still need to check this specific terminator does not
+      // read a live-in value.
       BreakNext = true;
     }
+    // We found a definition of the eflags, no need to preserve them.
     if (BreakNext)
-      break;
+      return false;
   }
+
+  // None of the terminators use or define the eflags.
+  // Check if they are live-out, that would imply we need to preserve them.
+  for (const MachineBasicBlock *Succ : MBB.successors())
+    if (Succ->isLiveIn(X86::EFLAGS))
+      return true;
+
   return false;
 }
 
@@ -306,7 +340,11 @@ MachineInstrBuilder X86FrameLowering::BuildStackAdjustment(
   // is tricky.
   bool UseLEA;
   if (!InEpilogue) {
-    UseLEA = STI.useLeaForSP();
+    // Check if inserting the prologue at the beginning
+    // of MBB would require to use LEA operations.
+    // We need to use LEA operations if EFLAGS is live in, because
+    // it means an instruction will read it before it gets defined.
+    UseLEA = STI.useLeaForSP() || MBB.isLiveIn(X86::EFLAGS);
   } else {
     // If we can use LEA for SP but we shouldn't, check that none
     // of the terminators uses the eflags. Otherwise we will insert
@@ -315,10 +353,10 @@ MachineInstrBuilder X86FrameLowering::BuildStackAdjustment(
     // and is an optimization anyway.
     UseLEA = canUseLEAForSPInEpilogue(*MBB.getParent());
     if (UseLEA && !STI.useLeaForSP())
-      UseLEA = terminatorsNeedFlagsAsInput(MBB);
+      UseLEA = flagsNeedToBePreservedBeforeTheTerminators(MBB);
     // If that assert breaks, that means we do not do the right thing
     // in canUseAsEpilogue.
-    assert((UseLEA || !terminatorsNeedFlagsAsInput(MBB)) &&
+    assert((UseLEA || !flagsNeedToBePreservedBeforeTheTerminators(MBB)) &&
            "We shouldn't have allowed this insertion point");
   }
 
@@ -404,23 +442,6 @@ X86FrameLowering::emitCalleeSavedFrameMoves(MachineBasicBlock &MBB,
     BuildCFI(MBB, MBBI, DL,
              MCCFIInstruction::createOffset(nullptr, DwarfReg, Offset));
   }
-}
-
-/// usesTheStack - This function checks if any of the users of EFLAGS
-/// copies the EFLAGS. We know that the code that lowers COPY of EFLAGS has
-/// to use the stack, and if we don't adjust the stack we clobber the first
-/// frame index.
-/// See X86InstrInfo::copyPhysReg.
-static bool usesTheStack(const MachineFunction &MF) {
-  const MachineRegisterInfo &MRI = MF.getRegInfo();
-
-  for (MachineRegisterInfo::reg_instr_iterator
-       ri = MRI.reg_instr_begin(X86::EFLAGS), re = MRI.reg_instr_end();
-       ri != re; ++ri)
-    if (ri->isCopy())
-      return true;
-
-  return false;
 }
 
 MachineInstr *X86FrameLowering::emitStackProbe(MachineFunction &MF,
@@ -892,9 +913,11 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   uint64_t MaxAlign = calculateMaxStackAlign(MF); // Desired stack alignment.
   uint64_t StackSize = MFI->getStackSize();    // Number of bytes to allocate.
   bool IsFunclet = MBB.isEHFuncletEntry();
+  EHPersonality Personality = EHPersonality::Unknown;
+  if (Fn->hasPersonalityFn())
+    Personality = classifyEHPersonality(Fn->getPersonalityFn());
   bool FnHasClrFunclet =
-      MMI.hasEHFunclets() &&
-      classifyEHPersonality(Fn->getPersonalityFn()) == EHPersonality::CoreCLR;
+      MMI.hasEHFunclets() && Personality == EHPersonality::CoreCLR;
   bool IsClrFunclet = IsFunclet && FnHasClrFunclet;
   bool HasFP = hasFP(MF);
   bool IsWin64CC = STI.isCallingConvWin64(Fn->getCallingConv());
@@ -905,8 +928,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   unsigned FramePtr = TRI->getFrameRegister(MF);
   const unsigned MachineFramePtr =
       STI.isTarget64BitILP32()
-          ? getX86SubSuperRegister(FramePtr, MVT::i64, false)
-          : FramePtr;
+          ? getX86SubSuperRegister(FramePtr, 64) : FramePtr;
   unsigned BasePtr = TRI->getBaseRegister();
   
   // Debug location must be unknown since the first debug location is used
@@ -983,7 +1005,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   else if (IsFunclet)
     Establisher = Uses64BitFramePtr ? X86::RDX : X86::EDX;
 
-  if (IsWin64Prologue && IsFunclet & !IsClrFunclet) {
+  if (IsWin64Prologue && IsFunclet && !IsClrFunclet) {
     // Immediately spill establisher into the home slot.
     // The runtime cares about this.
     // MOV64mr %rdx, 16(%rsp)
@@ -1230,19 +1252,21 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
           .addReg(SPOrEstablisher);
 
     // If this is not a funclet, emit the CFI describing our frame pointer.
-    if (NeedsWinCFI && !IsFunclet)
+    if (NeedsWinCFI && !IsFunclet) {
       BuildMI(MBB, MBBI, DL, TII.get(X86::SEH_SetFrame))
           .addImm(FramePtr)
           .addImm(SEHFrameOffset)
           .setMIFlag(MachineInstr::FrameSetup);
+      if (isAsynchronousEHPersonality(Personality))
+        MF.getWinEHFuncInfo()->SEHSetFrameOffset = SEHFrameOffset;
+    }
   } else if (IsFunclet && STI.is32Bit()) {
     // Reset EBP / ESI to something good for funclets.
     MBBI = restoreWin32EHStackPointers(MBB, MBBI, DL);
     // If we're a catch funclet, we can be returned to via catchret. Save ESP
     // into the registration node so that the runtime will restore it for us.
     if (!MBB.isCleanupFuncletEntry()) {
-      assert(classifyEHPersonality(Fn->getPersonalityFn()) ==
-             EHPersonality::MSVC_CXX);
+      assert(Personality == EHPersonality::MSVC_CXX);
       unsigned FrameReg;
       int FI = MF.getWinEHFuncInfo()->EHRegNodeFrameIndex;
       int64_t EHRegOffset = getFrameIndexReference(MF, FI, FrameReg);
@@ -1442,8 +1466,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   const bool Is64BitILP32 = STI.isTarget64BitILP32();
   unsigned FramePtr = TRI->getFrameRegister(MF);
   unsigned MachineFramePtr =
-      Is64BitILP32 ? getX86SubSuperRegister(FramePtr, MVT::i64, false)
-                   : FramePtr;
+      Is64BitILP32 ? getX86SubSuperRegister(FramePtr, 64) : FramePtr;
 
   bool IsWin64Prologue = MF.getTarget().getMCAsmInfo()->usesWindowsCFI();
   bool NeedsWinCFI =
@@ -2504,10 +2527,10 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
     // (Pushes of argument for frame setup, callee pops for frame destroy)
     Amount -= InternalAmt;
 
-    // If this is a callee-pop calling convention, and we're emitting precise
-    // SP-based CFI, emit a CFA adjust for the amount the callee popped.
-    if (isDestroy && InternalAmt && DwarfCFI && !hasFP(MF) && 
-        MMI.usePreciseUnwindInfo())
+    // TODO: This is needed only if we require precise CFA.
+    // If this is a callee-pop calling convention, emit a CFA adjust for
+    // the amount the callee popped.
+    if (isDestroy && InternalAmt && DwarfCFI && !hasFP(MF))
       BuildCFI(MBB, I, DL, 
                MCCFIInstruction::createAdjustCfaOffset(nullptr, -InternalAmt));
 
@@ -2528,11 +2551,14 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
       // offset to be correct at each call site, while for debugging we want
       // it to be more precise.
       int CFAOffset = Amount;
-      if (!MMI.usePreciseUnwindInfo())
-        CFAOffset += InternalAmt;
-      CFAOffset = isDestroy ? -CFAOffset : CFAOffset;
-      BuildCFI(MBB, I, DL, 
-               MCCFIInstruction::createAdjustCfaOffset(nullptr, CFAOffset));
+      // TODO: When not using precise CFA, we also need to adjust for the
+      // InternalAmt here.
+
+      if (CFAOffset) {
+        CFAOffset = isDestroy ? -CFAOffset : CFAOffset;
+        BuildCFI(MBB, I, DL, 
+                 MCCFIInstruction::createAdjustCfaOffset(nullptr, CFAOffset));
+      }
     }
 
     return;
@@ -2566,10 +2592,16 @@ bool X86FrameLowering::canUseAsEpilogue(const MachineBasicBlock &MBB) const {
     return true;
 
   // If we cannot use LEA to adjust SP, we may need to use ADD, which
-  // clobbers the EFLAGS. Check that none of the terminators reads the
-  // EFLAGS, and if one uses it, conservatively assume this is not
+  // clobbers the EFLAGS. Check that we do not need to preserve it,
+  // otherwise, conservatively assume this is not
   // safe to insert the epilogue here.
-  return !terminatorsNeedFlagsAsInput(MBB);
+  return !flagsNeedToBePreservedBeforeTheTerminators(MBB);
+}
+
+bool X86FrameLowering::enableShrinkWrapping(const MachineFunction &MF) const {
+  // If we may need to emit frameless compact unwind information, give
+  // up as this is currently broken: PR25614.
+  return MF.getFunction()->hasFnAttribute(Attribute::NoUnwind) || hasFP(MF);
 }
 
 MachineBasicBlock::iterator X86FrameLowering::restoreWin32EHStackPointers(

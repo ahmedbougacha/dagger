@@ -16,8 +16,7 @@
 #ifndef LLVM_LIB_TARGET_WEBASSEMBLY_WEBASSEMBLYMACHINEFUNCTIONINFO_H
 #define LLVM_LIB_TARGET_WEBASSEMBLY_WEBASSEMBLYMACHINEFUNCTIONINFO_H
 
-#include "WebAssemblyRegisterInfo.h"
-#include "llvm/CodeGen/MachineFunction.h"
+#include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 
 namespace llvm {
@@ -37,11 +36,16 @@ class WebAssemblyFunctionInfo final : public MachineFunctionInfo {
   /// determined or made to meet the stack requirements:
   ///   - single use (per path)
   ///   - single def (per path)
-  ///   - defined and used in FIFO order with other stack registers
+  ///   - defined and used in LIFO order with other stack registers
   BitVector VRegStackified;
 
+  // One entry for each possible target reg. we expect it to be small.
+  std::vector<unsigned> PhysRegs;
+
 public:
-  explicit WebAssemblyFunctionInfo(MachineFunction &MF) : MF(MF) {}
+  explicit WebAssemblyFunctionInfo(MachineFunction &MF) : MF(MF) {
+    PhysRegs.resize(WebAssembly::NUM_TARGET_REGS, -1U);
+  }
   ~WebAssemblyFunctionInfo() override;
 
   void addParam(MVT VT) { Params.push_back(VT); }
@@ -63,11 +67,29 @@ public:
   void initWARegs();
   void setWAReg(unsigned VReg, unsigned WAReg) {
     assert(WAReg != UnusedReg);
+    assert(TargetRegisterInfo::virtReg2Index(VReg) < WARegs.size());
     WARegs[TargetRegisterInfo::virtReg2Index(VReg)] = WAReg;
   }
-  unsigned getWAReg(unsigned VReg) const {
-    return WARegs[TargetRegisterInfo::virtReg2Index(VReg)];
+  unsigned getWAReg(unsigned Reg) const {
+    if (TargetRegisterInfo::isVirtualRegister(Reg)) {
+      assert(TargetRegisterInfo::virtReg2Index(Reg) < WARegs.size());
+      return WARegs[TargetRegisterInfo::virtReg2Index(Reg)];
+    }
+    return PhysRegs[Reg];
   }
+  // If new virtual registers are created after initWARegs has been called,
+  // this function can be used to add WebAssembly register mappings for them.
+  void addWAReg(unsigned VReg, unsigned WAReg) {
+    assert(VReg = WARegs.size());
+    WARegs.push_back(WAReg);
+  }
+
+  void addPReg(unsigned PReg, unsigned WAReg) {
+    assert(PReg < WebAssembly::NUM_TARGET_REGS);
+    assert(WAReg < -1U);
+    PhysRegs[PReg] = WAReg;
+  }
+  const std::vector<unsigned> &getPhysRegs() const { return PhysRegs; }
 };
 
 } // end namespace llvm

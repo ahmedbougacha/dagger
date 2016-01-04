@@ -15,11 +15,8 @@
 
 #include "WebAssemblyMCInstLower.h"
 #include "WebAssemblyMachineFunctionInfo.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/CodeGen/AsmPrinter.h"
-#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -34,13 +31,23 @@ WebAssemblyMCInstLower::GetGlobalAddressSymbol(const MachineOperand &MO) const {
   return Printer.getSymbol(MO.getGlobal());
 }
 
+MCSymbol *WebAssemblyMCInstLower::GetExternalSymbolSymbol(
+    const MachineOperand &MO) const {
+  return Printer.GetExternalSymbolSymbol(MO.getSymbolName());
+}
+
 MCOperand WebAssemblyMCInstLower::LowerSymbolOperand(const MachineOperand &MO,
                                                      MCSymbol *Sym) const {
+  assert(MO.getTargetFlags() == 0 && "WebAssembly does not use target flags");
 
   const MCExpr *Expr = MCSymbolRefExpr::create(Sym, Ctx);
 
-  if (!MO.isJTI() && MO.getOffset())
-    llvm_unreachable("unknown symbol op");
+  int64_t Offset = MO.getOffset();
+  if (Offset != 0) {
+    assert(!MO.isJTI() && "Unexpected offset with jump table index");
+    Expr =
+        MCBinaryExpr::createAdd(Expr, MCConstantExpr::create(Offset, Ctx), Ctx);
+  }
 
   return MCOperand::createExpr(Expr);
 }
@@ -61,7 +68,6 @@ void WebAssemblyMCInstLower::Lower(const MachineInstr *MI,
       // Ignore all implicit register operands.
       if (MO.isImplicit())
         continue;
-      // TODO: Handle physical registers.
       const WebAssemblyFunctionInfo &MFI =
           *MI->getParent()->getParent()->getInfo<WebAssemblyFunctionInfo>();
       unsigned WAReg = MFI.getWAReg(MO.getReg());
@@ -89,6 +95,9 @@ void WebAssemblyMCInstLower::Lower(const MachineInstr *MI,
       break;
     case MachineOperand::MO_GlobalAddress:
       MCOp = LowerSymbolOperand(MO, GetGlobalAddressSymbol(MO));
+      break;
+    case MachineOperand::MO_ExternalSymbol:
+      MCOp = LowerSymbolOperand(MO, GetExternalSymbolSymbol(MO));
       break;
     }
 

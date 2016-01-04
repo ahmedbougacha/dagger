@@ -79,7 +79,7 @@ class ARMTargetAsmStreamer : public ARMTargetStreamer {
   void emitAttribute(unsigned Attribute, unsigned Value) override;
   void emitTextAttribute(unsigned Attribute, StringRef String) override;
   void emitIntTextAttribute(unsigned Attribute, unsigned IntValue,
-                            StringRef StrinValue) override;
+                            StringRef StringValue) override;
   void emitArch(unsigned Arch) override;
   void emitArchExtension(unsigned ArchExt) override;
   void emitObjectArch(unsigned Arch) override;
@@ -243,7 +243,7 @@ void ARMTargetAsmStreamer::emitUnwindRaw(int64_t Offset,
 class ARMTargetELFStreamer : public ARMTargetStreamer {
 private:
   // This structure holds all attributes, accounting for
-  // their string/numeric value, so we can later emmit them
+  // their string/numeric value, so we can later emit them
   // in declaration order, keeping all in the same vector
   struct AttributeItem {
     enum {
@@ -254,7 +254,7 @@ private:
     } Type;
     unsigned Tag;
     unsigned IntValue;
-    StringRef StringValue;
+    std::string StringValue;
 
     static bool LessTag(const AttributeItem &LHS, const AttributeItem &RHS) {
       // The conformance tag must be emitted first when serialised
@@ -749,6 +749,7 @@ void ARMTargetELFStreamer::emitArchDefaultAttributes() {
 
   case ARM::AK_ARMV8A:
   case ARM::AK_ARMV8_1A:
+  case ARM::AK_ARMV8_2A:
     setAttributeItem(CPU_arch_profile, ApplicationProfile, false);
     setAttributeItem(ARM_ISA_use, Allowed, false);
     setAttributeItem(THUMB_ISA_use, AllowThumb32, false);

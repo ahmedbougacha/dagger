@@ -70,6 +70,7 @@ private:
   bool FastFMAF32;
   bool CaymanISA;
   bool FlatAddressSpace;
+  bool FlatForGlobal;
   bool EnableIRStructurizer;
   bool EnablePromoteAlloca;
   bool EnableIfCvt;
@@ -157,6 +158,10 @@ public:
 
   bool hasFlatAddressSpace() const {
     return FlatAddressSpace;
+  }
+
+  bool useFlatForGlobal() const {
+    return FlatForGlobal;
   }
 
   bool hasBFE() const {
@@ -303,6 +308,9 @@ public:
     return isAmdHsaOS() ? 0 : 36;
   }
 
+  unsigned getMaxNumUserSGPRs() const {
+    return 16;
+  }
 };
 
 } // End namespace llvm

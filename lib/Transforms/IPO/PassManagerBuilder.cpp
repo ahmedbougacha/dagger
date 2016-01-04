@@ -12,24 +12,26 @@
 //
 //===----------------------------------------------------------------------===//
 
-
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm-c/Transforms/PassManagerBuilder.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Analysis/Passes.h"
-#include "llvm/IR/DataLayout.h"
-#include "llvm/IR/Verifier.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/ManagedStatic.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/CFLAliasAnalysis.h"
 #include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/ScopedNoAliasAA.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TypeBasedAliasAnalysis.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/FunctionInfo.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ManagedStatic.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO.h"
+#include "llvm/Transforms/IPO/ForceFunctionAttrs.h"
+#include "llvm/Transforms/IPO/InferFunctionAttrs.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Vectorize.h"
 
@@ -108,6 +110,7 @@ PassManagerBuilder::PassManagerBuilder() {
     SizeLevel = 0;
     LibraryInfo = nullptr;
     Inliner = nullptr;
+    FunctionIndex = nullptr;
     DisableUnitAtATime = false;
     DisableUnrollLoops = false;
     BBVectorize = RunBBVectorization;
@@ -185,6 +188,9 @@ void PassManagerBuilder::populateFunctionPassManager(
 
 void PassManagerBuilder::populateModulePassManager(
     legacy::PassManagerBase &MPM) {
+  // Allow forcing function attributes as a debugging and tuning aid.
+  MPM.add(createForceFunctionAttrsLegacyPass());
+
   // If all optimizations are disabled, just run the always-inline pass and,
   // if enabled, the function merging pass.
   if (OptLevel == 0) {
@@ -214,10 +220,15 @@ void PassManagerBuilder::populateModulePassManager(
   addInitialAliasAnalysisPasses(MPM);
 
   if (!DisableUnitAtATime) {
+    // Infer attributes about declarations if possible.
+    MPM.add(createInferFunctionAttrsLegacyPass());
+
     addExtensionsToPM(EP_ModuleOptimizerEarly, MPM);
 
     MPM.add(createIPSCCPPass());              // IP SCCP
     MPM.add(createGlobalOptimizerPass());     // Optimize out global vars
+    // Promote any localized global vars
+    MPM.add(createPromoteMemoryToRegisterPass());
 
     MPM.add(createDeadArgEliminationPass());  // Dead argument elimination
 
@@ -476,6 +487,15 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
   // Provide AliasAnalysis services for optimizations.
   addInitialAliasAnalysisPasses(PM);
 
+  if (FunctionIndex)
+    PM.add(createFunctionImportPass(FunctionIndex));
+
+  // Allow forcing function attributes as a debugging and tuning aid.
+  PM.add(createForceFunctionAttrsLegacyPass());
+
+  // Infer attributes about declarations if possible.
+  PM.add(createInferFunctionAttrsLegacyPass());
+
   // Propagate constants at call sites into the functions they call.  This
   // opens opportunities for globalopt (and inlining) by substituting function
   // pointers passed as arguments to direct uses of functions.
@@ -484,6 +504,8 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
   // Now that we internalized some globals, see if we can hack on them!
   PM.add(createFunctionAttrsPass()); // Add norecurse if possible.
   PM.add(createGlobalOptimizerPass());
+  // Promote any localized global vars.
+  PM.add(createPromoteMemoryToRegisterPass());
 
   // Linking modules together can lead to duplicated global constants, only
   // keep one copy of each constant.
@@ -549,6 +571,15 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
 
   PM.add(createLoopVectorizePass(true, LoopVectorize));
 
+  // Now that we've optimized loops (in particular loop induction variables),
+  // we may have exposed more scalar opportunities. Run parts of the scalar
+  // optimizer again at this point.
+  PM.add(createInstructionCombiningPass()); // Initial cleanup
+  PM.add(createCFGSimplificationPass()); // if-convert
+  PM.add(createSCCPPass()); // Propagate exposed constants
+  PM.add(createInstructionCombiningPass()); // Clean up again
+  PM.add(createBitTrackingDCEPass());
+
   // More scalar chains could be vectorized due to more alias information
   if (RunSLPAfterLoopVectorization)
     if (SLPVectorize)
@@ -594,6 +625,10 @@ void PassManagerBuilder::populateLTOPassManager(legacy::PassManagerBase &PM) {
 
   if (OptLevel > 1)
     addLTOOptimizationPasses(PM);
+
+  // Create a function that performs CFI checks for cross-DSO calls with targets
+  // in the current module.
+  PM.add(createCrossDSOCFIPass());
 
   // Lower bit sets to globals. This pass supports Clang's control flow
   // integrity mechanisms (-fsanitize=cfi*) and needs to run at link time if CFI

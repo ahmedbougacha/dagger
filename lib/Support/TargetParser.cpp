@@ -54,14 +54,14 @@ static const struct {
 static const struct {
   const char *NameCStr;
   size_t NameLength;
-  ARM::ArchKind ID;
   const char *CPUAttrCStr;
   size_t CPUAttrLength;
   const char *SubArchCStr;
   size_t SubArchLength;
-  ARMBuildAttrs::CPUArch ArchAttr; // Arch ID in build attributes.
   unsigned DefaultFPU;
   unsigned ArchBaseExtensions;
+  ARM::ArchKind ID;
+  ARMBuildAttrs::CPUArch ArchAttr; // Arch ID in build attributes.
 
   StringRef getName() const { return StringRef(NameCStr, NameLength); }
 
@@ -72,8 +72,8 @@ static const struct {
   StringRef getSubArch() const { return StringRef(SubArchCStr, SubArchLength); }
 } ARCHNames[] = {
 #define ARM_ARCH(NAME, ID, CPU_ATTR, SUB_ARCH, ARCH_ATTR, ARCH_FPU, ARCH_BASE_EXT)       \
-  {NAME, sizeof(NAME) - 1, ID, CPU_ATTR, sizeof(CPU_ATTR) - 1, SUB_ARCH,       \
-   sizeof(SUB_ARCH) - 1, ARCH_ATTR, ARCH_FPU, ARCH_BASE_EXT},
+  {NAME, sizeof(NAME) - 1, CPU_ATTR, sizeof(CPU_ATTR) - 1, SUB_ARCH,       \
+   sizeof(SUB_ARCH) - 1, ARCH_FPU, ARCH_BASE_EXT, ID, ARCH_ATTR},
 #include "llvm/Support/ARMTargetParser.def"
 };
 
@@ -410,6 +410,7 @@ static StringRef getArchSynonym(StringRef Arch) {
       .Case("v7em", "v7e-m")
       .Cases("v8", "v8a", "aarch64", "arm64", "v8-a")
       .Case("v8.1a", "v8.1-a")
+      .Case("v8.2a", "v8.2-a")
       .Default(Arch);
 }
 
@@ -554,6 +555,7 @@ unsigned llvm::ARM::parseArchProfile(StringRef Arch) {
   case ARM::AK_ARMV7K:
   case ARM::AK_ARMV8A:
   case ARM::AK_ARMV8_1A:
+  case ARM::AK_ARMV8_2A:
     return ARM::PK_A;
   }
   return ARM::PK_INVALID;
@@ -594,6 +596,7 @@ unsigned llvm::ARM::parseArchVersion(StringRef Arch) {
     return 7;
   case ARM::AK_ARMV8A:
   case ARM::AK_ARMV8_1A:
+  case ARM::AK_ARMV8_2A:
     return 8;
   }
   return 0;

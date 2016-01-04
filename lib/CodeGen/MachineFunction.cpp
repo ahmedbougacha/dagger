@@ -17,7 +17,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Analysis/ConstantFolding.h"
-#include "llvm/Analysis/LibCallSemantics.h"
+#include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionInitializer.h"
@@ -46,6 +46,11 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "codegen"
+
+static cl::opt<unsigned>
+    AlignAllFunctions("align-all-functions",
+                      cl::desc("Force the alignment of all functions."),
+                      cl::init(0), cl::Hidden);
 
 void MachineFunctionInitializer::anchor() {}
 
@@ -86,6 +91,9 @@ MachineFunction::MachineFunction(const Function *F, const TargetMachine &TM,
   if (!Fn->hasFnAttribute(Attribute::OptimizeForSize))
     Alignment = std::max(Alignment,
                          STI->getTargetLowering()->getPrefFunctionAlignment());
+
+  if (AlignAllFunctions)
+    Alignment = AlignAllFunctions;
 
   FunctionNumber = FunctionNum;
   JumpTableInfo = nullptr;

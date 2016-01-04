@@ -375,7 +375,7 @@ def GR32_TC   : RegisterClass<"X86", [i32], 32, (add EAX, ECX, EDX)>;
 def GR64_TC   : RegisterClass<"X86", [i64], 64, (add RAX, RCX, RDX, RSI, RDI,
                                                      R8, R9, R11, RIP)>;
 def GR64_TCW64 : RegisterClass<"X86", [i64], 64, (add RAX, RCX, RDX,
-                                                      R8, R9, R10, R11)>;
+                                                      R8, R9, R10, R11, RIP)>;
 
 // GR8_NOREX - GR8 registers which do not require a REX prefix.
 def GR8_NOREX : RegisterClass<"X86", [i8], 8,
@@ -422,6 +422,8 @@ def GR32_AD : RegisterClass<"X86", [i32], 32, (add EAX, EDX)>;
 def FR32 : RegisterClass<"X86", [f32], 32, (sequence "XMM%u", 0, 15)>;
 
 def FR64 : RegisterClass<"X86", [f64], 64, (add FR32)>;
+
+def FR128 : RegisterClass<"X86", [i128, f128], 128, (add FR32)>;
 
 
 // FIXME: This sets up the floating point register files as though they are f64

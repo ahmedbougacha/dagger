@@ -18,6 +18,7 @@
 
 #include "AMDGPURegisterInfo.h"
 #include "AMDGPUSubtarget.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/Support/Debug.h"
 
 namespace llvm {
@@ -28,6 +29,15 @@ private:
 
 public:
   SIRegisterInfo();
+
+  /// Return the end register initially reserved for the scratch buffer in case
+  /// spilling is needed.
+  unsigned reservedPrivateSegmentBufferReg(const MachineFunction &MF) const;
+
+  /// Return the end register initially reserved for the scratch wave offset in
+  /// case spilling is needed.
+  unsigned reservedPrivateSegmentWaveByteOffsetReg(
+    const MachineFunction &MF) const;
 
   BitVector getReservedRegs(const MachineFunction &MF) const override;
 
@@ -54,6 +64,12 @@ public:
   /// \returns true if this class ID contains only SGPR registers
   bool isSGPRClassID(unsigned RCID) const {
     return isSGPRClass(getRegClass(RCID));
+  }
+
+  bool isSGPRReg(const MachineRegisterInfo &MRI, unsigned Reg) const {
+    if (TargetRegisterInfo::isVirtualRegister(Reg))
+      return isSGPRClass(MRI.getRegClass(Reg));
+    return getPhysRegClass(Reg);
   }
 
   /// \returns true if this class contains VGPR registers.
@@ -93,22 +109,25 @@ public:
 
   /// \returns True if operands defined with this operand type can accept
   /// an inline constant. i.e. An integer value in the range (-16, 64) or
-  /// -4.0f, -2.0f, -1.0f, -0.5f, 0.0f, 0.5f, 1.0f, 2.0f, 4.0f. 
+  /// -4.0f, -2.0f, -1.0f, -0.5f, 0.0f, 0.5f, 1.0f, 2.0f, 4.0f.
   bool opCanUseInlineConstant(unsigned OpType) const;
 
   enum PreloadedValue {
     // SGPRS:
-    SCRATCH_PTR         =  0,
-    INPUT_PTR           =  3,
-    TGID_X              = 10,
-    TGID_Y              = 11,
-    TGID_Z              = 12,
-    SCRATCH_WAVE_OFFSET = 14,
+    PRIVATE_SEGMENT_BUFFER =  0,
+    DISPATCH_PTR        =  1,
+    QUEUE_PTR           =  2,
+    KERNARG_SEGMENT_PTR =  3,
+    WORKGROUP_ID_X      = 10,
+    WORKGROUP_ID_Y      = 11,
+    WORKGROUP_ID_Z      = 12,
+    PRIVATE_SEGMENT_WAVE_BYTE_OFFSET = 14,
+
     // VGPRS:
     FIRST_VGPR_VALUE    = 15,
-    TIDIG_X             = FIRST_VGPR_VALUE,
-    TIDIG_Y             = 16,
-    TIDIG_Z             = 17,
+    WORKITEM_ID_X       = FIRST_VGPR_VALUE,
+    WORKITEM_ID_Y       = 16,
+    WORKITEM_ID_Z       = 17
   };
 
   /// \brief Returns the physical register that \p Value is stored in.

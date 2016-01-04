@@ -775,6 +775,31 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
   bool Deref = MI->getOperand(0).isReg() && MI->getOperand(1).isImm();
   int64_t Offset = Deref ? MI->getOperand(1).getImm() : 0;
 
+  for (unsigned i = 0; i < Expr->getNumElements(); ++i) {
+    if (Deref) {
+      // We currently don't support extra Offsets or derefs after the first
+      // one. Bail out early instead of emitting an incorrect comment
+      OS << " [complex expression]";
+      AP.OutStreamer->emitRawComment(OS.str());
+      return true;
+    }
+    uint64_t Op = Expr->getElement(i);
+    if (Op == dwarf::DW_OP_deref) {
+      Deref = true;
+      continue;
+    } else if (Op == dwarf::DW_OP_bit_piece) {
+      // There can't be any operands after this in a valid expression
+      break;
+    }
+    uint64_t ExtraOffset = Expr->getElement(i++);
+    if (Op == dwarf::DW_OP_plus)
+      Offset += ExtraOffset;
+    else {
+      assert(Op == dwarf::DW_OP_minus);
+      Offset -= ExtraOffset;
+    }
+  }
+
   // Register or immediate value. Register 0 means undef.
   if (MI->getOperand(0).isFPImm()) {
     APFloat APF = APFloat(MI->getOperand(0).getFPImm()->getValueAPF());
@@ -1186,6 +1211,11 @@ bool AsmPrinter::doFinalization(Module &M) {
       OutStreamer->EmitSymbolAttribute(Name, MCSA_WeakReference);
     else
       assert(Alias.hasLocalLinkage() && "Invalid alias linkage");
+
+    // Set the symbol type to function if the alias has a function type.
+    // This affects codegen when the aliasee is not a function.
+    if (Alias.getType()->getPointerElementType()->isFunctionTy())
+      OutStreamer->EmitSymbolAttribute(Name, MCSA_ELF_TypeFunction);
 
     EmitVisibility(Name, Alias.getVisibility());
 
@@ -1868,6 +1898,8 @@ static void emitGlobalConstantImpl(const DataLayout &DL, const Constant *C,
                                    const Constant *BaseCV = nullptr,
                                    uint64_t Offset = 0);
 
+static void emitGlobalConstantFP(const ConstantFP *CFP, AsmPrinter &AP);
+
 /// isRepeatedByteSequence - Determine whether the given value is
 /// composed of a repeated sequence of identical bytes and return the
 /// byte value.  If it is not a repeated sequence, return -1.
@@ -1945,34 +1977,9 @@ static void emitGlobalConstantDataSequential(const DataLayout &DL,
       AP.OutStreamer->EmitIntValue(CDS->getElementAsInteger(i),
                                    ElementByteSize);
     }
-  } else if (ElementByteSize == 4) {
-    // FP Constants are printed as integer constants to avoid losing
-    // precision.
-    assert(CDS->getElementType()->isFloatTy());
-    for (unsigned i = 0, e = CDS->getNumElements(); i != e; ++i) {
-      union {
-        float F;
-        uint32_t I;
-      };
-
-      F = CDS->getElementAsFloat(i);
-      if (AP.isVerbose())
-        AP.OutStreamer->GetCommentOS() << "float " << F << '\n';
-      AP.OutStreamer->EmitIntValue(I, 4);
-    }
   } else {
-    assert(CDS->getElementType()->isDoubleTy());
-    for (unsigned i = 0, e = CDS->getNumElements(); i != e; ++i) {
-      union {
-        double F;
-        uint64_t I;
-      };
-
-      F = CDS->getElementAsDouble(i);
-      if (AP.isVerbose())
-        AP.OutStreamer->GetCommentOS() << "double " << F << '\n';
-      AP.OutStreamer->EmitIntValue(I, 8);
-    }
+    for (unsigned I = 0, E = CDS->getNumElements(); I != E; ++I)
+      emitGlobalConstantFP(cast<ConstantFP>(CDS->getElementAsConstant(I)), AP);
   }
 
   unsigned Size = DL.getTypeAllocSize(CDS->getType());
@@ -2496,9 +2503,13 @@ void AsmPrinter::EmitBasicBlockStart(const MachineBasicBlock &MBB) const {
 
   // Print some verbose block comments.
   if (isVerbose()) {
-    if (const BasicBlock *BB = MBB.getBasicBlock())
-      if (BB->hasName())
-        OutStreamer->AddComment("%" + BB->getName());
+    if (const BasicBlock *BB = MBB.getBasicBlock()) {
+      if (BB->hasName()) {
+        BB->printAsOperand(OutStreamer->GetCommentOS(),
+                           /*PrintType=*/false, BB->getModule());
+        OutStreamer->GetCommentOS() << '\n';
+      }
+    }
     emitBasicBlockLoopComments(MBB, LI, *this);
   }
 

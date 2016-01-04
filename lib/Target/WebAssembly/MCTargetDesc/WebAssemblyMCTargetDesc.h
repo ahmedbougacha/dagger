@@ -16,7 +16,6 @@
 #define LLVM_LIB_TARGET_WEBASSEMBLY_MCTARGETDESC_WEBASSEMBLYMCTARGETDESC_H
 
 #include "llvm/Support/DataTypes.h"
-#include <string>
 
 namespace llvm {
 
@@ -46,6 +45,9 @@ MCCodeEmitter *createWebAssemblyMCCodeEmitter(const MCInstrInfo &MCII,
 MCAsmBackend *createWebAssemblyAsmBackend(const Target &T,
                                           const MCRegisterInfo &MRI,
                                           const Triple &TT, StringRef CPU);
+
+MCObjectWriter *createWebAssemblyELFObjectWriter(raw_pwrite_stream &OS,
+                                                 bool Is64Bit, uint8_t OSABI);
 
 } // end namespace llvm
 

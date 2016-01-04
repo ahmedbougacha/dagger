@@ -38,6 +38,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ELF.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetRegistry.h"
@@ -553,13 +554,13 @@ public:
   void adds4_6ImmOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
-    Inst.addOperand(MCOperand::createImm(CE->getValue() << 6));
+    Inst.addOperand(MCOperand::createImm(CE->getValue() * 64));
   }
 
   void adds3_6ImmOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
-    Inst.addOperand(MCOperand::createImm(CE->getValue() << 6));
+    Inst.addOperand(MCOperand::createImm(CE->getValue() * 64));
   }
 
   StringRef getToken() const {
@@ -1511,14 +1512,14 @@ unsigned HexagonAsmParser::validateTargetOperandClass(MCParsedAsmOperand &AsmOp,
 }
 
 void HexagonAsmParser::OutOfRange(SMLoc IDLoc, long long Val, long long Max) {
-  std::stringstream errStr;
-  errStr << "value " << Val << "(0x" << std::hex << Val << std::dec
-         << ") out of range: ";
+  std::string errStr;
+  raw_string_ostream ES(errStr);
+  ES << "value " << Val << "(" << format_hex(Val, 0) << ") out of range: ";
   if (Max >= 0)
-    errStr << "0-" << Max;
+    ES << "0-" << Max;
   else
-    errStr << Max << "-" << (-Max - 1);
-  Error(IDLoc, errStr.str().c_str());
+    ES << Max << "-" << (-Max - 1);
+  Error(IDLoc, ES.str().c_str());
 }
 
 int HexagonAsmParser::processInstruction(MCInst &Inst,
@@ -1591,7 +1592,7 @@ int HexagonAsmParser::processInstruction(MCInst &Inst,
     //   not use the other opcode as it is a legacy artifact of TD files.
     int64_t Value;
     if (MO.getExpr()->evaluateAsAbsolute(Value)) {
-      // if the the operand can fit within a 7:2 field
+      // if the operand can fit within a 7:2 field
       if (Value < (1 << 8) && Value >= -(1 << 8)) {
         SMLoc myLoc = Operands[2]->getStartLoc();
         // # is left in startLoc in the case of ##

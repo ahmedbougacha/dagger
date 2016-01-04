@@ -15,7 +15,6 @@
 #ifndef LLVM_IR_LLVMCONTEXT_H
 #define LLVM_IR_LLVMCONTEXT_H
 
-#include "llvm-c/Core.h"
 #include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Options.h"
@@ -72,7 +71,8 @@ public:
   /// Additionally, this scheme allows LLVM to efficiently check for specific
   /// operand bundle tags without comparing strings.
   enum {
-    OB_deopt = 0,  // "deopt"
+    OB_deopt = 0,   // "deopt"
+    OB_funclet = 1, // "funclet"
   };
 
   /// getMDKindID - Return a unique non-zero ID for the specified metadata kind.

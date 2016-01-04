@@ -239,7 +239,7 @@ TEST(FuzzerMutate, ShuffleBytes1) {
   TestShuffleBytes(&MutationDispatcher::Mutate_ShuffleBytes, 1 << 15);
 }
 TEST(FuzzerMutate, ShuffleBytes2) {
-  TestShuffleBytes(&MutationDispatcher::Mutate, 1 << 16);
+  TestShuffleBytes(&MutationDispatcher::Mutate, 1 << 19);
 }
 
 void TestAddWordFromDictionary(Mutator M, int NumIter) {
@@ -359,4 +359,17 @@ TEST(FuzzerDictionary, ParseDictionaryFile) {
       ParseDictionaryFile("  #zzzz\naaa=\"aa\"\n\nabc=\"abc\"", &Units));
   EXPECT_EQ(Units,
             std::vector<Unit>({Unit({'a', 'a'}), Unit({'a', 'b', 'c'})}));
+}
+
+TEST(FuzzerUtil, Base64) {
+  EXPECT_EQ("", Base64({}));
+  EXPECT_EQ("YQ==", Base64({'a'}));
+  EXPECT_EQ("eA==", Base64({'x'}));
+  EXPECT_EQ("YWI=", Base64({'a', 'b'}));
+  EXPECT_EQ("eHk=", Base64({'x', 'y'}));
+  EXPECT_EQ("YWJj", Base64({'a', 'b', 'c'}));
+  EXPECT_EQ("eHl6", Base64({'x', 'y', 'z'}));
+  EXPECT_EQ("YWJjeA==", Base64({'a', 'b', 'c', 'x'}));
+  EXPECT_EQ("YWJjeHk=", Base64({'a', 'b', 'c', 'x', 'y'}));
+  EXPECT_EQ("YWJjeHl6", Base64({'a', 'b', 'c', 'x', 'y', 'z'}));
 }

@@ -30,7 +30,7 @@ namespace llvm {
 // A container class for subtarget features.
 // This is convenient because std::bitset does not have a constructor
 // with an initializer list of set bits.
-const unsigned MAX_SUBTARGET_FEATURES = 96;
+const unsigned MAX_SUBTARGET_FEATURES = 128;
 class FeatureBitset : public std::bitset<MAX_SUBTARGET_FEATURES> {
 public:
   // Cannot inherit constructors because it's not supported by VC++..
@@ -39,8 +39,8 @@ public:
   FeatureBitset(const bitset<MAX_SUBTARGET_FEATURES>& B) : bitset(B) {}
 
   FeatureBitset(std::initializer_list<unsigned> Init) : bitset() {
-    for (auto I = Init.begin() , E = Init.end(); I != E; ++I)
-      set(*I);
+    for (auto I : Init)
+      set(I);
   }
 };
 
@@ -58,6 +58,11 @@ struct SubtargetFeatureKV {
   // Compare routine for std::lower_bound
   bool operator<(StringRef S) const {
     return StringRef(Key) < S;
+  }
+
+  // Compare routine for std::is_sorted.
+  bool operator<(const SubtargetFeatureKV &Other) const {
+    return StringRef(Key) < StringRef(Other.Key);
   }
 };
 

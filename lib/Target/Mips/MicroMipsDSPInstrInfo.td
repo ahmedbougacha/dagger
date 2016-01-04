@@ -120,6 +120,41 @@ class MULQ_RS_PH_MM_ENC : POOL32A_3RB0_FMT<"mulq_rs.ph", 0b0100010101>;
 class MULQ_RS_W_MMR2_ENC : POOL32A_3RB0_FMT<"mulq_rs.w", 0b0110010101>;
 class MULQ_S_PH_MMR2_ENC : POOL32A_3RB0_FMT<"mulq_s.ph", 0b0101010101>;
 class MULQ_S_W_MMR2_ENC : POOL32A_3RB0_FMT<"mulq_s.w", 0b0111010101>;
+class PRECR_QB_PH_MMR2_ENC : POOL32A_3RB0_FMT<"precr.qb.ph", 0b0001101101>;
+class PRECR_SRA_PH_W_MMR2_ENC
+    : POOL32A_2RSA5_FMT<"precr_sra.ph.w", 0b01111001101>;
+class PRECR_SRA_R_PH_W_MMR2_ENC
+    : POOL32A_2RSA5_FMT<"precr_sra_r.ph.w", 0b11111001101>;
+class PRECRQ_PH_W_MM_ENC : POOL32A_3RB0_FMT<"precrq.ph.w", 0b0011101101>;
+class PRECRQ_QB_PH_MM_ENC : POOL32A_3RB0_FMT<"precrq.qb.ph", 0b0010101101>;
+class PRECRQU_S_QB_PH_MM_ENC
+    : POOL32A_3RB0_FMT<"precrqu_s.qb.ph", 0b0101101101>;
+class PRECRQ_RS_PH_W_MM_ENC : POOL32A_3RB0_FMT<"precrq_rs.ph.w", 0b0100101101>;
+class LBUX_MM_ENC : POOL32A_1RMEMB0_FMT<"lbux", 0b1000100101>;
+class LHX_MM_ENC : POOL32A_1RMEMB0_FMT<"lhx", 0b0101100101>;
+class LWX_MM_ENC : POOL32A_1RMEMB0_FMT<"lwx", 0b0110100101>;
+class MAQ_S_W_PHL_MM_ENC : POOL32A_2RAC_FMT<"maq_s.w.phl", 0b01101001>;
+class MAQ_SA_W_PHL_MM_ENC : POOL32A_2RAC_FMT<"maq_sa.w.phl", 0b11101001>;
+class MAQ_S_W_PHR_MM_ENC : POOL32A_2RAC_FMT<"maq_s.w.phr", 0b00101001>;
+class MAQ_SA_W_PHR_MM_ENC : POOL32A_2RAC_FMT<"maq_sa.w.phr", 0b10101001>;
+class MFHI_MM_ENC : POOL32A_1RAC_FMT<"mfhi", 0b00000001>;
+class MFLO_MM_ENC : POOL32A_1RAC_FMT<"mflo", 0b01000001>;
+class MTHI_MM_ENC : POOL32A_1RAC_FMT<"mthi", 0b10000001>;
+class MTLO_MM_ENC : POOL32A_1RAC_FMT<"mthi", 0b11000001>;
+class PREPEND_MMR2_ENC : POOL32A_2RSA5B0_FMT<"prepend", 0b1001010101>;
+class RADDU_W_QB_MM_ENC : POOL32A_2R_FMT<"raddu.w.qb", 0b1111000100>;
+class RDDSP_MM_ENC : POOL32A_1RMASK7_FMT<"rddsp", 0b00011001>;
+class REPL_PH_MM_ENC : POOL32A_1RIMM10_FMT<"repl.ph", 0b0000111101>;
+class REPL_QB_MM_ENC : POOL32A_1RIMM8_FMT<"repl.qb", 0b010111>;
+class REPLV_PH_MM_ENC : POOL32A_2R_FMT<"replv.ph", 0b0000001100>;
+class REPLV_QB_MM_ENC : POOL32A_2R_FMT<"replv.qb", 0b0001001100>;
+class MTHLIP_MM_ENC : POOL32A_1RAC_FMT<"mthlip", 0b00001001>;
+class PACKRL_PH_MM_ENC : POOL32A_3RB0_FMT<"packrl.ph", 0b0110101101>;
+class PICK_PH_MM_ENC : POOL32A_3RB0_FMT<"pick.ph", 0b1000101101>;
+class PICK_QB_MM_ENC : POOL32A_3RB0_FMT<"pick.qb", 0b0111101101>;
+class SHILO_MM_ENC : POOL32A_4B0SHIFT6AC4B0_FMT<"shilo", 0b0000011101>;
+class SHILOV_MM_ENC : POOL32A_5B01RAC_FMT<"shilov", 0b01001001>;
+class WRDSP_MM_ENC : POOL32A_1RMASK7_FMT<"wrdsp", 0b01011001>;
 
 // Instruction desc.
 class ABSQ_S_PH_MM_R2_DESC_BASE<string opstr, SDPatternOperator OpNode,
@@ -241,6 +276,7 @@ class EXT_MM_1R_DESC_BASE<string instr_asm, SDPatternOperator OpNode,
   string AsmString = !strconcat(instr_asm, "\t$rt, $ac, $imm");
   InstrItinClass Itinerary = itin;
 }
+
 class EXTP_MM_DESC
     : EXT_MM_1R_DESC_BASE<"extp", MipsEXTP, NoItinerary>,
       Uses<[DSPPos]>, Defs<[DSPEFI]>;
@@ -277,6 +313,60 @@ class EXTRV_RS_W_MM_DESC
 class EXTRV_S_H_MM_DESC
     : EXT_MM_2R_DESC_BASE<"extrv_s.h", MipsEXTR_S_H, NoItinerary>,
       Defs<[DSPOutFlag23]>;
+
+class MFHI_MM_DESC_BASE<string instr_asm, RegisterOperand RO, SDNode OpNode,
+                        InstrItinClass itin> {
+  dag OutOperandList = (outs GPR32Opnd:$rs);
+  dag InOperandList = (ins RO:$ac);
+  string AsmString = !strconcat(instr_asm, "\t$rs, $ac");
+  list<dag> Pattern = [(set GPR32Opnd:$rs, (OpNode RO:$ac))];
+  InstrItinClass Itinerary = itin;
+}
+
+class MFHI_MM_DESC : MFHI_MM_DESC_BASE<"mfhi", ACC64DSPOpnd, MipsMFHI,
+                                       NoItinerary>;
+class MFLO_MM_DESC : MFHI_MM_DESC_BASE<"mflo", ACC64DSPOpnd, MipsMFLO,
+                                       NoItinerary>;
+
+class RADDU_W_QB_MM_DESC {
+  dag OutOperandList = (outs GPR32Opnd:$rt);
+  dag InOperandList = (ins DSPROpnd:$rs);
+  string AsmString = !strconcat("raddu.w.qb", "\t$rt, $rs");
+  list<dag> Pattern = [(set GPR32Opnd:$rt, (int_mips_raddu_w_qb DSPROpnd:$rs))];
+  InstrItinClass Itinerary = NoItinerary;
+  string BaseOpcode = "raddu.w.qb";
+}
+
+class RDDSP_MM_DESC {
+  dag OutOperandList = (outs GPR32Opnd:$rt);
+  dag InOperandList = (ins uimm16:$mask);
+  string AsmString = !strconcat("rddsp", "\t$rt, $mask");
+  list<dag> Pattern = [(set GPR32Opnd:$rt, (int_mips_rddsp immZExt10:$mask))];
+  InstrItinClass Itinerary = NoItinerary;
+}
+
+class REPL_QB_MM_DESC {
+  dag OutOperandList = (outs DSPROpnd:$rt);
+  dag InOperandList = (ins uimm16:$imm);
+  string AsmString = !strconcat("repl.qb", "\t$rt, $imm");
+  list<dag> Pattern = [(set DSPROpnd:$rt, (int_mips_repl_qb immZExt8:$imm))];
+  InstrItinClass Itinerary = NoItinerary;
+}
+
+class REPLV_PH_MM_DESC : ABSQ_S_PH_MM_R2_DESC_BASE<"replv.ph", int_mips_repl_ph,
+                                                   NoItinerary, DSPROpnd,
+                                                   GPR32Opnd>;
+class REPLV_QB_MM_DESC : ABSQ_S_PH_MM_R2_DESC_BASE<"replv.qb", int_mips_repl_qb,
+                                                   NoItinerary, DSPROpnd,
+                                                   GPR32Opnd>;
+
+class WRDSP_MM_DESC {
+  dag OutOperandList = (outs);
+  dag InOperandList = (ins GPR32Opnd:$rt, uimm7:$mask);
+  string AsmString = !strconcat("wrdsp", "\t$rt, $mask");
+  list<dag> Pattern = [(int_mips_wrdsp GPR32Opnd:$rt, immZExt7:$mask)];
+  InstrItinClass Itinerary = NoItinerary;
+}
 
 // Instruction defs.
 // microMIPS DSP Rev 1
@@ -354,6 +444,34 @@ def MULEQ_S_W_PHR_MM : DspMMRel, MULEQ_S_W_PHR_MM_ENC, MULEQ_S_W_PHR_DESC;
 def MULEU_S_PH_QBL_MM : DspMMRel, MULEU_S_PH_QBL_MM_ENC, MULEU_S_PH_QBL_DESC;
 def MULEU_S_PH_QBR_MM : DspMMRel, MULEU_S_PH_QBR_MM_ENC, MULEU_S_PH_QBR_DESC;
 def MULQ_RS_PH_MM : DspMMRel, MULQ_RS_PH_MM_ENC, MULQ_RS_PH_DESC;
+def PRECRQ_PH_W_MM : DspMMRel, PRECRQ_PH_W_MM_ENC, PRECRQ_PH_W_DESC;
+def PRECRQ_QB_PH_MM : DspMMRel, PRECRQ_QB_PH_MM_ENC, PRECRQ_QB_PH_DESC;
+def PRECRQU_S_QB_PH_MM : DspMMRel, PRECRQU_S_QB_PH_MM_ENC, PRECRQU_S_QB_PH_DESC;
+def PRECRQ_RS_PH_W_MM : DspMMRel, PRECRQ_RS_PH_W_MM_ENC, PRECRQ_RS_PH_W_DESC;
+def LBUX_MM : DspMMRel, LBUX_MM_ENC, LBUX_DESC;
+def LHX_MM : DspMMRel, LHX_MM_ENC, LHX_DESC;
+def LWX_MM : DspMMRel, LWX_MM_ENC, LWX_DESC;
+def MAQ_S_W_PHL_MM : DspMMRel, MAQ_S_W_PHL_MM_ENC, MAQ_S_W_PHL_DESC;
+def MAQ_SA_W_PHL_MM : DspMMRel, MAQ_SA_W_PHL_MM_ENC, MAQ_SA_W_PHL_DESC;
+def MAQ_S_W_PHR_MM : DspMMRel, MAQ_S_W_PHR_MM_ENC, MAQ_S_W_PHR_DESC;
+def MAQ_SA_W_PHR_MM : DspMMRel, MAQ_SA_W_PHR_MM_ENC, MAQ_SA_W_PHR_DESC;
+def MFHI_DSP_MM : DspMMRel, MFHI_MM_ENC, MFHI_MM_DESC;
+def MFLO_DSP_MM : DspMMRel, MFLO_MM_ENC, MFLO_MM_DESC;
+def MTHI_DSP_MM : DspMMRel, MTHI_MM_ENC, MTHI_DESC;
+def MTLO_DSP_MM : DspMMRel, MTLO_MM_ENC, MTLO_DESC;
+def RADDU_W_QB_MM : DspMMRel, RADDU_W_QB_MM_ENC, RADDU_W_QB_MM_DESC;
+def RDDSP_MM : DspMMRel, RDDSP_MM_ENC, RDDSP_MM_DESC;
+def REPL_PH_MM : DspMMRel, REPL_PH_MM_ENC, REPL_PH_DESC;
+def REPL_QB_MM : DspMMRel, REPL_QB_MM_ENC, REPL_QB_MM_DESC;
+def REPLV_PH_MM : DspMMRel, REPLV_PH_MM_ENC, REPLV_PH_MM_DESC;
+def REPLV_QB_MM : DspMMRel, REPLV_QB_MM_ENC, REPLV_QB_MM_DESC;
+def MTHLIP_MM : DspMMRel, MTHLIP_MM_ENC, MTHLIP_DESC;
+def PACKRL_PH_MM : DspMMRel, PACKRL_PH_MM_ENC, PACKRL_PH_DESC;
+def PICK_PH_MM : DspMMRel, PICK_PH_MM_ENC, PICK_PH_DESC;
+def PICK_QB_MM : DspMMRel, PICK_QB_MM_ENC, PICK_QB_DESC;
+def SHILO_MM : DspMMRel, SHILO_MM_ENC, SHILO_DESC;
+def SHILOV_MM : DspMMRel, SHILOV_MM_ENC, SHILOV_DESC;
+def WRDSP_MM : DspMMRel, WRDSP_MM_ENC, WRDSP_MM_DESC;
 // microMIPS DSP Rev 2
 def ABSQ_S_QB_MMR2 : DspMMRel, ABSQ_S_QB_MMR2_ENC, ABSQ_S_QB_MMR2_DESC,
                      ISA_DSPR2;
@@ -398,3 +516,13 @@ def MUL_S_PH_MMR2 : DspMMRel, MUL_S_PH_MMR2_ENC, MUL_S_PH_DESC, ISA_DSPR2;
 def MULQ_RS_W_MMR2 : DspMMRel, MULQ_RS_W_MMR2_ENC, MULQ_RS_W_DESC, ISA_DSPR2;
 def MULQ_S_PH_MMR2 : DspMMRel, MULQ_S_PH_MMR2_ENC, MULQ_S_PH_DESC, ISA_DSPR2;
 def MULQ_S_W_MMR2 : DspMMRel, MULQ_S_W_MMR2_ENC, MULQ_S_W_DESC, ISA_DSPR2;
+def PRECR_QB_PH_MMR2 : DspMMRel, PRECR_QB_PH_MMR2_ENC, PRECR_QB_PH_DESC,
+                       ISA_DSPR2;
+def PRECR_SRA_PH_W_MMR2 : DspMMRel, PRECR_SRA_PH_W_MMR2_ENC,
+                          PRECR_SRA_PH_W_DESC, ISA_DSPR2;
+def PRECR_SRA_R_PH_W_MMR2 : DspMMRel, PRECR_SRA_R_PH_W_MMR2_ENC,
+                            PRECR_SRA_R_PH_W_DESC, ISA_DSPR2;
+def PREPEND_MMR2 : DspMMRel, PREPEND_MMR2_ENC, PREPEND_DESC, ISA_DSPR2;
+
+// Instruction alias.
+def : MMDSPInstAlias<"wrdsp $rt", (WRDSP_MM GPR32Opnd:$rt, 0x1F), 1>;

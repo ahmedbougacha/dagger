@@ -48,7 +48,6 @@ FunctionPass *createSIFixSGPRCopiesPass();
 FunctionPass *createSIFixSGPRLiveRangesPass();
 FunctionPass *createSICodeEmitterPass(formatted_raw_ostream &OS);
 FunctionPass *createSIInsertWaits(TargetMachine &tm);
-FunctionPass *createSIPrepareScratchRegs();
 
 ModulePass *createAMDGPUAnnotateKernelFeaturesPass();
 void initializeAMDGPUAnnotateKernelFeaturesPass(PassRegistry &);
@@ -72,6 +71,7 @@ Pass *createAMDGPUStructurizeCFGPass();
 FunctionPass *createAMDGPUISelDag(TargetMachine &tm);
 ModulePass *createAMDGPUAlwaysInlinePass();
 ModulePass *createAMDGPUOpenCLImageTypeLoweringPass();
+FunctionPass *createAMDGPUAnnotateUniformValues();
 
 void initializeSIFixControlFlowLiveIntervalsPass(PassRegistry&);
 extern char &SIFixControlFlowLiveIntervalsID;
@@ -79,6 +79,8 @@ extern char &SIFixControlFlowLiveIntervalsID;
 void initializeSIFixSGPRLiveRangesPass(PassRegistry&);
 extern char &SIFixSGPRLiveRangesID;
 
+void initializeAMDGPUAnnotateUniformValuesPass(PassRegistry&);
+extern char &AMDGPUAnnotateUniformValuesPassID;
 
 extern Target TheAMDGPUTarget;
 extern Target TheGCNTarget;
@@ -92,8 +94,6 @@ enum TargetIndex {
   TI_SCRATCH_RSRC_DWORD3
 };
 }
-
-#define END_OF_TEXT_LABEL_NAME "EndOfTextLabel"
 
 } // End namespace llvm
 

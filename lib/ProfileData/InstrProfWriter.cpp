@@ -35,7 +35,7 @@ public:
   typedef uint64_t offset_type;
 
   static hash_value_type ComputeHash(key_type_ref K) {
-    return IndexedInstrProf::ComputeHash(IndexedInstrProf::HashType, K);
+    return IndexedInstrProf::ComputeHash(K);
   }
 
   static std::pair<offset_type, offset_type>
@@ -94,12 +94,8 @@ void InstrProfWriter::setValueProfDataEndianness(
   ValueProfDataEndianness = Endianness;
 }
 
-void InstrProfWriter::updateStringTableReferences(InstrProfRecord &I) {
-  I.updateStrings(&StringTable);
-}
-
-std::error_code InstrProfWriter::addRecord(InstrProfRecord &&I) {
-  updateStringTableReferences(I);
+std::error_code InstrProfWriter::addRecord(InstrProfRecord &&I,
+                                           uint64_t Weight) {
   auto &ProfileDataMap = FunctionData[I.Name];
 
   bool NewFunc;
@@ -107,22 +103,34 @@ std::error_code InstrProfWriter::addRecord(InstrProfRecord &&I) {
   std::tie(Where, NewFunc) =
       ProfileDataMap.insert(std::make_pair(I.Hash, InstrProfRecord()));
   InstrProfRecord &Dest = Where->second;
+
+  instrprof_error Result;
   if (NewFunc) {
     // We've never seen a function with this name and hash, add it.
     Dest = std::move(I);
+    // Fix up the name to avoid dangling reference.
+    Dest.Name = FunctionData.find(Dest.Name)->getKey();
+    Result = instrprof_error::success;
+    if (Weight > 1) {
+      for (auto &Count : Dest.Counts) {
+        bool Overflowed;
+        Count = SaturatingMultiply(Count, Weight, &Overflowed);
+        if (Overflowed && Result == instrprof_error::success) {
+          Result = instrprof_error::counter_overflow;
+        }
+      }
+    }
   } else {
     // We're updating a function we've seen before.
-    instrprof_error MergeResult = Dest.merge(I);
-    if (MergeResult != instrprof_error::success) {
-      return MergeResult;
-    }
+    Result = Dest.merge(I, Weight);
   }
 
   // We keep track of the max function count as we go for simplicity.
+  // Update this statistic no matter the result of the merge.
   if (Dest.Counts[0] > MaxFunctionCount)
     MaxFunctionCount = Dest.Counts[0];
 
-  return instrprof_error::success;
+  return Result;
 }
 
 std::pair<uint64_t, uint64_t> InstrProfWriter::writeImpl(raw_ostream &OS) {
@@ -171,22 +179,59 @@ void InstrProfWriter::write(raw_fd_ostream &OS) {
   endian::Writer<little>(OS).write<uint64_t>(TableStart.second);
 }
 
+static const char *ValueProfKindStr[] = {
+#define VALUE_PROF_KIND(Enumerator, Value) #Enumerator,
+#include "llvm/ProfileData/InstrProfData.inc"
+};
+
 void InstrProfWriter::writeRecordInText(const InstrProfRecord &Func,
+                                        InstrProfSymtab &Symtab,
                                         raw_fd_ostream &OS) {
   OS << Func.Name << "\n";
   OS << "# Func Hash:\n" << Func.Hash << "\n";
-  OS << "# Num Counters:\n" <<Func.Counts.size() << "\n";
+  OS << "# Num Counters:\n" << Func.Counts.size() << "\n";
   OS << "# Counter Values:\n";
   for (uint64_t Count : Func.Counts)
     OS << Count << "\n";
+
+  uint32_t NumValueKinds = Func.getNumValueKinds();
+  if (!NumValueKinds) {
+    OS << "\n";
+    return;
+  }
+
+  OS << "# Num Value Kinds:\n" << Func.getNumValueKinds() << "\n";
+  for (uint32_t VK = 0; VK < IPVK_Last + 1; VK++) {
+    uint32_t NS = Func.getNumValueSites(VK);
+    if (!NS)
+      continue;
+    OS << "# ValueKind = " << ValueProfKindStr[VK] << ":\n" << VK << "\n";
+    OS << "# NumValueSites:\n" << NS << "\n";
+    for (uint32_t S = 0; S < NS; S++) {
+      uint32_t ND = Func.getNumValueDataForSite(VK, S);
+      OS << ND << "\n";
+      std::unique_ptr<InstrProfValueData[]> VD = Func.getValueForSite(VK, S);
+      for (uint32_t I = 0; I < ND; I++) {
+        if (VK == IPVK_IndirectCallTarget)
+          OS << Symtab.getFuncName(VD[I].Value) << ":" << VD[I].Count << "\n";
+        else
+          OS << VD[I].Value << ":" << VD[I].Count << "\n";
+      }
+    }
+  }
 
   OS << "\n";
 }
 
 void InstrProfWriter::writeText(raw_fd_ostream &OS) {
+  InstrProfSymtab Symtab;
+  for (const auto &I : FunctionData)
+    Symtab.addFuncName(I.getKey());
+  Symtab.finalizeSymtab();
+
   for (const auto &I : FunctionData)
     for (const auto &Func : I.getValue())
-      writeRecordInText(Func.second, OS);
+      writeRecordInText(Func.second, Symtab, OS);
 }
 
 std::unique_ptr<MemoryBuffer> InstrProfWriter::writeBuffer() {

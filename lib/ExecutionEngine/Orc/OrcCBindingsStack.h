@@ -29,7 +29,7 @@ DEFINE_SIMPLE_CONVERSION_FUNCTIONS(TargetMachine, LLVMTargetMachineRef)
 class OrcCBindingsStack {
 public:
 
-  typedef orc::JITCompileCallbackManagerBase CompileCallbackMgr;
+  typedef orc::JITCompileCallbackManager CompileCallbackMgr;
   typedef orc::ObjectLinkingLayer<> ObjLayerT;
   typedef orc::IRCompileLayer<ObjLayerT> CompileLayerT;
   typedef orc::CompileOnDemandLayer<CompileLayerT, CompileCallbackMgr> CODLayerT;
@@ -268,7 +268,7 @@ private:
   CompileLayerT CompileLayer;
   CODLayerT CODLayer;
 
-  std::unique_ptr<orc::IndirectStubsManagerBase> IndirectStubsMgr;
+  std::unique_ptr<orc::IndirectStubsManager> IndirectStubsMgr;
 
   std::vector<std::unique_ptr<GenericHandle>> GenericHandles;
   std::vector<unsigned> FreeHandleIndexes;

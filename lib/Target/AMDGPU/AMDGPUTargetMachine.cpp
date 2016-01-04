@@ -14,7 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPUTargetMachine.h"
-#include "AMDGPUHSATargetObjectFile.h"
+#include "AMDGPUTargetObjectFile.h"
 #include "AMDGPU.h"
 #include "AMDGPUTargetTransformInfo.h"
 #include "R600ISelLowering.h"
@@ -51,13 +51,14 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeSIFixControlFlowLiveIntervalsPass(*PR);
   initializeSILoadStoreOptimizerPass(*PR);
   initializeAMDGPUAnnotateKernelFeaturesPass(*PR);
+  initializeAMDGPUAnnotateUniformValuesPass(*PR);
 }
 
 static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
   if (TT.getOS() == Triple::AMDHSA)
     return make_unique<AMDGPUHSATargetObjectFile>();
 
-  return make_unique<TargetLoweringObjectFileELF>();
+  return make_unique<AMDGPUTargetObjectFile>();
 }
 
 static ScheduleDAGInstrs *createR600MachineScheduler(MachineSchedContext *C) {
@@ -279,6 +280,8 @@ bool GCNPassConfig::addPreISel() {
   addPass(createSinkingPass());
   addPass(createSITypeRewriter());
   addPass(createSIAnnotateControlFlowPass());
+  addPass(createAMDGPUAnnotateUniformValues());
+
   return false;
 }
 
@@ -327,7 +330,6 @@ void GCNPassConfig::addOptimizedRegAlloc(FunctionPass *RegAllocPass) {
 }
 
 void GCNPassConfig::addPostRegAlloc() {
-  addPass(createSIPrepareScratchRegs(), false);
   addPass(createSIShrinkInstructionsPass(), false);
 }
 

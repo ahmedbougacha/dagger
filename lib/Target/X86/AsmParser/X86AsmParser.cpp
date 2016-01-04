@@ -11,7 +11,6 @@
 #include "X86AsmInstrumentation.h"
 #include "X86AsmParserCommon.h"
 #include "X86Operand.h"
-#include "X86ISelLowering.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
@@ -26,6 +25,7 @@
 #include "llvm/MC/MCParser/MCAsmParser.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
@@ -714,6 +714,7 @@ private:
                         SMLoc End, unsigned Size, StringRef Identifier,
                         InlineAsmIdentifierInfo &Info);
 
+  bool parseDirectiveEven(SMLoc L);
   bool ParseDirectiveWord(unsigned Size, SMLoc L);
   bool ParseDirectiveCode(StringRef IDVal, SMLoc L);
 
@@ -1049,6 +1050,7 @@ static unsigned getIntelMemOperandSize(StringRef OpStr) {
     .Cases("BYTE", "byte", 8)
     .Cases("WORD", "word", 16)
     .Cases("DWORD", "dword", 32)
+    .Cases("FWORD", "fword", 48)
     .Cases("QWORD", "qword", 64)
     .Cases("MMWORD","mmword", 64)
     .Cases("XWORD", "xword", 80)
@@ -1169,6 +1171,7 @@ bool X86AsmParser::ParseIntelExpression(IntelExprStateMachine &SM, SMLoc &End) {
   MCAsmParser &Parser = getParser();
   const AsmToken &Tok = Parser.getTok();
 
+  AsmToken::TokenKind PrevTK = AsmToken::Error;
   bool Done = false;
   while (!Done) {
     bool UpdateLocLex = true;
@@ -1212,7 +1215,8 @@ bool X86AsmParser::ParseIntelExpression(IntelExprStateMachine &SM, SMLoc &End) {
             return Error(Tok.getLoc(), "Unexpected identifier!");
         } else {
           // This is a dot operator, not an adjacent identifier.
-          if (Identifier.find('.') != StringRef::npos) {
+          if (Identifier.find('.') != StringRef::npos &&
+              PrevTK == AsmToken::RBrac) {
             return false;
           } else {
             InlineAsmIdentifierInfo &Info = SM.getIdentifierInfo();
@@ -1281,6 +1285,8 @@ bool X86AsmParser::ParseIntelExpression(IntelExprStateMachine &SM, SMLoc &End) {
 
     if (!Done && UpdateLocLex)
       End = consumeToken();
+
+    PrevTK = TK;
   }
   return false;
 }
@@ -1693,12 +1699,14 @@ std::unique_ptr<X86Operand> X86AsmParser::ParseIntelOperand() {
       return ParseIntelOperator(IOK_TYPE);
   }
 
+  bool PtrInOperand = false;
   unsigned Size = getIntelMemOperandSize(Tok.getString());
   if (Size) {
     Parser.Lex(); // Eat operand size (e.g., byte, word).
     if (Tok.getString() != "PTR" && Tok.getString() != "ptr")
       return ErrorOperand(Tok.getLoc(), "Expected 'PTR' or 'ptr' token!");
     Parser.Lex(); // Eat ptr.
+    PtrInOperand = true;
   }
   Start = Tok.getLoc();
 
@@ -1754,9 +1762,16 @@ std::unique_ptr<X86Operand> X86AsmParser::ParseIntelOperand() {
   if (!ParseRegister(RegNo, Start, End)) {
     // If this is a segment register followed by a ':', then this is the start
     // of a segment override, otherwise this is a normal register reference.
-    if (getLexer().isNot(AsmToken::Colon))
+    // In case it is a normal register and there is ptr in the operand this 
+    // is an error
+    if (getLexer().isNot(AsmToken::Colon)){
+      if (PtrInOperand){
+        return ErrorOperand(Start, "expected memory operand after "
+                                   "'ptr', found register operand instead");
+      }
       return X86Operand::CreateReg(RegNo, Start, End);
-
+    }
+    
     return ParseIntelSegmentOverride(/*SegReg=*/RegNo, Start, Size);
   }
 
@@ -2834,10 +2849,29 @@ bool X86AsmParser::ParseDirective(AsmToken DirectiveID) {
                                            "a '%' prefix in .intel_syntax");
     }
     return false;
-  }
+  } else if (IDVal == ".even")
+    return parseDirectiveEven(DirectiveID.getLoc());
   return true;
 }
 
+/// parseDirectiveEven
+///  ::= .even
+bool X86AsmParser::parseDirectiveEven(SMLoc L) {
+  const MCSection *Section = getStreamer().getCurrentSection().first;
+  if (getLexer().isNot(AsmToken::EndOfStatement)) {
+    TokError("unexpected token in directive");
+    return false;  
+  }
+  if (!Section) {
+    getStreamer().InitSections(false);
+    Section = getStreamer().getCurrentSection().first;
+  }
+  if (Section->UseCodeAlign())
+    getStreamer().EmitCodeAlignment(2, 0);
+  else
+    getStreamer().EmitValueToAlignment(2, 0, 1, 0);
+  return false;
+}
 /// ParseDirectiveWord
 ///  ::= .word [ expression (, expression)* ]
 bool X86AsmParser::ParseDirectiveWord(unsigned Size, SMLoc L) {

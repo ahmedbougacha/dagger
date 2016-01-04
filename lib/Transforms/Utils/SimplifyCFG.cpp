@@ -84,6 +84,11 @@ static cl::opt<bool> MergeCondStoresAggressively(
     cl::desc("When merging conditional stores, do so even if the resultant "
              "basic blocks are unlikely to be if-converted as a result"));
 
+static cl::opt<bool> SpeculateOneExpensiveInst(
+    "speculate-one-expensive-inst", cl::Hidden, cl::init(true),
+    cl::desc("Allow exactly one expensive instruction to be speculatively "
+             "executed"));
+
 STATISTIC(NumBitMaps, "Number of switch instructions turned into bitmaps");
 STATISTIC(NumLinearMaps, "Number of switch instructions turned into linear mapping");
 STATISTIC(NumLookupTables, "Number of switch instructions turned into lookup tables");
@@ -259,7 +264,8 @@ static unsigned ComputeSpeculationCost(const User *I,
 static bool DominatesMergePoint(Value *V, BasicBlock *BB,
                                 SmallPtrSetImpl<Instruction*> *AggressiveInsts,
                                 unsigned &CostRemaining,
-                                const TargetTransformInfo &TTI) {
+                                const TargetTransformInfo &TTI,
+                                unsigned Depth = 0) {
   Instruction *I = dyn_cast<Instruction>(V);
   if (!I) {
     // Non-instructions all dominate instructions, but not all constantexprs
@@ -297,15 +303,24 @@ static bool DominatesMergePoint(Value *V, BasicBlock *BB,
 
   unsigned Cost = ComputeSpeculationCost(I, TTI);
 
-  if (Cost > CostRemaining)
+  // Allow exactly one instruction to be speculated regardless of its cost
+  // (as long as it is safe to do so).
+  // This is intended to flatten the CFG even if the instruction is a division
+  // or other expensive operation. The speculation of an expensive instruction
+  // is expected to be undone in CodeGenPrepare if the speculation has not
+  // enabled further IR optimizations.
+  if (Cost > CostRemaining &&
+      (!SpeculateOneExpensiveInst || !AggressiveInsts->empty() || Depth > 0))
     return false;
 
-  CostRemaining -= Cost;
+  // Avoid unsigned wrap.
+  CostRemaining = (Cost > CostRemaining) ? 0 : CostRemaining - Cost;
 
   // Okay, we can only really hoist these out if their operands do
   // not take us over the cost threshold.
   for (User::op_iterator i = I->op_begin(), e = I->op_end(); i != e; ++i)
-    if (!DominatesMergePoint(*i, BB, AggressiveInsts, CostRemaining, TTI))
+    if (!DominatesMergePoint(*i, BB, AggressiveInsts, CostRemaining, TTI,
+                             Depth + 1))
       return false;
   // Okay, it's safe to do this!  Remember this instruction.
   AggressiveInsts->insert(I);
@@ -2404,6 +2419,11 @@ static Value *ensureValueAvailableInSuccessor(Value *V, BasicBlock *BB,
   if (PHI)
     return PHI;
 
+  // If V is not an instruction defined in BB, just return it.
+  if (!AlternativeV &&
+      (!isa<Instruction>(V) || cast<Instruction>(V)->getParent() != BB))
+    return V;
+
   PHI = PHINode::Create(V->getType(), 2, "simplifycfg.merge", &Succ->front());
   PHI->addIncoming(V, BB);
   for (BasicBlock *PredBB : predecessors(Succ))
@@ -3254,8 +3274,8 @@ bool SimplifyCFGOpt::SimplifyCleanupReturn(CleanupReturnInst *RI) {
   // updated to continue to the unwind destination of the cleanup pad being
   // simplified.
   BasicBlock *BB = RI->getParent();
-  Instruction *CPInst = dyn_cast<CleanupPadInst>(BB->getFirstNonPHI());
-  if (!CPInst)
+  CleanupPadInst *CPInst = RI->getCleanupPad();
+  if (CPInst->getParent() != BB)
     // This isn't an empty cleanup.
     return false;
 
@@ -3265,9 +3285,10 @@ bool SimplifyCFGOpt::SimplifyCleanupReturn(CleanupReturnInst *RI) {
     if (!isa<DbgInfoIntrinsic>(I))
       return false;
 
-  // If the cleanup return we are simplifying unwinds to the caller, this
-  // will set UnwindDest to nullptr.
+  // If the cleanup return we are simplifying unwinds to the caller, this will
+  // set UnwindDest to nullptr.
   BasicBlock *UnwindDest = RI->getUnwindDest();
+  Instruction *DestEHPad = UnwindDest ? UnwindDest->getFirstNonPHI() : nullptr;
 
   // We're about to remove BB from the control flow.  Before we do, sink any
   // PHINodes into the unwind destination.  Doing this before changing the
@@ -3278,7 +3299,7 @@ bool SimplifyCFGOpt::SimplifyCleanupReturn(CleanupReturnInst *RI) {
     // First, go through the PHI nodes in UnwindDest and update any nodes that
     // reference the block we are removing
     for (BasicBlock::iterator I = UnwindDest->begin(),
-                              IE = UnwindDest->getFirstNonPHI()->getIterator();
+                              IE = DestEHPad->getIterator();
          I != IE; ++I) {
       PHINode *DestPN = cast<PHINode>(I);
 
@@ -3322,7 +3343,7 @@ bool SimplifyCFGOpt::SimplifyCleanupReturn(CleanupReturnInst *RI) {
     }
 
     // Sink any remaining PHI nodes directly into UnwindDest.
-    Instruction *InsertPt = UnwindDest->getFirstNonPHI();
+    Instruction *InsertPt = DestEHPad;
     for (BasicBlock::iterator I = BB->begin(),
                               IE = BB->getFirstNonPHI()->getIterator();
          I != IE;) {
@@ -3492,18 +3513,16 @@ bool SimplifyCFGOpt::SimplifyUnreachable(UnreachableInst *UI) {
         }
     } else if ((isa<InvokeInst>(TI) &&
                 cast<InvokeInst>(TI)->getUnwindDest() == BB) ||
-               isa<CatchEndPadInst>(TI) || isa<TerminatePadInst>(TI)) {
+               isa<CatchSwitchInst>(TI)) {
       removeUnwindEdge(TI->getParent());
       Changed = true;
-    } else if (isa<CleanupReturnInst>(TI) || isa<CleanupEndPadInst>(TI)) {
+    } else if (isa<CleanupReturnInst>(TI)) {
       new UnreachableInst(TI->getContext(), TI);
       TI->eraseFromParent();
       Changed = true;
     }
-    // TODO: If TI is a CatchPadInst, then (BB must be its normal dest and)
-    // we can eliminate it, redirecting its preds to its unwind successor,
-    // or to the next outer handler if the removed catch is the last for its
-    // catchendpad.
+    // TODO: We can remove a catchswitch if all it's catchpads end in
+    // unreachable.
   }
 
   // If this block is now dead, remove it.

@@ -512,6 +512,10 @@ function(llvm_add_library name)
       add_dependencies(${objlib} ${LLVM_COMMON_DEPENDS})
     endforeach()
   endif()
+
+  if(ARG_SHARED OR ARG_MODULE)
+    llvm_externalize_debuginfo(${name})
+  endif()
 endfunction()
 
 macro(add_llvm_library name)
@@ -537,9 +541,11 @@ macro(add_llvm_library name)
     set_target_properties( ${name} PROPERTIES EXCLUDE_FROM_ALL ON)
   elseif(NOT _is_gtest)
     if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "LTO")
+      set(install_dir lib${LLVM_LIBDIR_SUFFIX})
       if(ARG_SHARED OR BUILD_SHARED_LIBS)
-        if(WIN32 OR CYGWIN)
+        if(WIN32 OR CYGWIN OR MINGW)
           set(install_type RUNTIME)
+          set(install_dir bin)
         else()
           set(install_type LIBRARY)
         endif()
@@ -549,7 +555,7 @@ macro(add_llvm_library name)
 
       install(TARGETS ${name}
             EXPORT LLVMExports
-            ${install_type} DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+            ${install_type} DESTINATION ${install_dir}
             COMPONENT ${name})
 
       if (NOT CMAKE_CONFIGURATION_TYPES)
@@ -595,7 +601,7 @@ endmacro(add_llvm_loadable_module name)
 
 
 macro(add_llvm_executable name)
-  cmake_parse_arguments(ARG "DISABLE_LLVM_LINK_LLVM_DYLIB" "" "" ${ARGN})
+  cmake_parse_arguments(ARG "DISABLE_LLVM_LINK_LLVM_DYLIB;IGNORE_EXTERNALIZE_DEBUGINFO" "" "" ${ARGN})
   llvm_process_sources( ALL_FILES ${ARG_UNPARSED_ARGUMENTS} )
 
   # Generate objlib
@@ -655,14 +661,18 @@ macro(add_llvm_executable name)
   if( LLVM_COMMON_DEPENDS )
     add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
   endif( LLVM_COMMON_DEPENDS )
+
+  if(NOT ARG_IGNORE_EXTERNALIZE_DEBUGINFO)
+    llvm_externalize_debuginfo(${name})
+  endif()
 endmacro(add_llvm_executable name)
 
 function(export_executable_symbols target)
   if (NOT MSVC) # MSVC's linker doesn't support exporting all symbols.
     set_target_properties(${target} PROPERTIES ENABLE_EXPORTS 1)
     if (APPLE)
-      set_target_properties(${target} PROPERTIES
-        LINK_FLAGS "-rdynamic")
+      set_property(TARGET ${target} APPEND_STRING PROPERTY
+        LINK_FLAGS " -rdynamic")
     endif()
   endif()
 endfunction()
@@ -870,7 +880,7 @@ function(add_unittest test_suite test_name)
 
   set(LLVM_REQUIRES_RTTI OFF)
 
-  add_llvm_executable(${test_name} ${ARGN})
+  add_llvm_executable(${test_name} IGNORE_EXTERNALIZE_DEBUGINFO ${ARGN})
   set(outdir ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR})
   set_output_directory(${test_name} BINARY_DIR ${outdir} LIBRARY_DIR ${outdir})
   target_link_libraries(${test_name}
@@ -1166,5 +1176,26 @@ function(add_llvm_tool_symlink name dest)
         llvm_install_symlink(${name} ${dest})
       endif()
     endif()
+  endif()
+endfunction()
+
+function(llvm_externalize_debuginfo name)
+  if(NOT LLVM_EXTERNALIZE_DEBUGINFO)
+    return()
+  endif()
+
+  if(APPLE)
+    if(CMAKE_CXX_FLAGS MATCHES "-flto"
+      OR CMAKE_CXX_FLAGS_${uppercase_CMAKE_BUILD_TYPE} MATCHES "-flto")
+
+      set(lto_object ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/${name}-lto.o)
+      set_property(TARGET ${name} APPEND_STRING PROPERTY
+        LINK_FLAGS " -Wl,-object_path_lto,${lto_object}")
+    endif()
+    add_custom_command(TARGET ${name} POST_BUILD
+      COMMAND xcrun dsymutil $<TARGET_FILE:${name}>
+      COMMAND xcrun strip -Sl $<TARGET_FILE:${name}>)
+  else()
+    message(FATAL_ERROR "LLVM_EXTERNALIZE_DEBUGINFO isn't implemented for non-darwin platforms!")
   endif()
 endfunction()

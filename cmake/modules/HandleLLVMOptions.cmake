@@ -317,6 +317,9 @@ if( MSVC )
     -wd4204 # Suppress 'nonstandard extension used : non-constant aggregate initializer'
     -wd4577 # Suppress 'noexcept used with no exception handling mode specified; termination on exception is not guaranteed'
     -wd4091 # Suppress 'typedef: ignored on left of '' when no variable is declared'
+        # C4592 is disabled because of false positives in Visual Studio 2015
+        # Update 1. Re-evaluate the usefulness of this diagnostic with Update 2.
+    -wd4592 # Suppress ''var': symbol will be dynamically initialized (implementation limitation)
 
 	# Ideally, we'd like this warning to be enabled, but MSVC 2013 doesn't
 	# support the 'aligned' attribute in the way that clang sources requires (for
@@ -335,7 +338,10 @@ if( MSVC )
 
   # Enable warnings
   if (LLVM_ENABLE_WARNINGS)
-    append("/W4" msvc_warning_flags)
+    # Put /W4 in front of all the -we flags. cl.exe doesn't care, but for
+    # clang-cl having /W4 after the -we flags will re-enable the warnings
+    # disabled by -we.
+    set(msvc_warning_flags "/W4 ${msvc_warning_flags}")
     # CMake appends /W3 by default, and having /W3 followed by /W4 will result in 
     # cl : Command line warning D9025 : overriding '/W3' with '/W4'.  Since this is
     # a command line warning and not a compiler warning, it cannot be suppressed except
@@ -388,16 +394,23 @@ elseif( LLVM_COMPILER_IS_GCC_COMPATIBLE )
     # Check if -Wnon-virtual-dtor warns even though the class is marked final.
     # If it does, don't add it. So it won't be added on clang 3.4 and older.
     # This also catches cases when -Wnon-virtual-dtor isn't supported by
-    # the compiler at all.
-    set(OLD_CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS})
-    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -std=c++11 -Werror=non-virtual-dtor")
-    CHECK_CXX_SOURCE_COMPILES("class base {public: virtual void anchor();protected: ~base();};
-                               class derived final : public base { public: ~derived();};
-                               int main() { return 0; }"
-                              CXX_WONT_WARN_ON_FINAL_NONVIRTUALDTOR)
-    set(CMAKE_REQUIRED_FLAGS ${OLD_CMAKE_REQUIRED_FLAGS})
-    append_if(CXX_WONT_WARN_ON_FINAL_NONVIRTUALDTOR
-              "-Wnon-virtual-dtor" CMAKE_CXX_FLAGS)
+    # the compiler at all.  This flag is not activated for gcc since it will
+    # incorrectly identify a protected non-virtual base when there is a friend
+    # declaration.
+    if (NOT CMAKE_COMPILER_IS_GNUCXX)
+      set(OLD_CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS})
+      set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -std=c++11 -Werror=non-virtual-dtor")
+      CHECK_CXX_SOURCE_COMPILES("class base {public: virtual void anchor();protected: ~base();};
+                                 class derived final : public base { public: ~derived();};
+                                 int main() { return 0; }"
+                                CXX_WONT_WARN_ON_FINAL_NONVIRTUALDTOR)
+      set(CMAKE_REQUIRED_FLAGS ${OLD_CMAKE_REQUIRED_FLAGS})
+      append_if(CXX_WONT_WARN_ON_FINAL_NONVIRTUALDTOR
+                "-Wnon-virtual-dtor" CMAKE_CXX_FLAGS)
+    endif()
+
+    # Enable -Wdelete-non-virtual-dtor if available.
+    add_flag_if_supported("-Wdelete-non-virtual-dtor" DELETE_NON_VIRTUAL_DTOR_FLAG)
 
     # Check if -Wcomment is OK with an // comment ending with '\' if the next
     # line is also a // comment.
@@ -583,6 +596,14 @@ option(LLVM_ENABLE_RTTI "Enable run time type information" OFF)
 if(LLVM_ENABLE_EH AND NOT LLVM_ENABLE_RTTI)
   message(FATAL_ERROR "Exception handling requires RTTI. You must set LLVM_ENABLE_RTTI to ON")
 endif()
+
+option(LLVM_BUILD_INSTRUMENTED "Build LLVM and tools with PGO instrumentation (experimental)" Off)
+mark_as_advanced(LLVM_BUILD_INSTRUMENTED)
+append_if(LLVM_BUILD_INSTRUMENTED "-fprofile-instr-generate"
+  CMAKE_CXX_FLAGS
+  CMAKE_C_FLAGS
+  CMAKE_EXE_LINKER_FLAGS
+  CMAKE_SHARED_LINKER_FLAGS)
 
 # Plugin support
 # FIXME: Make this configurable.

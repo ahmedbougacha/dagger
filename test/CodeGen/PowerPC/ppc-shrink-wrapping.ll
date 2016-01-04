@@ -1,6 +1,5 @@
 ; RUN: llc -mtriple=powerpc64le-unknown-linux-gnu -mcpu=pwr8 %s -o - | FileCheck %s --check-prefix=CHECK --check-prefix=ENABLE
 ; RUN: llc -mtriple=powerpc64le-unknown-linux-gnu %s -o - -enable-shrink-wrap=false |  FileCheck %s --check-prefix=CHECK --check-prefix=DISABLE
-; XFAIL: *
 ;
 ; Note: Lots of tests use inline asm instead of regular calls.
 ; This allows to have a better control on what the allocation will do.
@@ -495,7 +494,7 @@ declare i32 @someVariadicFunc(i32, ...)
 ; DISABLE: mflr {{[0-9]+}}
 ;
 ; CHECK: cmplwi 3, 0
-; CHECK-NEXT: bne 0, .[[ABORT:LBB[0-9_]+]]
+; CHECK-NEXT: bne{{[-]?}} 0, .[[ABORT:LBB[0-9_]+]]
 ;
 ; CHECK: li 3, 42
 ;

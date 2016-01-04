@@ -52,7 +52,7 @@ OrcLazyJIT::createCompileCallbackMgr(Triple T) {
     default: return nullptr;
 
     case Triple::x86_64: {
-      typedef orc::JITCompileCallbackManager<orc::OrcX86_64> CCMgrT;
+      typedef orc::LocalJITCompileCallbackManager<orc::OrcX86_64> CCMgrT;
       return llvm::make_unique<CCMgrT>(0);
     }
   }
@@ -65,7 +65,8 @@ OrcLazyJIT::createIndirectStubsMgrBuilder(Triple T) {
 
     case Triple::x86_64:
       return [](){
-        return llvm::make_unique<orc::IndirectStubsManager<orc::OrcX86_64>>();
+        return llvm::make_unique<
+                       orc::LocalIndirectStubsManager<orc::OrcX86_64>>();
       };
   }
 }

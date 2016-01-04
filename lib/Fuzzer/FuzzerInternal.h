@@ -24,7 +24,6 @@
 #include "FuzzerInterface.h"
 
 namespace fuzzer {
-typedef std::vector<uint8_t> Unit;
 using namespace std::chrono;
 
 std::string FileToString(const std::string &Path);
@@ -42,7 +41,7 @@ void Print(const Unit &U, const char *PrintAfter = "");
 void PrintASCII(const Unit &U, const char *PrintAfter = "");
 std::string Hash(const Unit &U);
 void SetTimer(int Seconds);
-void PrintFileAsBase64(const std::string &Path);
+std::string Base64(const Unit &U);
 int ExecuteCommand(const std::string &Command);
 
 // Private copy of SHA1 implementation.
@@ -94,6 +93,7 @@ class Fuzzer {
     std::string OutputCorpus;
     std::string SyncCommand;
     std::string ArtifactPrefix = "./";
+    std::string ExactArtifactPath;
     bool SaveArtifacts = true;
     bool PrintNEW = true;  // Print a status line when new units are found;
     bool OutputCSV = false;
@@ -131,7 +131,7 @@ class Fuzzer {
 
  private:
   void AlarmCallback();
-  void MutateAndTestOne(Unit *U);
+  void MutateAndTestOne();
   void ReportNewCoverage(const Unit &U);
   bool RunOne(const Unit &U);
   void RunOneAndUpdateCorpus(Unit &U);

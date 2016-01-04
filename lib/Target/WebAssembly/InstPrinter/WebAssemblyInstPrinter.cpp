@@ -13,9 +13,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "InstPrinter/WebAssemblyInstPrinter.h"
+#include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "WebAssembly.h"
 #include "WebAssemblyMachineFunctionInfo.h"
-#include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
@@ -24,7 +24,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Target/TargetRegisterInfo.h"
-#include <cctype>
 using namespace llvm;
 
 #define DEBUG_TYPE "asm-printer"
@@ -45,18 +44,20 @@ void WebAssemblyInstPrinter::printRegName(raw_ostream &OS,
 
 void WebAssemblyInstPrinter::printInst(const MCInst *MI, raw_ostream &OS,
                                        StringRef Annot,
-                                       const MCSubtargetInfo &STI) {
+                                       const MCSubtargetInfo & /*STI*/) {
+  // Print the instruction (this uses the AsmStrings from the .td files).
   printInstruction(MI, OS);
 
+  // Print any additional variadic operands.
   const MCInstrDesc &Desc = MII.get(MI->getOpcode());
   if (Desc.isVariadic())
-    for (unsigned i = Desc.getNumOperands(), e = MI->getNumOperands(); i < e;
-         ++i) {
+    for (auto i = Desc.getNumOperands(), e = MI->getNumOperands(); i < e; ++i) {
       if (i != 0)
         OS << ", ";
       printOperand(MI, i, OS);
     }
 
+  // Print any added annotation.
   printAnnotation(OS, Annot);
 }
 
@@ -98,13 +99,7 @@ void WebAssemblyInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
     case WebAssembly::PARAM:
     case WebAssembly::RESULT:
     case WebAssembly::LOCAL:
-      switch (Op.getImm()) {
-      case MVT::i32: O << "i32"; break;
-      case MVT::i64: O << "i64"; break;
-      case MVT::f32: O << "f32"; break;
-      case MVT::f64: O << "f64"; break;
-      default: llvm_unreachable("unexpected type");
-      }
+      O << WebAssembly::TypeToString(MVT::SimpleValueType(Op.getImm()));
       break;
     default:
       O << Op.getImm();
@@ -115,5 +110,20 @@ void WebAssemblyInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   else {
     assert(Op.isExpr() && "unknown operand kind in printOperand");
     Op.getExpr()->print(O, &MAI);
+  }
+}
+
+const char *llvm::WebAssembly::TypeToString(MVT Ty) {
+  switch (Ty.SimpleTy) {
+  case MVT::i32:
+    return "i32";
+  case MVT::i64:
+    return "i64";
+  case MVT::f32:
+    return "f32";
+  case MVT::f64:
+    return "f64";
+  default:
+    llvm_unreachable("unsupported type");
   }
 }

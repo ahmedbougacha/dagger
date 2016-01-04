@@ -17,7 +17,6 @@ set(Tests
   CounterTest
   FourIndependentBranchesTest
   FullCoverageSetTest
-  InfiniteTest
   MemcmpTest
   NullDerefTest
   SimpleCmpTest
@@ -38,6 +37,9 @@ set(UninstrumentedTests
   UninstrumentedTest
   )
 
+set(TraceBBTests
+  SimpleTest
+  )
 
 set(TestBinaries)
 
@@ -99,6 +101,11 @@ foreach(Test ${UninstrumentedTests})
   set(TestBinaries ${TestBinaries} LLVMFuzzer-${Test}-Uninstrumented)
 endforeach()
 
+add_subdirectory(trace-bb)
+
+foreach(Test ${TraceBBTests})
+  set(TestBinaries ${TestBinaries} LLVMFuzzer-${Test}-TraceBB)
+endforeach()
 
 set_target_properties(${TestBinaries}
   PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}

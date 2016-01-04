@@ -215,7 +215,7 @@ static void findLiveSetAtInst(Instruction *inst, GCPtrLivenessData &Data,
                               StatepointLiveSetTy &out);
 
 // TODO: Once we can get to the GCStrategy, this becomes
-// Optional<bool> isGCManagedPointer(const Value *V) const override {
+// Optional<bool> isGCManagedPointer(const Type *Ty) const override {
 
 static bool isGCPointerType(Type *T) {
   if (auto *PT = dyn_cast<PointerType>(T))
@@ -253,9 +253,8 @@ static bool containsGCPtrType(Type *Ty) {
   if (ArrayType *AT = dyn_cast<ArrayType>(Ty))
     return containsGCPtrType(AT->getElementType());
   if (StructType *ST = dyn_cast<StructType>(Ty))
-    return std::any_of(
-        ST->subtypes().begin(), ST->subtypes().end(),
-        [](Type *SubType) { return containsGCPtrType(SubType); });
+    return std::any_of(ST->subtypes().begin(), ST->subtypes().end(),
+                       containsGCPtrType);
   return false;
 }
 
@@ -445,21 +444,21 @@ static BaseDefiningValueResult findBaseDefiningValue(Value *I) {
   if (isa<Constant>(I)) {
     assert(!isa<GlobalVariable>(I) && !isa<UndefValue>(I) &&
            "order of checks wrong!");
-    // Note: Finding a constant base for something marked for relocation
-    // doesn't really make sense.  The most likely case is either a) some
-    // screwed up the address space usage or b) your validating against
-    // compiled C++ code w/o the proper separation.  The only real exception
-    // is a null pointer.  You could have generic code written to index of
-    // off a potentially null value and have proven it null.  We also use
-    // null pointers in dead paths of relocation phis (which we might later
-    // want to find a base pointer for).
-    assert(isa<ConstantPointerNull>(I) &&
-           "null is the only case which makes sense");
+    // Note: Even for frontends which don't have constant references, we can
+    // see constants appearing after optimizations.  A simple example is
+    // specialization of an address computation on null feeding into a merge
+    // point where the actual use of the now-constant input is protected by
+    // another null check.  (e.g. test4 in constants.ll)
     return BaseDefiningValueResult(I, true);
   }
 
   if (CastInst *CI = dyn_cast<CastInst>(I)) {
     Value *Def = CI->stripPointerCasts();
+    // If stripping pointer casts changes the address space there is an
+    // addrspacecast in between.
+    assert(cast<PointerType>(Def->getType())->getAddressSpace() ==
+               cast<PointerType>(CI->getType())->getAddressSpace() &&
+           "unsupported addrspacecast");
     // If we find a cast instruction here, it means we've found a cast which is
     // not simply a pointer cast (i.e. an inttoptr).  We don't know how to
     // handle int->ptr conversion.
@@ -478,14 +477,11 @@ static BaseDefiningValueResult findBaseDefiningValue(Value *I) {
 
   if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
     switch (II->getIntrinsicID()) {
-    case Intrinsic::experimental_gc_result_ptr:
     default:
       // fall through to general call handling
       break;
     case Intrinsic::experimental_gc_statepoint:
-    case Intrinsic::experimental_gc_result_float:
-    case Intrinsic::experimental_gc_result_int:
-      llvm_unreachable("these don't produce pointers");
+      llvm_unreachable("statepoints don't produce pointers");
     case Intrinsic::experimental_gc_relocate: {
       // Rerunning safepoint insertion after safepoints are already
       // inserted is not supported.  It could probably be made to work,
@@ -642,7 +638,7 @@ public:
 
 private:
   Status status;
-  Value *base; // non null only if status == base
+  AssertingVH<Value> base; // non null only if status == base
 };
 }
 
@@ -1099,10 +1095,10 @@ static Value *findBasePointer(Value *I, DefiningValueMapTy &cache) {
     NewInsts.erase(BaseI);
     ReverseMap.erase(BaseI);
     BaseI->replaceAllUsesWith(Replacement);
-    BaseI->eraseFromParent();
     assert(States.count(BDV));
     assert(States[BDV].isConflict() && States[BDV].getBase() == BaseI);
     States[BDV] = BDVState(BDVState::Conflict, Replacement);
+    BaseI->eraseFromParent();
   };
   const DataLayout &DL = cast<Instruction>(def)->getModule()->getDataLayout();
   while (!Worklist.empty()) {
@@ -1144,7 +1140,7 @@ static Value *findBasePointer(Value *I, DefiningValueMapTy &cache) {
     }
     cache[BDV] = base;
   }
-  assert(cache.find(def) != cache.end());
+  assert(cache.count(def));
   return cache[def];
 }
 
@@ -1212,8 +1208,11 @@ static void findBasePointers(DominatorTree &DT, DefiningValueMapTy &DVCache,
     std::sort(Temp.begin(), Temp.end(), order_by_name);
     for (Value *Ptr : Temp) {
       Value *Base = PointerToBase[Ptr];
-      errs() << " derived %" << Ptr->getName() << " base %" << Base->getName()
-             << "\n";
+      errs() << " derived ";
+      Ptr->printAsOperand(errs(), false);
+      errs() << " base ";
+      Base->printAsOperand(errs(), false);
+      errs() << "\n";;
     }
   }
 
@@ -1227,7 +1226,7 @@ static void recomputeLiveInValues(GCPtrLivenessData &RevisedLivenessData,
                                   PartiallyConstructedSafepointRecord &result);
 
 static void recomputeLiveInValues(
-    Function &F, DominatorTree &DT, Pass *P, ArrayRef<CallSite> toUpdate,
+    Function &F, DominatorTree &DT, ArrayRef<CallSite> toUpdate,
     MutableArrayRef<struct PartiallyConstructedSafepointRecord> records) {
   // TODO-PERF: reuse the original liveness, then simply run the dataflow
   // again.  The old values are still live and will help it stabilize quickly.
@@ -1506,11 +1505,8 @@ makeStatepointExplicitImpl(const CallSite CS, /* to replace */
     Builder.SetInsertPoint(&*UnwindBlock->getFirstInsertionPt());
     Builder.SetCurrentDebugLocation(ToReplace->getDebugLoc());
 
-    // Extract second element from landingpad return value. We will attach
-    // exceptional gc relocates to it.
-    Instruction *ExceptionalToken =
-        cast<Instruction>(Builder.CreateExtractValue(
-            UnwindBlock->getLandingPadInst(), 1, "relocate_token"));
+    // Attach exceptional gc relocates to the landingpad.
+    Instruction *ExceptionalToken = UnwindBlock->getLandingPadInst();
     Result.UnwindToken = ExceptionalToken;
 
     const unsigned LiveStartIdx = Statepoint(Token).gcArgsStartIdx();
@@ -1918,7 +1914,7 @@ static void insertUseHolderAfter(CallSite &CS, const ArrayRef<Value *> Values,
     // No values to hold live, might as well not insert the empty holder
     return;
 
-  Module *M = CS.getInstruction()->getParent()->getParent()->getParent();
+  Module *M = CS.getInstruction()->getModule();
   // Use a dummy vararg function to actually hold the values live
   Function *Func = cast<Function>(M->getOrInsertFunction(
       "__tmp_use", FunctionType::get(Type::getVoidTy(M->getContext()), true)));
@@ -1938,7 +1934,7 @@ static void insertUseHolderAfter(CallSite &CS, const ArrayRef<Value *> Values,
 }
 
 static void findLiveReferences(
-    Function &F, DominatorTree &DT, Pass *P, ArrayRef<CallSite> toUpdate,
+    Function &F, DominatorTree &DT, ArrayRef<CallSite> toUpdate,
     MutableArrayRef<struct PartiallyConstructedSafepointRecord> records) {
   GCPtrLivenessData OriginalLivenessData;
   computeLiveInValues(DT, F, OriginalLivenessData);
@@ -2105,16 +2101,12 @@ static bool findRematerializableChainToBasePointer(
   }
 
   if (CastInst *CI = dyn_cast<CastInst>(CurrentValue)) {
-    Value *Def = CI->stripPointerCasts();
-
-    // This two checks are basically similar. First one is here for the
-    // consistency with findBasePointers logic.
-    assert(!isa<CastInst>(Def) && "not a pointer cast found");
     if (!CI->isNoopCast(CI->getModule()->getDataLayout()))
       return false;
 
     ChainToBase.push_back(CI);
-    return findRematerializableChainToBasePointer(ChainToBase, Def, BaseValue);
+    return findRematerializableChainToBasePointer(ChainToBase,
+                                                  CI->getOperand(0), BaseValue);
   }
 
   // Not supported instruction in the chain
@@ -2277,7 +2269,8 @@ static void rematerializeLiveValues(CallSite CS,
   }
 }
 
-static bool insertParsePoints(Function &F, DominatorTree &DT, Pass *P,
+static bool insertParsePoints(Function &F, DominatorTree &DT,
+                              TargetTransformInfo &TTI,
                               SmallVectorImpl<CallSite> &ToUpdate) {
 #ifndef NDEBUG
   // sanity check the input
@@ -2334,7 +2327,7 @@ static bool insertParsePoints(Function &F, DominatorTree &DT, Pass *P,
 
   // A) Identify all gc pointers which are statically live at the given call
   // site.
-  findLiveReferences(F, DT, P, ToUpdate, Records);
+  findLiveReferences(F, DT, ToUpdate, Records);
 
   // B) Find the base pointers for each live pointer
   /* scope for caching */ {
@@ -2376,16 +2369,33 @@ static bool insertParsePoints(Function &F, DominatorTree &DT, Pass *P,
   // By selecting base pointers, we've effectively inserted new uses. Thus, we
   // need to rerun liveness.  We may *also* have inserted new defs, but that's
   // not the key issue.
-  recomputeLiveInValues(F, DT, P, ToUpdate, Records);
+  recomputeLiveInValues(F, DT, ToUpdate, Records);
 
   if (PrintBasePointers) {
     for (auto &Info : Records) {
       errs() << "Base Pairs: (w/Relocation)\n";
-      for (auto Pair : Info.PointerToBase)
-        errs() << " derived %" << Pair.first->getName() << " base %"
-               << Pair.second->getName() << "\n";
+      for (auto Pair : Info.PointerToBase) {
+        errs() << " derived ";
+        Pair.first->printAsOperand(errs(), false);
+        errs() << " base ";
+        Pair.second->printAsOperand(errs(), false);
+        errs() << "\n";
+      }
     }
   }
+
+  // It is possible that non-constant live variables have a constant base.  For
+  // example, a GEP with a variable offset from a global.  In this case we can
+  // remove it from the liveset.  We already don't add constants to the liveset
+  // because we assume they won't move at runtime and the GC doesn't need to be
+  // informed about them.  The same reasoning applies if the base is constant.
+  // Note that the relocation placement code relies on this filtering for
+  // correctness as it expects the base to be in the liveset, which isn't true
+  // if the base is constant.
+  for (auto &Info : Records)
+    for (auto &BasePair : Info.PointerToBase)
+      if (isa<Constant>(BasePair.second))
+        Info.LiveSet.erase(BasePair.first);
 
   for (CallInst *CI : Holders)
     CI->eraseFromParent();
@@ -2407,9 +2417,6 @@ static bool insertParsePoints(Function &F, DominatorTree &DT, Pass *P,
   // In order to reduce live set of statepoint we might choose to rematerialize
   // some values instead of relocating them. This is purely an optimization and
   // does not influence correctness.
-  TargetTransformInfo &TTI =
-    P->getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
-
   for (size_t i = 0; i < Records.size(); i++)
     rematerializeLiveValues(ToUpdate[i], Records[i], TTI);
 
@@ -2597,6 +2604,8 @@ bool RewriteStatepointsForGC::runOnFunction(Function &F) {
     return false;
 
   DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(F).getDomTree();
+  TargetTransformInfo &TTI =
+      getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
 
   auto NeedsRewrite = [](Instruction &I) {
     if (UseDeoptBundles) {
@@ -2677,7 +2686,7 @@ bool RewriteStatepointsForGC::runOnFunction(Function &F) {
       }
   }
 
-  MadeChange |= insertParsePoints(F, DT, this, ParsePointNeeded);
+  MadeChange |= insertParsePoints(F, DT, TTI, ParsePointNeeded);
   return MadeChange;
 }
 

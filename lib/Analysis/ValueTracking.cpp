@@ -1743,9 +1743,10 @@ bool isKnownToBeAPowerOfTwo(Value *V, bool OrZero, unsigned Depth,
     return false;
 
   Value *X = nullptr, *Y = nullptr;
-  // A shift of a power of two is a power of two or zero.
+  // A shift left or a logical shift right of a power of two is a power of two
+  // or zero.
   if (OrZero && (match(V, m_Shl(m_Value(X), m_Value())) ||
-                 match(V, m_Shr(m_Value(X), m_Value()))))
+                 match(V, m_LShr(m_Value(X), m_Value()))))
     return isKnownToBeAPowerOfTwo(X, /*OrZero*/ true, Depth, Q, DL);
 
   if (ZExtInst *ZI = dyn_cast<ZExtInst>(V))
@@ -3179,6 +3180,8 @@ static bool isAligned(const Value *Base, APInt Offset, unsigned Align,
 
   if (!BaseAlign) {
     Type *Ty = Base->getType()->getPointerElementType();
+    if (!Ty->isSized())
+      return false;
     BaseAlign = DL.getABITypeAlignment(Ty);
   }
 
@@ -3189,7 +3192,9 @@ static bool isAligned(const Value *Base, APInt Offset, unsigned Align,
 }
 
 static bool isAligned(const Value *Base, unsigned Align, const DataLayout &DL) {
-  APInt Offset(DL.getTypeStoreSizeInBits(Base->getType()), 0);
+  Type *Ty = Base->getType();
+  assert(Ty->isSized() && "must be sized");
+  APInt Offset(DL.getTypeStoreSizeInBits(Ty), 0);
   return isAligned(Base, Offset, Align, DL);
 }
 
@@ -3431,13 +3436,11 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V,
   case Instruction::AtomicCmpXchg:
   case Instruction::LandingPad:
   case Instruction::Resume:
+  case Instruction::CatchSwitch:
   case Instruction::CatchPad:
-  case Instruction::CatchEndPad:
   case Instruction::CatchRet:
   case Instruction::CleanupPad:
-  case Instruction::CleanupEndPad:
   case Instruction::CleanupRet:
-  case Instruction::TerminatePad:
     return false; // Misc instructions which have effects
   }
 }

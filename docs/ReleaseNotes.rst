@@ -41,6 +41,33 @@ Non-comprehensive list of changes in this release
   in the 3.9 release. Please migrate to using CMake. For more information see:
   `Building LLVM with CMake <CMake.html>`_
 
+* The C API function LLVMLinkModules is deprecated. It will be removed in the
+  3.9 release. Please migrate to LLVMLinkModules2. Unlike the old function the
+  new one
+
+   * Doesn't take an unused parameter.
+   * Destroys the source instead of only damaging it.
+   * Does not record a message. Use the diagnostic handler instead.
+
+* The C API functions LLVMParseBitcode, LLVMParseBitcodeInContext,
+  LLVMGetBitcodeModuleInContext and LLVMGetBitcodeModule have been deprecated.
+  They will be removed in 3.9. Please migrate to the versions with a 2 suffix.
+  Unlike the old ones the new ones do not record a diagnostic message. Use
+  the diagnostic handler instead.
+
+* The deprecated C APIs LLVMGetBitcodeModuleProviderInContext and
+  LLVMGetBitcodeModuleProvider have been removed.
+
+* The deprecated C APIs LLVMCreateExecutionEngine, LLVMCreateInterpreter,
+  LLVMCreateJITCompiler, LLVMAddModuleProvider and LLVMRemoveModuleProvider
+  have been removed.
+
+* With this release, the C API headers have been reorganized to improve build
+  time. Type specific declarations have been moved to Type.h, and error
+  handling routines have been moved to ErrorHandling.h. Both are included in
+  Core.h so nothing should change for projects directly including the headers,
+  but transitive dependencies may be affected.
+
 .. NOTE
    For small 1-3 sentence descriptions, just add an entry at the end of
    this list. If your description won't fit comfortably in one bullet
@@ -78,10 +105,21 @@ Changes to the PowerPC Target
  During this release ...
 
 
+Changes to the X86 Target
+-----------------------------
+
+ During this release ...
+
+* TLS is enabled for Cygwin as emutls.
+
+
 Changes to the OCaml bindings
 -----------------------------
 
  During this release ...
+
+* The ocaml function link_modules has been replaced with link_modules' which
+  uses LLVMLinkModules2.
 
 
 External Open Source Projects Using LLVM 3.8
