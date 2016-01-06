@@ -17374,6 +17374,18 @@ static SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, const X86Subtarget *Subtarget,
   if (!IntrData) {
     if (IntNo == llvm::Intrinsic::x86_seh_ehregnode)
       return MarkEHRegistrationNode(Op, DAG);
+    if (IntNo == llvm::Intrinsic::x86_flags_read_u32 ||
+        IntNo == llvm::Intrinsic::x86_flags_read_u64 ||
+        IntNo == llvm::Intrinsic::x86_flags_write_u32 ||
+        IntNo == llvm::Intrinsic::x86_flags_write_u64) {
+      // We need a frame pointer because this will get lowered to a PUSH/POP
+      // sequence.
+      MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
+      MFI->setHasOpaqueSPAdjustment(true);
+      // Don't do anything here, we will expand these intrinsics out later
+      // during ExpandISelPseudos in EmitInstrWithCustomInserter.
+      return SDValue();
+    }
     return SDValue();
   }
 
@@ -22541,8 +22553,6 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
   case X86::RDFLAGS32:
   case X86::RDFLAGS64: {
     DebugLoc DL = MI->getDebugLoc();
-    MachineFunction *MF = BB->getParent();
-    MF->getFrameInfo()->setHasOpaqueSPAdjustment(true);
     const TargetInstrInfo *TII = Subtarget->getInstrInfo();
     unsigned PushF =
         MI->getOpcode() == X86::RDFLAGS32 ? X86::PUSHF32 : X86::PUSHF64;
@@ -22558,8 +22568,6 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
   case X86::WRFLAGS32:
   case X86::WRFLAGS64: {
     DebugLoc DL = MI->getDebugLoc();
-    MachineFunction *MF = BB->getParent();
-    MF->getFrameInfo()->setHasOpaqueSPAdjustment(true);
     const TargetInstrInfo *TII = Subtarget->getInstrInfo();
     unsigned Push =
         MI->getOpcode() == X86::WRFLAGS32 ? X86::PUSH32r : X86::PUSH64r;
@@ -23559,6 +23567,31 @@ static SDValue PerformTargetShuffleCombine(SDValue N, SelectionDAG &DAG,
       if (isShuffleEquivalent(Op1, ShufOp, Mask, ExpectedMask))
         return DAG.getNode(X86ISD::UNPCKH, DL, VT, N.getOperand(0), ShufOp);
     }
+    return SDValue();
+  }
+  case X86ISD::BLENDI: {
+    SDValue V0 = N->getOperand(0);
+    SDValue V1 = N->getOperand(1);
+    assert(VT == V0.getSimpleValueType() && VT == V1.getSimpleValueType() &&
+           "Unexpected input vector types");
+
+    // Canonicalize a v2f64 blend with a mask of 2 by swapping the vector
+    // operands and changing the mask to 1. This saves us a bunch of
+    // pattern-matching possibilities related to scalar math ops in SSE/AVX.
+    // x86InstrInfo knows how to commute this back after instruction selection
+    // if it would help register allocation.
+
+    // TODO: If optimizing for size or a processor that doesn't suffer from
+    // partial register update stalls, this should be transformed into a MOVSD
+    // instruction because a MOVSD is 1-2 bytes smaller than a BLENDPD.
+
+    if (VT == MVT::v2f64)
+      if (auto *Mask = dyn_cast<ConstantSDNode>(N->getOperand(2)))
+        if (Mask->getZExtValue() == 2 && !isShuffleFoldableLoad(V0)) {
+          SDValue NewMask = DAG.getConstant(1, DL, MVT::i8);
+          return DAG.getNode(X86ISD::BLENDI, DL, VT, V1, V0, NewMask);
+        }
+
     return SDValue();
   }
   default:
@@ -27463,34 +27496,6 @@ static SDValue PerformISDSETCCCombine(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
-static SDValue PerformBLENDICombine(SDNode *N, SelectionDAG &DAG) {
-  SDValue V0 = N->getOperand(0);
-  SDValue V1 = N->getOperand(1);
-  SDLoc DL(N);
-  EVT VT = N->getValueType(0);
-  assert(VT == V0.getValueType() && VT == V1.getValueType() &&
-         "Unexpected input vector types");
-
-  // Canonicalize a v2f64 blend with a mask of 2 by swapping the vector
-  // operands and changing the mask to 1. This saves us a bunch of
-  // pattern-matching possibilities related to scalar math ops in SSE/AVX.
-  // x86InstrInfo knows how to commute this back after instruction selection
-  // if it would help register allocation.
-
-  // TODO: If optimizing for size or a processor that doesn't suffer from
-  // partial register update stalls, this should be transformed into a MOVSD
-  // instruction because a MOVSD is 1-2 bytes smaller than a BLENDPD.
-
-  if (VT == MVT::v2f64)
-    if (auto *Mask = dyn_cast<ConstantSDNode>(N->getOperand(2)))
-      if (Mask->getZExtValue() == 2 && !isShuffleFoldableLoad(V0)) {
-        SDValue NewMask = DAG.getConstant(1, DL, MVT::i8);
-        return DAG.getNode(X86ISD::BLENDI, DL, VT, V1, V0, NewMask);
-      }
-
-  return SDValue();
-}
-
 static SDValue PerformGatherScatterCombine(SDNode *N, SelectionDAG &DAG) {
   SDLoc DL(N);
   // Gather and Scatter instructions use k-registers for masks. The type of
@@ -27934,6 +27939,7 @@ SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
   case X86ISD::VZEXT:       return performVZEXTCombine(N, DAG, DCI, Subtarget);
   case X86ISD::SHUFP:       // Handle all target specific shuffles
   case X86ISD::PALIGNR:
+  case X86ISD::BLENDI:
   case X86ISD::UNPCKH:
   case X86ISD::UNPCKL:
   case X86ISD::MOVHLPS:
@@ -27948,7 +27954,6 @@ SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
   case X86ISD::VPERM2X128:
   case ISD::VECTOR_SHUFFLE: return PerformShuffleCombine(N, DAG, DCI,Subtarget);
   case ISD::FMA:            return PerformFMACombine(N, DAG, Subtarget);
-  case X86ISD::BLENDI:    return PerformBLENDICombine(N, DAG);
   case ISD::MGATHER:
   case ISD::MSCATTER:       return PerformGatherScatterCombine(N, DAG);
   }
