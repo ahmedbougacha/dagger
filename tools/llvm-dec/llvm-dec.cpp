@@ -40,7 +40,8 @@ static cl::opt<std::string>
 TripleName("triple", cl::desc("Target triple to disassemble for, "
                               "see -version for available targets"));
 
-static cl::opt<uint64_t>
+// cl::opt<uint64_t> isn't currently supported (PR19665).
+static cl::opt<unsigned long long>
 TranslationEntrypoint("entrypoint",
                       cl::desc("Address to start translating from "
                                "(default = object entrypoint)"));
