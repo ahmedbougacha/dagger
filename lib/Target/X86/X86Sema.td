@@ -137,8 +137,8 @@ class Sema_MOVX_m<Instruction inst, SDNode op, RegisterClass destRC, ValueType V
 def : Sema_MOVX_m<MOVZX16rm8,    zext, GR16, i8>;
 def : Sema_MOVX_m<MOVZX32rm8,    zext, GR32, i8>;
 def : Sema_MOVX_m<MOVZX32rm16,   zext, GR32, i16>;
-def : Sema_MOVX_m<MOVZX64rm8_Q,  zext, GR64, i8>;
-def : Sema_MOVX_m<MOVZX64rm16_Q, zext, GR64, i16>;
+def : Sema_MOVX_m<MOVZX64rm8,    zext, GR64, i8>;
+def : Sema_MOVX_m<MOVZX64rm16,   zext, GR64, i16>;
 def : Sema_MOVX_m<MOVSX16rm8,    sext, GR16, i8>;
 def : Sema_MOVX_m<MOVSX32rm8,    sext, GR32, i8>;
 def : Sema_MOVX_m<MOVSX32rm16,   sext, GR32, i16>;
