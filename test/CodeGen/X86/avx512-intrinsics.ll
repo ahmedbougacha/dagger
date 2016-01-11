@@ -5731,7 +5731,7 @@ define <8 x double>@test_int_x86_avx512_mask_getmant_pd_512(<8 x double> %x0, <8
 ; CHECK-NEXT:    movzbl %dil, %eax
 ; CHECK-NEXT:    kmovw %eax, %k1
 ; CHECK-NEXT:    vgetmantpd $11, %zmm0, %zmm1 {%k1}
-; CHECK-NEXT:    vgetmantpd $11,{sae}, %zmm0, %zmm0
+; CHECK-NEXT:    vgetmantpd $11, {sae}, %zmm0, %zmm0
 ; CHECK-NEXT:    vaddpd %zmm0, %zmm1, %zmm0
 ; CHECK-NEXT:    retq
   %res = call <8 x double> @llvm.x86.avx512.mask.getmant.pd.512(<8 x double> %x0, i32 11, <8 x double> %x2, i8 %x3, i32 4)
@@ -5747,7 +5747,7 @@ define <16 x float>@test_int_x86_avx512_mask_getmant_ps_512(<16 x float> %x0, <1
 ; CHECK:       ## BB#0:
 ; CHECK-NEXT:    kmovw %edi, %k1
 ; CHECK-NEXT:    vgetmantps $11, %zmm0, %zmm1 {%k1}
-; CHECK-NEXT:    vgetmantps $11,{sae}, %zmm0, %zmm0
+; CHECK-NEXT:    vgetmantps $11, {sae}, %zmm0, %zmm0
 ; CHECK-NEXT:    vaddps %zmm0, %zmm1, %zmm0
 ; CHECK-NEXT:    retq
   %res = call <16 x float> @llvm.x86.avx512.mask.getmant.ps.512(<16 x float> %x0, i32 11, <16 x float> %x2, i16 %x3, i32 4)
@@ -5767,7 +5767,7 @@ define <2 x double>@test_int_x86_avx512_mask_getmant_sd(<2 x double> %x0, <2 x d
 ; CHECK-NEXT:    vgetmantsd $11, %xmm1, %xmm0, %xmm3 {%k1}
 ; CHECK-NEXT:    vgetmantsd $11, %xmm1, %xmm0, %xmm4 {%k1} {z}
 ; CHECK-NEXT:    vgetmantsd $11, %xmm1, %xmm0, %xmm5
-; CHECK-NEXT:    vgetmantsd $11,{sae}, %xmm1, %xmm0, %xmm2 {%k1}
+; CHECK-NEXT:    vgetmantsd $11, {sae}, %xmm1, %xmm0, %xmm2 {%k1}
 ; CHECK-NEXT:    vaddpd %xmm4, %xmm3, %xmm0
 ; CHECK-NEXT:    vaddpd %xmm5, %xmm2, %xmm1
 ; CHECK-NEXT:    vaddpd %xmm1, %xmm0, %xmm0
@@ -5792,7 +5792,7 @@ define <4 x float>@test_int_x86_avx512_mask_getmant_ss(<4 x float> %x0, <4 x flo
 ; CHECK-NEXT:    vgetmantss $11, %xmm1, %xmm0, %xmm2 {%k1}
 ; CHECK-NEXT:    vgetmantss $11, %xmm1, %xmm0, %xmm3 {%k1} {z}
 ; CHECK-NEXT:    vgetmantss $11, %xmm1, %xmm0, %xmm4
-; CHECK-NEXT:    vgetmantss $11,{sae}, %xmm1, %xmm0, %xmm0
+; CHECK-NEXT:    vgetmantss $11, {sae}, %xmm1, %xmm0, %xmm0
 ; CHECK-NEXT:    vaddps %xmm3, %xmm2, %xmm1
 ; CHECK-NEXT:    vaddps %xmm4, %xmm0, %xmm0
 ; CHECK-NEXT:    vaddps %xmm0, %xmm1, %xmm0
@@ -6560,4 +6560,45 @@ define <16 x i32>@test_int_x86_avx512_mask_pshuf_d_512(<16 x i32> %x0, i16 %x1, 
 	%res3 = add <16 x i32> %res, %res1
 	%res4 = add <16 x i32> %res3, %res2
 	ret <16 x i32> %res4
+}
+
+declare <16 x i32> @llvm.x86.avx512.mask.prorv.d.512(<16 x i32>, <16 x i32>, <16 x i32>, i16)
+
+define <16 x i32>@test_int_x86_avx512_mask_prorv_d_512(<16 x i32> %x0, <16 x i32> %x1, <16 x i32> %x2, i16 %x3) {
+; CHECK-LABEL: test_int_x86_avx512_mask_prorv_d_512:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    kmovw %edi, %k1 
+; CHECK-NEXT:    vprorvd %zmm1, %zmm0, %zmm2 {%k1} 
+; CHECK-NEXT:    vprorvd %zmm1, %zmm0, %zmm3 {%k1} {z} 
+; CHECK-NEXT:    vprorvd %zmm1, %zmm0, %zmm0 
+; CHECK-NEXT:    vpaddd %zmm3, %zmm2, %zmm1 
+; CHECK-NEXT:    vpaddd %zmm0, %zmm1, %zmm0 
+; CHECK-NEXT:    retq 
+  %res = call <16 x i32> @llvm.x86.avx512.mask.prorv.d.512(<16 x i32> %x0, <16 x i32> %x1, <16 x i32> %x2, i16 %x3)
+  %res1 = call <16 x i32> @llvm.x86.avx512.mask.prorv.d.512(<16 x i32> %x0, <16 x i32> %x1, <16 x i32> zeroinitializer, i16 %x3)
+  %res2 = call <16 x i32> @llvm.x86.avx512.mask.prorv.d.512(<16 x i32> %x0, <16 x i32> %x1, <16 x i32> %x2, i16 -1)
+  %res3 = add <16 x i32> %res, %res1
+  %res4 = add <16 x i32> %res3, %res2
+  ret <16 x i32> %res4
+}
+
+declare <8 x i64> @llvm.x86.avx512.mask.prorv.q.512(<8 x i64>, <8 x i64>, <8 x i64>, i8)
+
+define <8 x i64>@test_int_x86_avx512_mask_prorv_q_512(<8 x i64> %x0, <8 x i64> %x1, <8 x i64> %x2, i8 %x3) {
+; CHECK-LABEL: test_int_x86_avx512_mask_prorv_q_512:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    movzbl %dil, %eax 
+; CHECK-NEXT:    kmovw %eax, %k1 
+; CHECK-NEXT:    vprorvq %zmm1, %zmm0, %zmm2 {%k1} 
+; CHECK-NEXT:    vprorvq %zmm1, %zmm0, %zmm3 {%k1} {z} 
+; CHECK-NEXT:    vprorvq %zmm1, %zmm0, %zmm0 
+; CHECK-NEXT:    vpaddq %zmm3, %zmm2, %zmm1 
+; CHECK-NEXT:    vpaddq %zmm0, %zmm1, %zmm0 
+; CHECK-NEXT:    retq 
+  %res = call <8 x i64> @llvm.x86.avx512.mask.prorv.q.512(<8 x i64> %x0, <8 x i64> %x1, <8 x i64> %x2, i8 %x3)
+  %res1 = call <8 x i64> @llvm.x86.avx512.mask.prorv.q.512(<8 x i64> %x0, <8 x i64> %x1, <8 x i64> zeroinitializer, i8 %x3)
+  %res2 = call <8 x i64> @llvm.x86.avx512.mask.prorv.q.512(<8 x i64> %x0, <8 x i64> %x1, <8 x i64> %x2, i8 -1)
+  %res3 = add <8 x i64> %res, %res1
+  %res4 = add <8 x i64> %res3, %res2
+  ret <8 x i64> %res4
 }
