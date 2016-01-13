@@ -324,9 +324,12 @@ private:
   void flatten(const TreePatternNode *TPN, NodeSemantics *Parent) {
     if (const CGIOperandList::OperandInfo *OpInfo =
             getNamedOperand(TPN->getName())) {
+      assert(Parent != nullptr && "An operand node was at the top-level?");
       flattenOperand(TPN, Parent, OpInfo);
       return;
-    } else if (TPN->isLeaf()) {
+    }
+    if (TPN->isLeaf()) {
+      assert(Parent != nullptr && "A leaf node was at the top-level?");
       flattenLeaf(TPN, Parent);
       return;
     }
