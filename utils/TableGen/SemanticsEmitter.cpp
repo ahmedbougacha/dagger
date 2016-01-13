@@ -14,6 +14,7 @@
 
 #include "CodeGenDAGPatterns.h"
 #include "CodeGenTarget.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/PrettyStackTrace.h"
@@ -38,8 +39,7 @@ public:
   /// Keep track of the equivalence between target-specific SDNodes and
   /// their target-independent equivalent, as described in definitions
   /// derived of the SDNodeEquiv class.
-  typedef std::map<Record *, Record *> SDNodeEquivMap;
-  SDNodeEquivMap SDNodeEquiv;
+  DenseMap<Record *, Record *> SDNodeEquiv;
 
   /// Unique constant integers, and keep track of their index in a table.
   /// This is done so that the generated semantics table is an unsigned[],
@@ -305,11 +305,10 @@ private:
   ///
   void flattenSDNode(const TreePatternNode *TPN, NodeSemantics &NS) {
     Record *Operator = TPN->getOperator();
-    SemanticsTarget::SDNodeEquivMap::const_iterator It =
-        Target.SDNodeEquiv.find(Operator);
     NS.Opcode = Operator->getValueAsString("Opcode");
-    if (It != Target.SDNodeEquiv.end()) {
-      Record *EquivNode = It->second;
+    auto EquivIt = Target.SDNodeEquiv.find(Operator);
+    if (EquivIt != Target.SDNodeEquiv.end()) {
+      Record *EquivNode = EquivIt->second;
       const SDNodeInfo &SDNI = Target.CGPatterns.getSDNodeInfo(EquivNode);
       NS.Opcode = SDNI.getEnumName();
       for (unsigned i = 0, e = TPN->getNumTypes() - SDNI.getNumResults();
