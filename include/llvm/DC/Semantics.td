@@ -1,3 +1,17 @@
+//===-- Semantics.td - Target Independent Inst. Semantics --*- tablegen -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines the basic interfaces with which to define
+// instruction-level semantics, mainly around the Pattern and Inst classes.
+//
+//===----------------------------------------------------------------------===//
+
 // Declare that pattern represents the semantics of inst.
 class Semantics<Instruction inst, list<dag> pattern> {
   list<dag> Pattern = pattern;
