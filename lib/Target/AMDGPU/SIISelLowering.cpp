@@ -259,7 +259,6 @@ SITargetLowering::SITargetLowering(TargetMachine &TM,
   setTargetDAGCombine(ISD::SMAX);
   setTargetDAGCombine(ISD::UMIN);
   setTargetDAGCombine(ISD::UMAX);
-  setTargetDAGCombine(ISD::SELECT_CC);
   setTargetDAGCombine(ISD::SETCC);
   setTargetDAGCombine(ISD::AND);
   setTargetDAGCombine(ISD::OR);
@@ -1158,6 +1157,13 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
 
   switch (IntrinsicID) {
   case Intrinsic::amdgcn_dispatch_ptr:
+    if (!Subtarget->isAmdHsaOS()) {
+      DiagnosticInfoUnsupported BadIntrin(*MF.getFunction(),
+                                          "hsa intrinsic without hsa target");
+      DAG.getContext()->diagnose(BadIntrin);
+      return DAG.getUNDEF(VT);
+    }
+
     return CreateLiveInRegister(DAG, &AMDGPU::SReg_64RegClass,
       TRI->getPreloadedValue(MF, SIRegisterInfo::DISPATCH_PTR), VT);
 
@@ -2027,7 +2033,7 @@ SDValue SITargetLowering::PerformDAGCombine(SDNode *N,
 
   case ISD::UINT_TO_FP: {
     return performUCharToFloatCombine(N, DCI);
-
+  }
   case ISD::FADD: {
     if (DCI.getDAGCombineLevel() < AfterLegalizeDAG)
       break;
@@ -2108,7 +2114,6 @@ SDValue SITargetLowering::PerformDAGCombine(SDNode *N,
     }
 
     break;
-  }
   }
   case ISD::LOAD:
   case ISD::STORE:

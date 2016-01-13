@@ -2707,30 +2707,6 @@ defm VMOVUPD : avx512_load_vl<0x10, "vmovupd", avx512vl_f64_info, HasAVX512, 0>,
                avx512_store_vl<0x11, "vmovupd", avx512vl_f64_info, HasAVX512>,
                PD, VEX_W, EVEX_CD8<64, CD8VF>;
 
-def: Pat<(v8f64 (int_x86_avx512_mask_loadu_pd_512 addr:$ptr,
-                (bc_v8f64 (v16i32 immAllZerosV)), GR8:$mask)),
-       (VMOVUPDZrmkz (v8i1 (COPY_TO_REGCLASS GR8:$mask, VK8WM)), addr:$ptr)>;
-
-def: Pat<(v16f32 (int_x86_avx512_mask_loadu_ps_512 addr:$ptr,
-                 (bc_v16f32 (v16i32 immAllZerosV)), GR16:$mask)),
-       (VMOVUPSZrmkz (v16i1 (COPY_TO_REGCLASS GR16:$mask, VK16WM)), addr:$ptr)>;
-
-def: Pat<(v8f64 (int_x86_avx512_mask_load_pd_512 addr:$ptr,
-                (bc_v8f64 (v16i32 immAllZerosV)), GR8:$mask)),
-       (VMOVAPDZrmkz (v8i1 (COPY_TO_REGCLASS GR8:$mask, VK8WM)), addr:$ptr)>;
-
-def: Pat<(v16f32 (int_x86_avx512_mask_load_ps_512 addr:$ptr,
-                 (bc_v16f32 (v16i32 immAllZerosV)), GR16:$mask)),
-       (VMOVAPSZrmkz (v16i1 (COPY_TO_REGCLASS GR16:$mask, VK16WM)), addr:$ptr)>;
-
-def: Pat<(v8f64 (int_x86_avx512_mask_load_pd_512 addr:$ptr,
-                (bc_v8f64 (v16i32 immAllZerosV)), (i8 -1))),
-       (VMOVAPDZrm addr:$ptr)>;
-
-def: Pat<(v16f32 (int_x86_avx512_mask_load_ps_512 addr:$ptr,
-                 (bc_v16f32 (v16i32 immAllZerosV)), (i16 -1))),
-       (VMOVAPSZrm addr:$ptr)>;
-
 def: Pat<(int_x86_avx512_mask_storeu_ps_512 addr:$ptr, (v16f32 VR512:$src),
           GR16:$mask),
          (VMOVUPSZmrk addr:$ptr, (v16i1 (COPY_TO_REGCLASS GR16:$mask, VK16WM)),
@@ -4081,7 +4057,7 @@ defm VPSRA : avx512_shift_rmi_dq<0x72, 0x72, MRM4r, MRM4m, "vpsra", X86vsrai>,
              avx512_shift_rmi_w<0x71, MRM4r, MRM4m, "vpsraw", X86vsrai>, AVX512BIi8Base, EVEX_4V;
 
 defm VPROR : avx512_shift_rmi_dq<0x72, 0x72, MRM0r, MRM0m, "vpror", rotr>, AVX512BIi8Base, EVEX_4V;
-defm VPROL : avx512_shift_rmi_dq<0x72, 0x72, MRM1r, MRM1m, "vprol", rotl>, AVX512BIi8Base, EVEX_4V;
+defm VPROL : avx512_shift_rmi_dq<0x72, 0x72, MRM1r, MRM1m, "vprol", X86vrotli>, AVX512BIi8Base, EVEX_4V;
 
 defm VPSLL : avx512_shift_types<0xF2, 0xF3, 0xF1, "vpsll", X86vshl>;
 defm VPSRA : avx512_shift_types<0xE2, 0xE2, 0xE1, "vpsra", X86vsra>;

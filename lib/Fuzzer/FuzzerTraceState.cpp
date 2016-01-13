@@ -76,7 +76,7 @@
 #include <algorithm>
 #include <cstring>
 #include <thread>
-#include <unordered_map>
+#include <map>
 
 #if !LLVM_FUZZER_SUPPORTS_DFSAN
 // Stubs for dfsan for platforms where dfsan does not exist and weak
@@ -170,25 +170,6 @@ struct TraceBasedMutation {
   uint8_t  Data[kMaxSize];
 };
 
-static void PrintDataByte(uint8_t Byte) {
-  if (Byte == '\\')
-    Printf("\\\\");
-  else if (Byte == '"')
-    Printf("\\\"");
-  else if (Byte >= 32 && Byte < 127)
-    Printf("%c", Byte);
-  else
-    Printf("\\x02x", Byte);
-}
-
-static void PrintData(const uint8_t *Data, size_t Size) {
-  Printf("\"");
-  for (size_t i = 0; i < Size; i++) {
-    PrintDataByte(Data[i]);
-  }
-  Printf("\"");
-}
-
 const size_t TraceBasedMutation::kMaxSize;
 
 class TraceState {
@@ -235,7 +216,26 @@ class TraceState {
     RecordingTraces = false;
     for (size_t i = 0; i < NumMutations; i++) {
       auto &M = Mutations[i];
-      USF.GetMD().AddWordToAutoDictionary(Unit(M.Data, M.Data + M.Size), M.Pos);
+      Unit U(M.Data, M.Data + M.Size);
+      if (Options.Verbosity >= 2) {
+        AutoDictUnitCounts[U]++;
+        AutoDictAdds++;
+        if ((AutoDictAdds & (AutoDictAdds - 1)) == 0) {
+          typedef std::pair<size_t, Unit> CU;
+          std::vector<CU> CountedUnits;
+          for (auto &I : AutoDictUnitCounts)
+            CountedUnits.push_back(std::make_pair(I.second, I.first));
+          std::sort(CountedUnits.begin(), CountedUnits.end(),
+                    [](const CU &a, const CU &b) { return a.first > b.first; });
+          Printf("AutoDict:\n");
+          for (auto &I : CountedUnits) {
+            Printf("   %zd ", I.first);
+            PrintASCII(I.second);
+            Printf("\n");
+          }
+        }
+      }
+      USF.GetMD().AddWordToAutoDictionary(U, M.Pos);
     }
   }
 
@@ -267,6 +267,8 @@ class TraceState {
   UserSuppliedFuzzer &USF;
   const Fuzzer::FuzzingOptions &Options;
   const Unit &CurrentUnit;
+  std::map<Unit, size_t> AutoDictUnitCounts;
+  size_t AutoDictAdds = 0;
   static thread_local bool IsMyThread;
 };
 
@@ -398,15 +400,17 @@ int TraceState::TryToAddDesiredData(const uint8_t *PresentData,
 void TraceState::TraceCmpCallback(uintptr_t PC, size_t CmpSize, size_t CmpType,
                                   uint64_t Arg1, uint64_t Arg2) {
   if (!RecordingTraces || !IsMyThread) return;
+  if ((CmpType == ICMP_EQ || CmpType == ICMP_NE) && Arg1 == Arg2)
+    return;  // No reason to mutate.
   int Added = 0;
-  if (Options.Verbosity >= 3)
-    Printf("TraceCmp %zd/%zd: %p %zd %zd\n", CmpSize, CmpType, PC, Arg1, Arg2);
   Added += TryToAddDesiredData(Arg1, Arg2, CmpSize);
   Added += TryToAddDesiredData(Arg2, Arg1, CmpSize);
   if (!Added && CmpSize == 4 && IsTwoByteData(Arg1) && IsTwoByteData(Arg2)) {
     Added += TryToAddDesiredData(Arg1, Arg2, 2);
     Added += TryToAddDesiredData(Arg2, Arg1, 2);
   }
+  if (Options.Verbosity >= 3 && Added)
+    Printf("TraceCmp %zd/%zd: %p %zd %zd\n", CmpSize, CmpType, PC, Arg1, Arg2);
 }
 
 void TraceState::TraceMemcmpCallback(size_t CmpSize, const uint8_t *Data1,
@@ -417,8 +421,8 @@ void TraceState::TraceMemcmpCallback(size_t CmpSize, const uint8_t *Data1,
   int Added1 = TryToAddDesiredData(Data2, Data1, CmpSize);
   if ((Added1 || Added2) && Options.Verbosity >= 3) {
     Printf("MemCmp Added %d%d: ", Added1, Added2);
-    if (Added1) PrintData(Data1, CmpSize);
-    if (Added2) PrintData(Data2, CmpSize);
+    if (Added1) PrintASCII(Data1, CmpSize);
+    if (Added2) PrintASCII(Data2, CmpSize);
     Printf("\n");
   }
 }
@@ -538,17 +542,25 @@ void dfsan_weak_hook_strcmp(void *caller_pc, const char *s1, const char *s2,
                           reinterpret_cast<const uint8_t *>(s2), L1, L2);
 }
 
+// We may need to avoid defining weak hooks to stay compatible with older clang.
+#ifndef LLVM_FUZZER_DEFINES_SANITIZER_WEAK_HOOOKS
+# define LLVM_FUZZER_DEFINES_SANITIZER_WEAK_HOOOKS 1
+#endif
+
+#if LLVM_FUZZER_DEFINES_SANITIZER_WEAK_HOOOKS
 void __sanitizer_weak_hook_memcmp(void *caller_pc, const void *s1,
-                                  const void *s2, size_t n) {
+                                  const void *s2, size_t n, int result) {
   if (!TS) return;
+  if (result == 0) return;  // No reason to mutate.
   if (n <= 1) return;  // Not interesting.
   TS->TraceMemcmpCallback(n, reinterpret_cast<const uint8_t *>(s1),
                           reinterpret_cast<const uint8_t *>(s2));
 }
 
 void __sanitizer_weak_hook_strncmp(void *caller_pc, const char *s1,
-                                   const char *s2, size_t n) {
+                                   const char *s2, size_t n, int result) {
   if (!TS) return;
+  if (result == 0) return;  // No reason to mutate.
   size_t Len1 = fuzzer::InternalStrnlen(s1, n);
   size_t Len2 = fuzzer::InternalStrnlen(s2, n);
   n = std::min(n, Len1);
@@ -559,8 +571,9 @@ void __sanitizer_weak_hook_strncmp(void *caller_pc, const char *s1,
 }
 
 void __sanitizer_weak_hook_strcmp(void *caller_pc, const char *s1,
-                                   const char *s2) {
+                                   const char *s2, int result) {
   if (!TS) return;
+  if (result == 0) return;  // No reason to mutate.
   size_t Len1 = strlen(s1);
   size_t Len2 = strlen(s2);
   size_t N = std::min(Len1, Len2);
@@ -568,6 +581,8 @@ void __sanitizer_weak_hook_strcmp(void *caller_pc, const char *s1,
   TS->TraceMemcmpCallback(N, reinterpret_cast<const uint8_t *>(s1),
                           reinterpret_cast<const uint8_t *>(s2));
 }
+
+#endif  // LLVM_FUZZER_DEFINES_SANITIZER_WEAK_HOOOKS
 
 __attribute__((visibility("default")))
 void __sanitizer_cov_trace_cmp(uint64_t SizeAndType, uint64_t Arg1,

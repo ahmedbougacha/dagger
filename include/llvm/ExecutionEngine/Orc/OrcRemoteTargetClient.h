@@ -18,6 +18,7 @@
 
 #include "IndirectionUtils.h"
 #include "OrcRemoteTargetRPCAPI.h"
+#include <system_error>
 
 #define DEBUG_TYPE "orc-remote"
 
@@ -41,6 +42,19 @@ public:
     RCMemoryManager(OrcRemoteTargetClient &Client, ResourceIdMgr::ResourceId Id)
         : Client(Client), Id(Id) {
       DEBUG(dbgs() << "Created remote allocator " << Id << "\n");
+    }
+
+    RCMemoryManager(RCMemoryManager &&Other)
+        : Client(std::move(Other.Client)), Id(std::move(Other.Id)),
+          Unmapped(std::move(Other.Unmapped)),
+          Unfinalized(std::move(Other.Unfinalized)) {}
+
+    RCMemoryManager operator=(RCMemoryManager &&Other) {
+      Client = std::move(Other.Client);
+      Id = std::move(Other.Id);
+      Unmapped = std::move(Other.Unmapped);
+      Unfinalized = std::move(Other.Unfinalized);
+      return *this;
     }
 
     ~RCMemoryManager() {
@@ -78,7 +92,7 @@ public:
           Unmapped.back().RWDataAllocs.back().getLocalAddress());
       DEBUG(dbgs() << "Allocator " << Id << " allocated rw-data for "
                    << SectionName << ": " << Alloc << " (" << Size
-                   << " bytes, alignment " << Alignment << "\n");
+                   << " bytes, alignment " << Alignment << ")\n");
       return Alloc;
     }
 
@@ -91,11 +105,11 @@ public:
       DEBUG(dbgs() << "Allocator " << Id << " reserved:\n");
 
       if (CodeSize != 0) {
-        if (auto EC = Client.reserveMem(Unmapped.back().RemoteCodeAddr, Id,
-                                        CodeSize, CodeAlign)) {
-          // FIXME; Add error to poll.
-          llvm_unreachable("Failed reserving remote memory.");
-        }
+        std::error_code EC = Client.reserveMem(Unmapped.back().RemoteCodeAddr,
+                                               Id, CodeSize, CodeAlign);
+        // FIXME; Add error to poll.
+        assert(!EC && "Failed reserving remote memory.");
+        (void)EC;
         DEBUG(dbgs() << "  code: "
                      << format("0x%016x", Unmapped.back().RemoteCodeAddr)
                      << " (" << CodeSize << " bytes, alignment " << CodeAlign
@@ -103,11 +117,11 @@ public:
       }
 
       if (RODataSize != 0) {
-        if (auto EC = Client.reserveMem(Unmapped.back().RemoteRODataAddr, Id,
-                                        RODataSize, RODataAlign)) {
-          // FIXME; Add error to poll.
-          llvm_unreachable("Failed reserving remote memory.");
-        }
+        std::error_code EC = Client.reserveMem(Unmapped.back().RemoteRODataAddr,
+                                               Id, RODataSize, RODataAlign);
+        // FIXME; Add error to poll.
+        assert(!EC && "Failed reserving remote memory.");
+        (void)EC;
         DEBUG(dbgs() << "  ro-data: "
                      << format("0x%016x", Unmapped.back().RemoteRODataAddr)
                      << " (" << RODataSize << " bytes, alignment "
@@ -115,11 +129,11 @@ public:
       }
 
       if (RWDataSize != 0) {
-        if (auto EC = Client.reserveMem(Unmapped.back().RemoteRWDataAddr, Id,
-                                        RWDataSize, RWDataAlign)) {
-          // FIXME; Add error to poll.
-          llvm_unreachable("Failed reserving remote memory.");
-        }
+        std::error_code EC = Client.reserveMem(Unmapped.back().RemoteRWDataAddr,
+                                               Id, RWDataSize, RWDataAlign);
+        // FIXME; Add error to poll.
+        assert(!EC && "Failed reserving remote memory.");
+        (void)EC;
         DEBUG(dbgs() << "  rw-data: "
                      << format("0x%016x", Unmapped.back().RemoteRWDataAddr)
                      << " (" << RWDataSize << " bytes, alignment "
@@ -251,6 +265,19 @@ public:
           : Size(Size), Align(Align), Contents(new char[Size + Align - 1]),
             RemoteAddr(0) {}
 
+      Alloc(Alloc &&Other)
+          : Size(std::move(Other.Size)), Align(std::move(Other.Align)),
+            Contents(std::move(Other.Contents)),
+            RemoteAddr(std::move(Other.RemoteAddr)) {}
+
+      Alloc &operator=(Alloc &&Other) {
+        Size = std::move(Other.Size);
+        Align = std::move(Other.Align);
+        Contents = std::move(Other.Contents);
+        RemoteAddr = std::move(Other.RemoteAddr);
+        return *this;
+      }
+
       uint64_t getSize() const { return Size; }
 
       unsigned getAlign() const { return Align; }
@@ -277,6 +304,25 @@ public:
     struct ObjectAllocs {
       ObjectAllocs()
           : RemoteCodeAddr(0), RemoteRODataAddr(0), RemoteRWDataAddr(0) {}
+
+      ObjectAllocs(ObjectAllocs &&Other)
+          : RemoteCodeAddr(std::move(Other.RemoteCodeAddr)),
+            RemoteRODataAddr(std::move(Other.RemoteRODataAddr)),
+            RemoteRWDataAddr(std::move(Other.RemoteRWDataAddr)),
+            CodeAllocs(std::move(Other.CodeAllocs)),
+            RODataAllocs(std::move(Other.RODataAllocs)),
+            RWDataAllocs(std::move(Other.RWDataAllocs)) {}
+
+      ObjectAllocs &operator=(ObjectAllocs &&Other) {
+        RemoteCodeAddr = std::move(Other.RemoteCodeAddr);
+        RemoteRODataAddr = std::move(Other.RemoteRODataAddr);
+        RemoteRWDataAddr = std::move(Other.RemoteRWDataAddr);
+        CodeAllocs = std::move(Other.CodeAllocs);
+        RODataAllocs = std::move(Other.RODataAllocs);
+        RWDataAllocs = std::move(Other.RWDataAllocs);
+        return *this;
+      }
+
       TargetAddress RemoteCodeAddr;
       TargetAddress RemoteRODataAddr;
       TargetAddress RemoteRWDataAddr;
@@ -680,16 +726,10 @@ private:
     if (ExistingError)
       return ExistingError;
 
-    if (auto EC = call<ReserveMem>(Channel, Id, Size, Align))
+    if (std::error_code EC = call<ReserveMem>(Channel, Id, Size, Align))
       return EC;
 
-    if (auto EC = expect<ReserveMemResponse>(Channel, [&](TargetAddress Addr) {
-          RemoteAddr = Addr;
-          return std::error_code();
-        }))
-      return EC;
-
-    return std::error_code();
+    return expect<ReserveMemResponse>(Channel, readArgs(RemoteAddr));
   }
 
   std::error_code setProtections(ResourceIdMgr::ResourceId Id,
