@@ -345,7 +345,8 @@ private:
     }
 
     if (Operator->getName() == "implicit") {
-      assert(Parent == nullptr && "An 'implicit' node wasn't at the top-level?");
+      assert(Parent == nullptr &&
+             "An 'implicit' node wasn't at the top-level?");
       flattenImplicit(TPN, NS);
     } else if (Operator->isSubClassOf("SDNode")) {
       flattenSDNode(TPN, NS);
@@ -458,8 +459,7 @@ void SemanticsEmitter::ParseSemantics() {
     // - iterating on InstructionsByEnumValue, and mapping CGI->Semantics before
     // - adding EnumValue to CGI
 
-    auto It =
-        std::find(CGIByEnum.begin(), CGIByEnum.end(), &CGI);
+    auto It = std::find(CGIByEnum.begin(), CGIByEnum.end(), &CGI);
     assert(It != CGIByEnum.end() && *It == &CGI);
 
     addInstSemantics(std::distance(CGIByEnum.begin(), It),
