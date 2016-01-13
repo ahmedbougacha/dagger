@@ -22,6 +22,7 @@
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 #include <algorithm>
+#include <map>
 
 using namespace llvm;
 
@@ -41,12 +42,14 @@ public:
   /// derived of the SDNodeEquiv class.
   DenseMap<Record *, Record *> SDNodeEquiv;
 
-  /// Unique constant integers, and keep track of their index in a table.
+  /// Unique constant integers, keeping track of the order they appeared in.
   /// This is done so that the generated semantics table is an unsigned[],
   /// with uint64_t constants only being an unsigned index to this table.
-  typedef std::map<uint64_t, unsigned> ConstantIdxMap;
-  ConstantIdxMap ConstantIdx;
-  unsigned CurConstIdx;
+  /// Use an std::map instead of:
+  /// - SetVector, because knowing whether a key exists isn't enough,
+  ///   we also need an efficient way to get its index.
+  /// - DenseMap, because there is no acceptable tombstone key.
+  std::map<uint64_t, unsigned> ConstantIdx;
 
   SemanticsTarget(RecordKeeper &Records);
 };
@@ -206,8 +209,10 @@ private:
       setNSTypeFromNode(Mov, TPN);
       Mov.Opcode = "DCINS::MOV_CONSTANT";
       unsigned &Idx = Target.ConstantIdx[OpInt->getValue()];
+      // If we haven't seen this constant yet, the [] access above inserted it
+      // into the map, growing its size(), so that it gives us an unused index.
       if (Idx == 0)
-        Idx = Target.CurConstIdx++;
+        Idx = Target.ConstantIdx.size();
       Mov.addOperand(utostr(Idx));
       addResOperand(*Parent, Mov);
       return;
@@ -511,12 +516,9 @@ void SemanticsEmitter::run(raw_ostream &OS) {
     OS << InstIdx[I] << ", \t// " << CGIByEnum[I]->TheDef->getName() << "\n";
   OS << "};\n\n";
 
-  std::vector<uint64_t> Constants(SemaTarget.ConstantIdx.size() + 1);
-  for (SemanticsTarget::ConstantIdxMap::const_iterator
-           CI = SemaTarget.ConstantIdx.begin(),
-           CE = SemaTarget.ConstantIdx.end();
-       CI != CE; ++CI)
-    Constants[CI->second] = CI->first;
+  std::vector<uint64_t> Constants(SemaTarget.ConstantIdx.size());
+  for (auto &CI : SemaTarget.ConstantIdx)
+    Constants[CI.second] = CI.first;
   OS << "const uint64_t ConstantArray[] = {\n";
   for (unsigned I = 0, E = Constants.size(); I != E; ++I) {
     OS.indent(2) << Constants[I] << "U,\n";
@@ -532,8 +534,7 @@ void SemanticsEmitter::run(raw_ostream &OS) {
 
 SemanticsTarget::SemanticsTarget(RecordKeeper &Records)
     : Records(Records), CGPatterns(Records),
-      CGTarget(CGPatterns.getTargetInfo()), SDNodeEquiv(), ConstantIdx(),
-      CurConstIdx(1) {
+      CGTarget(CGPatterns.getTargetInfo()), SDNodeEquiv(), ConstantIdx() {
   std::vector<Record *> Equivs =
       Records.getAllDerivedDefinitions("SDNodeEquiv");
   for (unsigned i = 0, e = Equivs.size(); i != e; ++i) {
