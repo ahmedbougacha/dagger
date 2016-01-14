@@ -47,6 +47,21 @@ def : SameSemantics<JMP_4, JMP_1>;
 
 def : Semantics<CALL64pcrel32, [(X86call imm:$dst)]>;
 
+// Reverse encodings for arithmetic operations.
+// We decode operands in reverse, so we can simply reuse semantics.
+multiclass Sema_BinOpRR_Rev<string inst> {
+  def : SameSemantics<!cast<I>(inst#8rr_REV),  !cast<I>(inst#8rr)>;
+  def : SameSemantics<!cast<I>(inst#16rr_REV), !cast<I>(inst#16rr)>;
+  def : SameSemantics<!cast<I>(inst#32rr_REV), !cast<I>(inst#32rr)>;
+  def : SameSemantics<!cast<I>(inst#64rr_REV), !cast<I>(inst#64rr)>;
+}
+
+defm : Sema_BinOpRR_Rev<"AND">;
+defm : Sema_BinOpRR_Rev<"OR">;
+defm : Sema_BinOpRR_Rev<"XOR">;
+defm : Sema_BinOpRR_Rev<"ADD">;
+defm : Sema_BinOpRR_Rev<"SUB">;
+
 // Instructions that imp-def EFLAGS.
 class Sema_F<Instruction inst, dag pattern>
   : Semantics<inst, [pattern, (implicit EFLAGS)]>;
