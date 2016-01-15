@@ -197,7 +197,7 @@ void DCRegisterSema::setRegValWithName(unsigned RegNo, Value *Val) {
 void DCRegisterSema::createLocalValueForReg(unsigned RegNo) {
   StringRef RegName = MRI.getName(RegNo);
   Value *&RV = RegVals[RegNo];
-  Value *&RA = RegAllocas[RegNo];
+  AllocaInst *&RA = RegAllocas[RegNo];
   Value *&RP = RegPtrs[RegNo];
   Value *&RI = RegInits[RegNo];
 

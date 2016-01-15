@@ -99,7 +99,7 @@ protected:
 
   // Valid only inside a Function.
   std::vector<Value *> RegPtrs;
-  std::vector<Value *> RegAllocas;
+  std::vector<AllocaInst *> RegAllocas;
   std::vector<Value *> RegInits;
   std::vector<unsigned> RegAssignments;
 
