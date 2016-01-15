@@ -25,6 +25,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/DebugInfo/CodeView/CodeView.h"
+#include "llvm/DebugInfo/CodeView/Line.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
@@ -72,7 +73,8 @@ public:
   void printStackMap() const override;
 private:
   void printSymbol(const SymbolRef &Sym);
-  void printRelocation(const SectionRef &Section, const RelocationRef &Reloc);
+  void printRelocation(const SectionRef &Section, const RelocationRef &Reloc,
+                       uint64_t Bias = 0);
   void printDataDirectory(uint32_t Index, const std::string &FieldName);
 
   void printDOSHeader(const dos_header *DH);
@@ -84,13 +86,27 @@ private:
   void printCodeViewTypeSection(StringRef SectionName, const SectionRef &Section);
   void printCodeViewFieldList(StringRef FieldData);
   StringRef getTypeName(TypeIndex Ty);
+  StringRef getFileNameForFileOffset(uint32_t FileOffset);
+  void printFileNameForOffset(StringRef Label, uint32_t FileOffset);
   void printTypeIndex(StringRef FieldName, TypeIndex TI);
 
   void printCodeViewSymbolsSubsection(StringRef Subsection,
                                       const SectionRef &Section,
-                                      uint32_t Offset);
+                                      StringRef SectionContents);
+
+  void printCodeViewInlineeLines(StringRef Subsection);
 
   void printMemberAttributes(MemberAttributes Attrs);
+
+  void printRelocatedField(StringRef Label, const coff_section *Sec,
+                           StringRef SectionContents, const ulittle32_t *Field,
+                           StringRef *RelocSym = nullptr);
+
+  void printBinaryBlockWithRelocs(StringRef Label, const SectionRef &Sec,
+                                  StringRef SectionContents, StringRef Block);
+
+  /// Given a .debug$S section, find the string table and file checksum table.
+  void initializeFileAndStringTables(StringRef Data);
 
   void cacheRelocations();
 
@@ -98,6 +114,9 @@ private:
                                 SymbolRef &Sym);
   std::error_code resolveSymbolName(const coff_section *Section,
                                     uint64_t Offset, StringRef &Name);
+  std::error_code resolveSymbolName(const coff_section *Section,
+                                    StringRef SectionContents,
+                                    const void *RelocPtr, StringRef &Name);
   void printImportedSymbols(iterator_range<imported_symbol_iterator> Range);
   void printDelayImportedSymbols(
       const DelayImportDirectoryEntryRef &I,
@@ -108,7 +127,7 @@ private:
   const llvm::object::COFFObjectFile *Obj;
   bool RelocCached = false;
   RelocMapTy RelocMap;
-  StringRef CVFileIndexToStringOffsetTable;
+  StringRef CVFileChecksumTable;
   StringRef CVStringTable;
 
   /// All user defined type records in .debug$T live in here. Type indices
@@ -167,6 +186,55 @@ std::error_code COFFDumper::resolveSymbolName(const coff_section *Section,
     return EC;
   Name = *NameOrErr;
   return std::error_code();
+}
+
+// Helper for when you have a pointer to real data and you want to know about
+// relocations against it.
+std::error_code COFFDumper::resolveSymbolName(const coff_section *Section,
+                                              StringRef SectionContents,
+                                              const void *RelocPtr,
+                                              StringRef &Name) {
+  assert(SectionContents.data() < RelocPtr &&
+         RelocPtr < SectionContents.data() + SectionContents.size() &&
+         "pointer to relocated object is not in section");
+  uint64_t Offset = ptrdiff_t(reinterpret_cast<const char *>(RelocPtr) -
+                              SectionContents.data());
+  return resolveSymbolName(Section, Offset, Name);
+}
+
+void COFFDumper::printRelocatedField(StringRef Label, const coff_section *Sec,
+                                     StringRef SectionContents,
+                                     const ulittle32_t *Field,
+                                     StringRef *RelocSym) {
+  StringRef SymStorage;
+  StringRef &Symbol = RelocSym ? *RelocSym : SymStorage;
+  if (!resolveSymbolName(Sec, SectionContents, Field, Symbol))
+    W.printSymbolOffset(Label, Symbol, *Field);
+  else
+    W.printHex(Label, *Field);
+}
+
+void COFFDumper::printBinaryBlockWithRelocs(StringRef Label,
+                                            const SectionRef &Sec,
+                                            StringRef SectionContents,
+                                            StringRef Block) {
+  W.printBinaryBlock(Label, Block);
+
+  assert(SectionContents.begin() < Block.begin() &&
+         SectionContents.end() >= Block.end() &&
+         "Block is not contained in SectionContents");
+  uint64_t OffsetStart = Block.data() - SectionContents.data();
+  uint64_t OffsetEnd = OffsetStart + Block.size();
+
+  cacheRelocations();
+  ListScope D(W, "BlockRelocations");
+  const coff_section *Section = Obj->getCOFFSection(Sec);
+  const auto &Relocations = RelocMap[Section];
+  for (const auto &Relocation : Relocations) {
+    uint64_t RelocationOffset = Relocation.getOffset();
+    if (OffsetStart <= RelocationOffset && RelocationOffset < OffsetEnd)
+      printRelocation(Sec, Relocation, OffsetStart);
+  }
 }
 
 static const EnumEntry<COFF::MachineTypes> ImageFileMachineType[] = {
@@ -879,6 +947,30 @@ static std::error_code consumeUInt32(StringRef &Data, uint32_t &Res) {
   return std::error_code();
 }
 
+void COFFDumper::initializeFileAndStringTables(StringRef Data) {
+  while (!Data.empty() && (CVFileChecksumTable.data() == nullptr ||
+                           CVStringTable.data() == nullptr)) {
+    // The section consists of a number of subsection in the following format:
+    // |SubSectionType|SubSectionSize|Contents...|
+    uint32_t SubType, SubSectionSize;
+    error(consumeUInt32(Data, SubType));
+    error(consumeUInt32(Data, SubSectionSize));
+    if (SubSectionSize > Data.size())
+      return error(object_error::parse_failed);
+    switch (ModuleSubstreamKind(SubType)) {
+    case ModuleSubstreamKind::FileChecksums:
+      CVFileChecksumTable = Data.substr(0, SubSectionSize);
+      break;
+    case ModuleSubstreamKind::StringTable:
+      CVStringTable = Data.substr(0, SubSectionSize);
+      break;
+    default:
+      break;
+    }
+    Data = Data.drop_front(alignTo(SubSectionSize, 4));
+  }
+}
+
 void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
                                             const SectionRef &Section) {
   StringRef SectionContents;
@@ -898,6 +990,8 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
   W.printHex("Magic", Magic);
   if (Magic != COFF::DEBUG_SECTION_MAGIC)
     return error(object_error::parse_failed);
+
+  initializeFileAndStringTables(Data);
 
   while (!Data.empty()) {
     // The section consists of a number of subsection in the following format:
@@ -919,7 +1013,7 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
     // the next subsection.
     size_t SectionOffset = Data.data() - SectionContents.data();
     size_t NextOffset = SectionOffset + SubSectionSize;
-    NextOffset = RoundUpToAlignment(NextOffset, 4);
+    NextOffset = alignTo(NextOffset, 4);
     Data = SectionContents.drop_front(NextOffset);
 
     // Optionally print the subsection bytes in case our parsing gets confused
@@ -929,8 +1023,13 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
 
     switch (ModuleSubstreamKind(SubType)) {
     case ModuleSubstreamKind::Symbols:
-      printCodeViewSymbolsSubsection(Contents, Section, SectionOffset);
+      printCodeViewSymbolsSubsection(Contents, Section, SectionContents);
       break;
+
+    case ModuleSubstreamKind::InlineeLines:
+      printCodeViewInlineeLines(Contents);
+      break;
+
     case ModuleSubstreamKind::Lines: {
       // Holds a PC to file:line table.  Some data to parse this subsection is
       // stored in the other subsections, so just check sanity and store the
@@ -957,27 +1056,6 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
       FunctionNames.push_back(LinkageName);
       break;
     }
-    case ModuleSubstreamKind::StringTable:
-      if (SubSectionSize == 0 || CVStringTable.data() != nullptr ||
-          Contents.back() != '\0') {
-        // Empty or duplicate or non-null-terminated subsection.
-        error(object_error::parse_failed);
-        return;
-      }
-      CVStringTable = Contents;
-      break;
-    case ModuleSubstreamKind::FileChecksums:
-      // Holds the translation table from file indices
-      // to offsets in the string table.
-
-      if (SubSectionSize == 0 ||
-          CVFileIndexToStringOffsetTable.data() != nullptr) {
-        // Empty or duplicate subsection.
-        error(object_error::parse_failed);
-        return;
-      }
-      CVFileIndexToStringOffsetTable = Contents;
-      break;
     case ModuleSubstreamKind::FrameData: {
       const size_t RelocationSize = 4;
       if (SubSectionSize != sizeof(FrameData) + RelocationSize) {
@@ -993,7 +1071,7 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
       StringRef LinkageName;
       error(resolveSymbolName(Obj->getCOFFSection(Section), SectionOffset,
                               LinkageName));
-      if (!FunctionFrameData.emplace(LinkageName, FD).second) {
+      if (!FunctionFrameData.insert(std::make_pair(LinkageName, FD)).second) {
         error(object_error::parse_failed);
         return;
       }
@@ -1038,28 +1116,8 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
         return;
       }
 
-      uint32_t FilenameOffset;
-      {
-        DataExtractor SDE(CVFileIndexToStringOffsetTable, true, 4);
-        uint32_t OffsetInSDE = OffsetInIndex;
-        if (!SDE.isValidOffset(OffsetInSDE)) {
-          error(object_error::parse_failed);
-          return;
-        }
-        FilenameOffset = SDE.getU32(&OffsetInSDE);
-      }
-
-      if (FilenameOffset == 0 || FilenameOffset + 1 >= CVStringTable.size() ||
-          CVStringTable.data()[FilenameOffset - 1] != '\0') {
-        // Each string in an F3 subsection should be preceded by a null
-        // character.
-        error(object_error::parse_failed);
-        return;
-      }
-
-      StringRef Filename(CVStringTable.data() + FilenameOffset);
       ListScope S(W, "FilenameSegment");
-      W.printString("Filename", Filename);
+      printFileNameForOffset("Filename", OffsetInIndex);
       for (unsigned LineIdx = 0;
            LineIdx != NumLines && DE.isValidOffset(Offset); ++LineIdx) {
         // Then go the (PC, LineNumber) pairs.  The line number is stored in the
@@ -1194,9 +1252,11 @@ std::error_code decodeUIntLeaf(StringRef &Data, uint64_t &Num) {
 
 void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
                                                 const SectionRef &Section,
-                                                uint32_t OffsetInSection) {
+                                                StringRef SectionContents) {
   if (Subsection.size() < sizeof(SymRecord))
     return error(object_error::parse_failed);
+
+  const coff_section *Sec = Obj->getCOFFSection(Section);
 
   // This holds the remaining data to parse.
   StringRef Data = Subsection;
@@ -1207,6 +1267,7 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
     error(consumeObject(Data, Rec));
 
     StringRef SymData = Data.substr(0, Rec->RecordLength - 2);
+    StringRef OrigSymData = SymData;
 
     Data = Data.drop_front(Rec->RecordLength - 2);
 
@@ -1225,16 +1286,7 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
         return error(object_error::parse_failed);
       InFunctionScope = true;
 
-      // In a COFF object file, the CodeOffset field is typically zero and has a
-      // relocation applied to it. Go and look up the symbol for that
-      // relocation.
-      ptrdiff_t SecOffsetOfCodeOffset =
-          reinterpret_cast<const char *>(&Proc->CodeOffset) - Subsection.data();
       StringRef LinkageName;
-      error(resolveSymbolName(Obj->getCOFFSection(Section),
-                              OffsetInSection + SecOffsetOfCodeOffset,
-                              LinkageName));
-
       StringRef DisplayName = SymData.split('\0').first;
       W.printHex("PtrParent", Proc->PtrParent);
       W.printHex("PtrEnd", Proc->PtrEnd);
@@ -1243,7 +1295,8 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       W.printHex("DbgStart", Proc->DbgStart);
       W.printHex("DbgEnd", Proc->DbgEnd);
       printTypeIndex("FunctionType", Proc->FunctionType);
-      W.printHex("CodeOffset", Proc->CodeOffset);
+      printRelocatedField("CodeOffset", Sec, SectionContents, &Proc->CodeOffset,
+                          &LinkageName);
       W.printHex("Segment", Proc->Segment);
       W.printFlags("Flags", Proc->Flags, makeArrayRef(ProcSymFlags));
       W.printString("DisplayName", DisplayName);
@@ -1262,21 +1315,13 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       const BlockSym *Block;
       error(consumeObject(SymData, Block));
 
-      // In a COFF object file, the CodeOffset field is typically zero and has a
-      // relocation applied to it. Go and look up the symbol for that
-      // relocation.
-      ptrdiff_t SecOffsetOfCodeOffset =
-          reinterpret_cast<const char *>(&Block->CodeOffset) - Subsection.data();
-      StringRef LinkageName;
-      error(resolveSymbolName(Obj->getCOFFSection(Section),
-                              OffsetInSection + SecOffsetOfCodeOffset,
-                              LinkageName));
-
       StringRef BlockName = SymData.split('\0').first;
+      StringRef LinkageName;
       W.printHex("PtrParent", Block->PtrParent);
       W.printHex("PtrEnd", Block->PtrEnd);
       W.printHex("CodeSize", Block->CodeSize);
-      W.printHex("CodeOffset", Block->CodeOffset);
+      printRelocatedField("CodeOffset", Sec, SectionContents,
+                          &Block->CodeOffset, &LinkageName);
       W.printHex("Segment", Block->Segment);
       W.printString("BlockName", BlockName);
       W.printString("LinkageName", LinkageName);
@@ -1294,18 +1339,10 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       const LabelSym *Label;
       error(consumeObject(SymData, Label));
 
-      // In a COFF object file, the CodeOffset field is typically zero and has a
-      // relocation applied to it. Go and look up the symbol for that
-      // relocation.
-      ptrdiff_t SecOffsetOfCodeOffset =
-          reinterpret_cast<const char *>(&Label->CodeOffset) - Subsection.data();
-      StringRef LinkageName;
-      error(resolveSymbolName(Obj->getCOFFSection(Section),
-                              OffsetInSection + SecOffsetOfCodeOffset,
-                              LinkageName));
-
       StringRef DisplayName = SymData.split('\0').first;
-      W.printHex("CodeOffset", Label->CodeOffset);
+      StringRef LinkageName;
+      printRelocatedField("CodeOffset", Sec, SectionContents,
+                          &Label->CodeOffset, &LinkageName);
       W.printHex("Segment", Label->Segment);
       W.printHex("Flags", Label->Flags);
       W.printFlags("Flags", Label->Flags, makeArrayRef(ProcSymFlags));
@@ -1373,19 +1410,19 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
         case Invalid:
           return error(object_error::parse_failed);
         case CodeOffset:
-          W.printNumber("CodeOffset", GetCompressedAnnotation());
+          W.printHex("CodeOffset", GetCompressedAnnotation());
           break;
         case ChangeCodeOffsetBase:
           W.printNumber("ChangeCodeOffsetBase", GetCompressedAnnotation());
           break;
         case ChangeCodeOffset:
-          W.printNumber("ChangeCodeOffset", GetCompressedAnnotation());
+          W.printHex("ChangeCodeOffset", GetCompressedAnnotation());
           break;
         case ChangeCodeLength:
           W.printNumber("ChangeCodeLength", GetCompressedAnnotation());
           break;
         case ChangeFile:
-          W.printNumber("ChangeFile", GetCompressedAnnotation());
+          W.printHex("ChangeFile", GetCompressedAnnotation());
           break;
         case ChangeLineOffset:
           W.printNumber("ChangeLineOffset",
@@ -1406,14 +1443,19 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
           break;
         case ChangeCodeOffsetAndLineOffset: {
           uint32_t Annotation = GetCompressedAnnotation();
-          uint32_t Operands[] = {Annotation >> 4, Annotation & 0xf};
-          W.printList("ChangeCodeOffsetAndLineOffset", Operands);
+          int32_t LineOffset = DecodeSignedOperand(Annotation >> 4);
+          uint32_t CodeOffset = Annotation & 0xf;
+          W.startLine() << "ChangeCodeOffsetAndLineOffset: {LineOffset: "
+                        << LineOffset << ", CodeOffset: " << W.hex(CodeOffset)
+                        << "}\n";
           break;
         }
         case ChangeCodeLengthAndCodeOffset: {
-          uint32_t Operands[] = {GetCompressedAnnotation(),
-                                 GetCompressedAnnotation()};
-          W.printList("ChangeCodeLengthAndCodeOffset", Operands);
+          uint32_t Length = GetCompressedAnnotation();
+          uint32_t CodeOffset = GetCompressedAnnotation();
+          W.startLine() << "ChangeCodeLengthAndCodeOffset: {Length: "
+                        << W.hex(Length)
+                        << ", CodeOffset: " << W.hex(CodeOffset) << "}\n";
           break;
         }
         case ChangeColumnEnd:
@@ -1426,6 +1468,19 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
 
     case S_INLINESITE_END: {
       DictScope S(W, "InlineSiteEnd");
+      break;
+    }
+
+    case S_CALLERS:
+    case S_CALLEES: {
+      ListScope S(W, Kind == S_CALLEES ? "Callees" : "Callers");
+      uint32_t Count;
+      error(consumeUInt32(SymData, Count));
+      for (uint32_t I = 0; I < Count; ++I) {
+        const TypeIndex *FuncID;
+        error(consumeObject(SymData, FuncID));
+        printTypeIndex("FuncID", *FuncID);
+      }
       break;
     }
 
@@ -1445,16 +1500,9 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       const CallSiteInfoSym *CallSiteInfo;
       error(consumeObject(SymData, CallSiteInfo));
 
-      // In a COFF object file, the CodeOffset field is typically zero and has a
-      // relocation applied to it. Go and look up the symbol for that
-      // relocation.
-      ptrdiff_t SecOffsetOfCodeOffset =
-          reinterpret_cast<const char *>(&CallSiteInfo->CodeOffset) - Subsection.data();
       StringRef LinkageName;
-      error(resolveSymbolName(Obj->getCOFFSection(Section),
-                              OffsetInSection + SecOffsetOfCodeOffset,
-                              LinkageName));
-      W.printHex("CodeOffset", CallSiteInfo->CodeOffset);
+      printRelocatedField("CodeOffset", Sec, SectionContents,
+                          &CallSiteInfo->CodeOffset, &LinkageName);
       W.printHex("Segment", CallSiteInfo->Segment);
       W.printHex("Reserved", CallSiteInfo->Reserved);
       printTypeIndex("Type", CallSiteInfo->Type);
@@ -1467,17 +1515,9 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       const HeapAllocationSiteSym *HeapAllocationSite;
       error(consumeObject(SymData, HeapAllocationSite));
 
-      // In a COFF object file, the CodeOffset field is typically zero and has a
-      // relocation applied to it. Go and look up the symbol for that
-      // relocation.
-      ptrdiff_t SecOffsetOfCodeOffset =
-          reinterpret_cast<const char *>(&HeapAllocationSite->CodeOffset) -
-          Subsection.data();
       StringRef LinkageName;
-      error(resolveSymbolName(Obj->getCOFFSection(Section),
-                              OffsetInSection + SecOffsetOfCodeOffset,
-                              LinkageName));
-      W.printHex("CodeOffset", HeapAllocationSite->CodeOffset);
+      printRelocatedField("CodeOffset", Sec, SectionContents,
+                          &HeapAllocationSite->CodeOffset, &LinkageName);
       W.printHex("Segment", HeapAllocationSite->Segment);
       W.printHex("CallInstructionSize",
                  HeapAllocationSite->CallInstructionSize);
@@ -1490,7 +1530,10 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       DictScope S(W, "FrameCookie");
       const FrameCookieSym *FrameCookie;
       error(consumeObject(SymData, FrameCookie));
-      W.printHex("CodeOffset", FrameCookie->CodeOffset);
+
+      StringRef LinkageName;
+      printRelocatedField("CodeOffset", Sec, SectionContents,
+                          &FrameCookie->CodeOffset, &LinkageName);
       W.printHex("Register", FrameCookie->Register);
       W.printEnum("CookieKind", uint16_t(FrameCookie->CookieKind),
                   makeArrayRef(FrameCookieKinds));
@@ -1505,39 +1548,26 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       const DataSym *Data;
       error(consumeObject(SymData, Data));
 
-      // In a COFF object file, the DataOffset field is typically zero and has a
-      // relocation applied to it. Go and look up the symbol for that
-      // relocation.
-      ptrdiff_t SecOffsetOfDataOffset =
-          reinterpret_cast<const char *>(&Data->DataOffset) - Subsection.data();
-      StringRef LinkageName;
-      error(resolveSymbolName(Obj->getCOFFSection(Section),
-                              OffsetInSection + SecOffsetOfDataOffset,
-                              LinkageName));
       StringRef DisplayName = SymData.split('\0').first;
-      W.printHex("DataOffset", Data->DataOffset);
+      StringRef LinkageName;
+      printRelocatedField("DataOffset", Sec, SectionContents, &Data->DataOffset,
+                          &LinkageName);
       printTypeIndex("Type", Data->Type);
       W.printString("DisplayName", DisplayName);
       W.printString("LinkageName", LinkageName);
       break;
     }
+
     case S_LTHREAD32:
     case S_GTHREAD32: {
       DictScope S(W, "ThreadLocalDataSym");
-      const DataSym *Data;
+      const ThreadLocalDataSym *Data;
       error(consumeObject(SymData, Data));
 
-      // In a COFF object file, the DataOffset field is typically zero and has a
-      // relocation applied to it. Go and look up the symbol for that
-      // relocation.
-      ptrdiff_t SecOffsetOfDataOffset =
-          reinterpret_cast<const char *>(&Data->DataOffset) - Subsection.data();
-      StringRef LinkageName;
-      error(resolveSymbolName(Obj->getCOFFSection(Section),
-                              OffsetInSection + SecOffsetOfDataOffset,
-                              LinkageName));
       StringRef DisplayName = SymData.split('\0').first;
-      W.printHex("DataOffset", Data->DataOffset);
+      StringRef LinkageName;
+      printRelocatedField("DataOffset", Sec, SectionContents, &Data->DataOffset,
+                          &LinkageName);
       printTypeIndex("Type", Data->Type);
       W.printString("DisplayName", DisplayName);
       W.printString("LinkageName", LinkageName);
@@ -1661,9 +1691,40 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       DictScope S(W, "UnknownSym");
       W.printHex("Kind", unsigned(Kind));
       W.printHex("Size", Rec->RecordLength);
-      W.printBinaryBlock("SymData", SymData);
       break;
     }
+    }
+
+    if (opts::CodeViewSubsectionBytes)
+      printBinaryBlockWithRelocs("SymData", Section, SectionContents,
+                                 OrigSymData);
+  }
+}
+
+void COFFDumper::printCodeViewInlineeLines(StringRef Subsection) {
+  StringRef Data = Subsection;
+  uint32_t Signature;
+  error(consumeUInt32(Data, Signature));
+  bool HasExtraFiles = Signature == unsigned(InlineeLinesSignature::ExtraFiles);
+
+  while (!Data.empty()) {
+    const InlineeSourceLine *ISL;
+    error(consumeObject(Data, ISL));
+    DictScope S(W, "InlineeSourceLine");
+    printTypeIndex("Inlinee", ISL->Inlinee);
+    printFileNameForOffset("FileID", ISL->FileID);
+    W.printNumber("SourceLineNum", ISL->SourceLineNum);
+
+    if (HasExtraFiles) {
+      uint32_t ExtraFileCount;
+      error(consumeUInt32(Data, ExtraFileCount));
+      W.printNumber("ExtraFileCount", ExtraFileCount);
+      ListScope ExtraFiles(W, "ExtraFiles");
+      for (unsigned I = 0; I < ExtraFileCount; ++I) {
+        uint32_t FileID;
+        error(consumeUInt32(Data, FileID));
+        printFileNameForOffset("FileID", FileID);
+      }
     }
   }
 }
@@ -1719,6 +1780,31 @@ void COFFDumper::printTypeIndex(StringRef FieldName, TypeIndex TI) {
     W.printHex(FieldName, TypeName, TI.getIndex());
   else
     W.printHex(FieldName, TI.getIndex());
+}
+
+StringRef COFFDumper::getFileNameForFileOffset(uint32_t FileOffset) {
+  // The file checksum subsection should precede all references to it.
+  if (!CVFileChecksumTable.data() || !CVStringTable.data())
+    error(object_error::parse_failed);
+  // Check if the file checksum table offset is valid.
+  if (FileOffset >= CVFileChecksumTable.size())
+    error(object_error::parse_failed);
+
+  // The string table offset comes first before the file checksum.
+  StringRef Data = CVFileChecksumTable.drop_front(FileOffset);
+  uint32_t StringOffset;
+  error(consumeUInt32(Data, StringOffset));
+
+  // Check if the string table offset is valid.
+  if (StringOffset >= CVStringTable.size())
+    error(object_error::parse_failed);
+
+  // Return the null-terminated string.
+  return CVStringTable.drop_front(StringOffset).split('\0').first;
+}
+
+void COFFDumper::printFileNameForOffset(StringRef Label, uint32_t FileOffset) {
+  W.printHex(Label, getFileNameForFileOffset(FileOffset), FileOffset);
 }
 
 static StringRef getLeafTypeName(TypeLeafKind LT) {
@@ -1786,8 +1872,6 @@ void COFFDumper::printCodeViewTypeSection(StringRef SectionName,
     switch (Leaf) {
     default: {
       W.printHex("Size", Rec->Len);
-      if (opts::CodeViewSubsectionBytes)
-        W.printBinaryBlock("LeafData", LeafData);
       break;
     }
 
@@ -1999,7 +2083,7 @@ void COFFDumper::printCodeViewTypeSection(StringRef SectionName,
       error(consumeObject(LeafData, Func));
       printTypeIndex("ParentScope", Func->ParentScope);
       printTypeIndex("FunctionType", Func->FunctionType);
-      StringRef Name, Null;
+      StringRef Null;
       std::tie(Name, Null) = LeafData.split('\0');
       W.printString("Name", Name);
       break;
@@ -2121,6 +2205,9 @@ void COFFDumper::printCodeViewTypeSection(StringRef SectionName,
       break;
     }
     }
+
+    if (opts::CodeViewSubsectionBytes)
+      W.printBinaryBlock("LeafData", LeafData);
 
     CVUDTNames.push_back(Name);
 
@@ -2370,8 +2457,8 @@ void COFFDumper::printRelocations() {
 }
 
 void COFFDumper::printRelocation(const SectionRef &Section,
-                                 const RelocationRef &Reloc) {
-  uint64_t Offset = Reloc.getOffset();
+                                 const RelocationRef &Reloc, uint64_t Bias) {
+  uint64_t Offset = Reloc.getOffset() - Bias;
   uint64_t RelocType = Reloc.getType();
   SmallString<32> RelocName;
   StringRef SymbolName;
