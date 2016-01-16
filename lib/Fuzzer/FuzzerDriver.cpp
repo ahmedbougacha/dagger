@@ -270,6 +270,7 @@ int FuzzerDriver(const std::vector<std::string> &Args,
   Options.UseCounters = Flags.use_counters;
   Options.UseIndirCalls = Flags.use_indir_calls;
   Options.UseTraces = Flags.use_traces;
+  Options.UseMemcmp = Flags.use_memcmp;
   Options.ShuffleAtStartUp = Flags.shuffle;
   Options.PreferSmallDuringInitialShuffle =
       Flags.prefer_small_during_initial_shuffle;
@@ -300,7 +301,8 @@ int FuzzerDriver(const std::vector<std::string> &Args,
   Fuzzer F(USF, Options);
 
   for (auto &U: Dictionary)
-    USF.GetMD().AddWordToManualDictionary(U);
+    if (U.size() <= Word::GetMaxSize())
+      USF.GetMD().AddWordToManualDictionary(Word(U.data(), U.size()));
 
   // Timer
   if (Flags.timeout > 0)
