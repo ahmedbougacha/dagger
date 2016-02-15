@@ -34,6 +34,7 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/CodeGen/SelectionDAGTargetInfo.h"
 #include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/WinEHFuncInfo.h"
 #include "llvm/IR/CallingConv.h"
@@ -42,6 +43,7 @@
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
@@ -61,7 +63,6 @@
 #include "llvm/Target/TargetIntrinsicInfo.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetOptions.h"
-#include "llvm/Target/TargetSelectionDAGInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include <algorithm>
 #include <utility>
@@ -992,10 +993,8 @@ SDValue SelectionDAGBuilder::getValue(const Value *V) {
 
   // If there's a virtual register allocated and initialized for this
   // value, use it.
-  SDValue copyFromReg = getCopyFromRegs(V, V->getType());
-  if (copyFromReg.getNode()) {
+  if (SDValue copyFromReg = getCopyFromRegs(V, V->getType()))
     return copyFromReg;
-  }
 
   // Otherwise create a new SDValue and remember it.
   SDValue Val = getValueImpl(V);
@@ -1380,7 +1379,7 @@ void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
         EVT VT = ValueVTs[j];
 
         if (ExtendKind != ISD::ANY_EXTEND && VT.isInteger())
-          VT = TLI.getTypeForExtArgOrReturn(Context, VT, ExtendKind);
+          VT = TLI.getTypeForExtReturn(Context, VT, ExtendKind);
 
         unsigned NumParts = TLI.getNumRegisters(Context, VT);
         MVT PartVT = TLI.getRegisterType(Context, VT);
@@ -2433,7 +2432,7 @@ void SelectionDAGBuilder::visitFCmp(const User &I) {
   SDValue Op1 = getValue(I.getOperand(0));
   SDValue Op2 = getValue(I.getOperand(1));
   ISD::CondCode Condition = getFCmpCondCode(predicate);
-  
+
   // FIXME: Fcmp instructions have fast-math-flags in IR, so we should use them.
   // FIXME: We should propagate the fast-math-flags to the DAG node itself for
   // further optimization, but currently FMF is only applicable to binary nodes.
@@ -2982,8 +2981,7 @@ void SelectionDAGBuilder::visitGetElementPtr(const User &I) {
   Value *Op0 = I.getOperand(0);
   // Note that the pointer operand may be a vector of pointers. Take the scalar
   // element which holds a pointer.
-  Type *Ty = Op0->getType()->getScalarType();
-  unsigned AS = Ty->getPointerAddressSpace();
+  unsigned AS = Op0->getType()->getScalarType()->getPointerAddressSpace();
   SDValue N = getValue(Op0);
   SDLoc dl = getCurSDLoc();
 
@@ -2997,10 +2995,10 @@ void SelectionDAGBuilder::visitGetElementPtr(const User &I) {
     SmallVector<SDValue, 16> Ops(VectorWidth, N);
     N = DAG.getNode(ISD::BUILD_VECTOR, dl, VT, Ops);
   }
-  for (GetElementPtrInst::const_op_iterator OI = I.op_begin()+1, E = I.op_end();
-       OI != E; ++OI) {
-    const Value *Idx = *OI;
-    if (StructType *StTy = dyn_cast<StructType>(Ty)) {
+  for (gep_type_iterator GTI = gep_type_begin(&I), E = gep_type_end(&I);
+       GTI != E; ++GTI) {
+    const Value *Idx = GTI.getOperand();
+    if (StructType *StTy = dyn_cast<StructType>(*GTI)) {
       unsigned Field = cast<Constant>(Idx)->getUniqueInteger().getZExtValue();
       if (Field) {
         // N = N + Offset
@@ -3015,14 +3013,11 @@ void SelectionDAGBuilder::visitGetElementPtr(const User &I) {
         N = DAG.getNode(ISD::ADD, dl, N.getValueType(), N,
                         DAG.getConstant(Offset, dl, N.getValueType()), &Flags);
       }
-
-      Ty = StTy->getElementType(Field);
     } else {
-      Ty = cast<SequentialType>(Ty)->getElementType();
       MVT PtrTy =
           DAG.getTargetLoweringInfo().getPointerTy(DAG.getDataLayout(), AS);
       unsigned PtrSize = PtrTy.getSizeInBits();
-      APInt ElementSize(PtrSize, DL->getTypeAllocSize(Ty));
+      APInt ElementSize(PtrSize, DL->getTypeAllocSize(GTI.getIndexedType()));
 
       // If this is a scalar constant or a splat vector of constants,
       // handle it quickly.
@@ -3055,7 +3050,7 @@ void SelectionDAGBuilder::visitGetElementPtr(const User &I) {
       if (!IdxN.getValueType().isVector() && VectorWidth) {
         MVT VT = MVT::getVectorVT(IdxN.getValueType().getSimpleVT(), VectorWidth);
         SmallVector<SDValue, 16> Ops(VectorWidth, IdxN);
-        IdxN = DAG.getNode(ISD::BUILD_VECTOR, dl, VT, Ops);      
+        IdxN = DAG.getNode(ISD::BUILD_VECTOR, dl, VT, Ops);
       }
       // If the index is smaller or larger than intptr_t, truncate or extend
       // it.
@@ -3724,7 +3719,8 @@ void SelectionDAGBuilder::visitTargetIntrinsic(const CallInst &I,
     if (VectorType *PTy = dyn_cast<VectorType>(I.getType())) {
       EVT VT = TLI.getValueType(DAG.getDataLayout(), PTy);
       Result = DAG.getNode(ISD::BITCAST, getCurSDLoc(), VT, Result);
-    }
+    } else
+      Result = lowerRangeToAssertZExt(DAG, I, Result);
 
     setValue(&I, Result);
   }
@@ -3887,7 +3883,7 @@ static SDValue expandExp(SDLoc dl, SDValue Op, SelectionDAG &DAG,
 /// limited-precision mode.
 static SDValue expandLog(SDLoc dl, SDValue Op, SelectionDAG &DAG,
                          const TargetLowering &TLI) {
- 
+
   // TODO: What fast-math-flags should be set on the floating-point nodes?
 
   if (Op.getValueType() == MVT::f32 &&
@@ -3986,7 +3982,7 @@ static SDValue expandLog(SDLoc dl, SDValue Op, SelectionDAG &DAG,
 /// limited-precision mode.
 static SDValue expandLog2(SDLoc dl, SDValue Op, SelectionDAG &DAG,
                           const TargetLowering &TLI) {
-  
+
   // TODO: What fast-math-flags should be set on the floating-point nodes?
 
   if (Op.getValueType() == MVT::f32 &&
@@ -5383,9 +5379,8 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
 void SelectionDAGBuilder::LowerCallTo(ImmutableCallSite CS, SDValue Callee,
                                       bool isTailCall,
                                       const BasicBlock *EHPadBB) {
-  PointerType *PT = cast<PointerType>(CS.getCalledValue()->getType());
-  FunctionType *FTy = cast<FunctionType>(PT->getElementType());
-  Type *RetTy = FTy->getReturnType();
+  FunctionType *FTy = CS.getFunctionType();
+  Type *RetTy = CS.getType();
 
   TargetLowering::ArgListTy Args;
   TargetLowering::ArgListEntry Entry;
@@ -5423,8 +5418,11 @@ void SelectionDAGBuilder::LowerCallTo(ImmutableCallSite CS, SDValue Callee,
     .setTailCall(isTailCall);
   std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
 
-  if (Result.first.getNode())
-    setValue(CS.getInstruction(), Result.first);
+  if (Result.first.getNode()) {
+    const Instruction *Inst = CS.getInstruction();
+    Result.first = lowerRangeToAssertZExt(DAG, *Inst, Result.first);
+    setValue(Inst, Result.first);
+  }
 }
 
 /// IsOnlyUsedInZeroEqualityComparison - Return true if it only matters that the
@@ -5454,7 +5452,7 @@ static SDValue getMemCmpLoad(const Value *PtrVal, MVT LoadVT,
                                          PointerType::getUnqual(LoadTy));
 
     if (const Constant *LoadCst = ConstantFoldLoadFromConstPtr(
-            const_cast<Constant *>(LoadInput), *Builder.DL))
+            const_cast<Constant *>(LoadInput), LoadTy, *Builder.DL))
       return Builder.getValue(LoadCst);
   }
 
@@ -5521,7 +5519,7 @@ bool SelectionDAGBuilder::visitMemCmpCall(const CallInst &I) {
     return true;
   }
 
-  const TargetSelectionDAGInfo &TSI = DAG.getSelectionDAGInfo();
+  const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
     TSI.EmitTargetCodeForMemcmp(DAG, getCurSDLoc(), DAG.getRoot(),
                                 getValue(LHS), getValue(RHS), getValue(Size),
@@ -5618,7 +5616,7 @@ bool SelectionDAGBuilder::visitMemChrCall(const CallInst &I) {
       !I.getType()->isPointerTy())
     return false;
 
-  const TargetSelectionDAGInfo &TSI = DAG.getSelectionDAGInfo();
+  const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
     TSI.EmitTargetCodeForMemchr(DAG, getCurSDLoc(), DAG.getRoot(),
                                 getValue(Src), getValue(Char), getValue(Length),
@@ -5646,7 +5644,7 @@ bool SelectionDAGBuilder::visitStrCpyCall(const CallInst &I, bool isStpcpy) {
       !I.getType()->isPointerTy())
     return false;
 
-  const TargetSelectionDAGInfo &TSI = DAG.getSelectionDAGInfo();
+  const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
     TSI.EmitTargetCodeForStrcpy(DAG, getCurSDLoc(), getRoot(),
                                 getValue(Arg0), getValue(Arg1),
@@ -5675,7 +5673,7 @@ bool SelectionDAGBuilder::visitStrCmpCall(const CallInst &I) {
       !I.getType()->isIntegerTy())
     return false;
 
-  const TargetSelectionDAGInfo &TSI = DAG.getSelectionDAGInfo();
+  const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
     TSI.EmitTargetCodeForStrcmp(DAG, getCurSDLoc(), DAG.getRoot(),
                                 getValue(Arg0), getValue(Arg1),
@@ -5702,7 +5700,7 @@ bool SelectionDAGBuilder::visitStrLenCall(const CallInst &I) {
   if (!Arg0->getType()->isPointerTy() || !I.getType()->isIntegerTy())
     return false;
 
-  const TargetSelectionDAGInfo &TSI = DAG.getSelectionDAGInfo();
+  const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
     TSI.EmitTargetCodeForStrlen(DAG, getCurSDLoc(), DAG.getRoot(),
                                 getValue(Arg0), MachinePointerInfo(Arg0));
@@ -5729,7 +5727,7 @@ bool SelectionDAGBuilder::visitStrNLenCall(const CallInst &I) {
       !I.getType()->isIntegerTy())
     return false;
 
-  const TargetSelectionDAGInfo &TSI = DAG.getSelectionDAGInfo();
+  const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
     TSI.EmitTargetCodeForStrnlen(DAG, getCurSDLoc(), DAG.getRoot(),
                                  getValue(Arg0), getValue(Arg1),
@@ -6720,6 +6718,39 @@ void SelectionDAGBuilder::visitVACopy(const CallInst &I) {
                           DAG.getSrcValue(I.getArgOperand(1))));
 }
 
+SDValue SelectionDAGBuilder::lowerRangeToAssertZExt(SelectionDAG &DAG,
+                                                    const Instruction &I,
+                                                    SDValue Op) {
+  const MDNode *Range = I.getMetadata(LLVMContext::MD_range);
+  if (!Range)
+    return Op;
+
+  Constant *Lo = cast<ConstantAsMetadata>(Range->getOperand(0))->getValue();
+  if (!Lo->isNullValue())
+    return Op;
+
+  Constant *Hi = cast<ConstantAsMetadata>(Range->getOperand(1))->getValue();
+  unsigned Bits = cast<ConstantInt>(Hi)->getValue().logBase2();
+
+  EVT SmallVT = EVT::getIntegerVT(*DAG.getContext(), Bits);
+
+  SDLoc SL = getCurSDLoc();
+
+  SDValue ZExt = DAG.getNode(ISD::AssertZext, SL, Op.getValueType(),
+                             Op, DAG.getValueType(SmallVT));
+  unsigned NumVals = Op.getNode()->getNumValues();
+  if (NumVals == 1)
+    return ZExt;
+
+  SmallVector<SDValue, 4> Ops;
+
+  Ops.push_back(ZExt);
+  for (unsigned I = 1; I != NumVals; ++I)
+    Ops.push_back(Op.getValue(I));
+
+  return DAG.getMergeValues(Ops, SL);
+}
+
 /// \brief Lower an argument list according to the target calling convention.
 ///
 /// \return A tuple of <return-value, token-chain>
@@ -7300,8 +7331,7 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
 void TargetLowering::LowerOperationWrapper(SDNode *N,
                                            SmallVectorImpl<SDValue> &Results,
                                            SelectionDAG &DAG) const {
-  SDValue Res = LowerOperation(SDValue(N, 0), DAG);
-  if (Res.getNode())
+  if (SDValue Res = LowerOperation(SDValue(N, 0), DAG))
     Results.push_back(Res);
 }
 

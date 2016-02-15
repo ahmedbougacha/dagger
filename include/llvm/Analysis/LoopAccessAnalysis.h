@@ -656,8 +656,15 @@ const SCEV *replaceSymbolicStrideSCEV(PredicatedScalarEvolution &PSE,
 ///
 /// If necessary this method will version the stride of the pointer according
 /// to \p PtrToStride and therefore add a new predicate to \p Preds.
+/// The \p Assume parameter indicates if we are allowed to make additional
+/// run-time assumptions.
 int isStridedPtr(PredicatedScalarEvolution &PSE, Value *Ptr, const Loop *Lp,
-                 const ValueToValueMap &StridesMap);
+                 const ValueToValueMap &StridesMap, bool Assume = false);
+
+/// \brief Returns true if the memory operations \p A and \p B are consecutive.
+/// This is a simple API that does not depend on the analysis pass. 
+bool isConsecutiveAccess(Value *A, Value *B, const DataLayout &DL,
+                         ScalarEvolution &SE, bool CheckType = true);
 
 /// \brief This analysis provides dependence information for the memory accesses
 /// of a loop.

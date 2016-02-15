@@ -18,7 +18,7 @@
 #include "WebAssembly.h"
 #include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCDisassembler.h"
+#include "llvm/MC/MCDisassembler/MCDisassembler.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
@@ -93,6 +93,7 @@ MCDisassembler::DecodeStatus WebAssemblyDisassembler::getInstruction(
     const MCOperandInfo &Info = Desc.OpInfo[i];
     switch (Info.OperandType) {
     case MCOI::OPERAND_IMMEDIATE:
+    case WebAssembly::OPERAND_P2ALIGN:
     case WebAssembly::OPERAND_BASIC_BLOCK: {
       if (Pos + sizeof(uint64_t) > Bytes.size())
         return MCDisassembler::Fail;

@@ -1222,7 +1222,28 @@ bool llvm::replaceDbgDeclareForAlloca(AllocaInst *AI, Value *NewAllocaAddress,
                            Deref, Offset);
 }
 
-void llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap) {
+unsigned llvm::removeAllNonTerminatorAndEHPadInstructions(BasicBlock *BB) {
+  unsigned NumDeadInst = 0;
+  // Delete the instructions backwards, as it has a reduced likelihood of
+  // having to update as many def-use and use-def chains.
+  Instruction *EndInst = BB->getTerminator(); // Last not to be deleted.
+  while (EndInst != BB->begin()) {
+    // Delete the next to last instruction.
+    Instruction *Inst = &*--EndInst->getIterator();
+    if (!Inst->use_empty() && !Inst->getType()->isTokenTy())
+      Inst->replaceAllUsesWith(UndefValue::get(Inst->getType()));
+    if (Inst->isEHPad() || Inst->getType()->isTokenTy()) {
+      EndInst = Inst;
+      continue;
+    }
+    if (!isa<DbgInfoIntrinsic>(Inst))
+      ++NumDeadInst;
+    Inst->eraseFromParent();
+  }
+  return NumDeadInst;
+}
+
+unsigned llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap) {
   BasicBlock *BB = I->getParent();
   // Loop over all of the successors, removing BB's entry from any PHI
   // nodes.
@@ -1240,12 +1261,15 @@ void llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap) {
   new UnreachableInst(I->getContext(), I);
 
   // All instructions after this are dead.
+  unsigned NumInstrsRemoved = 0;
   BasicBlock::iterator BBI = I->getIterator(), BBE = BB->end();
   while (BBI != BBE) {
     if (!BBI->use_empty())
       BBI->replaceAllUsesWith(UndefValue::get(BBI->getType()));
     BB->getInstList().erase(BBI++);
+    ++NumInstrsRemoved;
   }
+  return NumInstrsRemoved;
 }
 
 /// changeToCall - Convert the specified invoke into a normal call.
@@ -1441,7 +1465,7 @@ void llvm::removeUnwindEdge(BasicBlock *BB) {
 /// if they are in a dead cycle.  Return true if a change was made, false
 /// otherwise.
 bool llvm::removeUnreachableBlocks(Function &F, LazyValueInfo *LVI) {
-  SmallPtrSet<BasicBlock*, 128> Reachable;
+  SmallPtrSet<BasicBlock*, 16> Reachable;
   bool Changed = markAliveBlocks(F, Reachable);
 
   // If there are unreachable blocks in the CFG...
@@ -1569,7 +1593,7 @@ unsigned llvm::replaceDominatedUsesWith(Value *From, Value *To,
        UI != UE;) {
     Use &U = *UI++;
     auto *I = cast<Instruction>(U.getUser());
-    if (DT.dominates(BB, I->getParent())) {
+    if (DT.properlyDominates(BB, I->getParent())) {
       U.set(To);
       DEBUG(dbgs() << "Replace dominated use of '" << From->getName() << "' as "
                    << *To << " in " << *U << "\n");

@@ -19,9 +19,10 @@ namespace llvm {
 DwarfCompileUnit::DwarfCompileUnit(unsigned UID, const DICompileUnit *Node,
                                    AsmPrinter *A, DwarfDebug *DW,
                                    DwarfFile *DWU)
-    : DwarfUnit(UID, dwarf::DW_TAG_compile_unit, Node, A, DW, DWU),
+    : DwarfUnit(dwarf::DW_TAG_compile_unit, Node, A, DW, DWU), UniqueID(UID),
       Skeleton(nullptr), BaseAddress(nullptr) {
   insertDIE(Node, &getUnitDie());
+  MacroLabelBegin = Asm->createTempSymbol("cu_macro_begin");
 }
 
 /// addLabelAddress - Add a dwarf label attribute data and value using
@@ -83,8 +84,8 @@ static const ConstantExpr *getMergedGlobalExpr(const Value *V) {
 
   // First operand points to a global struct.
   Value *Ptr = CE->getOperand(0);
-  if (!isa<GlobalValue>(Ptr) ||
-      !isa<StructType>(cast<PointerType>(Ptr->getType())->getElementType()))
+  GlobalValue *GV = dyn_cast<GlobalValue>(Ptr);
+  if (!GV || !isa<StructType>(GV->getValueType()))
     return nullptr;
 
   // Second operand is zero.
@@ -192,14 +193,14 @@ DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(
     addToAccelTable = true;
     // GV is a merged global.
     DIELoc *Loc = new (DIEValueAllocator) DIELoc;
-    Value *Ptr = CE->getOperand(0);
-    MCSymbol *Sym = Asm->getSymbol(cast<GlobalValue>(Ptr));
+    auto *Ptr = cast<GlobalValue>(CE->getOperand(0));
+    MCSymbol *Sym = Asm->getSymbol(Ptr);
     DD->addArangeLabel(SymbolCU(this, Sym));
     addOpAddress(*Loc, Sym);
     addUInt(*Loc, dwarf::DW_FORM_data1, dwarf::DW_OP_constu);
     SmallVector<Value *, 3> Idx(CE->op_begin() + 1, CE->op_end());
     addUInt(*Loc, dwarf::DW_FORM_udata,
-            Asm->getDataLayout().getIndexedOffset(Ptr->getType(), Idx));
+            Asm->getDataLayout().getIndexedOffsetInType(Ptr->getValueType(), Idx));
     addUInt(*Loc, dwarf::DW_FORM_data1, dwarf::DW_OP_plus);
     addBlock(*VariableDIE, dwarf::DW_AT_location, Loc);
   }

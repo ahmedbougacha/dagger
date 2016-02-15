@@ -1200,7 +1200,7 @@ char *LLVMPrintValueToString(LLVMValueRef Val);
 void LLVMReplaceAllUsesWith(LLVMValueRef OldVal, LLVMValueRef NewVal);
 
 /**
- * Determine whether the specified constant instance is constant.
+ * Determine whether the specified value instance is constant.
  */
 LLVMBool LLVMIsConstant(LLVMValueRef Val);
 
@@ -1727,8 +1727,8 @@ unsigned LLVMGetAlignment(LLVMValueRef V);
 void LLVMSetAlignment(LLVMValueRef V, unsigned Bytes);
 
 /**
-  * @}
-  */
+ * @}
+ */
 
 /**
  * @defgroup LLVMCoreValueConstantGlobalVariable Global Variables
@@ -2106,6 +2106,11 @@ LLVMBool LLVMValueIsBasicBlock(LLVMValueRef Val);
 LLVMBasicBlockRef LLVMValueAsBasicBlock(LLVMValueRef Val);
 
 /**
+ * Obtain the string name of a basic block.
+ */
+const char *LLVMGetBasicBlockName(LLVMBasicBlockRef BB);
+
+/**
  * Obtain the function to which a basic block belongs.
  *
  * @see llvm::BasicBlock::getParent()
@@ -2327,6 +2332,16 @@ LLVMValueRef LLVMGetPreviousInstruction(LLVMValueRef Inst);
  * Remove and delete an instruction.
  *
  * The instruction specified is removed from its containing building
+ * block but is kept alive.
+ *
+ * @see llvm::Instruction::removeFromParent()
+ */
+void LLVMInstructionRemoveFromParent(LLVMValueRef Inst);
+
+/**
+ * Remove and delete an instruction.
+ *
+ * The instruction specified is removed from its containing building
  * block and then deleted.
  *
  * @see llvm::Instruction::eraseFromParent()
@@ -2381,6 +2396,17 @@ LLVMValueRef LLVMInstructionClone(LLVMValueRef Inst);
  */
 
 /**
+ * Obtain the argument count for a call instruction.
+ *
+ * This expects an LLVMValueRef that corresponds to a llvm::CallInst or
+ * llvm::InvokeInst.
+ *
+ * @see llvm::CallInst::getNumArgOperands()
+ * @see llvm::InvokeInst::getNumArgOperands()
+ */
+unsigned LLVMGetNumArgOperands(LLVMValueRef Instr);
+
+/**
  * Set the calling convention for a call instruction.
  *
  * This expects an LLVMValueRef that corresponds to a llvm::CallInst or
@@ -2407,6 +2433,17 @@ void LLVMRemoveInstrAttribute(LLVMValueRef Instr, unsigned index,
                               LLVMAttribute);
 void LLVMSetInstrParamAlignment(LLVMValueRef Instr, unsigned index,
                                 unsigned align);
+
+/**
+ * Obtain the pointer to the function invoked by this instruction.
+ *
+ * This expects an LLVMValueRef that corresponds to a llvm::CallInst or
+ * llvm::InvokeInst.
+ *
+ * @see llvm::CallInst::getCalledValue()
+ * @see llvm::InvokeInst::getCalledValue()
+ */
+LLVMValueRef LLVMGetCalledValue(LLVMValueRef Instr);
 
 /**
  * Obtain whether a call instruction is a tail call.
@@ -2501,6 +2538,24 @@ LLVMBasicBlockRef LLVMGetSwitchDefaultDest(LLVMValueRef SwitchInstr);
  */
 
 /**
+ * @defgroup LLVMCCoreValueInstructionAlloca Allocas
+ *
+ * Functions in this group only apply to instructions that map to
+ * llvm::AllocaInst instances.
+ *
+ * @{
+ */
+
+/**
+ * Obtain the type that is being allocated by the alloca instruction.
+ */
+LLVMTypeRef LLVMGetAllocatedType(LLVMValueRef Alloca);
+
+/**
+ * @}
+ */
+
+/**
  * @defgroup LLVMCCoreValueInstructionPHINode PHI Nodes
  *
  * Functions in this group only apply to instructions that map to
@@ -2529,6 +2584,30 @@ LLVMValueRef LLVMGetIncomingValue(LLVMValueRef PhiNode, unsigned Index);
  * Obtain an incoming value to a PHI node as an LLVMBasicBlockRef.
  */
 LLVMBasicBlockRef LLVMGetIncomingBlock(LLVMValueRef PhiNode, unsigned Index);
+
+/**
+ * @}
+ */
+
+/**
+ * @defgroup LLVMCCoreValueInstructionExtractValue ExtractValue
+ * @defgroup LLVMCCoreValueInstructionInsertValue InsertValue
+ *
+ * Functions in this group only apply to instructions that map to
+ * llvm::ExtractValue and llvm::InsertValue instances.
+ *
+ * @{
+ */
+
+/**
+ * Obtain the number of indices.
+ */
+unsigned LLVMGetNumIndices(LLVMValueRef Inst);
+
+/**
+ * Obtain the indices as an array.
+ */
+const unsigned *LLVMGetIndices(LLVMValueRef Inst);
 
 /**
  * @}

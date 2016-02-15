@@ -3906,6 +3906,8 @@ def : T2Pat<(ARMWrapper tglobaltlsaddr:$dst),
 
 // ConstantPool, GlobalAddress, and JumpTable
 def : T2Pat<(ARMWrapper  tconstpool  :$dst), (t2LEApcrel tconstpool  :$dst)>;
+def : T2Pat<(ARMWrapper texternalsym :$dst), (t2MOVi32imm texternalsym : $dst)>,
+          Requires<[IsThumb, HasV8MBaseline, UseMovt]>;
 def : T2Pat<(ARMWrapper  tglobaladdr :$dst), (t2MOVi32imm tglobaladdr :$dst)>,
            Requires<[IsThumb, HasV8MBaseline, UseMovt]>;
 
@@ -4336,6 +4338,37 @@ def t2SETPAN : T1I<(outs), (ins imm0_1:$imm), NoItinerary, "setpan\t$imm", []>,
 }
 
 //===----------------------------------------------------------------------===//
+// ARMv8-M Security Extensions instructions
+//
+
+let hasSideEffects = 1 in
+def t2SG : T2I<(outs), (ins), NoItinerary, "sg", "", []>,
+           Requires<[Has8MSecExt]> {
+  let Inst = 0xe97fe97f;
+}
+
+class T2TT<bits<2> at, string asm, list<dag> pattern>
+  : T2I<(outs rGPR:$Rt), (ins GPRnopc:$Rn), NoItinerary, asm, "\t$Rt, $Rn",
+        pattern> {
+  bits<4> Rn;
+  bits<4> Rt;
+
+  let Inst{31-20} = 0b111010000100;
+  let Inst{19-16} = Rn;
+  let Inst{15-12} = 0b1111;
+  let Inst{11-8} = Rt;
+  let Inst{7-6} = at;
+  let Inst{5-0} = 0b000000;
+
+  let Unpredictable{5-0} = 0b111111;
+}
+
+def t2TT   : T2TT<0b00, "tt",   []>, Requires<[IsThumb,Has8MSecExt]>;
+def t2TTT  : T2TT<0b01, "ttt",  []>, Requires<[IsThumb,Has8MSecExt]>;
+def t2TTA  : T2TT<0b10, "tta",  []>, Requires<[IsThumb,Has8MSecExt]>;
+def t2TTAT : T2TT<0b11, "ttat", []>, Requires<[IsThumb,Has8MSecExt]>;
+
+//===----------------------------------------------------------------------===//
 // Non-Instruction Patterns
 //
 
@@ -4557,13 +4590,13 @@ def : t2InstAlias<"mvn${s}${p} $Rd, $Rm",
 def : t2InstAlias<"mvn${s}${p} $Rd, $ShiftedRm",
            (t2MVNs rGPR:$Rd, t2_so_reg:$ShiftedRm, pred:$p, cc_out:$s)>;
 
-// PKHBT/PKHTB with default shift amount. PKHTB is equivalent to PKHBT when the
-// shift amount is zero (i.e., unspecified).
+// PKHBT/PKHTB with default shift amount. PKHTB is equivalent to PKHBT with the
+// input operands swapped when the shift amount is zero (i.e., unspecified).
 def : InstAlias<"pkhbt${p} $Rd, $Rn, $Rm",
                 (t2PKHBT rGPR:$Rd, rGPR:$Rn, rGPR:$Rm, 0, pred:$p)>,
             Requires<[HasT2ExtractPack, IsThumb2]>;
 def : InstAlias<"pkhtb${p} $Rd, $Rn, $Rm",
-                (t2PKHBT rGPR:$Rd, rGPR:$Rn, rGPR:$Rm, 0, pred:$p)>,
+                (t2PKHBT rGPR:$Rd, rGPR:$Rm, rGPR:$Rn, 0, pred:$p)>,
             Requires<[HasT2ExtractPack, IsThumb2]>;
 
 // PUSH/POP aliases for STM/LDM

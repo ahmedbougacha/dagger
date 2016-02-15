@@ -64,6 +64,7 @@ struct PostOrderFunctionAttrs : public CallGraphSCCPass {
     AU.setPreservesCFG();
     AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<TargetLibraryInfoWrapperPass>();
+    addUsedAAAnalyses(AU);
     CallGraphSCCPass::getAnalysisUsage(AU);
   }
 
@@ -119,8 +120,12 @@ static MemoryAccessKind checkFunctionMemoryAccess(Function &F, AAResults &AAR,
     // Detect these now, skipping to the next instruction if one is found.
     CallSite CS(cast<Value>(I));
     if (CS) {
-      // Ignore calls to functions in the same SCC.
-      if (CS.getCalledFunction() && SCCNodes.count(CS.getCalledFunction()))
+      // Ignore calls to functions in the same SCC, as long as the call sites
+      // don't have operand bundles.  Calls with operand bundles are allowed to
+      // have memory effects not described by the memory effects of the call
+      // target.
+      if (!CS.hasOperandBundles() && CS.getCalledFunction() &&
+          SCCNodes.count(CS.getCalledFunction()))
         continue;
       FunctionModRefBehavior MRB = AAR.getModRefBehavior(CS);
 
@@ -930,6 +935,54 @@ static bool addNonNullAttrs(const SCCNodeSet &SCCNodes,
   return MadeChange;
 }
 
+/// Removes convergent attributes where we can prove that none of the SCC's
+/// callees are themselves convergent.  Returns true if successful at removing
+/// the attribute.
+static bool removeConvergentAttrs(const SCCNodeSet &SCCNodes) {
+  // Determines whether a function can be made non-convergent, ignoring all
+  // other functions in SCC.  (A function can *actually* be made non-convergent
+  // only if all functions in its SCC can be made convergent.)
+  auto CanRemoveConvergent = [&](Function *F) {
+    if (!F->isConvergent())
+      return true;
+
+    // Can't remove convergent from declarations.
+    if (F->isDeclaration())
+      return false;
+
+    for (Instruction &I : instructions(*F))
+      if (auto CS = CallSite(&I)) {
+        // Can't remove convergent if any of F's callees -- ignoring functions
+        // in the SCC itself -- are convergent. This needs to consider both
+        // function calls and intrinsic calls. We also assume indirect calls
+        // might call a convergent function.
+        // FIXME: We should revisit this when we put convergent onto calls
+        // instead of functions so that indirect calls which should be
+        // convergent are required to be marked as such.
+        Function *Callee = CS.getCalledFunction();
+        if (!Callee || (SCCNodes.count(Callee) == 0 && Callee->isConvergent()))
+          return false;
+      }
+
+    return true;
+  };
+
+  // We can remove the convergent attr from functions in the SCC if they all
+  // can be made non-convergent (because they call only non-convergent
+  // functions, other than each other).
+  if (!llvm::all_of(SCCNodes, CanRemoveConvergent))
+    return false;
+
+  // If we got here, all of the SCC's callees are non-convergent. Therefore all
+  // of the SCC's functions can be marked as non-convergent.
+  for (Function *F : SCCNodes) {
+    if (F->isConvergent())
+      DEBUG(dbgs() << "Removing convergent attr from " << F->getName() << "\n");
+    F->setNotConvergent();
+  }
+  return true;
+}
+
 static bool setDoesNotRecurse(Function &F) {
   if (F.doesNotRecurse())
     return false;
@@ -938,31 +991,32 @@ static bool setDoesNotRecurse(Function &F) {
   return true;
 }
 
-static bool addNoRecurseAttrs(const CallGraphSCC &SCC) {
+static bool addNoRecurseAttrs(const SCCNodeSet &SCCNodes) {
   // Try and identify functions that do not recurse.
 
   // If the SCC contains multiple nodes we know for sure there is recursion.
-  if (!SCC.isSingular())
+  if (SCCNodes.size() != 1)
     return false;
 
-  const CallGraphNode *CGN = *SCC.begin();
-  Function *F = CGN->getFunction();
+  Function *F = *SCCNodes.begin();
   if (!F || F->isDeclaration() || F->doesNotRecurse())
     return false;
 
   // If all of the calls in F are identifiable and are to norecurse functions, F
   // is norecurse. This check also detects self-recursion as F is not currently
   // marked norecurse, so any called from F to F will not be marked norecurse.
-  if (std::all_of(CGN->begin(), CGN->end(),
-                  [](const CallGraphNode::CallRecord &CR) {
-                    Function *F = CR.second->getFunction();
-                    return F && F->doesNotRecurse();
-                  }))
-    // Function calls a potentially recursive function.
-    return setDoesNotRecurse(*F);
+  for (Instruction &I : instructions(*F))
+    if (auto CS = CallSite(&I)) {
+      Function *Callee = CS.getCalledFunction();
+      if (!Callee || Callee == F || !Callee->doesNotRecurse())
+        // Function calls a potentially recursive function.
+        return false;
+    }
 
-  // Nothing else we can deduce usefully during the postorder traversal.
-  return false;
+  // Every call was to a non-recursive function other than this function, and
+  // we have no indirect recursion as the SCC size is one. This function cannot
+  // recurse.
+  return setDoesNotRecurse(*F);
 }
 
 bool PostOrderFunctionAttrs::runOnSCC(CallGraphSCC &SCC) {
@@ -1006,9 +1060,10 @@ bool PostOrderFunctionAttrs::runOnSCC(CallGraphSCC &SCC) {
   if (!ExternalNode) {
     Changed |= addNoAliasAttrs(SCCNodes);
     Changed |= addNonNullAttrs(SCCNodes, *TLI);
+    Changed |= removeConvergentAttrs(SCCNodes);
+    Changed |= addNoRecurseAttrs(SCCNodes);
   }
 
-  Changed |= addNoRecurseAttrs(SCC);
   return Changed;
 }
 

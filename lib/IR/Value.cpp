@@ -34,6 +34,7 @@
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
+
 using namespace llvm;
 
 //===----------------------------------------------------------------------===//
@@ -313,8 +314,8 @@ void Value::takeName(Value *V) {
     ST->reinsertValue(this);
 }
 
-#ifndef NDEBUG
 void Value::assertModuleIsMaterialized() const {
+#ifndef NDEBUG
   const GlobalValue *GV = dyn_cast<GlobalValue>(this);
   if (!GV)
     return;
@@ -322,8 +323,10 @@ void Value::assertModuleIsMaterialized() const {
   if (!M)
     return;
   assert(M->isMaterialized());
+#endif
 }
 
+#ifndef NDEBUG
 static bool contains(SmallPtrSetImpl<ConstantExpr *> &Cache, ConstantExpr *Expr,
                      Constant *C) {
   if (!Cache.insert(Expr).second)
@@ -356,7 +359,7 @@ static bool contains(Value *Expr, Value *V) {
   SmallPtrSet<ConstantExpr *, 4> Cache;
   return contains(Cache, CE, C);
 }
-#endif
+#endif // NDEBUG
 
 void Value::replaceAllUsesWith(Value *New) {
   assert(New && "Value::replaceAllUsesWith(<null>) is invalid!");
@@ -377,7 +380,7 @@ void Value::replaceAllUsesWith(Value *New) {
     // constant because they are uniqued.
     if (auto *C = dyn_cast<Constant>(U.getUser())) {
       if (!isa<GlobalValue>(C)) {
-        C->handleOperandChange(this, New, &U);
+        C->handleOperandChange(this, New);
         continue;
       }
     }
@@ -408,7 +411,6 @@ void Value::replaceUsesOutsideBlock(Value *New, BasicBlock *BB) {
       continue;
     U.set(New);
   }
-  return;
 }
 
 namespace {
@@ -463,7 +465,7 @@ static Value *stripPointerCastsAndOffsets(Value *V) {
 
   return V;
 }
-} // namespace
+} // end anonymous namespace
 
 Value *Value::stripPointerCasts() {
   return stripPointerCastsAndOffsets<PSK_ZeroIndicesAndAliases>(this);
@@ -642,7 +644,6 @@ void ValueHandleBase::RemoveFromUseList() {
   }
 }
 
-
 void ValueHandleBase::ValueIsDeleted(Value *V) {
   assert(V->HasValueHandle && "Should only be called if ValueHandles present");
 
@@ -698,7 +699,6 @@ void ValueHandleBase::ValueIsDeleted(Value *V) {
     llvm_unreachable("All references to V were not removed?");
   }
 }
-
 
 void ValueHandleBase::ValueIsRAUWd(Value *Old, Value *New) {
   assert(Old->HasValueHandle &&"Should only be called if ValueHandles present");

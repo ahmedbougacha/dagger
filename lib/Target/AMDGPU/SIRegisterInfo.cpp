@@ -234,6 +234,7 @@ void SIRegisterInfo::buildScratchLoadStore(MachineBasicBlock::iterator MI,
   bool IsLoad = TII->get(LoadStoreOp).mayLoad();
 
   bool RanOutOfSGPRs = false;
+  bool Scavenged = false;
   unsigned SOffset = ScratchOffset;
 
   unsigned NumSubRegs = getNumSubRegsForSpillOp(MI->getOpcode());
@@ -244,6 +245,8 @@ void SIRegisterInfo::buildScratchLoadStore(MachineBasicBlock::iterator MI,
     if (SOffset == AMDGPU::NoRegister) {
       RanOutOfSGPRs = true;
       SOffset = AMDGPU::SGPR0;
+    } else {
+      Scavenged = true;
     }
     BuildMI(*MBB, MI, DL, TII->get(AMDGPU::S_ADD_U32), SOffset)
             .addReg(ScratchOffset)
@@ -259,10 +262,14 @@ void SIRegisterInfo::buildScratchLoadStore(MachineBasicBlock::iterator MI,
         getPhysRegSubReg(Value, &AMDGPU::VGPR_32RegClass, i) :
         Value;
 
+    unsigned SOffsetRegState = 0;
+    if (i + 1 == e && Scavenged)
+      SOffsetRegState |= RegState::Kill;
+
     BuildMI(*MBB, MI, DL, TII->get(LoadStoreOp))
       .addReg(SubReg, getDefRegState(IsLoad))
       .addReg(ScratchRsrcReg)
-      .addReg(SOffset)
+      .addReg(SOffset, SOffsetRegState)
       .addImm(Offset)
       .addImm(0) // glc
       .addImm(0) // slc
@@ -420,7 +427,8 @@ const TargetRegisterClass *SIRegisterInfo::getPhysRegClass(unsigned Reg) const {
     &AMDGPU::VReg_256RegClass,
     &AMDGPU::SReg_256RegClass,
     &AMDGPU::VReg_512RegClass,
-    &AMDGPU::SReg_512RegClass
+    &AMDGPU::SReg_512RegClass,
+    &AMDGPU::SCC_CLASSRegClass,
   };
 
   for (const TargetRegisterClass *BaseClass : BaseClasses) {
@@ -435,6 +443,8 @@ const TargetRegisterClass *SIRegisterInfo::getPhysRegClass(unsigned Reg) const {
 // TargetRegisterClass to mark which classes are VGPRs to make this trivial.
 bool SIRegisterInfo::hasVGPRs(const TargetRegisterClass *RC) const {
   switch (RC->getSize()) {
+  case 0: return false;
+  case 1: return false;
   case 4:
     return getCommonSubClass(&AMDGPU::VGPR_32RegClass, RC) != nullptr;
   case 8:
@@ -467,6 +477,24 @@ const TargetRegisterClass *SIRegisterInfo::getEquivalentVGPRClass(
     return &AMDGPU::VReg_256RegClass;
   case 64:
     return &AMDGPU::VReg_512RegClass;
+  default:
+    llvm_unreachable("Invalid register class size");
+  }
+}
+
+const TargetRegisterClass *SIRegisterInfo::getEquivalentSGPRClass(
+                                         const TargetRegisterClass *VRC) const {
+  switch (VRC->getSize()) {
+  case 4:
+    return &AMDGPU::SGPR_32RegClass;
+  case 8:
+    return &AMDGPU::SReg_64RegClass;
+  case 16:
+    return &AMDGPU::SReg_128RegClass;
+  case 32:
+    return &AMDGPU::SReg_256RegClass;
+  case 64:
+    return &AMDGPU::SReg_512RegClass;
   default:
     llvm_unreachable("Invalid register class size");
   }
@@ -624,6 +652,11 @@ unsigned SIRegisterInfo::getPreloadedValue(const MachineFunction &MF,
   case SIRegisterInfo::KERNARG_SEGMENT_PTR:
     assert(MFI->hasKernargSegmentPtr());
     return MFI->KernargSegmentPtrUserSGPR;
+  case SIRegisterInfo::DISPATCH_ID:
+    llvm_unreachable("unimplemented");
+  case SIRegisterInfo::FLAT_SCRATCH_INIT:
+    assert(MFI->hasFlatScratchInit());
+    return MFI->FlatScratchInitUserSGPR;
   case SIRegisterInfo::DISPATCH_PTR:
     assert(MFI->hasDispatchPtr());
     return MFI->DispatchPtrUserSGPR;

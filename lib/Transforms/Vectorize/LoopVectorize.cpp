@@ -372,7 +372,7 @@ protected:
 
   /// Shrinks vector element sizes based on information in "MinBWs".
   void truncateToMinimalBitwidths();
-  
+
   /// A helper function that computes the predicate of the block BB, assuming
   /// that the header block of the loop is set to True. It returns the *entry*
   /// mask for the block BB.
@@ -383,7 +383,7 @@ protected:
 
   /// A helper function to vectorize a single BB within the innermost loop.
   void vectorizeBlockInLoop(BasicBlock *BB, PhiVector *PV);
-  
+
   /// Vectorize a single PHINode in a block. This method handles the induction
   /// variable canonicalization. It supports both VF = 1 for unrolled loops and
   /// arbitrary length vectors.
@@ -1751,7 +1751,7 @@ struct LoopVectorize : public FunctionPass {
       }
     }
 
-    PredicatedScalarEvolution PSE(*SE);
+    PredicatedScalarEvolution PSE(*SE, *L);
 
     // Check if it is legal to vectorize the loop.
     LoopVectorizationRequirements Requirements;
@@ -2477,7 +2477,7 @@ void InnerLoopVectorizer::vectorizeMemoryInstruction(Instruction *Instr) {
       if (Legal->isMaskRequired(SI))
         NewSI = Builder.CreateMaskedStore(StoredVal[Part], VecPtr, Alignment,
                                           Mask[Part]);
-      else 
+      else
         NewSI = Builder.CreateAlignedStore(StoredVal[Part], VecPtr, Alignment);
       propagateMetadata(NewSI, SI);
     }
@@ -2624,7 +2624,7 @@ PHINode *InnerLoopVectorizer::createInductionVariable(Loop *L, Value *Start,
   auto *Induction = Builder.CreatePHI(Start->getType(), 2, "index");
 
   Builder.SetInsertPoint(Latch->getTerminator());
-  
+
   // Create i+1 and fill the PHINode.
   Value *Next = Builder.CreateAdd(Induction, Step, "index.next");
   Induction->addIncoming(Start, L->getLoopPreheader());
@@ -2632,7 +2632,7 @@ PHINode *InnerLoopVectorizer::createInductionVariable(Loop *L, Value *Start,
   // Create the compare.
   Value *ICmp = Builder.CreateICmpEQ(Next, End);
   Builder.CreateCondBr(ICmp, L->getExitBlock(), Header);
-  
+
   // Now we have two terminators. Remove the old one from the block.
   Latch->getTerminator()->eraseFromParent();
 
@@ -2651,7 +2651,7 @@ Value *InnerLoopVectorizer::getOrCreateTripCount(Loop *L) {
          "Invalid loop count");
 
   Type *IdxTy = Legal->getWidestInductionType();
-  
+
   // The exit count might have the type of i64 while the phi is i32. This can
   // happen if we have an induction variable that is sign extended before the
   // compare. The only way that we get a backedge taken count is that the
@@ -2661,7 +2661,7 @@ Value *InnerLoopVectorizer::getOrCreateTripCount(Loop *L) {
       IdxTy->getPrimitiveSizeInBits())
     BackedgeTakenCount = SE->getTruncateOrNoop(BackedgeTakenCount, IdxTy);
   BackedgeTakenCount = SE->getNoopOrZeroExtend(BackedgeTakenCount, IdxTy);
-  
+
   // Get the total trip count from the count by adding 1.
   const SCEV *ExitCount = SE->getAddExpr(
       BackedgeTakenCount, SE->getOne(BackedgeTakenCount->getType()));
@@ -2688,10 +2688,10 @@ Value *InnerLoopVectorizer::getOrCreateTripCount(Loop *L) {
 Value *InnerLoopVectorizer::getOrCreateVectorTripCount(Loop *L) {
   if (VectorTripCount)
     return VectorTripCount;
-  
+
   Value *TC = getOrCreateTripCount(L);
   IRBuilder<> Builder(L->getLoopPreheader()->getTerminator());
-  
+
   // Now we need to generate the expression for N - (N % VF), which is
   // the part that the vectorized body will execute.
   // The loop step is equal to the vectorization factor (num of SIMD elements)
@@ -2715,9 +2715,13 @@ void InnerLoopVectorizer::emitMinimumIterationCountCheck(Loop *L,
     Builder.CreateICmpULT(Count,
                           ConstantInt::get(Count->getType(), VF * UF),
                           "min.iters.check");
-  
+
   BasicBlock *NewBB = BB->splitBasicBlock(BB->getTerminator(),
                                           "min.iters.checked");
+  // Update dominator tree immediately if the generated block is a
+  // LoopBypassBlock because SCEV expansions to generate loop bypass
+  // checks may query it before the current function is finished.
+  DT->addNewBlock(NewBB, BB);
   if (L->getParentLoop())
     L->getParentLoop()->addBasicBlockToLoop(NewBB, *LI);
   ReplaceInstWithInst(BB->getTerminator(),
@@ -2730,7 +2734,7 @@ void InnerLoopVectorizer::emitVectorLoopEnteredCheck(Loop *L,
   Value *TC = getOrCreateVectorTripCount(L);
   BasicBlock *BB = L->getLoopPreheader();
   IRBuilder<> Builder(BB->getTerminator());
-  
+
   // Now, compare the new count to zero. If it is zero skip the vector loop and
   // jump to the scalar loop.
   Value *Cmp = Builder.CreateICmpEQ(TC, Constant::getNullValue(TC->getType()),
@@ -2740,6 +2744,10 @@ void InnerLoopVectorizer::emitVectorLoopEnteredCheck(Loop *L,
   // adding one to the backedge-taken count will not overflow.
   BasicBlock *NewBB = BB->splitBasicBlock(BB->getTerminator(),
                                           "vector.ph");
+  // Update dominator tree immediately if the generated block is a
+  // LoopBypassBlock because SCEV expansions to generate loop bypass
+  // checks may query it before the current function is finished.
+  DT->addNewBlock(NewBB, BB);
   if (L->getParentLoop())
     L->getParentLoop()->addBasicBlockToLoop(NewBB, *LI);
   ReplaceInstWithInst(BB->getTerminator(),
@@ -2765,6 +2773,10 @@ void InnerLoopVectorizer::emitSCEVChecks(Loop *L, BasicBlock *Bypass) {
   // Create a new block containing the stride check.
   BB->setName("vector.scevcheck");
   auto *NewBB = BB->splitBasicBlock(BB->getTerminator(), "vector.ph");
+  // Update dominator tree immediately if the generated block is a
+  // LoopBypassBlock because SCEV expansions to generate loop bypass
+  // checks may query it before the current function is finished.
+  DT->addNewBlock(NewBB, BB);
   if (L->getParentLoop())
     L->getParentLoop()->addBasicBlockToLoop(NewBB, *LI);
   ReplaceInstWithInst(BB->getTerminator(),
@@ -2790,6 +2802,10 @@ void InnerLoopVectorizer::emitMemRuntimeChecks(Loop *L,
   // Create a new block containing the memory check.
   BB->setName("vector.memcheck");
   auto *NewBB = BB->splitBasicBlock(BB->getTerminator(), "vector.ph");
+  // Update dominator tree immediately if the generated block is a
+  // LoopBypassBlock because SCEV expansions to generate loop bypass
+  // checks may query it before the current function is finished.
+  DT->addNewBlock(NewBB, BB);
   if (L->getParentLoop())
     L->getParentLoop()->addBasicBlockToLoop(NewBB, *LI);
   ReplaceInstWithInst(BB->getTerminator(),
@@ -2896,7 +2912,7 @@ void InnerLoopVectorizer::createEmptyLoop() {
   // checks into a separate block to make the more common case of few elements
   // faster.
   emitMemRuntimeChecks(Lp, ScalarPH);
-  
+
   // Generate the induction variable.
   // The loop step is equal to the vectorization factor (num of SIMD elements)
   // times the unroll factor (num of SIMD instructions).
@@ -3171,6 +3187,9 @@ void InnerLoopVectorizer::truncateToMinimalBitwidths() {
       if (TruncatedTy == OriginalTy)
         continue;
 
+      if (!isa<Instruction>(I))
+        continue;
+
       IRBuilder<> B(cast<Instruction>(I));
       auto ShrinkOperand = [&](Value *V) -> Value* {
         if (auto *ZI = dyn_cast<ZExtInst>(V))
@@ -3226,6 +3245,17 @@ void InnerLoopVectorizer::truncateToMinimalBitwidths() {
       } else if (isa<LoadInst>(I)) {
         // Don't do anything with the operands, just extend the result.
         continue;
+      } else if (auto *IE = dyn_cast<InsertElementInst>(I)) {
+        auto Elements = IE->getOperand(0)->getType()->getVectorNumElements();
+        auto *O0 = B.CreateZExtOrTrunc(
+            IE->getOperand(0), VectorType::get(ScalarTruncatedTy, Elements));
+        auto *O1 = B.CreateZExtOrTrunc(IE->getOperand(1), ScalarTruncatedTy);
+        NewI = B.CreateInsertElement(O0, O1, IE->getOperand(2));
+      } else if (auto *EE = dyn_cast<ExtractElementInst>(I)) {
+        auto Elements = EE->getOperand(0)->getType()->getVectorNumElements();
+        auto *O0 = B.CreateZExtOrTrunc(
+            EE->getOperand(0), VectorType::get(ScalarTruncatedTy, Elements));
+        NewI = B.CreateExtractElement(O0, EE->getOperand(2));
       } else {
         llvm_unreachable("Unhandled instruction type!");
       }
@@ -3263,15 +3293,14 @@ void InnerLoopVectorizer::vectorizeLoop() {
   //===------------------------------------------------===//
   Constant *Zero = Builder.getInt32(0);
 
-  // In order to support reduction variables we need to be able to vectorize
-  // Phi nodes. Phi nodes have cycles, so we need to vectorize them in two
-  // stages. First, we create a new vector PHI node with no incoming edges.
-  // We use this value when we vectorize all of the instructions that use the
-  // PHI. Next, after all of the instructions in the block are complete we
-  // add the new incoming edges to the PHI. At this point all of the
-  // instructions in the basic block are vectorized, so we can use them to
-  // construct the PHI.
-  PhiVector RdxPHIsToFix;
+  // In order to support recurrences we need to be able to vectorize Phi nodes.
+  // Phi nodes have cycles, so we need to vectorize them in two stages. First,
+  // we create a new vector PHI node with no incoming edges. We use this value
+  // when we vectorize all of the instructions that use the PHI. Next, after
+  // all of the instructions in the block are complete we add the new incoming
+  // edges to the PHI. At this point all of the instructions in the basic block
+  // are vectorized, so we can use them to construct the PHI.
+  PhiVector PHIsToFix;
 
   // Scan the loop in a topological order to ensure that defs are vectorized
   // before users.
@@ -3281,31 +3310,25 @@ void InnerLoopVectorizer::vectorizeLoop() {
   // Vectorize all of the blocks in the original loop.
   for (LoopBlocksDFS::RPOIterator bb = DFS.beginRPO(),
        be = DFS.endRPO(); bb != be; ++bb)
-    vectorizeBlockInLoop(*bb, &RdxPHIsToFix);
+    vectorizeBlockInLoop(*bb, &PHIsToFix);
 
   // Insert truncates and extends for any truncated instructions as hints to
   // InstCombine.
   if (VF > 1)
     truncateToMinimalBitwidths();
-  
-  // At this point every instruction in the original loop is widened to
-  // a vector form. We are almost done. Now, we need to fix the PHI nodes
-  // that we vectorized. The PHI nodes are currently empty because we did
-  // not want to introduce cycles. Notice that the remaining PHI nodes
-  // that we need to fix are reduction variables.
 
-  // Create the 'reduced' values for each of the induction vars.
-  // The reduced values are the vector values that we scalarize and combine
-  // after the loop is finished.
-  for (PhiVector::iterator it = RdxPHIsToFix.begin(), e = RdxPHIsToFix.end();
-       it != e; ++it) {
-    PHINode *RdxPhi = *it;
-    assert(RdxPhi && "Unable to recover vectorized PHI");
+  // At this point every instruction in the original loop is widened to a
+  // vector form. Now we need to fix the recurrences in PHIsToFix. These PHI
+  // nodes are currently empty because we did not want to introduce cycles.
+  // This is the second stage of vectorizing recurrences.
+  for (PHINode *Phi : PHIsToFix) {
+    assert(Phi && "Unable to recover vectorized PHI");
 
-    // Find the reduction variable descriptor.
-    assert(Legal->isReductionVariable(RdxPhi) &&
+    // We currently only handle reductions. Ensure the PHI node to be fixed is
+    // a reduction, and get its reduction variable descriptor.
+    assert(Legal->isReductionVariable(Phi) &&
            "Unable to find the reduction variable");
-    RecurrenceDescriptor RdxDesc = (*Legal->getReductionVars())[RdxPhi];
+    RecurrenceDescriptor RdxDesc = (*Legal->getReductionVars())[Phi];
 
     RecurrenceDescriptor::RecurrenceKind RK = RdxDesc.getRecurrenceKind();
     TrackingVH<Value> ReductionStartValue = RdxDesc.getRecurrenceStartValue();
@@ -3360,9 +3383,9 @@ void InnerLoopVectorizer::vectorizeLoop() {
 
     // Reductions do not have to start at zero. They can start with
     // any loop invariant values.
-    VectorParts &VecRdxPhi = WidenMap.get(RdxPhi);
+    VectorParts &VecRdxPhi = WidenMap.get(Phi);
     BasicBlock *Latch = OrigLoop->getLoopLatch();
-    Value *LoopVal = RdxPhi->getIncomingValueForBlock(Latch);
+    Value *LoopVal = Phi->getIncomingValueForBlock(Latch);
     VectorParts &Val = getVectorValue(LoopVal);
     for (unsigned part = 0; part < UF; ++part) {
       // Make sure to add the reduction stat value only to the
@@ -3386,7 +3409,7 @@ void InnerLoopVectorizer::vectorizeLoop() {
     // If the vector reduction can be performed in a smaller type, we truncate
     // then extend the loop exit value to enable InstCombine to evaluate the
     // entire expression in the smaller type.
-    if (VF > 1 && RdxPhi->getType() != RdxDesc.getRecurrenceType()) {
+    if (VF > 1 && Phi->getType() != RdxDesc.getRecurrenceType()) {
       Type *RdxVecTy = VectorType::get(RdxDesc.getRecurrenceType(), VF);
       Builder.SetInsertPoint(LoopVectorBody.back()->getTerminator());
       for (unsigned part = 0; part < UF; ++part) {
@@ -3460,16 +3483,16 @@ void InnerLoopVectorizer::vectorizeLoop() {
 
       // If the reduction can be performed in a smaller type, we need to extend
       // the reduction to the wider type before we branch to the original loop.
-      if (RdxPhi->getType() != RdxDesc.getRecurrenceType())
+      if (Phi->getType() != RdxDesc.getRecurrenceType())
         ReducedPartRdx =
             RdxDesc.isSigned()
-                ? Builder.CreateSExt(ReducedPartRdx, RdxPhi->getType())
-                : Builder.CreateZExt(ReducedPartRdx, RdxPhi->getType());
+                ? Builder.CreateSExt(ReducedPartRdx, Phi->getType())
+                : Builder.CreateZExt(ReducedPartRdx, Phi->getType());
     }
 
     // Create a phi node that merges control-flow from the backedge-taken check
     // block and the middle block.
-    PHINode *BCBlockPhi = PHINode::Create(RdxPhi->getType(), 2, "bc.merge.rdx",
+    PHINode *BCBlockPhi = PHINode::Create(Phi->getType(), 2, "bc.merge.rdx",
                                           LoopScalarPreHeader->getTerminator());
     for (unsigned I = 0, E = LoopBypassBlocks.size(); I != E; ++I)
       BCBlockPhi->addIncoming(ReductionStartValue, LoopBypassBlocks[I]);
@@ -3500,19 +3523,19 @@ void InnerLoopVectorizer::vectorizeLoop() {
     // Fix the scalar loop reduction variable with the incoming reduction sum
     // from the vector body and from the backedge value.
     int IncomingEdgeBlockIdx =
-    (RdxPhi)->getBasicBlockIndex(OrigLoop->getLoopLatch());
+        Phi->getBasicBlockIndex(OrigLoop->getLoopLatch());
     assert(IncomingEdgeBlockIdx >= 0 && "Invalid block index");
     // Pick the other block.
     int SelfEdgeBlockIdx = (IncomingEdgeBlockIdx ? 0 : 1);
-    (RdxPhi)->setIncomingValue(SelfEdgeBlockIdx, BCBlockPhi);
-    (RdxPhi)->setIncomingValue(IncomingEdgeBlockIdx, LoopExitInst);
-  }// end of for each redux variable.
+    Phi->setIncomingValue(SelfEdgeBlockIdx, BCBlockPhi);
+    Phi->setIncomingValue(IncomingEdgeBlockIdx, LoopExitInst);
+  } // end of for each Phi in PHIsToFix.
 
   fixLCSSAPHIs();
 
   // Make sure DomTree is updated.
   updateAnalysis();
-  
+
   // Predicate any stores.
   for (auto KV : PredicatedStores) {
     BasicBlock::iterator I(KV.first);
@@ -3787,7 +3810,7 @@ void InnerLoopVectorizer::vectorizeBlockInLoop(BasicBlock *BB, PhiVector *PV) {
       VectorParts &Cond = getVectorValue(it->getOperand(0));
       VectorParts &Op0  = getVectorValue(it->getOperand(1));
       VectorParts &Op1  = getVectorValue(it->getOperand(2));
-      
+
       Value *ScalarCond = (VF == 1) ? Cond[0] :
         Builder.CreateExtractElement(Cond[0], Builder.getInt32(0));
 
@@ -3963,10 +3986,6 @@ void InnerLoopVectorizer::updateAnalysis() {
   // Update the dominator tree information.
   assert(DT->properlyDominates(LoopBypassBlocks.front(), LoopExitBlock) &&
          "Entry does not dominate exit.");
-
-  for (unsigned I = 1, E = LoopBypassBlocks.size(); I != E; ++I)
-    DT->addNewBlock(LoopBypassBlocks[I], LoopBypassBlocks[I-1]);
-  DT->addNewBlock(LoopVectorPreHeader, LoopBypassBlocks.back());
 
   // We don't predicate stores by this point, so the vector body should be a
   // single loop.
@@ -4486,7 +4505,7 @@ bool LoopVectorizationLegality::blockNeedsPredication(BasicBlock *BB)  {
 
 bool LoopVectorizationLegality::blockCanBePredicated(BasicBlock *BB,
                                            SmallPtrSetImpl<Value *> &SafePtrs) {
-  
+
   for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; ++it) {
     // Check that we don't have a constant expression that can trap as operand.
     for (Instruction::op_iterator OI = it->op_begin(), OE = it->op_end();
@@ -4519,7 +4538,7 @@ bool LoopVectorizationLegality::blockCanBePredicated(BasicBlock *BB,
 
       bool isSafePtr = (SafePtrs.count(SI->getPointerOperand()) != 0);
       bool isSinglePredecessor = SI->getParent()->getSinglePredecessor();
-      
+
       if (++NumPredStores > NumberOfStoresToPredicate || !isSafePtr ||
           !isSinglePredecessor) {
         // Build a masked store if it is legal for the target, otherwise
@@ -5540,7 +5559,7 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
         Legal->isInductionVariable(I->getOperand(0)))
       return TTI.getCastInstrCost(I->getOpcode(), I->getType(),
                                   I->getOperand(0)->getType());
-    
+
     Type *SrcScalarTy = I->getOperand(0)->getType();
     Type *SrcVecTy = ToVectorTy(SrcScalarTy, VF);
     if (VF > 1 && MinBWs.count(I)) {
@@ -5561,7 +5580,7 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
                                              MinVecTy);
       }
     }
-    
+
     return TTI.getCastInstrCost(I->getOpcode(), VectorTy, SrcVecTy);
   }
   case Instruction::Call: {

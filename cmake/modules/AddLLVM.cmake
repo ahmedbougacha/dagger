@@ -468,20 +468,23 @@ function(llvm_add_library name)
     endif()
   endif()
 
-  # Add the explicit dependency information for this library.
-  #
-  # It would be nice to verify that we have the dependencies for this library
-  # name, but using get_property(... SET) doesn't suffice to determine if a
-  # property has been set to an empty value.
-  get_property(lib_deps GLOBAL PROPERTY LLVMBUILD_LIB_DEPS_${name})
-
-  if (LLVM_LINK_LLVM_DYLIB AND NOT ARG_STATIC AND NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB)
-    set(llvm_libs LLVM)
+  if (DEFINED LLVM_LINK_COMPONENTS OR DEFINED ARG_LINK_COMPONENTS)
+    if (LLVM_LINK_LLVM_DYLIB AND NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB)
+      set(llvm_libs LLVM)
+    else()
+      llvm_map_components_to_libnames(llvm_libs
+       ${ARG_LINK_COMPONENTS}
+       ${LLVM_LINK_COMPONENTS}
+       )
+    endif()
   else()
-    llvm_map_components_to_libnames(llvm_libs
-      ${ARG_LINK_COMPONENTS}
-      ${LLVM_LINK_COMPONENTS}
-      )
+    # Components have not been defined explicitly in CMake, so add the
+    # dependency information for this library as defined by LLVMBuild.
+    #
+    # It would be nice to verify that we have the dependencies for this library
+    # name, but using get_property(... SET) doesn't suffice to determine if a
+    # property has been set to an empty value.
+    get_property(lib_deps GLOBAL PROPERTY LLVMBUILD_LIB_DEPS_${name})
   endif()
 
   if(CMAKE_VERSION VERSION_LESS 2.8.12)
@@ -882,14 +885,11 @@ function(add_unittest test_suite test_name)
 
   set(LLVM_REQUIRES_RTTI OFF)
 
+  list(APPEND LLVM_LINK_COMPONENTS Support) # gtest needs it for raw_ostream
   add_llvm_executable(${test_name} IGNORE_EXTERNALIZE_DEBUGINFO ${ARGN})
   set(outdir ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR})
   set_output_directory(${test_name} BINARY_DIR ${outdir} LIBRARY_DIR ${outdir})
-  target_link_libraries(${test_name}
-    gtest
-    gtest_main
-    LLVMSupport # gtest needs it for raw_ostream.
-    )
+  target_link_libraries(${test_name} gtest_main gtest)
 
   add_dependencies(${test_suite} ${test_name})
   get_target_property(test_suite_folder ${test_suite} FOLDER)
@@ -913,13 +913,8 @@ function(llvm_add_go_executable binary pkgpath)
       set(cppflags "${cppflags} -I${d}")
     endforeach(d)
     set(ldflags "${CMAKE_EXE_LINKER_FLAGS}")
-    if (LLVM_LINK_LLVM_DYLIB)
-      set(linkmode "dylib")
-    else()
-      set(linkmode "component-libs")
-    endif()
     add_custom_command(OUTPUT ${binpath}
-      COMMAND ${CMAKE_BINARY_DIR}/bin/llvm-go "go=${GO_EXECUTABLE}" "cc=${cc}" "cxx=${cxx}" "cppflags=${cppflags}" "ldflags=${ldflags}" "linkmode=${linkmode}"
+      COMMAND ${CMAKE_BINARY_DIR}/bin/llvm-go "go=${GO_EXECUTABLE}" "cc=${cc}" "cxx=${cxx}" "cppflags=${cppflags}" "ldflags=${ldflags}"
               ${ARG_GOFLAGS} build -o ${binpath} ${pkgpath}
       DEPENDS llvm-config ${CMAKE_BINARY_DIR}/bin/llvm-go${CMAKE_EXECUTABLE_SUFFIX}
               ${llvmlibs} ${ARG_DEPENDS}
@@ -1196,7 +1191,7 @@ function(llvm_externalize_debuginfo name)
     endif()
     add_custom_command(TARGET ${name} POST_BUILD
       COMMAND xcrun dsymutil $<TARGET_FILE:${name}>
-      COMMAND xcrun strip -Sl $<TARGET_FILE:${name}>)
+      COMMAND xcrun strip -Sxl $<TARGET_FILE:${name}>)
   else()
     message(FATAL_ERROR "LLVM_EXTERNALIZE_DEBUGINFO isn't implemented for non-darwin platforms!")
   endif()

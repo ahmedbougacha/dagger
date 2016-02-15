@@ -89,6 +89,10 @@ private:
   StringRef getFileNameForFileOffset(uint32_t FileOffset);
   void printFileNameForOffset(StringRef Label, uint32_t FileOffset);
   void printTypeIndex(StringRef FieldName, TypeIndex TI);
+  void printLocalVariableAddrRange(const LocalVariableAddrRange &Range,
+                                   const coff_section *Sec,
+                                   StringRef SectionContents);
+  void printLocalVariableAddrGap(StringRef &SymData);
 
   void printCodeViewSymbolsSubsection(StringRef Subsection,
                                       const SectionRef &Section,
@@ -1116,8 +1120,7 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
     uint32_t Offset = 6;  // Skip relocations.
     uint16_t Flags = DE.getU16(&Offset);
     W.printHex("Flags", Flags);
-    bool HasColumnInformation =
-        Flags & COFF::DEBUG_LINE_TABLES_HAVE_COLUMN_RECORDS;
+    bool HasColumnInformation = Flags & codeview::LineFlags::HaveColumns;
     uint32_t FunctionSize = DE.getU32(&Offset);
     W.printHex("CodeSize", FunctionSize);
     while (DE.isValidOffset(Offset)) {
@@ -1151,14 +1154,15 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
         char Buffer[32];
         format("+0x%X", PC).snprint(Buffer, 32);
         ListScope PCScope(W, Buffer);
-        uint32_t LineNumberStart = LineData & COFF::CVL_MaxLineNumber;
-        uint32_t LineNumberEndDelta =
-            (LineData >> COFF::CVL_LineNumberStartBits) &
-            COFF::CVL_LineNumberEndDeltaMask;
-        bool IsStatement = LineData & COFF::CVL_IsStatement;
-        W.printNumber("LineNumberStart", LineNumberStart);
-        W.printNumber("LineNumberEndDelta", LineNumberEndDelta);
-        W.printBoolean("IsStatement", IsStatement);
+        LineInfo LI(LineData);
+        if (LI.isAlwaysStepInto())
+          W.printString("StepInto", StringRef("Always"));
+        else if (LI.isNeverStepInto())
+          W.printString("StepInto", StringRef("Never"));
+        else
+          W.printNumber("LineNumberStart", LI.getStartLine());
+        W.printNumber("LineNumberEndDelta", LI.getLineDelta());
+        W.printBoolean("IsStatement", LI.isStatement());
         if (HasColumnInformation &&
             ColumnDE.isValidOffsetForDataOfSize(ColumnOffset, 4)) {
           uint16_t ColStart = ColumnDE.getU16(&ColumnOffset);
@@ -1424,7 +1428,7 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
           W.printHex("ChangeCodeOffset", GetCompressedAnnotation());
           break;
         case ChangeCodeLength:
-          W.printNumber("ChangeCodeLength", GetCompressedAnnotation());
+          W.printHex("ChangeCodeLength", GetCompressedAnnotation());
           break;
         case ChangeFile:
           printFileNameForOffset("ChangeFile", GetCompressedAnnotation());
@@ -1450,17 +1454,17 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
           uint32_t Annotation = GetCompressedAnnotation();
           int32_t LineOffset = DecodeSignedOperand(Annotation >> 4);
           uint32_t CodeOffset = Annotation & 0xf;
-          W.startLine() << "ChangeCodeOffsetAndLineOffset: {LineOffset: "
-                        << LineOffset << ", CodeOffset: " << W.hex(CodeOffset)
+          W.startLine() << "ChangeCodeOffsetAndLineOffset: {CodeOffset: "
+                        << W.hex(CodeOffset) << ", LineOffset: " << LineOffset
                         << "}\n";
           break;
         }
         case ChangeCodeLengthAndCodeOffset: {
           uint32_t Length = GetCompressedAnnotation();
           uint32_t CodeOffset = GetCompressedAnnotation();
-          W.startLine() << "ChangeCodeLengthAndCodeOffset: {Length: "
-                        << W.hex(Length)
-                        << ", CodeOffset: " << W.hex(CodeOffset) << "}\n";
+          W.startLine() << "ChangeCodeLengthAndCodeOffset: {CodeOffset: "
+                        << W.hex(CodeOffset) << ", Length: " << W.hex(Length)
+                        << "}\n";
           break;
         }
         case ChangeColumnEnd:
@@ -1497,6 +1501,90 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       W.printFlags("Flags", uint16_t(Local->Flags), makeArrayRef(LocalFlags));
       StringRef VarName = SymData.split('\0').first;
       W.printString("VarName", VarName);
+      break;
+    }
+
+    case S_DEFRANGE: {
+      DictScope S(W, "DefRange");
+      const DefRangeSym *DefRange;
+      error(consumeObject(SymData, DefRange));
+      W.printString(
+          "Program",
+          CVStringTable.drop_front(DefRange->Program).split('\0').first);
+      printLocalVariableAddrRange(DefRange->Range, Sec, SectionContents);
+      printLocalVariableAddrGap(SymData);
+      break;
+    }
+    case S_DEFRANGE_SUBFIELD: {
+      DictScope S(W, "DefRangeSubfield");
+      const DefRangeSubfieldSym *DefRangeSubfield;
+      error(consumeObject(SymData, DefRangeSubfield));
+      W.printString("Program",
+                    CVStringTable.drop_front(DefRangeSubfield->Program)
+                        .split('\0')
+                        .first);
+      W.printNumber("OffsetInParent", DefRangeSubfield->OffsetInParent);
+      printLocalVariableAddrRange(DefRangeSubfield->Range, Sec,
+                                  SectionContents);
+      printLocalVariableAddrGap(SymData);
+      break;
+    }
+    case S_DEFRANGE_REGISTER: {
+      DictScope S(W, "DefRangeRegister");
+      const DefRangeRegisterSym *DefRangeRegister;
+      error(consumeObject(SymData, DefRangeRegister));
+      W.printNumber("Register", DefRangeRegister->Register);
+      W.printNumber("MayHaveNoName", DefRangeRegister->MayHaveNoName);
+      printLocalVariableAddrRange(DefRangeRegister->Range, Sec,
+                                  SectionContents);
+      printLocalVariableAddrGap(SymData);
+      break;
+    }
+    case S_DEFRANGE_SUBFIELD_REGISTER: {
+      DictScope S(W, "DefRangeSubfieldRegister");
+      const DefRangeSubfieldRegisterSym *DefRangeSubfieldRegisterSym;
+      error(consumeObject(SymData, DefRangeSubfieldRegisterSym));
+      W.printNumber("Register", DefRangeSubfieldRegisterSym->Register);
+      W.printNumber("MayHaveNoName",
+                    DefRangeSubfieldRegisterSym->MayHaveNoName);
+      W.printNumber("OffsetInParent",
+                    DefRangeSubfieldRegisterSym->OffsetInParent);
+      printLocalVariableAddrRange(DefRangeSubfieldRegisterSym->Range, Sec,
+                                  SectionContents);
+      printLocalVariableAddrGap(SymData);
+      break;
+    }
+    case S_DEFRANGE_FRAMEPOINTER_REL: {
+      DictScope S(W, "DefRangeFramePointerRel");
+      const DefRangeFramePointerRelSym *DefRangeFramePointerRel;
+      error(consumeObject(SymData, DefRangeFramePointerRel));
+      W.printNumber("Offset", DefRangeFramePointerRel->Offset);
+      printLocalVariableAddrRange(DefRangeFramePointerRel->Range, Sec,
+                                  SectionContents);
+      printLocalVariableAddrGap(SymData);
+      break;
+    }
+    case S_DEFRANGE_FRAMEPOINTER_REL_FULL_SCOPE: {
+      DictScope S(W, "DefRangeFramePointerRelFullScope");
+      const DefRangeFramePointerRelFullScopeSym
+          *DefRangeFramePointerRelFullScope;
+      error(consumeObject(SymData, DefRangeFramePointerRelFullScope));
+      W.printNumber("Offset", DefRangeFramePointerRelFullScope->Offset);
+      break;
+    }
+    case S_DEFRANGE_REGISTER_REL: {
+      DictScope S(W, "DefRangeRegisterRel");
+      const DefRangeRegisterRelSym *DefRangeRegisterRel;
+      error(consumeObject(SymData, DefRangeRegisterRel));
+      W.printNumber("BaseRegister", DefRangeRegisterRel->BaseRegister);
+      W.printBoolean("HasSpilledUDTMember",
+                     DefRangeRegisterRel->hasSpilledUDTMember());
+      W.printNumber("OffsetInParent", DefRangeRegisterRel->offsetInParent());
+      W.printNumber("BasePointerOffset",
+                    DefRangeRegisterRel->BasePointerOffset);
+      printLocalVariableAddrRange(DefRangeRegisterRel->Range, Sec,
+                                  SectionContents);
+      printLocalVariableAddrGap(SymData);
       break;
     }
 
@@ -1651,7 +1739,7 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
       DictScope S(W, "BPRelativeSym");
       const BPRelativeSym *BPRel;
       error(consumeObject(SymData, BPRel));
-      W.printHex("Offset", BPRel->Offset);
+      W.printNumber("Offset", BPRel->Offset);
       printTypeIndex("Type", BPRel->Type);
       StringRef VarName = SymData.split('\0').first;
       W.printString("VarName", VarName);
@@ -1726,9 +1814,8 @@ void COFFDumper::printCodeViewFileChecksums(StringRef Subsection) {
       error(object_error::parse_failed);
     StringRef ChecksumBytes = Data.substr(0, FC->ChecksumSize);
     W.printBinary("ChecksumBytes", ChecksumBytes);
-    unsigned PaddedSize =
-        RoundUpToAlignment(FC->ChecksumSize + sizeof(FileChecksum), 4) -
-        sizeof(FileChecksum);
+    unsigned PaddedSize = alignTo(FC->ChecksumSize + sizeof(FileChecksum), 4) -
+                          sizeof(FileChecksum);
     Data = Data.drop_front(PaddedSize);
   }
 }
@@ -1812,6 +1899,25 @@ void COFFDumper::printTypeIndex(StringRef FieldName, TypeIndex TI) {
     W.printHex(FieldName, TypeName, TI.getIndex());
   else
     W.printHex(FieldName, TI.getIndex());
+}
+
+void COFFDumper::printLocalVariableAddrRange(
+    const LocalVariableAddrRange &Range, const coff_section *Sec,
+    StringRef SectionContents) {
+  DictScope S(W, "LocalVariableAddrRange");
+  printRelocatedField("OffsetStart", Sec, SectionContents, &Range.OffsetStart);
+  W.printHex("ISectStart", Range.ISectStart);
+  W.printHex("Range", Range.Range);
+}
+
+void COFFDumper::printLocalVariableAddrGap(StringRef &SymData) {
+  while (!SymData.empty()) {
+    const LocalVariableAddrGap *Gap;
+    error(consumeObject(SymData, Gap));
+    ListScope S(W, "LocalVariableAddrGap");
+    W.printHex("GapStartOffset", Gap->GapStartOffset);
+    W.printHex("Range", Gap->Range);
+  }
 }
 
 StringRef COFFDumper::getFileNameForFileOffset(uint32_t FileOffset) {

@@ -280,11 +280,7 @@ public:
   // when using them since you might not get all uses.
   // The methods that don't start with materialized_ assert that modules is
   // fully materialized.
-#ifdef NDEBUG
-  void assertModuleIsMaterialized() const {}
-#else
   void assertModuleIsMaterialized() const;
-#endif
 
   bool use_empty() const {
     assertModuleIsMaterialized();
@@ -600,6 +596,16 @@ void Use::set(Value *V) {
   if (Val) removeFromList();
   Val = V;
   if (V) V->addUse(*this);
+}
+
+Value *Use::operator=(Value *RHS) {
+  set(RHS);
+  return RHS;
+}
+
+const Use &Use::operator=(const Use &RHS) {
+  set(RHS.Val);
+  return *this;
 }
 
 template <class Compare> void Value::sortUseList(Compare Cmp) {

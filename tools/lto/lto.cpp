@@ -23,6 +23,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
 
 // extra command-line flags needed for LTOCodeGenerator
 static cl::opt<char>
@@ -81,7 +82,6 @@ static void diagnosticHandler(const DiagnosticInfo &DI, void *Context) {
     DiagnosticPrinterRawOStream DP(Stream);
     DI.print(DP);
   }
-  sLastErrorString += '\n';
 }
 
 // Initialize the configured targets if they have not been initialized.
@@ -111,7 +111,6 @@ namespace {
 static void handleLibLTODiagnostic(lto_codegen_diagnostic_severity_t Severity,
                                    const char *Msg, void *) {
   sLastErrorString = Msg;
-  sLastErrorString += "\n";
 }
 
 // This derived class owns the native object file. This helps implement the

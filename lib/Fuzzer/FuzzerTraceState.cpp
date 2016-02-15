@@ -174,9 +174,9 @@ static bool RecordingMemcmp = false;
 
 class TraceState {
  public:
-   TraceState(UserSuppliedFuzzer &USF, const Fuzzer::FuzzingOptions &Options,
+   TraceState(MutationDispatcher &MD, const Fuzzer::FuzzingOptions &Options,
               uint8_t **CurrentUnitData, size_t *CurrentUnitSize)
-       : USF(USF), Options(Options), CurrentUnitData(CurrentUnitData),
+       : MD(MD), Options(Options), CurrentUnitData(CurrentUnitData),
          CurrentUnitSize(CurrentUnitSize) {
      // Current trace collection is not thread-friendly and it probably
      // does not have to be such, but at least we should not crash in presence
@@ -210,7 +210,7 @@ class TraceState {
     RecordingTraces = Options.UseTraces;
     RecordingMemcmp = Options.UseMemcmp;
     NumMutations = 0;
-    USF.GetMD().ClearAutoDictionary();
+    MD.ClearAutoDictionary();
   }
 
   void StopTraceRecording() {
@@ -237,7 +237,7 @@ class TraceState {
           }
         }
       }
-      USF.GetMD().AddWordToAutoDictionary(M.W, M.Pos);
+      MD.AddWordToAutoDictionary(M.W, M.Pos);
     }
   }
 
@@ -259,11 +259,27 @@ class TraceState {
     Signed >>= 16;
     return Signed == 0 || Signed == -1L;
   }
+
+  // We don't want to create too many trace-based mutations as it is both
+  // expensive and useless. So after some number of mutations is collected,
+  // start rejecting some of them. The more there are mutations the more we
+  // reject.
+  bool WantToHandleOneMoreMutation() {
+    const size_t FirstN = 64;
+    // Gladly handle first N mutations.
+    if (NumMutations <= FirstN) return true;
+    size_t Diff = NumMutations - FirstN;
+    size_t DiffLog = sizeof(long) * 8 - __builtin_clzl((long)Diff);
+    assert(DiffLog > 0 && DiffLog < 64);
+    bool WantThisOne = MD.GetRand()(1 << DiffLog) == 0;  // 1 out of DiffLog.
+    return WantThisOne;
+  }
+
   static const size_t kMaxMutations = 1 << 16;
   size_t NumMutations;
   TraceBasedMutation Mutations[kMaxMutations];
   LabelRange LabelRanges[1 << (sizeof(dfsan_label) * 8)];
-  UserSuppliedFuzzer &USF;
+  MutationDispatcher &MD;
   const Fuzzer::FuzzingOptions &Options;
   uint8_t **CurrentUnitData;
   size_t *CurrentUnitSize;
@@ -362,6 +378,7 @@ void TraceState::DFSanSwitchCallback(uint64_t PC, size_t ValSizeInBits,
 
 int TraceState::TryToAddDesiredData(uint64_t PresentData, uint64_t DesiredData,
                                     size_t DataSize) {
+  if (NumMutations >= kMaxMutations || !WantToHandleOneMoreMutation()) return 0;
   int Res = 0;
   const uint8_t *Beg = *CurrentUnitData;
   const uint8_t *End = Beg + *CurrentUnitSize;
@@ -382,6 +399,7 @@ int TraceState::TryToAddDesiredData(uint64_t PresentData, uint64_t DesiredData,
 int TraceState::TryToAddDesiredData(const uint8_t *PresentData,
                                     const uint8_t *DesiredData,
                                     size_t DataSize) {
+  if (NumMutations >= kMaxMutations || !WantToHandleOneMoreMutation()) return 0;
   int Res = 0;
   const uint8_t *Beg = *CurrentUnitData;
   const uint8_t *End = Beg + *CurrentUnitSize;
@@ -468,7 +486,7 @@ void Fuzzer::AssignTaintLabels(uint8_t *Data, size_t Size) {
 
 void Fuzzer::InitializeTraceState() {
   if (!Options.UseTraces && !Options.UseMemcmp) return;
-  TS = new TraceState(USF, Options, &CurrentUnitData, &CurrentUnitSize);
+  TS = new TraceState(MD, Options, &CurrentUnitData, &CurrentUnitSize);
   if (ReallyHaveDFSan()) {
     for (size_t i = 0; i < static_cast<size_t>(Options.MaxLen); i++) {
       dfsan_label L = dfsan_create_label("input", (void *)(i + 1));

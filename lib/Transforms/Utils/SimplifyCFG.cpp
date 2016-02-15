@@ -90,6 +90,11 @@ static cl::opt<bool> SpeculateOneExpensiveInst(
     cl::desc("Allow exactly one expensive instruction to be speculatively "
              "executed"));
 
+static cl::opt<unsigned> MaxSpeculationDepth(
+    "max-speculation-depth", cl::Hidden, cl::init(10),
+    cl::desc("Limit maximum recursion depth when calculating costs of "
+             "speculatively executed instructions"));
+
 STATISTIC(NumBitMaps, "Number of switch instructions turned into bitmaps");
 STATISTIC(NumLinearMaps, "Number of switch instructions turned into linear mapping");
 STATISTIC(NumLookupTables, "Number of switch instructions turned into lookup tables");
@@ -269,6 +274,13 @@ static bool DominatesMergePoint(Value *V, BasicBlock *BB,
                                 unsigned &CostRemaining,
                                 const TargetTransformInfo &TTI,
                                 unsigned Depth = 0) {
+  // It is possible to hit a zero-cost cycle (phi/gep instructions for example),
+  // so limit the recursion depth.
+  // TODO: While this recursion limit does prevent pathological behavior, it
+  // would be better to track visited instructions to avoid cycles.
+  if (Depth == MaxSpeculationDepth)
+    return false;
+
   Instruction *I = dyn_cast<Instruction>(V);
   if (!I) {
     // Non-instructions all dominate instructions, but not all constantexprs
@@ -420,13 +432,14 @@ private:
     ConstantInt *RHSC;
 
     // Pattern match a special case
-    // (x & ~2^x) == y --> x == y || x == y|2^x
+    // (x & ~2^z) == y --> x == y || x == y|2^z
     // This undoes a transformation done by instcombine to fuse 2 compares.
     if (ICI->getPredicate() == (isEQ ? ICmpInst::ICMP_EQ:ICmpInst::ICMP_NE)) {
       if (match(ICI->getOperand(0),
                 m_And(m_Value(RHSVal), m_ConstantInt(RHSC)))) {
         APInt Not = ~RHSC->getValue();
-        if (Not.isPowerOf2()) {
+        if (Not.isPowerOf2() && C->getValue().isPowerOf2() &&
+            Not != C->getValue()) {
           // If we already have a value for the switch, it has to match!
           if(!setValueOnce(RHSVal))
             return false;
@@ -495,8 +508,10 @@ private:
 
     // Keep a stack (SmallVector for efficiency) for depth-first traversal
     SmallVector<Value *, 8> DFT;
+    SmallPtrSet<Value *, 8> Visited;
 
     // Initialize
+    Visited.insert(V);
     DFT.push_back(V);
 
     while(!DFT.empty()) {
@@ -505,8 +520,10 @@ private:
       if (Instruction *I = dyn_cast<Instruction>(V)) {
         // If it is a || (or && depending on isEQ), process the operands.
         if (I->getOpcode() == (isEQ ? Instruction::Or : Instruction::And)) {
-          DFT.push_back(I->getOperand(1));
-          DFT.push_back(I->getOperand(0));
+          if (Visited.insert(I->getOperand(1)).second)
+            DFT.push_back(I->getOperand(1));
+          if (Visited.insert(I->getOperand(0)).second)
+            DFT.push_back(I->getOperand(0));
           continue;
         }
 
@@ -1673,19 +1690,6 @@ static bool SpeculativelyExecuteBB(BranchInst *BI, BasicBlock *ThenBB,
   return true;
 }
 
-/// \returns True if this block contains a CallInst with the NoDuplicate
-/// attribute.
-static bool HasNoDuplicateCall(const BasicBlock *BB) {
-  for (BasicBlock::const_iterator I = BB->begin(), E = BB->end(); I != E; ++I) {
-    const CallInst *CI = dyn_cast<CallInst>(I);
-    if (!CI)
-      continue;
-    if (CI->cannotDuplicate())
-      return true;
-  }
-  return false;
-}
-
 /// Return true if we can thread a branch across this block.
 static bool BlockIsSimpleEnoughToThreadThrough(BasicBlock *BB) {
   BranchInst *BI = cast<BranchInst>(BB->getTerminator());
@@ -1730,7 +1734,12 @@ static bool FoldCondBranchOnPHI(BranchInst *BI, const DataLayout &DL) {
   // Now we know that this block has multiple preds and two succs.
   if (!BlockIsSimpleEnoughToThreadThrough(BB)) return false;
 
-  if (HasNoDuplicateCall(BB)) return false;
+  // Can't fold blocks that contain noduplicate or convergent calls.
+  if (llvm::any_of(*BB, [](const Instruction &I) {
+        const CallInst *CI = dyn_cast<CallInst>(&I);
+        return CI && (CI->cannotDuplicate() || CI->isConvergent());
+      }))
+    return false;
 
   // Okay, this is a simple enough basic block.  See if any phi values are
   // constants.
@@ -3989,7 +3998,7 @@ ConstantFold(Instruction *I, const DataLayout &DL,
                                            COps[1], DL);
   }
 
-  return ConstantFoldInstOperands(I->getOpcode(), I->getType(), COps, DL);
+  return ConstantFoldInstOperands(I, COps, DL);
 }
 
 /// Try to determine the resulting constant values in phi nodes

@@ -35,9 +35,12 @@ Non-comprehensive list of changes in this release
 =================================================
 * .. note about autoconf build having been removed.
 
-* .. note about C API functions LLVMLinkModules, LLVMParseBitcode,
+* .. note about C API functions LLVMParseBitcode,
    LLVMParseBitcodeInContext, LLVMGetBitcodeModuleInContext and
-   LLVMGetBitcodeModule having been removed.
+   LLVMGetBitcodeModule having been removed. LLVMGetTargetMachineData has been
+   removed (use LLVMGetDataLayout instead).
+
+* The C API function LLVMLinkModules has been removed.
 
 .. NOTE
    For small 1-3 sentence descriptions, just add an entry at the end of
@@ -80,6 +83,11 @@ Changes to the X86 Target
 -----------------------------
 
  During this release ...
+
+Changes to the AMDGPU Target
+-----------------------------
+
+ * Mesa 11.0.x is no longer supported
 
 
 Changes to the OCaml bindings

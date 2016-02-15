@@ -70,9 +70,7 @@ static void initialize(TargetLibraryInfoImpl &TLI, const Triple &T,
   // There are no library implementations of mempcy and memset for AMD gpus and
   // these can be difficult to lower in the backend.
   if (T.getArch() == Triple::r600 ||
-      T.getArch() == Triple::amdgcn ||
-      T.getArch() == Triple::wasm32 ||
-      T.getArch() == Triple::wasm64) {
+      T.getArch() == Triple::amdgcn) {
     TLI.setUnavailable(LibFunc::memcpy);
     TLI.setUnavailable(LibFunc::memset);
     TLI.setUnavailable(LibFunc::memset_pattern16);
@@ -386,6 +384,20 @@ static void initialize(TargetLibraryInfoImpl &TLI, const Triple &T,
     TLI.setUnavailable(LibFunc::statvfs64);
     TLI.setUnavailable(LibFunc::tmpfile64);
   }
+
+  // As currently implemented in clang, NVPTX code has no standard library to
+  // speak of.  Headers provide a standard-ish library implementation, but many
+  // of the signatures are wrong -- for example, many libm functions are not
+  // extern "C".
+  //
+  // libdevice, an IR library provided by nvidia, is linked in by the front-end,
+  // but only used functions are provided to llvm.  Moreover, most of the
+  // functions in libdevice don't map precisely to standard library functions.
+  //
+  // FIXME: Having no standard library prevents e.g. many fastmath
+  // optimizations, so this situation should be fixed.
+  if (T.isNVPTX())
+    TLI.disableAllFunctions();
 
   TLI.addVectorizableFunctionsFromVecLib(ClVectorLibrary);
 }

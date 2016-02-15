@@ -417,7 +417,7 @@ public:
   /// replaceable with another preexisting expression. Here we add all uses of
   /// I to the worklist, replace all uses of I with the new value, then return
   /// I, so that the inst combiner will know that I was modified.
-  Instruction *ReplaceInstUsesWith(Instruction &I, Value *V) {
+  Instruction *replaceInstUsesWith(Instruction &I, Value *V) {
     // If there are no uses to replace, then we return nullptr to indicate that
     // no changes were made to the program.
     if (I.use_empty()) return nullptr;
@@ -451,16 +451,16 @@ public:
   /// When dealing with an instruction that has side effects or produces a void
   /// value, we can't rely on DCE to delete the instruction. Instead, visit
   /// methods should return the value returned by this function.
-  Instruction *EraseInstFromFunction(Instruction &I) {
+  Instruction *eraseInstFromFunction(Instruction &I) {
     DEBUG(dbgs() << "IC: ERASE " << I << '\n');
 
     assert(I.use_empty() && "Cannot erase instruction that is used!");
     // Make sure that we reprocess all operands now that we reduced their
     // use counts.
     if (I.getNumOperands() < 8) {
-      for (User::op_iterator i = I.op_begin(), e = I.op_end(); i != e; ++i)
-        if (Instruction *Op = dyn_cast<Instruction>(*i))
-          Worklist.Add(Op);
+      for (Use &Operand : I.operands())
+        if (auto *Inst = dyn_cast<Instruction>(Operand))
+          Worklist.Add(Inst);
     }
     Worklist.Remove(&I);
     I.eraseFromParent();

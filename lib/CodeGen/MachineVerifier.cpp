@@ -58,7 +58,7 @@ namespace {
       Banner(b)
       {}
 
-    bool runOnMachineFunction(MachineFunction &MF);
+    unsigned verify(MachineFunction &MF);
 
     Pass *const PASS;
     const char *Banner;
@@ -217,10 +217,22 @@ namespace {
                         LaneBitmask LaneMask) const;
     void report_context(const LiveRange::Segment &S) const;
     void report_context(const VNInfo &VNI) const;
+    void report_context(SlotIndex Pos) const;
+    void report_context_liverange(const LiveRange &LR) const;
+    void report_context_regunit(unsigned RegUnit) const;
+    void report_context_lanemask(LaneBitmask LaneMask) const;
+    void report_context_vreg_regunit(unsigned VRegOrRegUnit) const;
 
     void verifyInlineAsm(const MachineInstr *MI);
 
     void checkLiveness(const MachineOperand *MO, unsigned MONum);
+    void checkLivenessAtUse(const MachineOperand *MO, unsigned MONum,
+                            SlotIndex UseIdx, const LiveRange &LR, unsigned Reg,
+                            LaneBitmask LaneMask = 0);
+    void checkLivenessAtDef(const MachineOperand *MO, unsigned MONum,
+                            SlotIndex DefIdx, const LiveRange &LR, unsigned Reg,
+                            LaneBitmask LaneMask = 0);
+
     void markReachable(const MachineBasicBlock *MBB);
     void calcRegsPassed();
     void checkPHIOps(const MachineBasicBlock *MBB);
@@ -256,7 +268,9 @@ namespace {
     }
 
     bool runOnMachineFunction(MachineFunction &MF) override {
-      MF.verify(this, Banner.c_str());
+      unsigned FoundErrors = MachineVerifier(this, Banner.c_str()).verify(MF);
+      if (FoundErrors)
+        report_fatal_error("Found "+Twine(FoundErrors)+" machine code errors.");
       return false;
     }
   };
@@ -271,9 +285,13 @@ FunctionPass *llvm::createMachineVerifierPass(const std::string &Banner) {
   return new MachineVerifierPass(Banner);
 }
 
-void MachineFunction::verify(Pass *p, const char *Banner) const {
-  MachineVerifier(p, Banner)
-    .runOnMachineFunction(const_cast<MachineFunction&>(*this));
+bool MachineFunction::verify(Pass *p, const char *Banner, bool AbortOnErrors)
+    const {
+  MachineFunction &MF = const_cast<MachineFunction&>(*this);
+  unsigned FoundErrors = MachineVerifier(p, Banner).verify(MF);
+  if (AbortOnErrors && FoundErrors)
+    report_fatal_error("Found "+Twine(FoundErrors)+" machine code errors.");
+  return FoundErrors == 0;
 }
 
 void MachineVerifier::verifySlotIndexes() const {
@@ -289,7 +307,7 @@ void MachineVerifier::verifySlotIndexes() const {
   }
 }
 
-bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
+unsigned MachineVerifier::verify(MachineFunction &MF) {
   foundErrors = 0;
 
   this->MF = &MF;
@@ -374,9 +392,6 @@ bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
   }
   visitMachineFunctionAfter();
 
-  if (foundErrors)
-    report_fatal_error("Found "+Twine(foundErrors)+" machine code errors.");
-
   // Clean up.
   regsLive.clear();
   regsDefined.clear();
@@ -386,7 +401,7 @@ bool MachineVerifier::runOnMachineFunction(MachineFunction &MF) {
   regsLiveInButUnused.clear();
   MBBInfoMap.clear();
 
-  return false;                 // no changes
+  return foundErrors;
 }
 
 void MachineVerifier::report(const char *msg, const MachineFunction *MF) {
@@ -435,16 +450,20 @@ void MachineVerifier::report(const char *msg,
   errs() << "\n";
 }
 
+void MachineVerifier::report_context(SlotIndex Pos) const {
+  errs() << "- at:          " << Pos << '\n';
+}
+
 void MachineVerifier::report_context(const LiveInterval &LI) const {
   errs() << "- interval:    " << LI << '\n';
 }
 
 void MachineVerifier::report_context(const LiveRange &LR, unsigned Reg,
                                      LaneBitmask LaneMask) const {
+  report_context_liverange(LR);
   errs() << "- register:    " << PrintReg(Reg, TRI) << '\n';
   if (LaneMask != 0)
-    errs() << "- lanemask:    " << PrintLaneMask(LaneMask) << '\n';
-  errs() << "- liverange:   " << LR << '\n';
+    report_context_lanemask(LaneMask);
 }
 
 void MachineVerifier::report_context(const LiveRange::Segment &S) const {
@@ -453,6 +472,26 @@ void MachineVerifier::report_context(const LiveRange::Segment &S) const {
 
 void MachineVerifier::report_context(const VNInfo &VNI) const {
   errs() << "- ValNo:       " << VNI.id << " (def " << VNI.def << ")\n";
+}
+
+void MachineVerifier::report_context_liverange(const LiveRange &LR) const {
+  errs() << "- liverange:   " << LR << '\n';
+}
+
+void MachineVerifier::report_context_regunit(unsigned RegUnit) const {
+  errs() << "- regunit:     " << PrintRegUnit(RegUnit, TRI) << '\n';
+}
+
+void MachineVerifier::report_context_vreg_regunit(unsigned VRegOrUnit) const {
+  if (TargetRegisterInfo::isVirtualRegister(VRegOrUnit)) {
+    errs() << "- v. register: " << PrintReg(VRegOrUnit, TRI) << '\n';
+  } else {
+    errs() << "- regunit:     " << PrintRegUnit(VRegOrUnit, TRI) << '\n';
+  }
+}
+
+void MachineVerifier::report_context_lanemask(LaneBitmask LaneMask) const {
+  errs() << "- lanemask:    " << PrintLaneMask(LaneMask) << '\n';
 }
 
 void MachineVerifier::markReachable(const MachineBasicBlock *MBB) {
@@ -1028,6 +1067,83 @@ MachineVerifier::visitMachineOperand(const MachineOperand *MO, unsigned MONum) {
   }
 }
 
+void MachineVerifier::checkLivenessAtUse(const MachineOperand *MO,
+    unsigned MONum, SlotIndex UseIdx, const LiveRange &LR, unsigned VRegOrUnit,
+    LaneBitmask LaneMask) {
+  LiveQueryResult LRQ = LR.Query(UseIdx);
+  // Check if we have a segment at the use, note however that we only need one
+  // live subregister range, the others may be dead.
+  if (!LRQ.valueIn() && LaneMask == 0) {
+    report("No live segment at use", MO, MONum);
+    report_context_liverange(LR);
+    report_context_vreg_regunit(VRegOrUnit);
+    report_context(UseIdx);
+  }
+  if (MO->isKill() && !LRQ.isKill()) {
+    report("Live range continues after kill flag", MO, MONum);
+    report_context_liverange(LR);
+    report_context_vreg_regunit(VRegOrUnit);
+    if (LaneMask != 0)
+      report_context_lanemask(LaneMask);
+    report_context(UseIdx);
+  }
+}
+
+void MachineVerifier::checkLivenessAtDef(const MachineOperand *MO,
+    unsigned MONum, SlotIndex DefIdx, const LiveRange &LR, unsigned VRegOrUnit,
+    LaneBitmask LaneMask) {
+  if (const VNInfo *VNI = LR.getVNInfoAt(DefIdx)) {
+    assert(VNI && "NULL valno is not allowed");
+    if (VNI->def != DefIdx) {
+      report("Inconsistent valno->def", MO, MONum);
+      report_context_liverange(LR);
+      report_context_vreg_regunit(VRegOrUnit);
+      if (LaneMask != 0)
+        report_context_lanemask(LaneMask);
+      report_context(*VNI);
+      report_context(DefIdx);
+    }
+  } else {
+    report("No live segment at def", MO, MONum);
+    report_context_liverange(LR);
+    report_context_vreg_regunit(VRegOrUnit);
+    if (LaneMask != 0)
+      report_context_lanemask(LaneMask);
+    report_context(DefIdx);
+  }
+  // Check that, if the dead def flag is present, LiveInts agree.
+  if (MO->isDead()) {
+    LiveQueryResult LRQ = LR.Query(DefIdx);
+    if (!LRQ.isDeadDef()) {
+      // In case of physregs we can have a non-dead definition on another
+      // operand.
+      bool otherDef = false;
+      if (!TargetRegisterInfo::isVirtualRegister(VRegOrUnit)) {
+        const MachineInstr &MI = *MO->getParent();
+        for (const MachineOperand &MO : MI.operands()) {
+          if (!MO.isReg() || !MO.isDef() || MO.isDead())
+            continue;
+          unsigned Reg = MO.getReg();
+          for (MCRegUnitIterator Units(Reg, TRI); Units.isValid(); ++Units) {
+            if (*Units == VRegOrUnit) {
+              otherDef = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!otherDef) {
+        report("Live range continues after dead def flag", MO, MONum);
+        report_context_liverange(LR);
+        report_context_vreg_regunit(VRegOrUnit);
+        if (LaneMask != 0)
+          report_context_lanemask(LaneMask);
+      }
+    }
+  }
+}
+
 void MachineVerifier::checkLiveness(const MachineOperand *MO, unsigned MONum) {
   const MachineInstr *MI = MO->getParent();
   const unsigned Reg = MO->getReg();
@@ -1053,18 +1169,8 @@ void MachineVerifier::checkLiveness(const MachineOperand *MO, unsigned MONum) {
       // Check the cached regunit intervals.
       if (TargetRegisterInfo::isPhysicalRegister(Reg) && !isReserved(Reg)) {
         for (MCRegUnitIterator Units(Reg, TRI); Units.isValid(); ++Units) {
-          if (const LiveRange *LR = LiveInts->getCachedRegUnit(*Units)) {
-            LiveQueryResult LRQ = LR->Query(UseIdx);
-            if (!LRQ.valueIn()) {
-              report("No live segment at use", MO, MONum);
-              errs() << UseIdx << " is not live in " << PrintRegUnit(*Units, TRI)
-                  << ' ' << *LR << '\n';
-            }
-            if (MO->isKill() && !LRQ.isKill()) {
-              report("Live range continues after kill flag", MO, MONum);
-              errs() << PrintRegUnit(*Units, TRI) << ' ' << *LR << '\n';
-            }
-          }
+          if (const LiveRange *LR = LiveInts->getCachedRegUnit(*Units))
+            checkLivenessAtUse(MO, MONum, UseIdx, *LR, *Units);
         }
       }
 
@@ -1072,16 +1178,28 @@ void MachineVerifier::checkLiveness(const MachineOperand *MO, unsigned MONum) {
         if (LiveInts->hasInterval(Reg)) {
           // This is a virtual register interval.
           const LiveInterval &LI = LiveInts->getInterval(Reg);
-          LiveQueryResult LRQ = LI.Query(UseIdx);
-          if (!LRQ.valueIn()) {
-            report("No live segment at use", MO, MONum);
-            errs() << UseIdx << " is not live in " << LI << '\n';
-          }
-          // Check for extra kill flags.
-          // Note that we allow missing kill flags for now.
-          if (MO->isKill() && !LRQ.isKill()) {
-            report("Live range continues after kill flag", MO, MONum);
-            errs() << "Live range: " << LI << '\n';
+          checkLivenessAtUse(MO, MONum, UseIdx, LI, Reg);
+
+          if (LI.hasSubRanges() && !MO->isDef()) {
+            unsigned SubRegIdx = MO->getSubReg();
+            LaneBitmask MOMask = SubRegIdx != 0
+                               ? TRI->getSubRegIndexLaneMask(SubRegIdx)
+                               : MRI->getMaxLaneMaskForVReg(Reg);
+            LaneBitmask LiveInMask = 0;
+            for (const LiveInterval::SubRange &SR : LI.subranges()) {
+              if ((MOMask & SR.LaneMask) == 0)
+                continue;
+              checkLivenessAtUse(MO, MONum, UseIdx, SR, Reg, SR.LaneMask);
+              LiveQueryResult LRQ = SR.Query(UseIdx);
+              if (LRQ.valueIn())
+                LiveInMask |= SR.LaneMask;
+            }
+            // At least parts of the register has to be live at the use.
+            if ((LiveInMask & MOMask) == 0) {
+              report("No live subrange at use", MO, MONum);
+              report_context(LI);
+              report_context(UseIdx);
+            }
           }
         } else {
           report("Virtual register has no live interval", MO, MONum);
@@ -1154,33 +1272,29 @@ void MachineVerifier::checkLiveness(const MachineOperand *MO, unsigned MONum) {
       report("Multiple virtual register defs in SSA form", MO, MONum);
 
     // Check LiveInts for a live segment, but only for virtual registers.
-    if (LiveInts && TargetRegisterInfo::isVirtualRegister(Reg) &&
-        !LiveInts->isNotInMIMap(MI)) {
+    if (LiveInts && !LiveInts->isNotInMIMap(MI)) {
       SlotIndex DefIdx = LiveInts->getInstructionIndex(MI);
       DefIdx = DefIdx.getRegSlot(MO->isEarlyClobber());
-      if (LiveInts->hasInterval(Reg)) {
-        const LiveInterval &LI = LiveInts->getInterval(Reg);
-        if (const VNInfo *VNI = LI.getVNInfoAt(DefIdx)) {
-          assert(VNI && "NULL valno is not allowed");
-          if (VNI->def != DefIdx) {
-            report("Inconsistent valno->def", MO, MONum);
-            errs() << "Valno " << VNI->id << " is not defined at "
-              << DefIdx << " in " << LI << '\n';
+
+      if (TargetRegisterInfo::isVirtualRegister(Reg)) {
+        if (LiveInts->hasInterval(Reg)) {
+          const LiveInterval &LI = LiveInts->getInterval(Reg);
+          checkLivenessAtDef(MO, MONum, DefIdx, LI, Reg);
+
+          if (LI.hasSubRanges()) {
+            unsigned SubRegIdx = MO->getSubReg();
+            LaneBitmask MOMask = SubRegIdx != 0
+              ? TRI->getSubRegIndexLaneMask(SubRegIdx)
+              : MRI->getMaxLaneMaskForVReg(Reg);
+            for (const LiveInterval::SubRange &SR : LI.subranges()) {
+              if ((SR.LaneMask & MOMask) == 0)
+                continue;
+              checkLivenessAtDef(MO, MONum, DefIdx, SR, Reg, SR.LaneMask);
+            }
           }
         } else {
-          report("No live segment at def", MO, MONum);
-          errs() << DefIdx << " is not live in " << LI << '\n';
+          report("Virtual register has no Live interval", MO, MONum);
         }
-        // Check that, if the dead def flag is present, LiveInts agree.
-        if (MO->isDead()) {
-          LiveQueryResult LRQ = LI.Query(DefIdx);
-          if (!LRQ.isDeadDef()) {
-            report("Live range continues after dead def flag", MO, MONum);
-            errs() << "Live range: " << LI << '\n';
-          }
-        }
-      } else {
-        report("Virtual register has no Live interval", MO, MONum);
       }
     }
   }

@@ -55,6 +55,14 @@ int main() { return (float)x; }"
   endif()
 endif()
 
+if (CMAKE_LINKER MATCHES "lld-link.exe")
+  # Pass /MANIFEST:NO so that CMake doesn't run mt.exe on our binaries.  Adding
+  # manifests with mt.exe breaks LLD's symbol tables and takes as much time as
+  # the link. See PR24476.
+  append("/MANIFEST:NO"
+    CMAKE_EXE_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+endif()
+
 if( LLVM_ENABLE_ASSERTIONS )
   # MSVC doesn't like _DEBUG on release builds. See PR 4379.
   if( NOT MSVC )
@@ -320,6 +328,7 @@ if( MSVC )
         # C4592 is disabled because of false positives in Visual Studio 2015
         # Update 1. Re-evaluate the usefulness of this diagnostic with Update 2.
     -wd4592 # Suppress ''var': symbol will be dynamically initialized (implementation limitation)
+    -wd4319 # Suppress ''operator' : zero extending 'type' to 'type' of greater size'
 
 	# Ideally, we'd like this warning to be enabled, but MSVC 2013 doesn't
 	# support the 'aligned' attribute in the way that clang sources requires (for
@@ -328,7 +337,7 @@ if( MSVC )
 	# When we switch to requiring a version of MSVC that supports the 'alignas'
 	# specifier (MSVC 2015?) this warning can be re-enabled.
     -wd4324 # Suppress 'structure was padded due to __declspec(align())'
-	    
+
     # Promoted warnings.
     -w14062 # Promote 'enumerator in switch of enum is not handled' to level 1 warning.
 
@@ -362,6 +371,23 @@ if( MSVC )
   endforeach(flag)
 
   append("/Zc:inline" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+
+  # /Zc:strictStrings is incompatible with VS12's (Visual Studio 2013's)
+  # debug mode headers. Instead of only enabling them in VS2013's debug mode,
+  # we'll just enable them for Visual Studio 2015 (VS 14, MSVC_VERSION 1900)
+  # and up.
+  if (NOT (MSVC_VERSION LESS 1900))
+    # Disable string literal const->non-const type conversion.
+    # "When specified, the compiler requires strict const-qualification
+    # conformance for pointers initialized by using string literals."
+    append("/Zc:strictStrings" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+  endif(NOT (MSVC_VERSION LESS 1900))
+
+  # "Generate Intrinsic Functions".
+  append("/Oi" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+
+  # "Enforce type conversion rules".
+  append("/Zc:rvalueCast" CMAKE_CXX_FLAGS)
 
   if (NOT LLVM_ENABLE_TIMESTAMPS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # clang-cl and cl by default produce non-deterministic binaries because
@@ -514,10 +540,6 @@ macro(append_common_sanitizer_flags)
     if (CMAKE_LINKER MATCHES "lld-link.exe")
       # Use DWARF debug info with LLD.
       append("-gdwarf" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
-      # Pass /MANIFEST:NO so that CMake doesn't run mt.exe on our binaries.
-      # Adding manifests with mt.exe breaks LLD's symbol tables. See PR24476.
-      append("/MANIFEST:NO"
-        CMAKE_EXE_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
     else()
       # Enable codeview otherwise.
       append("/Z7" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
@@ -634,6 +656,19 @@ append_if(LLVM_BUILD_INSTRUMENTED "-fprofile-instr-generate"
   CMAKE_C_FLAGS
   CMAKE_EXE_LINKER_FLAGS
   CMAKE_SHARED_LINKER_FLAGS)
+
+set(LLVM_ENABLE_LTO OFF CACHE STRING "Build LLVM with LTO. May be specified as Thin or Full to use a particular kind of LTO")
+string(TOUPPER "${LLVM_ENABLE_LTO}" uppercase_LLVM_ENABLE_LTO)
+if(uppercase_LLVM_ENABLE_LTO STREQUAL "THIN")
+  append("-flto=thin" CMAKE_CXX_FLAGS CMAKE_C_FLAGS
+                      CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+elseif(uppercase_LLVM_ENABLE_LTO STREQUAL "FULL")
+  append("-flto=full" CMAKE_CXX_FLAGS CMAKE_C_FLAGS
+                 CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+elseif(LLVM_ENABLE_LTO)
+  append("-flto" CMAKE_CXX_FLAGS CMAKE_C_FLAGS
+                 CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+endif()
 
 # Plugin support
 # FIXME: Make this configurable.

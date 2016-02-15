@@ -612,7 +612,8 @@ simplifyRelocatesOffABase(GCRelocateInst *RelocatedBase,
       continue;
 
     // Create a Builder and replace the target callsite with a gep
-    assert(RelocatedBase->getNextNode() && "Should always have one since it's not a terminator");
+    assert(RelocatedBase->getNextNode() &&
+           "Should always have one since it's not a terminator");
 
     // Insert after RelocatedBase
     IRBuilder<> Builder(RelocatedBase->getNextNode());
@@ -1138,7 +1139,7 @@ static bool OptimizeExtractBits(BinaryOperator *ShiftI, ConstantInt *CI,
 //  %13 = icmp eq i1 %12, true
 //  br i1 %13, label %cond.load4, label %else5
 //
-static void ScalarizeMaskedLoad(CallInst *CI) {
+static void scalarizeMaskedLoad(CallInst *CI) {
   Value *Ptr  = CI->getArgOperand(0);
   Value *Alignment = CI->getArgOperand(1);
   Value *Mask = CI->getArgOperand(2);
@@ -1284,7 +1285,7 @@ static void ScalarizeMaskedLoad(CallInst *CI) {
 //   store i32 %8, i32* %9
 //   br label %else2
 //   . . .
-static void ScalarizeMaskedStore(CallInst *CI) {
+static void scalarizeMaskedStore(CallInst *CI) {
   Value *Src = CI->getArgOperand(0);
   Value *Ptr  = CI->getArgOperand(1);
   Value *Alignment = CI->getArgOperand(2);
@@ -1403,7 +1404,7 @@ static void ScalarizeMaskedStore(CallInst *CI) {
 // . . .
 // % Result = select <16 x i1> %Mask, <16 x i32> %res.phi.select, <16 x i32> %Src
 // ret <16 x i32> %Result
-static void ScalarizeMaskedGather(CallInst *CI) {
+static void scalarizeMaskedGather(CallInst *CI) {
   Value *Ptrs = CI->getArgOperand(0);
   Value *Alignment = CI->getArgOperand(1);
   Value *Mask = CI->getArgOperand(2);
@@ -1538,7 +1539,7 @@ static void ScalarizeMaskedGather(CallInst *CI) {
 // store i32 % Elt1, i32* % Ptr1, align 4
 // br label %else2
 //   . . .
-static void ScalarizeMaskedScatter(CallInst *CI) {
+static void scalarizeMaskedScatter(CallInst *CI) {
   Value *Src = CI->getArgOperand(0);
   Value *Ptrs = CI->getArgOperand(1);
   Value *Alignment = CI->getArgOperand(2);
@@ -1744,7 +1745,7 @@ bool CodeGenPrepare::optimizeCallInst(CallInst *CI, bool& ModifiedDT) {
       GlobalVariable *GV;
       if ((GV = dyn_cast<GlobalVariable>(Val)) && GV->canIncreaseAlignment() &&
           GV->getAlignment() < PrefAlign &&
-          DL->getTypeAllocSize(GV->getType()->getElementType()) >=
+          DL->getTypeAllocSize(GV->getValueType()) >=
               MinSize + Offset2)
         GV->setAlignment(PrefAlign);
     }
@@ -1774,8 +1775,7 @@ bool CodeGenPrepare::optimizeCallInst(CallInst *CI, bool& ModifiedDT) {
       // happens.
       WeakVH IterHandle(&*CurInstIterator);
 
-      replaceAndRecursivelySimplify(CI, RetVal,
-                                    TLInfo, nullptr);
+      replaceAndRecursivelySimplify(CI, RetVal, TLInfo, nullptr);
 
       // If the iterator instruction was recursively deleted, start over at the
       // start of the block.
@@ -1788,7 +1788,7 @@ bool CodeGenPrepare::optimizeCallInst(CallInst *CI, bool& ModifiedDT) {
     case Intrinsic::masked_load: {
       // Scalarize unsupported vector masked load
       if (!TTI->isLegalMaskedLoad(CI->getType())) {
-        ScalarizeMaskedLoad(CI);
+        scalarizeMaskedLoad(CI);
         ModifiedDT = true;
         return true;
       }
@@ -1796,7 +1796,7 @@ bool CodeGenPrepare::optimizeCallInst(CallInst *CI, bool& ModifiedDT) {
     }
     case Intrinsic::masked_store: {
       if (!TTI->isLegalMaskedStore(CI->getArgOperand(0)->getType())) {
-        ScalarizeMaskedStore(CI);
+        scalarizeMaskedStore(CI);
         ModifiedDT = true;
         return true;
       }
@@ -1804,7 +1804,7 @@ bool CodeGenPrepare::optimizeCallInst(CallInst *CI, bool& ModifiedDT) {
     }
     case Intrinsic::masked_gather: {
       if (!TTI->isLegalMaskedGather(CI->getType())) {
-        ScalarizeMaskedGather(CI);
+        scalarizeMaskedGather(CI);
         ModifiedDT = true;
         return true;
       }
@@ -1812,7 +1812,7 @@ bool CodeGenPrepare::optimizeCallInst(CallInst *CI, bool& ModifiedDT) {
     }
     case Intrinsic::masked_scatter: {
       if (!TTI->isLegalMaskedScatter(CI->getArgOperand(0)->getType())) {
-        ScalarizeMaskedScatter(CI);
+        scalarizeMaskedScatter(CI);
         ModifiedDT = true;
         return true;
       }
@@ -2076,7 +2076,7 @@ void ExtAddrMode::print(raw_ostream &OS) const {
 }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
-void ExtAddrMode::dump() const {
+LLVM_DUMP_METHOD void ExtAddrMode::dump() const {
   print(dbgs());
   dbgs() << '\n';
 }
@@ -5254,7 +5254,7 @@ bool CodeGenPrepare::optimizeBlock(BasicBlock &BB, bool& ModifiedDT) {
     }
   }
   MadeChange |= dupRetToEnableTailCallOpts(&BB);
-  
+
   return MadeChange;
 }
 

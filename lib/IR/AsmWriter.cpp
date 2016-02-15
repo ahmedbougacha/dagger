@@ -2416,7 +2416,7 @@ void AssemblyWriter::printGlobal(const GlobalVariable *GV) {
     Out << "addrspace(" << AddressSpace << ") ";
   if (GV->isExternallyInitialized()) Out << "externally_initialized ";
   Out << (GV->isConstant() ? "constant " : "global ");
-  TypePrinter.print(GV->getType()->getElementType(), Out);
+  TypePrinter.print(GV->getValueType(), Out);
 
   if (GV->hasInitializer()) {
     Out << ' ';
@@ -2676,7 +2676,7 @@ void AssemblyWriter::printBasicBlock(const BasicBlock *BB) {
     Out << "\n; <label>:";
     int Slot = Machine.getLocalSlot(BB);
     if (Slot != -1)
-      Out << Slot;
+      Out << Slot << ":";
     else
       Out << "<badref>";
   }
@@ -3214,6 +3214,17 @@ void AssemblyWriter::printUseLists(const Function *F) {
 //===----------------------------------------------------------------------===//
 //                       External Interface declarations
 //===----------------------------------------------------------------------===//
+
+void Function::print(raw_ostream &ROS, AssemblyAnnotationWriter *AAW,
+                     bool ShouldPreserveUseListOrder,
+                     bool IsForDebug) const {
+  SlotTracker SlotTable(this->getParent());
+  formatted_raw_ostream OS(ROS);
+  AssemblyWriter W(OS, SlotTable, this->getParent(), AAW,
+                   IsForDebug,
+                   ShouldPreserveUseListOrder);
+  W.printFunction(this);
+}
 
 void Module::print(raw_ostream &ROS, AssemblyAnnotationWriter *AAW,
                    bool ShouldPreserveUseListOrder, bool IsForDebug) const {

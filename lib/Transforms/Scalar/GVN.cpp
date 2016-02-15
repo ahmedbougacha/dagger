@@ -512,9 +512,11 @@ void ValueTable::verifyRemoved(const Value *V) const {
 
 namespace {
   class GVN;
-  struct AvailableValueInBlock {
-    /// BB - The basic block in question.
-    BasicBlock *BB;
+  /// Represents a particular available value that we know how to materialize.
+  /// Materialization of an AvailableValue never fails.  An AvailableValue is
+  /// implicitly associated with a rematerialization point which is the
+  /// location of the instruction from which it was formed. 
+  struct AvailableValue {
     enum ValType {
       SimpleVal,  // A simple offsetted value that is accessed.
       LoadVal,    // A value produced by a load.
@@ -529,39 +531,35 @@ namespace {
     /// Offset - The byte offset in Val that is interesting for the load query.
     unsigned Offset;
   
-    static AvailableValueInBlock get(BasicBlock *BB, Value *V,
-                                     unsigned Offset = 0) {
-      AvailableValueInBlock Res;
-      Res.BB = BB;
+    static AvailableValue get(Value *V,
+                              unsigned Offset = 0) {
+      AvailableValue Res;
       Res.Val.setPointer(V);
       Res.Val.setInt(SimpleVal);
       Res.Offset = Offset;
       return Res;
     }
   
-    static AvailableValueInBlock getMI(BasicBlock *BB, MemIntrinsic *MI,
-                                       unsigned Offset = 0) {
-      AvailableValueInBlock Res;
-      Res.BB = BB;
+    static AvailableValue getMI(MemIntrinsic *MI,
+                                unsigned Offset = 0) {
+      AvailableValue Res;
       Res.Val.setPointer(MI);
       Res.Val.setInt(MemIntrin);
       Res.Offset = Offset;
       return Res;
     }
   
-    static AvailableValueInBlock getLoad(BasicBlock *BB, LoadInst *LI,
-                                         unsigned Offset = 0) {
-      AvailableValueInBlock Res;
-      Res.BB = BB;
+    static AvailableValue getLoad(LoadInst *LI,
+                                  unsigned Offset = 0) {
+      AvailableValue Res;
       Res.Val.setPointer(LI);
       Res.Val.setInt(LoadVal);
       Res.Offset = Offset;
       return Res;
     }
 
-    static AvailableValueInBlock getUndef(BasicBlock *BB) {
-      AvailableValueInBlock Res;
-      Res.BB = BB;
+    static AvailableValue getUndef() {
+      AvailableValue Res;
       Res.Val.setPointer(nullptr);
       Res.Val.setInt(UndefVal);
       Res.Offset = 0;
@@ -587,10 +585,42 @@ namespace {
       assert(isMemIntrinValue() && "Wrong accessor");
       return cast<MemIntrinsic>(Val.getPointer());
     }
+
+    /// Emit code at the specified insertion point to adjust the value defined
+    /// here to the specified type. This handles various coercion cases.
+    Value *MaterializeAdjustedValue(LoadInst *LI, Instruction *InsertPt,
+                                    GVN &gvn) const;
+  };
+
+  /// Represents an AvailableValue which can be rematerialized at the end of
+  /// the associated BasicBlock.
+  struct AvailableValueInBlock {
+    /// BB - The basic block in question.
+    BasicBlock *BB;
+
+    /// AV - The actual available value
+    AvailableValue AV;
+
+    static AvailableValueInBlock get(BasicBlock *BB, AvailableValue &&AV) {
+      AvailableValueInBlock Res;
+      Res.BB = BB;
+      Res.AV = std::move(AV);
+      return Res;
+    }
+
+    static AvailableValueInBlock get(BasicBlock *BB, Value *V,
+                                     unsigned Offset = 0) {
+      return get(BB, AvailableValue::get(V, Offset));
+    }
+    static AvailableValueInBlock getUndef(BasicBlock *BB) {
+      return get(BB, AvailableValue::getUndef());
+    }
   
-    /// Emit code into this block to adjust the value defined here to the
-    /// specified type. This handles various coercion cases.
-    Value *MaterializeAdjustedValue(LoadInst *LI, GVN &gvn) const;
+    /// Emit code at the end of this block to adjust the value defined here to
+    /// the specified type. This handles various coercion cases.
+    Value *MaterializeAdjustedValue(LoadInst *LI, GVN &gvn) const {
+      return AV.MaterializeAdjustedValue(LI, BB->getTerminator(), gvn);
+    }
   };
 
   class GVN : public FunctionPass {
@@ -705,10 +735,18 @@ namespace {
     }
 
 
-    // Helper functions of redundant load elimination 
+    // Helper functions of redundant load elimination
     bool processLoad(LoadInst *L);
     bool processNonLocalLoad(LoadInst *L);
     bool processAssumeIntrinsic(IntrinsicInst *II);
+    /// Given a local dependency (Def or Clobber) determine if a value is
+    /// available for the load.  Returns true if an value is known to be
+    /// available and populates Res.  Returns false otherwise.
+    bool AnalyzeLoadAvailability(LoadInst *LI, MemDepResult DepInfo,
+                                 Value *Address, AvailableValue &Res);
+    /// Given a list of non-local dependencies, determine if a value is
+    /// available for the load in each specified block.  If it is, add it to
+    /// ValuesPerBlock.  If not, add it to UnavailableBlocks.
     void AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps, 
                                  AvailValInBlkVect &ValuesPerBlock,
                                  UnavailBlkVect &UnavailableBlocks);
@@ -875,8 +913,8 @@ static bool CanCoerceMustAliasedValueToLoad(Value *StoredVal,
 static Value *CoerceAvailableValueToLoadType(Value *StoredVal, Type *LoadedTy,
                                              IRBuilder<> &IRB,
                                              const DataLayout &DL) {
-  if (!CanCoerceMustAliasedValueToLoad(StoredVal, LoadedTy, DL))
-    return nullptr;
+  assert(CanCoerceMustAliasedValueToLoad(StoredVal, LoadedTy, DL) &&
+         "precondition violation - materialization can't fail");
 
   // If this is already the right type, just return it.
   Type *StoredValTy = StoredVal->getType();
@@ -1071,6 +1109,11 @@ static int AnalyzeLoadFromClobberingLoad(Type *LoadTy, Value *LoadPtr,
       LoadBase, LoadOffs, LoadSize, DepLI);
   if (Size == 0) return -1;
 
+  // Check non-obvious conditions enforced by MDA which we rely on for being
+  // able to materialize this potentially available value
+  assert(DepLI->isSimple() && "Cannot widen volatile/atomic load!");
+  assert(DepLI->getType()->isIntegerTy() && "Can't widen non-integer load");
+
   return AnalyzeLoadFromClobberingWrite(LoadTy, LoadPtr, DepPtr, Size*8, DL);
 }
 
@@ -1117,7 +1160,7 @@ static int AnalyzeLoadFromClobberingMemInst(Type *LoadTy, Value *LoadPtr,
   Src = ConstantExpr::getGetElementPtr(Type::getInt8Ty(Src->getContext()), Src,
                                        OffsetCst);
   Src = ConstantExpr::getBitCast(Src, PointerType::get(LoadTy, AS));
-  if (ConstantFoldLoadFromConstPtr(Src, DL))
+  if (ConstantFoldLoadFromConstPtr(Src, LoadTy, DL))
     return Offset;
   return -1;
 }
@@ -1279,7 +1322,7 @@ static Value *GetMemInstValueForLoad(MemIntrinsic *SrcInst, unsigned Offset,
   Src = ConstantExpr::getGetElementPtr(Type::getInt8Ty(Src->getContext()), Src,
                                        OffsetCst);
   Src = ConstantExpr::getBitCast(Src, PointerType::get(LoadTy, AS));
-  return ConstantFoldLoadFromConstPtr(Src, DL);
+  return ConstantFoldLoadFromConstPtr(Src, LoadTy, DL);
 }
 
 
@@ -1294,7 +1337,8 @@ static Value *ConstructSSAForLoadSet(LoadInst *LI,
   if (ValuesPerBlock.size() == 1 &&
       gvn.getDominatorTree().properlyDominates(ValuesPerBlock[0].BB,
                                                LI->getParent())) {
-    assert(!ValuesPerBlock[0].isUndefValue() && "Dead BB dominate this block");
+    assert(!ValuesPerBlock[0].AV.isUndefValue() &&
+           "Dead BB dominate this block");
     return ValuesPerBlock[0].MaterializeAdjustedValue(LI, gvn);
   }
 
@@ -1316,15 +1360,16 @@ static Value *ConstructSSAForLoadSet(LoadInst *LI,
   return SSAUpdate.GetValueInMiddleOfBlock(LI->getParent());
 }
 
-Value *AvailableValueInBlock::MaterializeAdjustedValue(LoadInst *LI,
-                                                       GVN &gvn) const {
+Value *AvailableValue::MaterializeAdjustedValue(LoadInst *LI,
+                                                Instruction *InsertPt,
+                                                GVN &gvn) const {
   Value *Res;
   Type *LoadTy = LI->getType();
   const DataLayout &DL = LI->getModule()->getDataLayout();
   if (isSimpleValue()) {
     Res = getSimpleValue();
     if (Res->getType() != LoadTy) {
-      Res = GetStoreValueForLoad(Res, Offset, LoadTy, BB->getTerminator(), DL);
+      Res = GetStoreValueForLoad(Res, Offset, LoadTy, InsertPt, DL);
 
       DEBUG(dbgs() << "GVN COERCED NONLOCAL VAL:\nOffset: " << Offset << "  "
                    << *getSimpleValue() << '\n'
@@ -1335,16 +1380,15 @@ Value *AvailableValueInBlock::MaterializeAdjustedValue(LoadInst *LI,
     if (Load->getType() == LoadTy && Offset == 0) {
       Res = Load;
     } else {
-      Res = GetLoadValueForLoad(Load, Offset, LoadTy, BB->getTerminator(),
-                                gvn);
-  
+      Res = GetLoadValueForLoad(Load, Offset, LoadTy, InsertPt, gvn);
+      
       DEBUG(dbgs() << "GVN COERCED NONLOCAL LOAD:\nOffset: " << Offset << "  "
                    << *getCoercedLoadValue() << '\n'
                    << *Res << '\n' << "\n\n\n");
     }
   } else if (isMemIntrinValue()) {
     Res = GetMemInstValueForLoad(getMemIntrinValue(), Offset, LoadTy,
-                                 BB->getTerminator(), DL);
+                                 InsertPt, DL);
     DEBUG(dbgs() << "GVN COERCED NONLOCAL MEM INTRIN:\nOffset: " << Offset
                  << "  " << *getMemIntrinValue() << '\n'
                  << *Res << '\n' << "\n\n\n");
@@ -1353,6 +1397,7 @@ Value *AvailableValueInBlock::MaterializeAdjustedValue(LoadInst *LI,
     DEBUG(dbgs() << "GVN COERCED NONLOCAL Undef:\n";);
     return UndefValue::get(LoadTy);
   }
+  assert(Res && "failed to materialize?");
   return Res;
 }
 
@@ -1361,6 +1406,123 @@ static bool isLifetimeStart(const Instruction *Inst) {
     return II->getIntrinsicID() == Intrinsic::lifetime_start;
   return false;
 }
+
+bool GVN::AnalyzeLoadAvailability(LoadInst *LI, MemDepResult DepInfo,
+                                  Value *Address, AvailableValue &Res) {
+
+  assert((DepInfo.isDef() || DepInfo.isClobber()) &&
+         "expected a local dependence");
+
+  const DataLayout &DL = LI->getModule()->getDataLayout();
+  
+  if (DepInfo.isClobber()) {
+    // If the dependence is to a store that writes to a superset of the bits
+    // read by the load, we can extract the bits we need for the load from the
+    // stored value.
+    if (StoreInst *DepSI = dyn_cast<StoreInst>(DepInfo.getInst())) {
+      if (Address) {
+        int Offset =
+          AnalyzeLoadFromClobberingStore(LI->getType(), Address, DepSI);
+        if (Offset != -1) {
+          Res = AvailableValue::get(DepSI->getValueOperand(), Offset);
+          return true;
+        }
+      }
+    }
+
+    // Check to see if we have something like this:
+    //    load i32* P
+    //    load i8* (P+1)
+    // if we have this, replace the later with an extraction from the former.
+    if (LoadInst *DepLI = dyn_cast<LoadInst>(DepInfo.getInst())) {
+      // If this is a clobber and L is the first instruction in its block, then
+      // we have the first instruction in the entry block.
+      if (DepLI != LI && Address) {
+        int Offset =
+          AnalyzeLoadFromClobberingLoad(LI->getType(), Address, DepLI, DL);
+        
+        if (Offset != -1) {
+          Res = AvailableValue::getLoad(DepLI, Offset);
+          return true;
+        }
+      }
+    }
+
+    // If the clobbering value is a memset/memcpy/memmove, see if we can
+    // forward a value on from it.
+    if (MemIntrinsic *DepMI = dyn_cast<MemIntrinsic>(DepInfo.getInst())) {
+      if (Address) {
+        int Offset = AnalyzeLoadFromClobberingMemInst(LI->getType(), Address,
+                                                      DepMI, DL);
+        if (Offset != -1) {
+          Res = AvailableValue::getMI(DepMI, Offset);
+          return true;
+        }
+      }
+    }
+    // Nothing known about this clobber, have to be conservative
+    DEBUG(
+      // fast print dep, using operator<< on instruction is too slow.
+      dbgs() << "GVN: load ";
+      LI->printAsOperand(dbgs());
+      Instruction *I = DepInfo.getInst();
+      dbgs() << " is clobbered by " << *I << '\n';
+    );
+    return false;
+  }
+  assert(DepInfo.isDef() && "follows from above");
+
+  Instruction *DepInst = DepInfo.getInst();
+  
+  // Loading the allocation -> undef.
+  if (isa<AllocaInst>(DepInst) || isMallocLikeFn(DepInst, TLI) ||
+      // Loading immediately after lifetime begin -> undef.
+      isLifetimeStart(DepInst)) {
+    Res = AvailableValue::get(UndefValue::get(LI->getType()));
+    return true;
+  }
+  
+  // Loading from calloc (which zero initializes memory) -> zero
+  if (isCallocLikeFn(DepInst, TLI)) {
+    Res = AvailableValue::get(Constant::getNullValue(LI->getType()));
+    return true;
+  }
+  
+  if (StoreInst *S = dyn_cast<StoreInst>(DepInst)) {
+    // Reject loads and stores that are to the same address but are of
+    // different types if we have to. If the stored value is larger or equal to
+    // the loaded value, we can reuse it.
+    if (S->getValueOperand()->getType() != LI->getType() &&
+        !CanCoerceMustAliasedValueToLoad(S->getValueOperand(),
+                                         LI->getType(), DL))
+      return false;
+    
+    Res = AvailableValue::get(S->getValueOperand());
+    return true;
+  }
+  
+  if (LoadInst *LD = dyn_cast<LoadInst>(DepInst)) {
+    // If the types mismatch and we can't handle it, reject reuse of the load.
+    // If the stored value is larger or equal to the loaded value, we can reuse
+    // it. 
+    if (LD->getType() != LI->getType() &&
+        !CanCoerceMustAliasedValueToLoad(LD, LI->getType(), DL))
+      return false;
+
+    Res = AvailableValue::getLoad(LD);
+    return true;
+  }
+
+  // Unknown def - must be conservative
+  DEBUG(
+    // fast print dep, using operator<< on instruction is too slow.
+    dbgs() << "GVN: load ";
+    LI->printAsOperand(dbgs());
+    dbgs() << " has unknown def " << *DepInst << '\n';
+  );
+  return false;
+}
+
 
 void GVN::AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps, 
                                   AvailValInBlkVect &ValuesPerBlock,
@@ -1371,7 +1533,6 @@ void GVN::AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps,
   // dependencies that produce an unknown value for the load (such as a call
   // that could potentially clobber the load).
   unsigned NumDeps = Deps.size();
-  const DataLayout &DL = LI->getModule()->getDataLayout();
   for (unsigned i = 0, e = NumDeps; i != e; ++i) {
     BasicBlock *DepBB = Deps[i].getBB();
     MemDepResult DepInfo = Deps[i].getResult();
@@ -1388,120 +1549,27 @@ void GVN::AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps,
       continue;
     }
 
-    if (DepInfo.isClobber()) {
-      // The address being loaded in this non-local block may not be the same as
-      // the pointer operand of the load if PHI translation occurs.  Make sure
-      // to consider the right address.
-      Value *Address = Deps[i].getAddress();
+    // The address being loaded in this non-local block may not be the same as
+    // the pointer operand of the load if PHI translation occurs.  Make sure
+    // to consider the right address.
+    Value *Address = Deps[i].getAddress();
 
-      // If the dependence is to a store that writes to a superset of the bits
-      // read by the load, we can extract the bits we need for the load from the
-      // stored value.
-      if (StoreInst *DepSI = dyn_cast<StoreInst>(DepInfo.getInst())) {
-        if (Address) {
-          int Offset =
-              AnalyzeLoadFromClobberingStore(LI->getType(), Address, DepSI);
-          if (Offset != -1) {
-            ValuesPerBlock.push_back(AvailableValueInBlock::get(DepBB,
-                                                       DepSI->getValueOperand(),
-                                                                Offset));
-            continue;
-          }
-        }
-      }
-
-      // Check to see if we have something like this:
-      //    load i32* P
-      //    load i8* (P+1)
-      // if we have this, replace the later with an extraction from the former.
-      if (LoadInst *DepLI = dyn_cast<LoadInst>(DepInfo.getInst())) {
-        // If this is a clobber and L is the first instruction in its block, then
-        // we have the first instruction in the entry block.
-        if (DepLI != LI && Address) {
-          int Offset =
-              AnalyzeLoadFromClobberingLoad(LI->getType(), Address, DepLI, DL);
-
-          if (Offset != -1) {
-            ValuesPerBlock.push_back(AvailableValueInBlock::getLoad(DepBB,DepLI,
-                                                                    Offset));
-            continue;
-          }
-        }
-      }
-
-      // If the clobbering value is a memset/memcpy/memmove, see if we can
-      // forward a value on from it.
-      if (MemIntrinsic *DepMI = dyn_cast<MemIntrinsic>(DepInfo.getInst())) {
-        if (Address) {
-          int Offset = AnalyzeLoadFromClobberingMemInst(LI->getType(), Address,
-                                                        DepMI, DL);
-          if (Offset != -1) {
-            ValuesPerBlock.push_back(AvailableValueInBlock::getMI(DepBB, DepMI,
-                                                                  Offset));
-            continue;
-          }
-        }
-      }
-
+    AvailableValue AV;
+    if (AnalyzeLoadAvailability(LI, DepInfo, Address, AV)) {
+      // subtlety: because we know this was a non-local dependency, we know
+      // it's safe to materialize anywhere between the instruction within
+      // DepInfo and the end of it's block.
+      ValuesPerBlock.push_back(AvailableValueInBlock::get(DepBB,
+                                                          std::move(AV)));
+    } else {
       UnavailableBlocks.push_back(DepBB);
-      continue;
     }
-
-    // DepInfo.isDef() here
-
-    Instruction *DepInst = DepInfo.getInst();
-
-    // Loading the allocation -> undef.
-    if (isa<AllocaInst>(DepInst) || isMallocLikeFn(DepInst, TLI) ||
-        // Loading immediately after lifetime begin -> undef.
-        isLifetimeStart(DepInst)) {
-      ValuesPerBlock.push_back(AvailableValueInBlock::get(DepBB,
-                                             UndefValue::get(LI->getType())));
-      continue;
-    }
-
-    // Loading from calloc (which zero initializes memory) -> zero
-    if (isCallocLikeFn(DepInst, TLI)) {
-      ValuesPerBlock.push_back(AvailableValueInBlock::get(
-          DepBB, Constant::getNullValue(LI->getType())));
-      continue;
-    }
-
-    if (StoreInst *S = dyn_cast<StoreInst>(DepInst)) {
-      // Reject loads and stores that are to the same address but are of
-      // different types if we have to.
-      if (S->getValueOperand()->getType() != LI->getType()) {
-        // If the stored value is larger or equal to the loaded value, we can
-        // reuse it.
-        if (!CanCoerceMustAliasedValueToLoad(S->getValueOperand(),
-                                             LI->getType(), DL)) {
-          UnavailableBlocks.push_back(DepBB);
-          continue;
-        }
-      }
-
-      ValuesPerBlock.push_back(AvailableValueInBlock::get(DepBB,
-                                                         S->getValueOperand()));
-      continue;
-    }
-
-    if (LoadInst *LD = dyn_cast<LoadInst>(DepInst)) {
-      // If the types mismatch and we can't handle it, reject reuse of the load.
-      if (LD->getType() != LI->getType()) {
-        // If the stored value is larger or equal to the loaded value, we can
-        // reuse it.
-        if (!CanCoerceMustAliasedValueToLoad(LD, LI->getType(), DL)) {
-          UnavailableBlocks.push_back(DepBB);
-          continue;
-        }
-      }
-      ValuesPerBlock.push_back(AvailableValueInBlock::getLoad(DepBB, LD));
-      continue;
-    }
-
-    UnavailableBlocks.push_back(DepBB);
   }
+
+  assert(NumDeps == ValuesPerBlock.size() + UnavailableBlocks.size() &&
+         "post condition violation");
 }
+
 
 bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock, 
                          UnavailBlkVect &UnavailableBlocks) {
@@ -1893,84 +1961,14 @@ bool GVN::processLoad(LoadInst *L) {
 
   // ... to a pointer that has been loaded from before...
   MemDepResult Dep = MD->getDependency(L);
-  const DataLayout &DL = L->getModule()->getDataLayout();
-
-  // If we have a clobber and target data is around, see if this is a clobber
-  // that we can fix up through code synthesis.
-  if (Dep.isClobber()) {
-    // Check to see if we have something like this:
-    //   store i32 123, i32* %P
-    //   %A = bitcast i32* %P to i8*
-    //   %B = gep i8* %A, i32 1
-    //   %C = load i8* %B
-    //
-    // We could do that by recognizing if the clobber instructions are obviously
-    // a common base + constant offset, and if the previous store (or memset)
-    // completely covers this load.  This sort of thing can happen in bitfield
-    // access code.
-    Value *AvailVal = nullptr;
-    if (StoreInst *DepSI = dyn_cast<StoreInst>(Dep.getInst())) {
-      int Offset = AnalyzeLoadFromClobberingStore(
-          L->getType(), L->getPointerOperand(), DepSI);
-      if (Offset != -1)
-        AvailVal = GetStoreValueForLoad(DepSI->getValueOperand(), Offset,
-                                        L->getType(), L, DL);
-    }
-
-    // Check to see if we have something like this:
-    //    load i32* P
-    //    load i8* (P+1)
-    // if we have this, replace the later with an extraction from the former.
-    if (LoadInst *DepLI = dyn_cast<LoadInst>(Dep.getInst())) {
-      // If this is a clobber and L is the first instruction in its block, then
-      // we have the first instruction in the entry block.
-      if (DepLI == L)
-        return false;
-
-      int Offset = AnalyzeLoadFromClobberingLoad(
-          L->getType(), L->getPointerOperand(), DepLI, DL);
-      if (Offset != -1)
-        AvailVal = GetLoadValueForLoad(DepLI, Offset, L->getType(), L, *this);
-    }
-
-    // If the clobbering value is a memset/memcpy/memmove, see if we can forward
-    // a value on from it.
-    if (MemIntrinsic *DepMI = dyn_cast<MemIntrinsic>(Dep.getInst())) {
-      int Offset = AnalyzeLoadFromClobberingMemInst(
-          L->getType(), L->getPointerOperand(), DepMI, DL);
-      if (Offset != -1)
-        AvailVal = GetMemInstValueForLoad(DepMI, Offset, L->getType(), L, DL);
-    }
-
-    if (AvailVal) {
-      DEBUG(dbgs() << "GVN COERCED INST:\n" << *Dep.getInst() << '\n'
-            << *AvailVal << '\n' << *L << "\n\n\n");
-
-      // Replace the load!
-      L->replaceAllUsesWith(AvailVal);
-      if (AvailVal->getType()->getScalarType()->isPointerTy())
-        MD->invalidateCachedPointerInfo(AvailVal);
-      markInstructionForDeletion(L);
-      ++NumGVNLoad;
-      return true;
-    }
-
-    // If the value isn't available, don't do anything!
-    DEBUG(
-      // fast print dep, using operator<< on instruction is too slow.
-      dbgs() << "GVN: load ";
-      L->printAsOperand(dbgs());
-      Instruction *I = Dep.getInst();
-      dbgs() << " is clobbered by " << *I << '\n';
-    );
-    return false;
-  }
 
   // If it is defined in another block, try harder.
   if (Dep.isNonLocal())
     return processNonLocalLoad(L);
 
-  if (!Dep.isDef()) {
+  // Only handle the local case below
+  if (!Dep.isDef() && !Dep.isClobber()) {
+    // This might be a NonFuncLocal or an Unknown
     DEBUG(
       // fast print dep, using operator<< on instruction is too slow.
       dbgs() << "GVN: load ";
@@ -1980,86 +1978,18 @@ bool GVN::processLoad(LoadInst *L) {
     return false;
   }
 
-  Instruction *DepInst = Dep.getInst();
-  if (StoreInst *DepSI = dyn_cast<StoreInst>(DepInst)) {
-    Value *StoredVal = DepSI->getValueOperand();
-
-    // The store and load are to a must-aliased pointer, but they may not
-    // actually have the same type.  See if we know how to reuse the stored
-    // value (depending on its type).
-    if (StoredVal->getType() != L->getType()) {
-      IRBuilder<> Builder(L);
-      StoredVal =
-          CoerceAvailableValueToLoadType(StoredVal, L->getType(), Builder, DL);
-      if (!StoredVal)
-        return false;
-
-      DEBUG(dbgs() << "GVN COERCED STORE:\n" << *DepSI << '\n' << *StoredVal
-                   << '\n' << *L << "\n\n\n");
-    }
-
-    // Remove it!
-    L->replaceAllUsesWith(StoredVal);
-    if (StoredVal->getType()->getScalarType()->isPointerTy())
-      MD->invalidateCachedPointerInfo(StoredVal);
+  AvailableValue AV;
+  if (AnalyzeLoadAvailability(L, Dep, L->getPointerOperand(), AV)) {
+    Value *AvailableValue = AV.MaterializeAdjustedValue(L, L, *this);
+    
+    // Replace the load!
+    patchAndReplaceAllUsesWith(L, AvailableValue);
     markInstructionForDeletion(L);
     ++NumGVNLoad;
-    return true;
-  }
-
-  if (LoadInst *DepLI = dyn_cast<LoadInst>(DepInst)) {
-    Value *AvailableVal = DepLI;
-
-    // The loads are of a must-aliased pointer, but they may not actually have
-    // the same type.  See if we know how to reuse the previously loaded value
-    // (depending on its type).
-    if (DepLI->getType() != L->getType()) {
-      IRBuilder<> Builder(L);
-      AvailableVal =
-          CoerceAvailableValueToLoadType(DepLI, L->getType(), Builder, DL);
-      if (!AvailableVal)
-        return false;
-
-      DEBUG(dbgs() << "GVN COERCED LOAD:\n" << *DepLI << "\n" << *AvailableVal
-                   << "\n" << *L << "\n\n\n");
-    }
-
-    // Remove it!
-    patchAndReplaceAllUsesWith(L, AvailableVal);
-    if (DepLI->getType()->getScalarType()->isPointerTy())
-      MD->invalidateCachedPointerInfo(DepLI);
-    markInstructionForDeletion(L);
-    ++NumGVNLoad;
-    return true;
-  }
-
-  // If this load really doesn't depend on anything, then we must be loading an
-  // undef value.  This can happen when loading for a fresh allocation with no
-  // intervening stores, for example.
-  if (isa<AllocaInst>(DepInst) || isMallocLikeFn(DepInst, TLI)) {
-    L->replaceAllUsesWith(UndefValue::get(L->getType()));
-    markInstructionForDeletion(L);
-    ++NumGVNLoad;
-    return true;
-  }
-
-  // If this load occurs either right after a lifetime begin,
-  // then the loaded value is undefined.
-  if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(DepInst)) {
-    if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
-      L->replaceAllUsesWith(UndefValue::get(L->getType()));
-      markInstructionForDeletion(L);
-      ++NumGVNLoad;
-      return true;
-    }
-  }
-
-  // If this load follows a calloc (which zero initializes memory),
-  // then the loaded value is zero
-  if (isCallocLikeFn(DepInst, TLI)) {
-    L->replaceAllUsesWith(Constant::getNullValue(L->getType()));
-    markInstructionForDeletion(L);
-    ++NumGVNLoad;
+    // Tell MDA to rexamine the reused pointer since we might have more
+    // information after forwarding it.
+    if (MD && AvailableValue->getType()->getScalarType()->isPointerTy())
+      MD->invalidateCachedPointerInfo(AvailableValue);
     return true;
   }
 
@@ -2133,7 +2063,8 @@ bool GVN::replaceOperandsWithConsts(Instruction *Instr) const {
 /// The given values are known to be equal in every block
 /// dominated by 'Root'.  Exploit this, for example by replacing 'LHS' with
 /// 'RHS' everywhere in the scope.  Returns whether a change was made.
-/// If DominatesByEdge is false, then it means that it is dominated by Root.End.
+/// If DominatesByEdge is false, then it means that we will propagate the RHS
+/// value starting from the end of Root.Start.
 bool GVN::propagateEquality(Value *LHS, Value *RHS, const BasicBlockEdge &Root,
                             bool DominatesByEdge) {
   SmallVector<std::pair<Value*, Value*>, 4> Worklist;
@@ -2195,7 +2126,7 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS, const BasicBlockEdge &Root,
       unsigned NumReplacements =
           DominatesByEdge
               ? replaceDominatedUsesWith(LHS, RHS, *DT, Root)
-              : replaceDominatedUsesWith(LHS, RHS, *DT, Root.getEnd());
+              : replaceDominatedUsesWith(LHS, RHS, *DT, Root.getStart());
 
       Changed |= NumReplacements > 0;
       NumGVNEqProp += NumReplacements;
@@ -2271,7 +2202,7 @@ bool GVN::propagateEquality(Value *LHS, Value *RHS, const BasicBlockEdge &Root,
               DominatesByEdge
                   ? replaceDominatedUsesWith(NotCmp, NotVal, *DT, Root)
                   : replaceDominatedUsesWith(NotCmp, NotVal, *DT,
-                                             Root.getEnd());
+                                             Root.getStart());
           Changed |= NumReplacements > 0;
           NumGVNEqProp += NumReplacements;
         }

@@ -44,16 +44,6 @@ static cl::opt<bool>
 PrefetchWrites("ppc-loop-prefetch-writes", cl::Hidden, cl::init(false),
                cl::desc("Prefetch write addresses"));
 
-// This seems like a reasonable default for the BG/Q (this pass is enabled, by
-// default, only on the BG/Q).
-static cl::opt<unsigned>
-PrefDist("ppc-loop-prefetch-distance", cl::Hidden, cl::init(300),
-         cl::desc("The loop prefetch distance"));
-
-static cl::opt<unsigned>
-CacheLineSize("ppc-loop-prefetch-cache-line", cl::Hidden, cl::init(64),
-              cl::desc("The loop prefetch cache line size"));
-
 namespace llvm {
   void initializePPCLoopDataPrefetchPass(PassRegistry&);
 }
@@ -110,6 +100,10 @@ bool PPCLoopDataPrefetch::runOnFunction(Function &F) {
   AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
   TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
 
+  assert(TTI->getCacheLineSize() && "Cache line size is not set for target");
+  assert(TTI->getPrefetchDistance() &&
+         "Prefetch distance is not set for target");
+
   bool MadeChange = false;
 
   for (auto I = LI->begin(), IE = LI->end(); I != IE; ++I)
@@ -149,7 +143,7 @@ bool PPCLoopDataPrefetch::runOnLoop(Loop *L) {
   if (!LoopSize)
     LoopSize = 1;
 
-  unsigned ItersAhead = PrefDist/LoopSize;
+  unsigned ItersAhead = TTI->getPrefetchDistance() / LoopSize;
   if (!ItersAhead)
     ItersAhead = 1;
 
@@ -193,7 +187,7 @@ bool PPCLoopDataPrefetch::runOnLoop(Loop *L) {
         if (const SCEVConstant *ConstPtrDiff =
             dyn_cast<SCEVConstant>(PtrDiff)) {
           int64_t PD = std::abs(ConstPtrDiff->getValue()->getSExtValue());
-          if (PD < (int64_t) CacheLineSize) {
+          if (PD < (int64_t) TTI->getCacheLineSize()) {
             DupPref = true;
             break;
           }

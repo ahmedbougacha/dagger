@@ -807,6 +807,9 @@ void ARMAsmPrinter::emitAttributes() {
   if (STI.hasDivideInARMMode() && !STI.hasV8Ops())
     ATS.emitAttribute(ARMBuildAttrs::DIV_use, ARMBuildAttrs::AllowDIVExt);
 
+  if (STI.hasDSP() && isV8M(&STI))
+    ATS.emitAttribute(ARMBuildAttrs::DSP_extension, ARMBuildAttrs::Allowed);
+
   if (MMI) {
     if (const Module *SourceModule = MMI->getModule()) {
       // ABI_PCS_wchar_t to indicate wchar_t width
@@ -1240,6 +1243,8 @@ void ARMAsmPrinter::EmitUnwindingInstruction(const MachineInstr *MI) {
 
 void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   const DataLayout &DL = getDataLayout();
+  MCTargetStreamer &TS = *OutStreamer->getTargetStreamer();
+  ARMTargetStreamer &ATS = static_cast<ARMTargetStreamer &>(TS);
 
   // If we just ended a constant pool, mark it as such.
   if (InConstantPool && MI->getOpcode() != ARM::CONSTPOOL_ENTRY) {
@@ -1656,29 +1661,26 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     // Non-Darwin binutils don't yet support the "trap" mnemonic.
     // FIXME: Remove this special case when they do.
     if (!Subtarget->isTargetMachO()) {
-      //.long 0xe7ffdefe @ trap
       uint32_t Val = 0xe7ffdefeUL;
       OutStreamer->AddComment("trap");
-      OutStreamer->EmitIntValue(Val, 4);
+      ATS.emitInst(Val);
       return;
     }
     break;
   }
   case ARM::TRAPNaCl: {
-    //.long 0xe7fedef0 @ trap
     uint32_t Val = 0xe7fedef0UL;
     OutStreamer->AddComment("trap");
-    OutStreamer->EmitIntValue(Val, 4);
+    ATS.emitInst(Val);
     return;
   }
   case ARM::tTRAP: {
     // Non-Darwin binutils don't yet support the "trap" mnemonic.
     // FIXME: Remove this special case when they do.
     if (!Subtarget->isTargetMachO()) {
-      //.short 57086 @ trap
       uint16_t Val = 0xdefe;
       OutStreamer->AddComment("trap");
-      OutStreamer->EmitIntValue(Val, 2);
+      ATS.emitInst(Val, 'n');
       return;
     }
     break;

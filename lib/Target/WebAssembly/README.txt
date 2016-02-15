@@ -13,14 +13,14 @@ binary encoding of WebAssembly itself:
   * https://github.com/WebAssembly/design/blob/master/BinaryEncoding.md
 
 The backend is built, tested and archived on the following waterfall:
-  https://build.chromium.org/p/client.wasm.llvm/console
+  https://wasm-stat.us
 
 The backend's bringup is done using the GCC torture test suite first since it
 doesn't require C library support. Current known failures are in
 known_gcc_test_failures.txt, all other tests should pass. The waterfall will
 turn red if not. Once most of these pass, further testing will use LLVM's own
 test suite. The tests can be run locally using:
-  github.com/WebAssembly/experimental/blob/master/buildbot/torture_test.py
+  https://github.com/WebAssembly/waterfall/blob/master/src/compile_torture_tests.py
 
 Interesting work that remains to be done:
 * Write a pass to restructurize irreducible control flow. This needs to be done
@@ -29,12 +29,6 @@ Interesting work that remains to be done:
   level. Note that LLVM's GPU code has such a pass, but it linearizes control
   flow (e.g. both sides of branches execute and are masked) which is undesirable
   for WebAssembly.
-
-//===---------------------------------------------------------------------===//
-
-set_local instructions have a return value. We should (a) model this,
-and (b) write optimizations which take advantage of it. Keep in mind that
-many set_local instructions are implicit!
 
 //===---------------------------------------------------------------------===//
 
@@ -58,10 +52,6 @@ us too?
 
 //===---------------------------------------------------------------------===//
 
-When is it profitable to set isAsCheapAsAMove on instructions in WebAssembly?
-
-//===---------------------------------------------------------------------===//
-
 Register stackification uses the EXPR_STACK physical register to impose
 ordering dependencies on instructions with stack operands. This is pessimistic;
 we should consider alternate ways to model stack dependencies.
@@ -82,11 +72,6 @@ stores.
 
 //===---------------------------------------------------------------------===//
 
-Memset/memcpy/memmove should be marked with the "returned" attribute somehow,
-even when they are translated through intrinsics.
-
-//===---------------------------------------------------------------------===//
-
 Consider implementing optimizeSelect, optimizeCompareInstr, optimizeCondBranch,
 optimizeLoadInstr, and/or getMachineCombinerPatterns.
 
@@ -94,5 +79,24 @@ optimizeLoadInstr, and/or getMachineCombinerPatterns.
 
 Find a clean way to fix the problem which leads to the Shrink Wrapping pass
 being run after the WebAssembly PEI pass.
+
+//===---------------------------------------------------------------------===//
+
+When setting multiple local variables to the same constant, we currently get
+code like this:
+
+    i32.const   $4=, 0
+    i32.const   $3=, 0
+
+It could be done with a smaller encoding like this:
+
+    i32.const   $push5=, 0
+    tee_local   $push6=, $4=, $pop5
+    copy_local  $3=, $pop6
+
+//===---------------------------------------------------------------------===//
+
+WebAssembly registers are implicitly initialized to zero. Explicit zeroing is
+therefore often redundant and could be optimized away.
 
 //===---------------------------------------------------------------------===//

@@ -36,6 +36,8 @@
 #include "llvm/IR/Statepoint.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
+#include <algorithm>
+#include <array>
 #include <cstring>
 using namespace llvm;
 using namespace llvm::PatternMatch;
@@ -79,35 +81,45 @@ static unsigned getBitWidth(Type *Ty, const DataLayout &DL) {
   return DL.getPointerTypeSizeInBits(Ty);
 }
 
-// Many of these functions have internal versions that take an assumption
-// exclusion set. This is because of the potential for mutual recursion to
-// cause computeKnownBits to repeatedly visit the same assume intrinsic. The
-// classic case of this is assume(x = y), which will attempt to determine
-// bits in x from bits in y, which will attempt to determine bits in y from
-// bits in x, etc. Regarding the mutual recursion, computeKnownBits can call
-// isKnownNonZero, which calls computeKnownBits and ComputeSignBit and
-// isKnownToBeAPowerOfTwo (all of which can call computeKnownBits), and so on.
-typedef SmallPtrSet<const Value *, 8> ExclInvsSet;
-
 namespace {
 // Simplifying using an assume can only be done in a particular control-flow
 // context (the context instruction provides that context). If an assume and
 // the context instruction are not in the same block then the DT helps in
 // figuring out if we can use it.
 struct Query {
-  ExclInvsSet ExclInvs;
   const DataLayout &DL;
   AssumptionCache *AC;
   const Instruction *CxtI;
   const DominatorTree *DT;
 
+  /// Set of assumptions that should be excluded from further queries.
+  /// This is because of the potential for mutual recursion to cause
+  /// computeKnownBits to repeatedly visit the same assume intrinsic. The
+  /// classic case of this is assume(x = y), which will attempt to determine
+  /// bits in x from bits in y, which will attempt to determine bits in y from
+  /// bits in x, etc. Regarding the mutual recursion, computeKnownBits can call
+  /// isKnownNonZero, which calls computeKnownBits and ComputeSignBit and
+  /// isKnownToBeAPowerOfTwo (all of which can call computeKnownBits), and so
+  /// on.
+  std::array<const Value*, MaxDepth> Excluded;
+  unsigned NumExcluded;
+
   Query(const DataLayout &DL, AssumptionCache *AC, const Instruction *CxtI,
         const DominatorTree *DT)
-      : DL(DL), AC(AC), CxtI(CxtI), DT(DT) {}
+      : DL(DL), AC(AC), CxtI(CxtI), DT(DT), NumExcluded(0) {}
 
   Query(const Query &Q, const Value *NewExcl)
-      : ExclInvs(Q.ExclInvs), DL(Q.DL), AC(Q.AC), CxtI(Q.CxtI), DT(Q.DT) {
-    ExclInvs.insert(NewExcl);
+      : DL(Q.DL), AC(Q.AC), CxtI(Q.CxtI), DT(Q.DT), NumExcluded(Q.NumExcluded) {
+    Excluded = Q.Excluded;
+    Excluded[NumExcluded++] = NewExcl;
+    assert(NumExcluded <= Excluded.size());
+  }
+
+  bool isExcluded(const Value *Value) const {
+    if (NumExcluded == 0)
+      return false;
+    auto End = Excluded.begin() + NumExcluded;
+    return std::find(Excluded.begin(), End, Value) != End;
   }
 };
 } // end anonymous namespace
@@ -730,7 +742,7 @@ static void computeKnownBitsFromAssume(Value *V, APInt &KnownZero,
     CallInst *I = cast<CallInst>(AssumeVH);
     assert(I->getParent()->getParent() == Q.CxtI->getParent()->getParent() &&
            "Got assumption for the wrong function!");
-    if (Q.ExclInvs.count(I))
+    if (Q.isExcluded(I))
       continue;
 
     // Warning: This loop can end up being somewhat performance sensetive.
@@ -1342,7 +1354,7 @@ static void computeKnownBitsFromOperator(Operator *I, APInt &KnownZero,
     AllocaInst *AI = cast<AllocaInst>(I);
     unsigned Align = AI->getAlignment();
     if (Align == 0)
-      Align = Q.DL.getABITypeAlignment(AI->getType()->getElementType());
+      Align = Q.DL.getABITypeAlignment(AI->getAllocatedType());
 
     if (Align > 0)
       KnownZero = APInt::getLowBitsSet(BitWidth, countTrailingZeros(Align));
@@ -1560,7 +1572,7 @@ static unsigned getAlignment(const Value *V, const DataLayout &DL) {
     Align = GO->getAlignment();
     if (Align == 0) {
       if (auto *GVar = dyn_cast<GlobalVariable>(GO)) {
-        Type *ObjectType = GVar->getType()->getElementType();
+        Type *ObjectType = GVar->getValueType();
         if (ObjectType->isSized()) {
           // If the object is defined in the current Module, we'll be giving
           // it the preferred alignment. Otherwise, we have to assume that it
@@ -2062,6 +2074,12 @@ bool isKnownNonZero(Value *V, unsigned Depth, const Query &Q) {
         }
       }
     }
+    // Check if all incoming values are non-zero constant.
+    bool AllNonZeroConstants = all_of(PN->operands(), [](Value *V) {
+      return isa<ConstantInt>(V) && !cast<ConstantInt>(V)->isZeroValue();
+    });
+    if (AllNonZeroConstants)
+      return true;
   }
 
   if (!BitWidth) return false;
@@ -2886,8 +2904,7 @@ bool llvm::getConstantStringInfo(const Value *V, StringRef &Str,
       return false;
 
     // Make sure the index-ee is a pointer to array of i8.
-    PointerType *PT = cast<PointerType>(GEP->getOperand(0)->getType());
-    ArrayType *AT = dyn_cast<ArrayType>(PT->getElementType());
+    ArrayType *AT = dyn_cast<ArrayType>(GEP->getSourceElementType());
     if (!AT || !AT->getElementType()->isIntegerTy(8))
       return false;
 
@@ -3253,8 +3270,7 @@ static bool isDereferenceableAndAlignedPointer(
 
   // For GEPs, determine if the indexing lands within the allocated object.
   if (const GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
-    Type *VTy = GEP->getType();
-    Type *Ty = VTy->getPointerElementType();
+    Type *Ty = GEP->getResultElementType();
     const Value *Base = GEP->getPointerOperand();
 
     // Conservatively require that the base pointer be fully dereferenceable
@@ -3265,14 +3281,14 @@ static bool isDereferenceableAndAlignedPointer(
                                             Visited))
       return false;
 
-    APInt Offset(DL.getPointerTypeSizeInBits(VTy), 0);
+    APInt Offset(DL.getPointerTypeSizeInBits(GEP->getType()), 0);
     if (!GEP->accumulateConstantOffset(DL, Offset))
       return false;
 
     // Check if the load is within the bounds of the underlying object
     // and offset is aligned.
     uint64_t LoadSize = DL.getTypeStoreSize(Ty);
-    Type *BaseType = Base->getType()->getPointerElementType();
+    Type *BaseType = GEP->getSourceElementType();
     assert(isPowerOf2_32(Align) && "must be a power of 2!");
     return (Offset + LoadSize).ule(DL.getTypeAllocSize(BaseType)) && 
            !(Offset & APInt(Offset.getBitWidth(), Align-1));

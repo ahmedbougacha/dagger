@@ -372,10 +372,16 @@ void MachineOperand::print(raw_ostream &OS, ModuleSlotTracker &MST,
     getCImm()->getValue().print(OS, false);
     break;
   case MachineOperand::MO_FPImmediate:
-    if (getFPImm()->getType()->isFloatTy())
+    if (getFPImm()->getType()->isFloatTy()) {
       OS << getFPImm()->getValueAPF().convertToFloat();
-    else
+    } else if (getFPImm()->getType()->isHalfTy()) {
+      APFloat APF = getFPImm()->getValueAPF();
+      bool Unused;
+      APF.convert(APFloat::IEEEsingle, APFloat::rmNearestTiesToEven, &Unused);
+      OS << "half " << APF.convertToFloat();
+    } else {
       OS << getFPImm()->getValueAPF().convertToDouble();
+    }
     break;
   case MachineOperand::MO_MachineBasicBlock:
     OS << "<BB#" << getMBB()->getNumber() << ">";
@@ -647,7 +653,12 @@ MachineInstr::MachineInstr(MachineFunction &MF, const MCInstrDesc &tid,
                            DebugLoc dl, bool NoImp)
     : MCID(&tid), Parent(nullptr), Operands(nullptr), NumOperands(0), Flags(0),
       AsmPrinterFlags(0), NumMemRefs(0), MemRefs(nullptr),
-      debugLoc(std::move(dl)) {
+      debugLoc(std::move(dl))
+#ifdef LLVM_BUILD_GLOBAL_ISEL
+      ,
+      Ty(nullptr)
+#endif
+{
   assert(debugLoc.hasTrivialDestructor() && "Expected trivial destructor");
 
   // Reserve space for the expected number of operands.
@@ -664,10 +675,14 @@ MachineInstr::MachineInstr(MachineFunction &MF, const MCInstrDesc &tid,
 /// MachineInstr ctor - Copies MachineInstr arg exactly
 ///
 MachineInstr::MachineInstr(MachineFunction &MF, const MachineInstr &MI)
-  : MCID(&MI.getDesc()), Parent(nullptr), Operands(nullptr), NumOperands(0),
-    Flags(0), AsmPrinterFlags(0),
-    NumMemRefs(MI.NumMemRefs), MemRefs(MI.MemRefs),
-    debugLoc(MI.getDebugLoc()) {
+    : MCID(&MI.getDesc()), Parent(nullptr), Operands(nullptr), NumOperands(0),
+      Flags(0), AsmPrinterFlags(0), NumMemRefs(MI.NumMemRefs),
+      MemRefs(MI.MemRefs), debugLoc(MI.getDebugLoc())
+#ifdef LLVM_BUILD_GLOBAL_ISEL
+      ,
+      Ty(nullptr)
+#endif
+{
   assert(debugLoc.hasTrivialDestructor() && "Expected trivial destructor");
 
   CapOperands = OperandCapacity::get(MI.getNumOperands());
@@ -1607,7 +1622,7 @@ void MachineInstr::copyImplicitOps(MachineFunction &MF,
   }
 }
 
-void MachineInstr::dump() const {
+LLVM_DUMP_METHOD void MachineInstr::dump() const {
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   dbgs() << "  " << *this;
 #endif
@@ -1651,8 +1666,15 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
     if (StartOp != 0) OS << ", ";
     getOperand(StartOp).print(OS, MST, TRI);
     unsigned Reg = getOperand(StartOp).getReg();
-    if (TargetRegisterInfo::isVirtualRegister(Reg))
+    if (TargetRegisterInfo::isVirtualRegister(Reg)) {
       VirtRegs.push_back(Reg);
+#ifdef LLVM_BUILD_GLOBAL_ISEL
+      unsigned Size;
+      if (MRI && (Size = MRI->getSize(Reg))) {
+        OS << '(' << Size << ')';
+      }
+#endif
+    }
   }
 
   if (StartOp != 0)
@@ -1663,6 +1685,12 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
     OS << TII->getName(getOpcode());
   else
     OS << "UNKNOWN";
+
+
+#ifdef LLVM_BUILD_GLOBAL_ISEL
+  if (Ty)
+    OS << ' ' << *Ty << ' ';
+#endif
 
   if (SkipOpers)
     return;
@@ -1825,6 +1853,11 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
     }
     for (unsigned i = 0; i != VirtRegs.size(); ++i) {
       const TargetRegisterClass *RC = MRI->getRegClass(VirtRegs[i]);
+#ifdef LLVM_BUILD_GLOBAL_ISEL
+      // Generic virtual registers do not have register classes.
+      if (!RC)
+        continue;
+#endif
       OS << " " << TRI->getRegClassName(RC)
          << ':' << PrintReg(VirtRegs[i]);
       for (unsigned j = i+1; j != VirtRegs.size();) {

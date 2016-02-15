@@ -406,17 +406,30 @@ void Function::copyAttributesFrom(const GlobalValue *Src) {
     setPrologueData(SrcF->getPrologueData());
 }
 
+/// Table of string intrinsic names indexed by enum value.
+static const char * const IntrinsicNameTable[] = {
+  "not_intrinsic",
+#define GET_INTRINSIC_NAME_TABLE
+#include "llvm/IR/Intrinsics.gen"
+#undef GET_INTRINSIC_NAME_TABLE
+};
+
 /// \brief This does the actual lookup of an intrinsic ID which
 /// matches the given function name.
 static Intrinsic::ID lookupIntrinsicID(const ValueName *ValName) {
-  unsigned Len = ValName->getKeyLength();
-  const char *Name = ValName->getKeyData();
+  StringRef Name = ValName->getKey();
 
-#define GET_FUNCTION_RECOGNIZER
-#include "llvm/IR/Intrinsics.gen"
-#undef GET_FUNCTION_RECOGNIZER
+  ArrayRef<const char *> NameTable(&IntrinsicNameTable[1],
+                                   std::end(IntrinsicNameTable));
+  int Idx = Intrinsic::lookupLLVMIntrinsicByName(NameTable, Name);
+  Intrinsic::ID ID = static_cast<Intrinsic::ID>(Idx + 1);
+  if (ID == Intrinsic::not_intrinsic)
+    return ID;
 
-  return Intrinsic::not_intrinsic;
+  // If the intrinsic is not overloaded, require an exact match. If it is
+  // overloaded, require a prefix match.
+  bool IsPrefixMatch = Name.size() > strlen(NameTable[Idx]);
+  return IsPrefixMatch == isOverloaded(ID) ? ID : Intrinsic::not_intrinsic;
 }
 
 void Function::recalculateIntrinsicID() {
@@ -471,15 +484,9 @@ static std::string getMangledTypeStr(Type* Ty) {
 
 std::string Intrinsic::getName(ID id, ArrayRef<Type*> Tys) {
   assert(id < num_intrinsics && "Invalid intrinsic ID!");
-  static const char * const Table[] = {
-    "not_intrinsic",
-#define GET_INTRINSIC_NAME_TABLE
-#include "llvm/IR/Intrinsics.gen"
-#undef GET_INTRINSIC_NAME_TABLE
-  };
   if (Tys.empty())
-    return Table[id];
-  std::string Result(Table[id]);
+    return IntrinsicNameTable[id];
+  std::string Result(IntrinsicNameTable[id]);
   for (unsigned i = 0; i < Tys.size(); ++i) {
     Result += "." + getMangledTypeStr(Tys[i]);
   }
@@ -989,4 +996,28 @@ Optional<uint64_t> Function::getEntryCount() const {
         return CI->getValue().getZExtValue();
       }
   return None;
+}
+
+std::string Function::getGlobalIdentifier(StringRef FuncName,
+                                          GlobalValue::LinkageTypes Linkage,
+                                          StringRef FileName) {
+
+  // Function names may be prefixed with a binary '1' to indicate
+  // that the backend should not modify the symbols due to any platform
+  // naming convention. Do not include that '1' in the PGO profile name.
+  if (FuncName[0] == '\1')
+    FuncName = FuncName.substr(1);
+
+  std::string NewFuncName = FuncName;
+  if (llvm::GlobalValue::isLocalLinkage(Linkage)) {
+    // For local symbols, prepend the main file name to distinguish them.
+    // Do not include the full path in the file name since there's no guarantee
+    // that it will stay the same, e.g., if the files are checked out from
+    // version control in different locations.
+    if (FileName.empty())
+      NewFuncName = NewFuncName.insert(0, "<unknown>:");
+    else
+      NewFuncName = NewFuncName.insert(0, FileName.str() + ":");
+  }
+  return NewFuncName;
 }

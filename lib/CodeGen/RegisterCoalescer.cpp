@@ -939,11 +939,13 @@ bool RegisterCoalescer::reMaterializeTrivialDef(const CoalescerPair &CP,
     }
   }
 
+  DebugLoc DL = CopyMI->getDebugLoc();
   MachineBasicBlock *MBB = CopyMI->getParent();
   MachineBasicBlock::iterator MII =
     std::next(MachineBasicBlock::iterator(CopyMI));
   TII->reMaterialize(*MBB, MII, DstReg, SrcIdx, DefMI, *TRI);
   MachineInstr *NewMI = std::prev(MII);
+  NewMI->setDebugLoc(DL);
 
   // In a situation like the following:
   //     %vreg0:subreg = instr              ; DefMI, subreg = DstIdx
@@ -999,6 +1001,36 @@ bool RegisterCoalescer::reMaterializeTrivialDef(const CoalescerPair &CP,
 
     updateRegDefsUses(DstReg, DstReg, DstIdx);
     NewMI->getOperand(0).setSubReg(NewIdx);
+    // Add dead subregister definitions if we are defining the whole register
+    // but only part of it is live.
+    // This could happen if the rematerialization instruction is rematerializing
+    // more than actually is used in the register.
+    // An example would be:
+    // vreg1 = LOAD CONSTANTS 5, 8 ; Loading both 5 and 8 in different subregs
+    // ; Copying only part of the register here, but the rest is undef.
+    // vreg2:sub_16bit<def, read-undef> = COPY vreg1:sub_16bit
+    // ==>
+    // ; Materialize all the constants but only using one
+    // vreg2 = LOAD_CONSTANTS 5, 8
+    //
+    // at this point for the part that wasn't defined before we could have
+    // subranges missing the definition.
+    LiveInterval &DstInt = LIS->getInterval(DstReg);
+    if (NewIdx == 0 && DstInt.hasSubRanges()) {
+      SlotIndex CurrIdx = LIS->getInstructionIndex(NewMI);
+      SlotIndex DefIndex = CurrIdx.getRegSlot(NewMI->getOperand(0).isEarlyClobber());
+      LaneBitmask MaxMask = MRI->getMaxLaneMaskForVReg(DstReg);
+      VNInfo::Allocator& Alloc = LIS->getVNInfoAllocator();
+      for (LiveInterval::SubRange &SR : DstInt.subranges()) {
+        if (!SR.liveAt(DefIndex))
+          SR.createDeadDef(DefIndex, Alloc);
+        MaxMask &= ~SR.LaneMask;
+      }
+      if (MaxMask != 0) {
+        LiveInterval::SubRange *SR = DstInt.createSubRange(Alloc, MaxMask);
+        SR->createDeadDef(DefIndex, Alloc);
+      }
+    }
   } else if (NewMI->getOperand(0).getReg() != CopyDstReg) {
     // The New instruction may be defining a sub-register of what's actually
     // been asked for. If so it must implicitly define the whole thing.

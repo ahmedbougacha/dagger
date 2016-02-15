@@ -1849,7 +1849,7 @@ static unsigned getTestUnderMaskCond(unsigned BitSize, unsigned CCMask,
     if (CCMask == SystemZ::CCMASK_CMP_NE)
       return SystemZ::CCMASK_TM_SOME_1;
   }
-  if (EffectivelyUnsigned && CmpVal <= Low) {
+  if (EffectivelyUnsigned && CmpVal > 0 && CmpVal <= Low) {
     if (CCMask == SystemZ::CCMASK_CMP_LT)
       return SystemZ::CCMASK_TM_ALL_0;
     if (CCMask == SystemZ::CCMASK_CMP_GE)
@@ -4120,8 +4120,7 @@ SDValue SystemZTargetLowering::lowerBUILD_VECTOR(SDValue Op,
   }
 
   // See if we should use shuffles to construct the vector from other vectors.
-  SDValue Res = tryBuildVectorShuffle(DAG, BVN);
-  if (Res.getNode())
+  if (SDValue Res = tryBuildVectorShuffle(DAG, BVN))
     return Res;
 
   // Detect SCALAR_TO_VECTOR conversions.
@@ -4745,9 +4744,8 @@ SDValue SystemZTargetLowering::PerformDAGCombine(SDNode *N,
     auto *SN = cast<StoreSDNode>(N);
     EVT MemVT = SN->getMemoryVT();
     if (MemVT.isInteger()) {
-      SDValue Value = combineTruncateExtract(SDLoc(N), MemVT,
-                                             SN->getValue(), DCI);
-      if (Value.getNode()) {
+      if (SDValue Value =
+              combineTruncateExtract(SDLoc(N), MemVT, SN->getValue(), DCI)) {
         DCI.AddToWorklist(Value.getNode());
 
         // Rewrite the store with the new form of stored value.

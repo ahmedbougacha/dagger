@@ -605,6 +605,15 @@ class AsmOperandClass {
   // match failure error message. By default, use a generic "invalid operand"
   // diagnostic. The target AsmParser maps these codes to text.
   string DiagnosticType = "";
+
+  /// Set to 1 if this operand is optional and not always required. Typically,
+  /// the AsmParser will emit an error when it finishes parsing an
+  /// instruction if it hasn't matched all the operands yet.  However, this
+  /// error will be suppressed if all of the remaining unmatched operands are
+  /// marked as IsOptional.
+  ///
+  /// Optional arguments must be at the end of the operand list.
+  bit IsOptional = 0;
 }
 
 def ImmAsmOperand : AsmOperandClass {
@@ -913,6 +922,10 @@ def FAULTING_LOAD_OP : Instruction {
   let usesCustomInserter = 1;
   let mayLoad = 1;
 }
+
+// Generic opcodes used in GlobalISel.
+include "llvm/Target/GenericOpcodes.td"
+
 }
 
 //===----------------------------------------------------------------------===//
@@ -936,6 +949,14 @@ class AsmParser {
   // ShouldEmitMatchRegisterName - Set to false if the target needs a hand
   // written register name matcher
   bit ShouldEmitMatchRegisterName = 1;
+
+  // Set to true if the target needs a generated 'alternative register name'
+  // matcher.
+  //
+  // This generates a function which can be used to lookup registers from
+  // their aliases. This function will fail when called on targets where
+  // several registers share the same alias (i.e. not a 1:1 mapping).
+  bit ShouldEmitMatchRegisterAltName = 0;
 
   // HasMnemonicFirst - Set to false if target instructions don't always
   // start with a mnemonic as the first token.

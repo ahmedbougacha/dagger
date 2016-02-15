@@ -452,6 +452,15 @@ private:
                       const SmallVectorImpl<SDValue> &OutVals, SDLoc DL,
                       SelectionDAG &DAG) const override;
 
+#ifdef LLVM_BUILD_GLOBAL_ISEL
+  bool LowerReturn(MachineIRBuilder &MIRBuiler, const Value *Val,
+                   unsigned VReg) const override;
+  bool
+  LowerFormalArguments(MachineIRBuilder &MIRBuilder,
+                       const Function::ArgumentListType &Args,
+                       const SmallVectorImpl<unsigned> &VRegs) const override;
+#endif
+
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerDarwinGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const;
@@ -488,6 +497,8 @@ private:
   SDValue LowerCTPOP(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerF128Call(SDValue Op, SelectionDAG &DAG,
                         RTLIB::Libcall Call) const;
+  SDValue LowerAND(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerOR(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFCOPYSIGN(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFP_EXTEND(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFP_ROUND(SDValue Op, SelectionDAG &DAG) const;

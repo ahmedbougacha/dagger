@@ -35,61 +35,6 @@ using namespace llvm;
 
 #define DEBUG_TYPE "wasm-lower"
 
-namespace {
-// Diagnostic information for unimplemented or unsupported feature reporting.
-// TODO: This code is copied from BPF and AMDGPU; consider factoring it out
-// and sharing code.
-class DiagnosticInfoUnsupported final : public DiagnosticInfo {
-private:
-  // Debug location where this diagnostic is triggered.
-  DebugLoc DLoc;
-  const Twine &Description;
-  const Function &Fn;
-  SDValue Value;
-
-  static int KindID;
-
-  static int getKindID() {
-    if (KindID == 0)
-      KindID = llvm::getNextAvailablePluginDiagnosticKind();
-    return KindID;
-  }
-
-public:
-  DiagnosticInfoUnsupported(SDLoc DLoc, const Function &Fn, const Twine &Desc,
-                            SDValue Value)
-      : DiagnosticInfo(getKindID(), DS_Error), DLoc(DLoc.getDebugLoc()),
-        Description(Desc), Fn(Fn), Value(Value) {}
-
-  void print(DiagnosticPrinter &DP) const override {
-    std::string Str;
-    raw_string_ostream OS(Str);
-
-    if (DLoc) {
-      auto DIL = DLoc.get();
-      StringRef Filename = DIL->getFilename();
-      unsigned Line = DIL->getLine();
-      unsigned Column = DIL->getColumn();
-      OS << Filename << ':' << Line << ':' << Column << ' ';
-    }
-
-    OS << "in function " << Fn.getName() << ' ' << *Fn.getFunctionType() << '\n'
-       << Description;
-    if (Value)
-      Value->print(OS);
-    OS << '\n';
-    OS.flush();
-    DP << Str;
-  }
-
-  static bool classof(const DiagnosticInfo *DI) {
-    return DI->getKind() == getKindID();
-  }
-};
-
-int DiagnosticInfoUnsupported::KindID = 0;
-} // end anonymous namespace
-
 WebAssemblyTargetLowering::WebAssemblyTargetLowering(
     const TargetMachine &TM, const WebAssemblySubtarget &STI)
     : TargetLowering(TM), Subtarget(&STI) {
@@ -116,6 +61,8 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
   setOperationAction(ISD::GlobalAddress, MVTPtr, Custom);
   setOperationAction(ISD::ExternalSymbol, MVTPtr, Custom);
   setOperationAction(ISD::JumpTable, MVTPtr, Custom);
+  setOperationAction(ISD::BlockAddress, MVTPtr, Custom);
+  setOperationAction(ISD::BRIND, MVT::Other, Custom);
 
   // Take the default expansion for va_arg, va_copy, and va_end. There is no
   // default action for va_start, so we do that custom.
@@ -204,8 +151,7 @@ bool WebAssemblyTargetLowering::isOffsetFoldingLegal(
 MVT WebAssemblyTargetLowering::getScalarShiftAmountTy(const DataLayout & /*DL*/,
                                                       EVT VT) const {
   unsigned BitWidth = NextPowerOf2(VT.getSizeInBits() - 1);
-  if (BitWidth > 1 && BitWidth < 8)
-    BitWidth = 8;
+  if (BitWidth > 1 && BitWidth < 8) BitWidth = 8;
 
   if (BitWidth > 64) {
     BitWidth = 64;
@@ -219,13 +165,13 @@ MVT WebAssemblyTargetLowering::getScalarShiftAmountTy(const DataLayout & /*DL*/,
   return Result;
 }
 
-const char *
-WebAssemblyTargetLowering::getTargetNodeName(unsigned Opcode) const {
+const char *WebAssemblyTargetLowering::getTargetNodeName(
+    unsigned Opcode) const {
   switch (static_cast<WebAssemblyISD::NodeType>(Opcode)) {
-  case WebAssemblyISD::FIRST_NUMBER:
-    break;
-#define HANDLE_NODETYPE(NODE)                                                  \
-  case WebAssemblyISD::NODE:                                                   \
+    case WebAssemblyISD::FIRST_NUMBER:
+      break;
+#define HANDLE_NODETYPE(NODE) \
+  case WebAssemblyISD::NODE:  \
     return "WebAssemblyISD::" #NODE;
 #include "WebAssemblyISD.def"
 #undef HANDLE_NODETYPE
@@ -240,17 +186,17 @@ WebAssemblyTargetLowering::getRegForInlineAsmConstraint(
   // WebAssembly register class.
   if (Constraint.size() == 1) {
     switch (Constraint[0]) {
-    case 'r':
-      assert(VT != MVT::iPTR && "Pointer MVT not expected here");
-      if (VT.isInteger() && !VT.isVector()) {
-        if (VT.getSizeInBits() <= 32)
-          return std::make_pair(0U, &WebAssembly::I32RegClass);
-        if (VT.getSizeInBits() <= 64)
-          return std::make_pair(0U, &WebAssembly::I64RegClass);
-      }
-      break;
-    default:
-      break;
+      case 'r':
+        assert(VT != MVT::iPTR && "Pointer MVT not expected here");
+        if (VT.isInteger() && !VT.isVector()) {
+          if (VT.getSizeInBits() <= 32)
+            return std::make_pair(0U, &WebAssembly::I32RegClass);
+          if (VT.getSizeInBits() <= 64)
+            return std::make_pair(0U, &WebAssembly::I64RegClass);
+        }
+        break;
+      default:
+        break;
     }
   }
 
@@ -274,14 +220,24 @@ bool WebAssemblyTargetLowering::isLegalAddressingMode(const DataLayout &DL,
   // WebAssembly offsets are added as unsigned without wrapping. The
   // isLegalAddressingMode gives us no way to determine if wrapping could be
   // happening, so we approximate this by accepting only non-negative offsets.
-  if (AM.BaseOffs < 0)
-    return false;
+  if (AM.BaseOffs < 0) return false;
 
   // WebAssembly has no scale register operands.
-  if (AM.Scale != 0)
-    return false;
+  if (AM.Scale != 0) return false;
 
   // Everything else is legal.
+  return true;
+}
+
+bool WebAssemblyTargetLowering::allowsMisalignedMemoryAccesses(
+    EVT /*VT*/, unsigned /*AddrSpace*/, unsigned /*Align*/, bool *Fast) const {
+  // WebAssembly supports unaligned accesses, though it should be declared
+  // with the p2align attribute on loads and stores which do so, and there
+  // may be a performance impact. We tell LLVM they're "fast" because
+  // for the kinds of things that LLVM uses this for (merging adjacent stores
+  // of constants, etc.), WebAssembly implementations will either want the
+  // unaligned access or they'll split anyway.
+  if (Fast) *Fast = true;
   return true;
 }
 
@@ -296,7 +252,7 @@ bool WebAssemblyTargetLowering::isLegalAddressingMode(const DataLayout &DL,
 static void fail(SDLoc DL, SelectionDAG &DAG, const char *msg) {
   MachineFunction &MF = DAG.getMachineFunction();
   DAG.getContext()->diagnose(
-      DiagnosticInfoUnsupported(DL, *MF.getFunction(), msg, SDValue()));
+      DiagnosticInfoUnsupported(*MF.getFunction(), msg, DL.getDebugLoc()));
 }
 
 // Test whether the given calling convention is supported.
@@ -312,14 +268,14 @@ static bool CallingConvSupported(CallingConv::ID CallConv) {
          CallConv == CallingConv::CXX_FAST_TLS;
 }
 
-SDValue
-WebAssemblyTargetLowering::LowerCall(CallLoweringInfo &CLI,
-                                     SmallVectorImpl<SDValue> &InVals) const {
+SDValue WebAssemblyTargetLowering::LowerCall(
+    CallLoweringInfo &CLI, SmallVectorImpl<SDValue> &InVals) const {
   SelectionDAG &DAG = CLI.DAG;
   SDLoc DL = CLI.DL;
   SDValue Chain = CLI.Chain;
   SDValue Callee = CLI.Callee;
   MachineFunction &MF = DAG.getMachineFunction();
+  auto Layout = MF.getDataLayout();
 
   CallingConv::ID CallConv = CLI.CallConv;
   if (!CallingConvSupported(CallConv))
@@ -337,16 +293,15 @@ WebAssemblyTargetLowering::LowerCall(CallLoweringInfo &CLI,
     fail(DL, DAG, "WebAssembly doesn't support tail call yet");
   CLI.IsTailCall = false;
 
-  SmallVectorImpl<SDValue> &OutVals = CLI.OutVals;
-
   SmallVectorImpl<ISD::InputArg> &Ins = CLI.Ins;
   if (Ins.size() > 1)
     fail(DL, DAG, "WebAssembly doesn't support more than 1 returned value yet");
 
   SmallVectorImpl<ISD::OutputArg> &Outs = CLI.Outs;
-  for (const ISD::OutputArg &Out : Outs) {
-    if (Out.Flags.isByVal())
-      fail(DL, DAG, "WebAssembly hasn't implemented byval arguments");
+  SmallVectorImpl<SDValue> &OutVals = CLI.OutVals;
+  for (unsigned i = 0; i < Outs.size(); ++i) {
+    const ISD::OutputArg &Out = Outs[i];
+    SDValue &OutVal = OutVals[i];
     if (Out.Flags.isNest())
       fail(DL, DAG, "WebAssembly hasn't implemented nest arguments");
     if (Out.Flags.isInAlloca())
@@ -355,28 +310,41 @@ WebAssemblyTargetLowering::LowerCall(CallLoweringInfo &CLI,
       fail(DL, DAG, "WebAssembly hasn't implemented cons regs arguments");
     if (Out.Flags.isInConsecutiveRegsLast())
       fail(DL, DAG, "WebAssembly hasn't implemented cons regs last arguments");
+    if (Out.Flags.isByVal() && Out.Flags.getByValSize() != 0) {
+      auto *MFI = MF.getFrameInfo();
+      int FI = MFI->CreateStackObject(Out.Flags.getByValSize(),
+                                      Out.Flags.getByValAlign(),
+                                      /*isSS=*/false);
+      SDValue SizeNode =
+          DAG.getConstant(Out.Flags.getByValSize(), DL, MVT::i32);
+      SDValue FINode = DAG.getFrameIndex(FI, getPointerTy(Layout));
+      Chain = DAG.getMemcpy(
+          Chain, DL, FINode, OutVal, SizeNode, Out.Flags.getByValAlign(),
+          /*isVolatile*/ false, /*AlwaysInline=*/true,
+          /*isTailCall*/ false, MachinePointerInfo(), MachinePointerInfo());
+      OutVal = FINode;
+    }
   }
 
   bool IsVarArg = CLI.IsVarArg;
   unsigned NumFixedArgs = CLI.NumFixedArgs;
-  auto PtrVT = getPointerTy(MF.getDataLayout());
+
+  auto PtrVT = getPointerTy(Layout);
 
   // Analyze operands of the call, assigning locations to each operand.
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, IsVarArg, MF, ArgLocs, *DAG.getContext());
 
   if (IsVarArg) {
-    // Outgoing non-fixed arguments are placed at the top of the stack. First
-    // compute their offsets and the total amount of argument stack space
-    // needed.
+    // Outgoing non-fixed arguments are placed in a buffer. First
+    // compute their offsets and the total amount of buffer space needed.
     for (SDValue Arg :
          make_range(OutVals.begin() + NumFixedArgs, OutVals.end())) {
       EVT VT = Arg.getValueType();
       assert(VT != MVT::iPTR && "Legalized args should be concrete");
       Type *Ty = VT.getTypeForEVT(*DAG.getContext());
-      unsigned Offset =
-          CCInfo.AllocateStack(MF.getDataLayout().getTypeAllocSize(Ty),
-                               MF.getDataLayout().getABITypeAlignment(Ty));
+      unsigned Offset = CCInfo.AllocateStack(Layout.getTypeAllocSize(Ty),
+                                             Layout.getABITypeAlignment(Ty));
       CCInfo.addLoc(CCValAssign::getMem(ArgLocs.size(), VT.getSimpleVT(),
                                         Offset, VT.getSimpleVT(),
                                         CCValAssign::Full));
@@ -385,17 +353,13 @@ WebAssemblyTargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   unsigned NumBytes = CCInfo.getAlignedCallFrameSize();
 
-  SDValue NB;
-  if (NumBytes) {
-    NB = DAG.getConstant(NumBytes, DL, PtrVT, true);
-    Chain = DAG.getCALLSEQ_START(Chain, NB, DL);
-  }
-
-  if (IsVarArg) {
+  SDValue FINode;
+  if (IsVarArg && NumBytes) {
     // For non-fixed arguments, next emit stores to store the argument values
-    // to the stack at the offsets computed above.
-    SDValue SP = DAG.getCopyFromReg(
-        Chain, DL, getStackPointerRegisterToSaveRestore(), PtrVT);
+    // to the stack buffer at the offsets computed above.
+    int FI = MF.getFrameInfo()->CreateStackObject(NumBytes,
+                                                  Layout.getStackAlignment(),
+                                                  /*isSS=*/false);
     unsigned ValNo = 0;
     SmallVector<SDValue, 8> Chains;
     for (SDValue Arg :
@@ -403,14 +367,17 @@ WebAssemblyTargetLowering::LowerCall(CallLoweringInfo &CLI,
       assert(ArgLocs[ValNo].getValNo() == ValNo &&
              "ArgLocs should remain in order and only hold varargs args");
       unsigned Offset = ArgLocs[ValNo++].getLocMemOffset();
-      SDValue Add = DAG.getNode(ISD::ADD, DL, PtrVT, SP,
+      FINode = DAG.getFrameIndex(FI, getPointerTy(Layout));
+      SDValue Add = DAG.getNode(ISD::ADD, DL, PtrVT, FINode,
                                 DAG.getConstant(Offset, DL, PtrVT));
-      Chains.push_back(DAG.getStore(Chain, DL, Arg, Add,
-                                    MachinePointerInfo::getStack(MF, Offset),
-                                    false, false, 0));
+      Chains.push_back(DAG.getStore(
+          Chain, DL, Arg, Add,
+          MachinePointerInfo::getFixedStack(MF, FI, Offset), false, false, 0));
     }
     if (!Chains.empty())
       Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, Chains);
+  } else if (IsVarArg) {
+    FINode = DAG.getIntPtrConstant(0, DL);
   }
 
   // Compute the operands for the CALLn node.
@@ -422,8 +389,10 @@ WebAssemblyTargetLowering::LowerCall(CallLoweringInfo &CLI,
   // isn't reliable.
   Ops.append(OutVals.begin(),
              IsVarArg ? OutVals.begin() + NumFixedArgs : OutVals.end());
+  // Add a pointer to the vararg buffer.
+  if (IsVarArg) Ops.push_back(FINode);
 
-  SmallVector<EVT, 8> Tys;
+  SmallVector<EVT, 8> InTys;
   for (const auto &In : Ins) {
     assert(!In.Flags.isByVal() && "byval is not valid for return values");
     assert(!In.Flags.isNest() && "nest is not valid for return values");
@@ -436,23 +405,18 @@ WebAssemblyTargetLowering::LowerCall(CallLoweringInfo &CLI,
            "WebAssembly hasn't implemented cons regs last return values");
     // Ignore In.getOrigAlign() because all our arguments are passed in
     // registers.
-    Tys.push_back(In.VT);
+    InTys.push_back(In.VT);
   }
-  Tys.push_back(MVT::Other);
-  SDVTList TyList = DAG.getVTList(Tys);
+  InTys.push_back(MVT::Other);
+  SDVTList InTyList = DAG.getVTList(InTys);
   SDValue Res =
       DAG.getNode(Ins.empty() ? WebAssemblyISD::CALL0 : WebAssemblyISD::CALL1,
-                  DL, TyList, Ops);
+                  DL, InTyList, Ops);
   if (Ins.empty()) {
     Chain = Res;
   } else {
     InVals.push_back(Res);
     Chain = Res.getValue(1);
-  }
-
-  if (NumBytes) {
-    SDValue Unused = DAG.getTargetConstant(0, DL, PtrVT);
-    Chain = DAG.getCALLSEQ_END(Chain, NB, Unused, SDValue(), DL);
   }
 
   return Chain;
@@ -496,10 +460,11 @@ SDValue WebAssemblyTargetLowering::LowerReturn(
 }
 
 SDValue WebAssemblyTargetLowering::LowerFormalArguments(
-    SDValue Chain, CallingConv::ID CallConv, bool /*IsVarArg*/,
+    SDValue Chain, CallingConv::ID CallConv, bool IsVarArg,
     const SmallVectorImpl<ISD::InputArg> &Ins, SDLoc DL, SelectionDAG &DAG,
     SmallVectorImpl<SDValue> &InVals) const {
   MachineFunction &MF = DAG.getMachineFunction();
+  auto *MFI = MF.getInfo<WebAssemblyFunctionInfo>();
 
   if (!CallingConvSupported(CallConv))
     fail(DL, DAG, "WebAssembly doesn't support non-C calling conventions");
@@ -509,8 +474,6 @@ SDValue WebAssemblyTargetLowering::LowerFormalArguments(
   MF.getRegInfo().addLiveIn(WebAssembly::ARGUMENTS);
 
   for (const ISD::InputArg &In : Ins) {
-    if (In.Flags.isByVal())
-      fail(DL, DAG, "WebAssembly hasn't implemented byval arguments");
     if (In.Flags.isInAlloca())
       fail(DL, DAG, "WebAssembly hasn't implemented inalloca arguments");
     if (In.Flags.isNest())
@@ -528,11 +491,22 @@ SDValue WebAssemblyTargetLowering::LowerFormalArguments(
             : DAG.getUNDEF(In.VT));
 
     // Record the number and types of arguments.
-    MF.getInfo<WebAssemblyFunctionInfo>()->addParam(In.VT);
+    MFI->addParam(In.VT);
   }
 
-  // Incoming varargs arguments are on the stack and will be accessed through
-  // va_arg, so we don't need to do anything for them here.
+  // Varargs are copied into a buffer allocated by the caller, and a pointer to
+  // the buffer is passed as an argument.
+  if (IsVarArg) {
+    MVT PtrVT = getPointerTy(MF.getDataLayout());
+    unsigned VarargVreg =
+        MF.getRegInfo().createVirtualRegister(getRegClassFor(PtrVT));
+    MFI->setVarargBufferVreg(VarargVreg);
+    Chain = DAG.getCopyToReg(
+        Chain, DL, VarargVreg,
+        DAG.getNode(WebAssemblyISD::ARGUMENT, DL, PtrVT,
+                    DAG.getTargetConstant(Ins.size(), DL, MVT::i32)));
+    MFI->addParam(PtrVT);
+  }
 
   return Chain;
 }
@@ -543,22 +517,33 @@ SDValue WebAssemblyTargetLowering::LowerFormalArguments(
 
 SDValue WebAssemblyTargetLowering::LowerOperation(SDValue Op,
                                                   SelectionDAG &DAG) const {
+  SDLoc DL(Op);
   switch (Op.getOpcode()) {
-  default:
-    llvm_unreachable("unimplemented operation lowering");
-    return SDValue();
-  case ISD::FrameIndex:
-    return LowerFrameIndex(Op, DAG);
-  case ISD::GlobalAddress:
-    return LowerGlobalAddress(Op, DAG);
-  case ISD::ExternalSymbol:
-    return LowerExternalSymbol(Op, DAG);
-  case ISD::JumpTable:
-    return LowerJumpTable(Op, DAG);
-  case ISD::BR_JT:
-    return LowerBR_JT(Op, DAG);
-  case ISD::VASTART:
-    return LowerVASTART(Op, DAG);
+    default:
+      llvm_unreachable("unimplemented operation lowering");
+      return SDValue();
+    case ISD::FrameIndex:
+      return LowerFrameIndex(Op, DAG);
+    case ISD::GlobalAddress:
+      return LowerGlobalAddress(Op, DAG);
+    case ISD::ExternalSymbol:
+      return LowerExternalSymbol(Op, DAG);
+    case ISD::JumpTable:
+      return LowerJumpTable(Op, DAG);
+    case ISD::BR_JT:
+      return LowerBR_JT(Op, DAG);
+    case ISD::VASTART:
+      return LowerVASTART(Op, DAG);
+    case ISD::BlockAddress:
+    case ISD::BRIND:
+      fail(DL, DAG, "WebAssembly hasn't implemented computed gotos");
+      return SDValue();
+    case ISD::RETURNADDR: // Probably nothing meaningful can be returned here.
+      fail(DL, DAG, "WebAssembly hasn't implemented __builtin_return_address");
+      return SDValue();
+    case ISD::FRAMEADDR: // TODO: Make this return the userspace frame address
+      fail(DL, DAG, "WebAssembly hasn't implemented __builtin_frame_address");
+      return SDValue();
   }
 }
 
@@ -582,9 +567,8 @@ SDValue WebAssemblyTargetLowering::LowerGlobalAddress(SDValue Op,
       DAG.getTargetGlobalAddress(GA->getGlobal(), DL, VT, GA->getOffset()));
 }
 
-SDValue
-WebAssemblyTargetLowering::LowerExternalSymbol(SDValue Op,
-                                               SelectionDAG &DAG) const {
+SDValue WebAssemblyTargetLowering::LowerExternalSymbol(
+    SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
   const auto *ES = cast<ExternalSymbolSDNode>(Op);
   EVT VT = Op.getValueType();
@@ -631,8 +615,7 @@ SDValue WebAssemblyTargetLowering::LowerBR_JT(SDValue Op,
   Ops.push_back(DAG.getBasicBlock(MBBs[0]));
 
   // Add an operand for each case.
-  for (auto MBB : MBBs)
-    Ops.push_back(DAG.getBasicBlock(MBB));
+  for (auto MBB : MBBs) Ops.push_back(DAG.getBasicBlock(MBB));
 
   return DAG.getNode(WebAssemblyISD::TABLESWITCH, DL, MVT::Other, Ops);
 }
@@ -642,15 +625,12 @@ SDValue WebAssemblyTargetLowering::LowerVASTART(SDValue Op,
   SDLoc DL(Op);
   EVT PtrVT = getPointerTy(DAG.getMachineFunction().getDataLayout());
 
-  // The incoming non-fixed arguments are placed on the top of the stack, with
-  // natural alignment, at the point of the call, so the base pointer is just
-  // the current frame pointer.
-  DAG.getMachineFunction().getFrameInfo()->setFrameAddressIsTaken(true);
-  unsigned FP =
-      Subtarget->getRegisterInfo()->getFrameRegister(DAG.getMachineFunction());
-  SDValue FrameAddr = DAG.getCopyFromReg(DAG.getEntryNode(), DL, FP, PtrVT);
+  auto *MFI = DAG.getMachineFunction().getInfo<WebAssemblyFunctionInfo>();
   const Value *SV = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
-  return DAG.getStore(Op.getOperand(0), DL, FrameAddr, Op.getOperand(1),
+
+  SDValue ArgN = DAG.getCopyFromReg(DAG.getEntryNode(), DL,
+                                    MFI->getVarargBufferVreg(), PtrVT);
+  return DAG.getStore(Op.getOperand(0), DL, ArgN, Op.getOperand(1),
                       MachinePointerInfo(SV), false, false, 0);
 }
 

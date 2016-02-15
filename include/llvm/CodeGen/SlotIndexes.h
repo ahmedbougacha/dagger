@@ -66,7 +66,6 @@ namespace llvm {
 
     bool isPoisoned() const { return (reinterpret_cast<intptr_t>(mi) & 0x1) == 0x1; }
 #endif // EXPENSIVE_CHECKS
-
   };
 
   template <>
@@ -213,6 +212,12 @@ namespace llvm {
       return A.listEntry()->getIndex() < B.listEntry()->getIndex();
     }
 
+    /// Return true if A refers to the same instruction as B or an earlier one.
+    /// This is equivalent to !isEarlierInstr(B, A).
+    static bool isEarlierEqualInstr(SlotIndex A, SlotIndex B) {
+      return !isEarlierInstr(B, A);
+    }
+
     /// Return the distance from this index to the given one.
     int distance(SlotIndex other) const {
       return other.getIndex() - getIndex();
@@ -302,7 +307,6 @@ namespace llvm {
     SlotIndex getPrevIndex() const {
       return SlotIndex(&*--listEntry()->getIterator(), getSlot());
     }
-
   };
 
   template <> struct isPodLike<SlotIndex> { static const bool value = true; };
@@ -376,7 +380,7 @@ namespace llvm {
       initializeSlotIndexesPass(*PassRegistry::getPassRegistry());
     }
 
-    ~SlotIndexes() {
+    ~SlotIndexes() override {
       // The indexList's nodes are all allocated in the BumpPtrAllocator.
       indexList.clearAndLeakNodesUnsafely();
     }
@@ -703,15 +707,13 @@ namespace llvm {
       indexList.erase(entry);
 #endif
     }
-
   };
-
 
   // Specialize IntervalMapInfo for half-open slot index intervals.
   template <>
   struct IntervalMapInfo<SlotIndex> : IntervalMapHalfOpenInfo<SlotIndex> {
   };
 
-}
+} // end namespace llvm
 
 #endif // LLVM_CODEGEN_SLOTINDEXES_H

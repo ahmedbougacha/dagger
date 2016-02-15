@@ -141,7 +141,7 @@ raw_ostream &raw_ostream::operator<<(unsigned long long N) {
     return this->operator<<(static_cast<unsigned long>(N));
 
   char NumberBuffer[20];
-  char *EndPtr = NumberBuffer+sizeof(NumberBuffer);
+  char *EndPtr = std::end(NumberBuffer);
   char *CurPtr = EndPtr;
 
   while (N) {
@@ -166,13 +166,13 @@ raw_ostream &raw_ostream::write_hex(unsigned long long N) {
   if (N == 0)
     return *this << '0';
 
-  char NumberBuffer[20];
-  char *EndPtr = NumberBuffer+sizeof(NumberBuffer);
+  char NumberBuffer[16];
+  char *EndPtr = std::end(NumberBuffer);
   char *CurPtr = EndPtr;
 
   while (N) {
-    uintptr_t x = N % 16;
-    *--CurPtr = (x < 10 ? '0' + x : 'a' + x - 10);
+    unsigned char x = static_cast<unsigned char>(N) % 16;
+    *--CurPtr = hexdigit(x, /*LowerCase*/true);
     N /= 16;
   }
 
@@ -181,9 +181,7 @@ raw_ostream &raw_ostream::write_hex(unsigned long long N) {
 
 raw_ostream &raw_ostream::write_escaped(StringRef Str,
                                         bool UseHexEscapes) {
-  for (unsigned i = 0, e = Str.size(); i != e; ++i) {
-    unsigned char c = Str[i];
-
+  for (unsigned char c : Str) {
     switch (c) {
     case '\\':
       *this << '\\' << '\\';
@@ -422,11 +420,10 @@ raw_ostream &raw_ostream::operator<<(const FormattedNumber &FN) {
       NumberBuffer[1] = '0';
     char *EndPtr = NumberBuffer+Width;
     char *CurPtr = EndPtr;
-    const char A = FN.Upper ? 'A' : 'a';
     unsigned long long N = FN.HexValue;
     while (N) {
-      uintptr_t x = N % 16;
-      *--CurPtr = (x < 10 ? '0' + x : A + x - 10);
+      unsigned char x = static_cast<unsigned char>(N) % 16;
+      *--CurPtr = hexdigit(x, !FN.Upper);
       N /= 16;
     }
 

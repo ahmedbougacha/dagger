@@ -77,7 +77,8 @@ DisablePromotion("disable-licm-promotion", cl::Hidden,
 static bool inSubLoop(BasicBlock *BB, Loop *CurLoop, LoopInfo *LI);
 static bool isNotUsedInLoop(const Instruction &I, const Loop *CurLoop,
                             const LICMSafetyInfo *SafetyInfo);
-static bool hoist(Instruction &I, BasicBlock *Preheader);
+static bool hoist(Instruction &I, const DominatorTree *DT, const Loop *CurLoop,
+                  const LICMSafetyInfo *SafetyInfo);
 static bool sink(Instruction &I, const LoopInfo *LI, const DominatorTree *DT,
                  const Loop *CurLoop, AliasSetTracker *CurAST,
                  const LICMSafetyInfo *SafetyInfo);
@@ -163,6 +164,11 @@ namespace {
 
     /// Simple Analysis hook. Delete loop L from alias set map.
     void deleteAnalysisLoop(Loop *L) override;
+
+    /// Returns an owning pointer to an alias set which incorporates aliasing
+    /// info from all subloops of L, but does not include instructions in L
+    /// itself.
+    AliasSetTracker *collectAliasInfoFromSubLoops(Loop *L);
   };
 }
 
@@ -201,20 +207,7 @@ bool LICM::runOnLoop(Loop *L, LPPassManager &LPM) {
 
   assert(L->isLCSSAForm(*DT) && "Loop is not in LCSSA form.");
 
-  CurAST = new AliasSetTracker(*AA);
-  // Collect Alias info from subloops.
-  for (Loop *InnerL : L->getSubLoops()) {
-    AliasSetTracker *InnerAST = LoopToAliasSetMap[InnerL];
-    assert(InnerAST && "Where is my AST?");
-
-    // What if InnerLoop was modified by other passes ?
-    CurAST->add(*InnerAST);
-
-    // Once we've incorporated the inner loop's AST into ours, we don't need the
-    // subloop's anymore.
-    delete InnerAST;
-    LoopToAliasSetMap.erase(InnerL);
-  }
+  CurAST = collectAliasInfoFromSubLoops(L);
 
   CurLoop = L;
 
@@ -397,7 +390,7 @@ bool llvm::hoistRegion(DomTreeNode *N, AliasAnalysis *AA, LoopInfo *LI,
           canSinkOrHoistInst(I, AA, DT, TLI, CurLoop, CurAST, SafetyInfo) &&
           isSafeToExecuteUnconditionally(I, DT, TLI, CurLoop, SafetyInfo,
                                  CurLoop->getLoopPreheader()->getTerminator()))
-        Changed |= hoist(I, CurLoop->getLoopPreheader());
+        Changed |= hoist(I, DT, CurLoop, SafetyInfo);
     }
 
   const std::vector<DomTreeNode*> &Children = N->getChildren();
@@ -716,15 +709,25 @@ static bool sink(Instruction &I, const LoopInfo *LI, const DominatorTree *DT,
 /// When an instruction is found to only use loop invariant operands that
 /// is safe to hoist, this instruction is called to do the dirty work.
 ///
-static bool hoist(Instruction &I, BasicBlock *Preheader) {
+static bool hoist(Instruction &I, const DominatorTree *DT, const Loop *CurLoop,
+                  const LICMSafetyInfo *SafetyInfo) {
+  auto *Preheader = CurLoop->getLoopPreheader();
   DEBUG(dbgs() << "LICM hoisting to " << Preheader->getName() << ": "
         << I << "\n");
+
+  // Metadata can be dependent on conditions we are hoisting above.
+  // Conservatively strip all metadata on the instruction unless we were
+  // guaranteed to execute I if we entered the loop, in which case the metadata
+  // is valid in the loop preheader.
+  if (I.hasMetadataOtherThanDebugLoc() &&
+      // The check on hasMetadataOtherThanDebugLoc is to prevent us from burning
+      // time in isGuaranteedToExecute if we don't actually have anything to
+      // drop.  It is a compile time optimization, not required for correctness.
+      !isGuaranteedToExecute(I, DT, CurLoop, SafetyInfo))
+    I.dropUnknownNonDebugMetadata();
+
   // Move the new node to the Preheader, before its terminator.
   I.moveBefore(Preheader->getTerminator());
-
-  // Metadata can be dependent on the condition we are hoisting above.
-  // Conservatively strip all metadata on the instruction.
-  I.dropUnknownNonDebugMetadata();
 
   if (isa<LoadInst>(I)) ++NumMovedLoads;
   else if (isa<CallInst>(I)) ++NumMovedCalls;
@@ -1052,6 +1055,32 @@ bool llvm::promoteLoopAccessesToScalars(AliasSet &AS,
     PreheaderLoad->eraseFromParent();
 
   return Changed;
+}
+
+/// Returns an owning pointer to an alias set which incorporates aliasing info
+/// from all subloops of L, but does not include instructions in L itself.
+///
+AliasSetTracker *LICM::collectAliasInfoFromSubLoops(Loop *L) {
+  AliasSetTracker *CurAST = nullptr;
+  for (Loop *InnerL : L->getSubLoops()) {
+    AliasSetTracker *InnerAST = LoopToAliasSetMap[InnerL];
+    assert(InnerAST && "Where is my AST?");
+
+    if (CurAST != nullptr) {
+      // What if InnerLoop was modified by other passes ?
+      CurAST->add(*InnerAST);
+
+      // Once we've incorporated the inner loop's AST into ours, we don't need
+      // the subloop's anymore.
+      delete InnerAST;
+    } else {
+      CurAST = InnerAST;
+    }
+    LoopToAliasSetMap.erase(InnerL);
+  }
+  if (CurAST == nullptr)
+    CurAST = new AliasSetTracker(*AA);
+  return CurAST;
 }
 
 /// Simple analysis hook. Clone alias set info.

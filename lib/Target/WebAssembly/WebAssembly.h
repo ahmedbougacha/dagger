@@ -28,6 +28,7 @@ FunctionPass *createWebAssemblyOptimizeReturned();
 FunctionPass *createWebAssemblyISelDag(WebAssemblyTargetMachine &TM,
                                        CodeGenOpt::Level OptLevel);
 FunctionPass *createWebAssemblyArgumentMove();
+FunctionPass *createWebAssemblySetP2AlignOperands();
 
 FunctionPass *createWebAssemblyStoreResults();
 FunctionPass *createWebAssemblyRegStackify();
@@ -37,8 +38,6 @@ FunctionPass *createWebAssemblyCFGStackify();
 FunctionPass *createWebAssemblyLowerBrUnless();
 FunctionPass *createWebAssemblyRegNumbering();
 FunctionPass *createWebAssemblyPeephole();
-
-FunctionPass *createWebAssemblyRelooper();
 
 } // end namespace llvm
 

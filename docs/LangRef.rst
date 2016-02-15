@@ -907,8 +907,7 @@ Currently, only the following parameter attributes are defined:
 ``zeroext``
     This indicates to the code generator that the parameter or return
     value should be zero-extended to the extent required by the target's
-    ABI (which is usually 32-bits, but is 8-bits for a i1 on x86-64) by
-    the caller (for a parameter) or the callee (for a return value).
+    ABI by the caller (for a parameter) or the callee (for a return value).
 ``signext``
     This indicates to the code generator that the parameter or return
     value should be sign-extended to the extent required by the target's
@@ -1239,10 +1238,17 @@ example:
     function call are also considered to be cold; and, thus, given low
     weight.
 ``convergent``
-    This attribute indicates that the callee is dependent on a convergent
-    thread execution pattern under certain parallel execution models.
-    Transformations that are execution model agnostic may not make the execution
-    of a convergent operation control dependent on any additional values.
+    In some parallel execution models, there exist operations that cannot be
+    made control-dependent on any additional values.  We call such operations
+    ``convergent``, and mark them with this function attribute.
+
+    For example, the intrinsic ``llvm.cuda.syncthreads`` is ``convergent``, so
+    calls to this intrinsic cannot be made control-dependent on additional
+    values.  Other functions may also be marked as convergent; this prevents
+    the same optimization on those functions.
+
+    The optimizer may remove the ``convergent`` attribute when it can prove
+    that the function does not execute any convergent operations.
 ``inaccessiblememonly``
     This attribute indicates that the function may only access memory that
     is not accessible by the module being compiled. This is a weaker form
@@ -1511,7 +1517,7 @@ operand bundle to not miscompile programs containing it.
   ways before control is transferred to the callee or invokee.
 - Calls and invokes with operand bundles have unknown read / write
   effect on the heap on entry and exit (even if the call target is
-  ``readnone`` or ``readonly``), unless they're overriden with
+  ``readnone`` or ``readonly``), unless they're overridden with
   callsite specific attributes.
 - An operand bundle at a call site cannot change the implementation
   of the called function.  Inter-procedural optimizations work as
@@ -1601,6 +1607,18 @@ it is undefined behavior to execute a ``call`` or ``invoke`` which:
 
 Similarly, if no funclet EH pads have been entered-but-not-yet-exited,
 executing a ``call`` or ``invoke`` with a ``"funclet"`` bundle is undefined behavior.
+
+GC Transition Operand Bundles
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+GC transition operand bundles are characterized by the
+``"gc-transition"`` operand bundle tag. These operand bundles mark a
+call as a transition between a function with one GC strategy to a
+function with a different GC strategy. If coordinating the transition
+between GC strategies requires additional code generation at the call
+site, these bundles may contain any values that are needed by the
+generated code.  For more details, see :ref:`GC Transitions
+<gc_transition_args>`.
 
 .. _moduleasm:
 
@@ -3119,7 +3137,7 @@ the same register to an output and an input. If this is not safe (e.g. if the
 assembly contains two instructions, where the first writes to one output, and
 the second reads an input and writes to a second output), then the "``&``"
 modifier must be used (e.g. "``=&r``") to specify that the output is an
-"early-clobber" output. Marking an ouput as "early-clobber" ensures that LLVM
+"early-clobber" output. Marking an output as "early-clobber" ensures that LLVM
 will not use the same register for any inputs (other than an input tied to this
 output).
 
@@ -4541,6 +4559,17 @@ For example:
 .. code-block:: llvm
 
    !0 = !{!"llvm.loop.unroll.full"}
+
+'``llvm.loop.licm_versioning.disable``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This metadata indicates that the loop should not be versioned for the purpose
+of enabling loop-invariant code motion (LICM). The metadata has a single operand
+which is the string ``llvm.loop.licm_versioning.disable``. For example:
+
+.. code-block:: llvm
+
+   !0 = !{!"llvm.loop.licm_versioning.disable"}
 
 '``llvm.mem``'
 ^^^^^^^^^^^^^^^
@@ -7091,11 +7120,11 @@ Example:
 .. code-block:: llvm
 
     entry:
-      %orig = atomic load i32, i32* %ptr unordered                ; yields i32
+      %orig = load atomic i32, i32* %ptr unordered, align 4                      ; yields i32
       br label %loop
 
     loop:
-      %cmp = phi i32 [ %orig, %entry ], [%old, %loop]
+      %cmp = phi i32 [ %orig, %entry ], [%value_loaded, %loop]
       %squared = mul i32 %cmp, %cmp
       %val_success = cmpxchg i32* %ptr, i32 %cmp, i32 %squared acq_rel monotonic ; yields  { i32, i1 }
       %value_loaded = extractvalue { i32, i1 } %val_success, 0
@@ -11475,7 +11504,7 @@ The '``llvm.masked.scatter``' intrinsics is designed for writing selected vector
 
 ::
 
-       ;; This instruction unconditionaly stores data vector in multiple addresses
+       ;; This instruction unconditionally stores data vector in multiple addresses
        call @llvm.masked.scatter.v8i32 (<8 x i32> %value, <8 x i32*> %ptrs, i32 4,  <8 x i1>  <true, true, .. true>)
 
        ;; It is equivalent to a list of scalar stores

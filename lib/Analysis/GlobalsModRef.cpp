@@ -243,13 +243,14 @@ FunctionModRefBehavior
 GlobalsAAResult::getModRefBehavior(ImmutableCallSite CS) {
   FunctionModRefBehavior Min = FMRB_UnknownModRefBehavior;
 
-  if (const Function *F = CS.getCalledFunction())
-    if (FunctionInfo *FI = getFunctionInfo(F)) {
-      if (FI->getModRefInfo() == MRI_NoModRef)
-        Min = FMRB_DoesNotAccessMemory;
-      else if ((FI->getModRefInfo() & MRI_Mod) == 0)
-        Min = FMRB_OnlyReadsMemory;
-    }
+  if (!CS.hasOperandBundles())
+    if (const Function *F = CS.getCalledFunction())
+      if (FunctionInfo *FI = getFunctionInfo(F)) {
+        if (FI->getModRefInfo() == MRI_NoModRef)
+          Min = FMRB_DoesNotAccessMemory;
+        else if ((FI->getModRefInfo() & MRI_Mod) == 0)
+          Min = FMRB_OnlyReadsMemory;
+      }
 
   return FunctionModRefBehavior(AAResultBase::getModRefBehavior(CS) & Min);
 }
@@ -269,7 +270,7 @@ GlobalsAAResult::getFunctionInfo(const Function *F) {
 /// (really, their address passed to something nontrivial), record this fact,
 /// and record the functions that they are used directly in.
 void GlobalsAAResult::AnalyzeGlobals(Module &M) {
-  SmallPtrSet<Function *, 64> TrackedFunctions;
+  SmallPtrSet<Function *, 32> TrackedFunctions;
   for (Function &F : M)
     if (F.hasLocalLinkage())
       if (!AnalyzeUsesOfPointer(&F)) {
@@ -281,7 +282,7 @@ void GlobalsAAResult::AnalyzeGlobals(Module &M) {
         ++NumNonAddrTakenFunctions;
       }
 
-  SmallPtrSet<Function *, 64> Readers, Writers;
+  SmallPtrSet<Function *, 16> Readers, Writers;
   for (GlobalVariable &GV : M.globals())
     if (GV.hasLocalLinkage()) {
       if (!AnalyzeUsesOfPointer(&GV, &Readers,
@@ -310,7 +311,7 @@ void GlobalsAAResult::AnalyzeGlobals(Module &M) {
         ++NumNonAddrTakenGlobalVars;
 
         // If this global holds a pointer type, see if it is an indirect global.
-        if (GV.getType()->getElementType()->isPointerTy() &&
+        if (GV.getValueType()->isPointerTy() &&
             AnalyzeIndirectGlobalMemory(&GV))
           ++NumIndirectGlobalVars;
       }

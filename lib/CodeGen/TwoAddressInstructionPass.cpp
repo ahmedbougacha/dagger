@@ -50,6 +50,7 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
+
 using namespace llvm;
 
 #define DEBUG_TYPE "twoaddrinstr"
@@ -156,6 +157,7 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
     AU.addRequired<AAResultsWrapperPass>();
+    AU.addUsedIfAvailable<LiveVariables>();
     AU.addPreserved<LiveVariables>();
     AU.addPreserved<SlotIndexes>();
     AU.addPreserved<LiveIntervals>();
@@ -539,7 +541,6 @@ regsAreCompatible(unsigned RegA, unsigned RegB, const TargetRegisterInfo *TRI) {
   return TRI->regsOverlap(RegA, RegB);
 }
 
-
 /// Return true if it's potentially profitable to commute the two-address
 /// instruction that's being processed.
 bool
@@ -808,7 +809,6 @@ void TwoAddressInstructionPass::processCopy(MachineInstr *MI) {
   }
 
   Processed.insert(MI);
-  return;
 }
 
 /// If there is one more local instruction that reads 'Reg' and it kills 'Reg,
