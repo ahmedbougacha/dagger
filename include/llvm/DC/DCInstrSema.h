@@ -170,9 +170,6 @@ private:
   void SwitchToBasicBlock(uint64_t BeginAddr);
 };
 
-DCInstrSema *createDCInstrSema(StringRef Triple, const MCRegisterInfo &MRI,
-                               const MCInstrInfo &MII);
-
 } // end namespace llvm
 
 #endif
