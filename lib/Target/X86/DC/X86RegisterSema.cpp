@@ -73,8 +73,7 @@ void X86RegisterSema::onRegisterGet(unsigned RegNo) {
     return;
 
   Value *EFLAGSDef =
-    computeEFLAGSForDef(LastEFLAGSChangingDef, getRegNoCallback(RegNo),
-                        LastEFLAGSDefWasPartialINCDEC);
+      computeEFLAGSForDef(LastEFLAGSChangingDef, LastEFLAGSDefWasPartialINCDEC);
   setRegValWithName(RegNo, EFLAGSDef);
   LastEFLAGSDef = EFLAGSDef;
   LastEFLAGSChangingDef = 0;
@@ -191,7 +190,6 @@ void X86RegisterSema::setCC(X86::CondCode CC, Value *CCV) {
 
 Value *X86RegisterSema::getEFLAGSforCMP(Value *LHS, Value *RHS) {
   clearCCSF();
-  Value *OldEFLAGS = getReg(X86::EFLAGS);
   assert(LHS->getType() == RHS->getType());
   if (RHS->getType()->isIntegerTy()) {
     // FIXME: the ultimate goal is to make this transparent, depending on the
@@ -207,7 +205,7 @@ Value *X86RegisterSema::getEFLAGSforCMP(Value *LHS, Value *RHS) {
     setCC(X86::COND_E,  Builder->CreateICmpEQ  (LHS, RHS));
     setCC(X86::COND_NE, Builder->CreateICmpNE (LHS, RHS));
     // Per the intel manual, CMP is equivalent to SUB.
-    return computeEFLAGSForDef(Builder->CreateSub(LHS, RHS), OldEFLAGS);
+    return computeEFLAGSForDef(Builder->CreateSub(LHS, RHS));
   } else {
     setSF(X86::OF, Builder->getFalse());
     setSF(X86::SF, Builder->getFalse());
@@ -215,7 +213,7 @@ Value *X86RegisterSema::getEFLAGSforCMP(Value *LHS, Value *RHS) {
     setSF(X86::ZF, Builder->CreateFCmpUEQ(LHS, RHS));
     setSF(X86::PF, Builder->CreateFCmpUNO(LHS, RHS));
     setSF(X86::CF, Builder->CreateFCmpULT(LHS, RHS));
-    return createEFLAGSFromSFs(OldEFLAGS);
+    return createEFLAGSFromSFs();
   }
 }
 
@@ -228,8 +226,7 @@ void X86RegisterSema::updateEFLAGS(Value *Def, bool IsINCDEC) {
   LastEFLAGSDefWasPartialINCDEC = IsINCDEC;
 }
 
-Value *X86RegisterSema::computeEFLAGSForDef(Value *Def, Value *OldEFLAGS,
-                                            bool DontUpdateCF) {
+Value *X86RegisterSema::computeEFLAGSForDef(Value *Def, bool DontUpdateCF) {
   // FIXME: This describes the general semantics of EFLAGS update, but this
   // needs to handle the differences between instructions.
   // This would be done by keeping more information on the instruction with
@@ -284,25 +281,24 @@ Value *X86RegisterSema::computeEFLAGSForDef(Value *Def, Value *OldEFLAGS,
                                              TheModule, Intrinsic::ctpop, I8Ty),
                                          {Builder->CreateTrunc(Def, I8Ty)}),
                      Builder->getInt1Ty())));
-  return createEFLAGSFromSFs(OldEFLAGS);
+  return createEFLAGSFromSFs();
 }
 
-Value *X86RegisterSema::createEFLAGSFromSFs(Value *OldEFLAGS) {
+Value *X86RegisterSema::createEFLAGSFromSFs() {
   // Now recreate EFLAGS from the individual components.
   const X86::StatusFlag Flags[6] = {X86::CF, X86::PF, X86::AF,
                                     X86::ZF, X86::SF, X86::OF};
   uint32_t Mask = 0;
   for (unsigned i = 0, e = 6; i != e; ++i)
     Mask |= 1 << Flags[i];
-  Value *Masked = Builder->CreateAnd(OldEFLAGS, ~Mask);
+  Value *Res = getReg(X86::CtlSysEFLAGS);
   for (unsigned i = 0, e = 6; i != e; ++i) {
-    Masked = Builder->CreateOr(
-      Builder->CreateShl(
-        Builder->CreateZExt(SFVals[Flags[i]], Masked->getType()),
-        Flags[i]),
-      Masked);
+    Res = Builder->CreateOr(
+        Builder->CreateShl(
+            Builder->CreateZExt(SFVals[Flags[i]], Res->getType()), Flags[i]),
+        Res);
   }
-  return Masked;
+  return Res;
 }
 
 void X86RegisterSema::setSF(X86::StatusFlag SF, Value *Val) {
@@ -361,6 +357,7 @@ void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
   InitRegTo(X86::RSI, Builder->CreatePtrToInt(ArgV, Builder->getInt64Ty()));
   // Initialize EFLAGS to 0x202 (empirical).
   InitRegTo(X86::EFLAGS, Builder->getInt32(0x202));
+  InitRegTo(X86::CtlSysEFLAGS, Builder->getInt32(0x202));
 
   Builder->CreateRetVoid();
 }

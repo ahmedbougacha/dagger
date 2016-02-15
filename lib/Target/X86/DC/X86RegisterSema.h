@@ -74,9 +74,8 @@ private:
   void setSF(X86::StatusFlag SF, Value *Val);
   void setCC(X86::CondCode CC, Value *Val);
 
-  Value *computeEFLAGSForDef(Value *Def, Value *OldEFLAGS,
-                             bool DontUpdateCF = false);
-  Value *createEFLAGSFromSFs(Value *OldEFLAGS);
+  Value *computeEFLAGSForDef(Value *Def, bool DontUpdateCF = false);
+  Value *createEFLAGSFromSFs();
 
   void insertExternalWrapperAsm(BasicBlock *WrapperBB, Value *ExtFn) override;
 };

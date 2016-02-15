@@ -23,7 +23,7 @@ ret
 # CHECK:     [[PF0:%PF_[0-9]+]] = icmp eq i1 [[POP_PARITY]], false
 
 ## Now insert each status flag in EFLAGS.
-# CHECK-DAG: [[MASKED:%[0-9]+]] = and i32 [[EFLAGS0]], -2262
+# CHECK:     [[CtlSysEFLAGS0:%CtlSysEFLAGS_[0-9]+]] = load i32, i32* %CtlSysEFLAGS
 
 ## -2262 is a mask for all status flags we're about to compute:
 ## -2262 =  1011100101010
@@ -37,7 +37,7 @@ ret
 
 # CHECK:     [[CFEXT:%[0-9]+]] = zext i1 [[CF0]] to i32
 # CHECK:     [[CFSHL:%[0-9]+]] = shl i32 [[CFEXT]], 0
-# CHECK:     [[WITHCF:%[0-9]+]] = or i32 [[CFSHL]], [[MASKED]]
+# CHECK:     [[WITHCF:%[0-9]+]] = or i32 [[CFSHL]], [[CtlSysEFLAGS0]]
 
 # CHECK:     [[PFEXT:%[0-9]+]] = zext i1 [[PF0]] to i32
 # CHECK:     [[PFSHL:%[0-9]+]] = shl i32 [[PFEXT]], 2
