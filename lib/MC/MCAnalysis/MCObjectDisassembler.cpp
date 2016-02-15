@@ -19,7 +19,7 @@
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
-#include "llvm/MC/MCDisassembler.h"
+#include "llvm/MC/MCDisassembler/MCDisassembler.h"
 #include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"

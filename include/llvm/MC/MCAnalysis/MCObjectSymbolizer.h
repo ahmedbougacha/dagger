@@ -17,7 +17,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/MC/MCSymbolizer.h"
+#include "llvm/MC/MCDisassembler/MCSymbolizer.h"
 #include "llvm/Object/ObjectFile.h"
 #include <vector>
 

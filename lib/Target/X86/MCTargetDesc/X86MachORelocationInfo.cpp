@@ -9,9 +9,9 @@
 
 #include "MCTargetDesc/X86MCTargetDesc.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCDisassembler/MCRelocationInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
-#include "llvm/MC/MCRelocationInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Object/MachO.h"
 

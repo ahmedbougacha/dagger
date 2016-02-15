@@ -10,7 +10,7 @@
 #define LLVM_MC_MCANALYSIS_MCDISASSEMBLER_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/MC/MCDisassembler.h"
+#include "llvm/MC/MCDisassembler/MCDisassembler.h"
 #include "llvm/MC/MCInst.h"
 #include <algorithm>
 #include <vector>
