@@ -1086,15 +1086,11 @@ void AsmWriterEmitter::EmitPrintMachineOperand(raw_ostream &O) {
     SmallPtrSet<Record *, 30> FoundOperands;
 
     // Look for all named operands that were referenced in instructions.
-    for (unsigned i = 0, e = Instructions.size(); i != e; ++i) {
-      AsmWriterInst &AWI = Instructions[i];
-      for (unsigned oi = 0, oe = AWI.Operands.size(); oi != oe; ++oi) {
-        AsmWriterOperand &AWO = AWI.Operands[oi];
-        if (AWO.OperandType == AsmWriterOperand::isMachineInstrOperand) {
-          Record *OpRec = AWI.CGI->Operands[AWO.CGIOpNo].Rec;
-          if (OpRec->isSubClassOf("Operand") && !OpRec->isAnonymous())
-            FoundOperands.insert(OpRec);
-        }
+    for (auto &AWI : Instructions) {
+      for (auto &OpInfo : AWI.CGI->Operands) {
+        Record *OpRec = OpInfo.Rec;
+        if (OpRec->isSubClassOf("Operand") && !OpRec->isAnonymous())
+          FoundOperands.insert(OpRec);
       }
     }
 
