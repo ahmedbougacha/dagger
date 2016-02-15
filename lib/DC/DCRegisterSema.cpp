@@ -96,7 +96,7 @@ void DCRegisterSema::SwitchToFunction(Function *Fn) { TheFunction = Fn; }
 
 void DCRegisterSema::SwitchToBasicBlock(BasicBlock *TheBB) {
   // Clear all local values.
-  for (unsigned RI = 1, RE = MRI.getNumRegs(); RI != RE; ++RI) {
+  for (unsigned RI = 1, RE = NumRegs; RI != RE; ++RI) {
     RegVals[RI] = 0;
   }
   Builder->SetInsertPoint(TheBB);
@@ -161,7 +161,7 @@ void DCRegisterSema::FinalizeBasicBlock() {
 }
 
 Value *DCRegisterSema::getReg(unsigned RegNo) {
-  if (RegNo == 0 || RegNo > MRI.getNumRegs())
+  if (RegNo == 0 || RegNo > NumRegs)
     return 0;
 
   getRegNoCallback(RegNo);
