@@ -96,9 +96,10 @@ Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
 
   AllocaInst *Regset = Builder->CreateAlloca(DRS.getRegSetType());
 
-  // allocate a small local array to serve as a test stack.
+  // Allocate a local array to serve as a stack.
+  const unsigned kStackSize = 1 << 10;
   AllocaInst *Stack =
-      Builder->CreateAlloca(ArrayType::get(Builder->getInt8Ty(), 8192));
+      Builder->CreateAlloca(ArrayType::get(Builder->getInt8Ty(), kStackSize));
 
   // 64byte alignment ought to be enough for anybody.
   // FIXME: this should probably be the maximum natural alignment of the
@@ -107,7 +108,7 @@ Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
   Regset->setAlignment(64);
   Stack->setAlignment(64);
 
-  Value *StackSize = Builder->getInt32(8192);
+  Value *StackSize = Builder->getInt32(kStackSize);
   Value *Idx[2] = { Builder->getInt32(0), Builder->getInt32(0) };
   Value *StackPtr = Builder->CreateInBoundsGEP(Stack, Idx);
 
