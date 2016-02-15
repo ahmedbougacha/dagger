@@ -327,7 +327,6 @@ Value *X86RegisterSema::getSF(X86::StatusFlag SF) {
 void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
   IRBuilderBase::InsertPointGuard IPG(*Builder);
   Type *I64Ty = Builder->getInt64Ty();
-  Value *Idx[] = {Builder->getInt32(0), 0};
   Builder->SetInsertPoint(BasicBlock::Create(Ctx, "", InitFn));
 
   Function::arg_iterator ArgI = InitFn->getArgumentList().begin();
@@ -346,24 +345,22 @@ void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
   Builder->CreateStore(Builder->getInt(APInt::getAllOnesValue(64)),
                        Builder->CreateIntToPtr(RSP, I64Ty->getPointerTo()));
 
+  auto InitRegTo = [&](unsigned RegNo, Value *Val) {
+    unsigned RegLargestSuper = RegLargestSupers[RegNo];
+    assert(RegLargestSuper == RegNo);
+    unsigned RegOffsetInSet = RegOffsetsInSet[RegLargestSuper];
+    Value *Idx[] = {Builder->getInt32(0), Builder->getInt32(RegOffsetInSet)};
+    Builder->CreateStore(Val, Builder->CreateInBoundsGEP(RegSet, Idx));
+  };
+
   // put a pointer to the test stack in RSP
-  Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::RSP]]);
-  Builder->CreateStore(RSP, Builder->CreateInBoundsGEP(RegSet, Idx));
-
+  InitRegTo(X86::RSP, RSP);
   // ac comes in EDI
-  Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::EDI]]);
-  Builder->CreateStore(Builder->CreateZExt(ArgC, Builder->getInt64Ty()),
-                       Builder->CreateInBoundsGEP(RegSet, Idx));
-
+  InitRegTo(X86::RDI, Builder->CreateZExt(ArgC, Builder->getInt64Ty()));
   // av comes in RSI
-  Idx[1] = Builder->getInt32(RegOffsetsInSet[X86::RSI]);
-  Builder->CreateStore(Builder->CreatePtrToInt(ArgV, Builder->getInt64Ty()),
-                       Builder->CreateInBoundsGEP(RegSet, Idx));
-
+  InitRegTo(X86::RSI, Builder->CreatePtrToInt(ArgV, Builder->getInt64Ty()));
   // Initialize EFLAGS to 0x202 (empirical).
-  Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::EFLAGS]]);
-  Builder->CreateStore(Builder->getInt32(0x202),
-                       Builder->CreateInBoundsGEP(RegSet, Idx));
+  InitRegTo(X86::EFLAGS, Builder->getInt32(0x202));
 
   Builder->CreateRetVoid();
 }
