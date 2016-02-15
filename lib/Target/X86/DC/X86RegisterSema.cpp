@@ -23,9 +23,12 @@ using namespace llvm;
 #define DEBUG_TYPE "x86-dc-regsema"
 
 static void X86InitSpecialRegSizes(DCRegisterSema::RegSizeTy &RegSizes) {
+  // IP and EIP don't have register classes, but RIP does.
+  assert(RegSizes[X86::IP] == 0);
+  assert(RegSizes[X86::EIP] == 0);
+  assert(RegSizes[X86::RIP] == 64);
   RegSizes[X86::IP] = 16;
   RegSizes[X86::EIP] = 32;
-  RegSizes[X86::RIP] = 64;
 }
 
 X86RegisterSema::X86RegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
