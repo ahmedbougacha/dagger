@@ -46,7 +46,8 @@ which will print tons of LLVM debug output.
 Features
 --------
 
-X86 is the only currently supported target.
+X86 is the main currently supported target.
+There is ongoing work on adding AArch64 support.
 
 The Mach-O object file format is the best supported.  Basic ELF is also
 supported.  However, except for DYN, there is always a generic fallback, so

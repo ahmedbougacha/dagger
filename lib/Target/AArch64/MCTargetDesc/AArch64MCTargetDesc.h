@@ -79,6 +79,7 @@ MCTargetStreamer *createAArch64ObjectTargetStreamer(MCStreamer &S,
 // Defines symbolic names for the AArch64 instructions.
 //
 #define GET_INSTRINFO_ENUM
+#define GET_INSTRINFO_OPERAND_TYPES_ENUM
 #include "AArch64GenInstrInfo.inc"
 
 #define GET_SUBTARGETINFO_ENUM
