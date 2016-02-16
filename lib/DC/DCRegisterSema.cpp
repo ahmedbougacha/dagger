@@ -15,6 +15,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -22,6 +23,11 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "dc-regsema"
+
+static cl::opt<bool>
+    EnableMockIntrin("enable-dc-reg-mock-intrin",
+                     cl::desc("Mock register accesses using intrinsics"),
+                     cl::init(false));
 
 DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
                                const MCInstrInfo &MII, const DataLayout &DL,
@@ -111,6 +117,13 @@ void DCRegisterSema::SwitchToBasicBlock(BasicBlock *TheBB) {
 
 void DCRegisterSema::SwitchToInst(const MCDecodedInst &DecodedInst) {
   CurrentInst = &DecodedInst;
+
+  if (EnableMockIntrin) {
+    Function *StartInstIntrin = Intrinsic::getDeclaration(
+        TheModule, Intrinsic::dc_startinst);
+    Builder->CreateCall(StartInstIntrin,
+                        Builder->getInt64(CurrentInst->Address));
+  }
 }
 
 void DCRegisterSema::saveAllLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
@@ -171,6 +184,14 @@ void DCRegisterSema::FinalizeBasicBlock() {
 Value *DCRegisterSema::getReg(unsigned RegNo) {
   if (RegNo == 0 || RegNo > NumRegs)
     return 0;
+
+  if (EnableMockIntrin) {
+    Value *MDRegName =
+        MetadataAsValue::get(Ctx, MDString::get(Ctx, MRI.getName(RegNo)));
+    Function *GetRegIntrin = Intrinsic::getDeclaration(
+        TheModule, Intrinsic::dc_getreg, getRegType(RegNo));
+    return Builder->CreateCall(GetRegIntrin, MDRegName);
+  }
 
   getRegNoCallback(RegNo);
   onRegisterGet(RegNo);
@@ -323,6 +344,16 @@ void DCRegisterSema::setRegNoSubSuper(unsigned RegNo, Value *Val) {
 }
 
 void DCRegisterSema::setReg(unsigned RegNo, Value *Val) {
+  if (EnableMockIntrin) {
+    Value *MDRegName =
+        MetadataAsValue::get(Ctx, MDString::get(Ctx, MRI.getName(RegNo)));
+    Function *SetRegIntrin = Intrinsic::getDeclaration(
+        TheModule, Intrinsic::dc_setreg, Val->getType());
+    // FIXME: val type or regtype?
+    Builder->CreateCall(SetRegIntrin, {Val, MDRegName});
+    return;
+  }
+
   setRegNoSubSuper(RegNo, Val);
   defineAllSubSuperRegs(RegNo);
 }

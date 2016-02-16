@@ -686,3 +686,11 @@ include "llvm/IR/IntrinsicsAMDGPU.td"
 include "llvm/IR/IntrinsicsBPF.td"
 include "llvm/IR/IntrinsicsSystemZ.td"
 include "llvm/IR/IntrinsicsWebAssembly.td"
+
+//===----------------------------------------------------------------------===//
+// DC generic intrinsics
+//===----------------------------------------------------------------------===//
+
+def int_dc_getreg : Intrinsic<[llvm_any_ty], [llvm_metadata_ty], []>;
+def int_dc_setreg : Intrinsic<[], [llvm_any_ty, llvm_metadata_ty], []>;
+def int_dc_startinst : Intrinsic<[], [llvm_i64_ty], []>;

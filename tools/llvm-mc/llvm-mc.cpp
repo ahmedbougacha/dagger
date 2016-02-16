@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Target/TargetOpcodes.h"
 #include "Disassembler.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -55,6 +56,11 @@ ShowEncoding("show-encoding", cl::desc("Show instruction encodings"));
 static cl::opt<bool> RelaxELFRel(
     "relax-relocations", cl::init(true),
     cl::desc("Emit R_X86_64_GOTPCRELX instead of R_X86_64_GOTPCREL"));
+
+static cl::opt<unsigned> ListStartOpc("list-start-opc", cl::init(TargetOpcode::GENERIC_OP_END + 1));
+static cl::opt<unsigned> ListNumOpc("list-num-opc", cl::init(~0U));
+
+static cl::opt<uint64_t> ListImmVal("list-imm-val", cl::init(2));
 
 static cl::opt<DebugCompressionType>
 CompressDebugSections("compress-debug-sections", cl::ValueOptional,
@@ -174,6 +180,7 @@ enum ActionType {
   AC_Assemble,
   AC_Disassemble,
   AC_MDisassemble,
+  AC_ListInsts,
 };
 
 static cl::opt<ActionType>
@@ -187,6 +194,7 @@ Action(cl::desc("Action to perform:"),
                              "Disassemble strings of hex bytes"),
                   clEnumValN(AC_MDisassemble, "mdis",
                              "Marked up disassembly of strings of hex bytes"),
+                  clEnumValN(AC_ListInsts, "list-insts", ""),
                   clEnumValEnd));
 
 static const Target *GetTarget(const char *ProgName) {
@@ -546,6 +554,63 @@ int main(int argc, char **argv) {
   case AC_Disassemble:
     disassemble = true;
     break;
+  case AC_ListInsts: {
+    SmallVector<const MCRegisterClass *, 5> PtrRCs(5);
+    for (auto &RC : make_range(MRI->regclass_begin(), MRI->regclass_end())) {
+      StringRef Name = MRI->getRegClassName(&RC);
+      if (Name == "GR64")
+        PtrRCs[0] = &RC;
+      if (Name == "GR64_NOSP")
+        PtrRCs[1] = &RC;
+      if (Name == "GR64_NOREX")
+        PtrRCs[2] = &RC;
+      if (Name == "GR64_NOREX_NOSP")
+        PtrRCs[3] = &RC;
+      if (Name == "GR64_TC")
+        PtrRCs[4] = &RC;
+    }
+    unsigned NumOpcodes = MCII->getNumOpcodes();
+    if (ListNumOpc != ~0U && ListStartOpc < NumOpcodes)
+      NumOpcodes = ListStartOpc + ListNumOpc;
+    for (unsigned Opc = ListStartOpc; Opc < NumOpcodes; ++Opc) {
+      MCInst I;
+      I.setOpcode(Opc);
+
+      auto &Desc = MCII->get(Opc);
+
+      if (Desc.isPseudo())
+        continue;
+
+      for (unsigned OpI = 0; OpI != Desc.NumOperands; ++OpI) {
+        auto &Op = Desc.OpInfo[OpI];
+
+        if (Op.isLookupPtrRegClass()) {
+          assert(PtrRCs[Op.RegClass]);
+          auto &RC = *PtrRCs[Op.RegClass];
+          auto Reg = RC.getRegister((OpI + RC.getNumRegs() / 2) % RC.getNumRegs());
+          I.addOperand(MCOperand::createReg(Reg));
+        } else if (Op.RegClass == -1) {
+          uint64_t Imm = 2;
+          if (Op.OperandType == MCOI::OPERAND_IMMEDIATE)
+            Imm = ListImmVal;
+          I.addOperand(MCOperand::createImm(Imm));
+        } else {
+          auto &RC = MRI->getRegClass(Op.RegClass);
+          auto Reg = RC.getRegister((OpI + RC.getNumRegs() / 2) % RC.getNumRegs());
+          if (StringRef(MRI->getRegClassName(&RC)) == "SEGMENT_REG")
+            Reg = 0;
+          int Tied = Desc.getOperandConstraint(OpI, MCOI::TIED_TO);
+          if (Tied != -1)
+            Reg = RC.getRegister((Tied + RC.getNumRegs() / 2) % RC.getNumRegs());
+          I.addOperand(MCOperand::createReg(Reg));
+        }
+      }
+      Str->InitSections(false);
+      Out->os() << "	### " << MCII->getName(Opc) << "\n";
+      Str->EmitInstruction(I, *STI);
+    }
+    return 0;
+  }
   }
   if (disassemble)
     Res = Disassembler::disassemble(*TheTarget, TripleName, *STI, *Str,
