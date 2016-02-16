@@ -18,6 +18,9 @@
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/Support/raw_ostream.h"
+
+#define GET_REGISTER_SEMA
+#include "X86GenSema.inc"
 using namespace llvm;
 
 #define DEBUG_TYPE "x86-dc-regsema"
@@ -33,7 +36,8 @@ static void X86InitSpecialRegSizes(DCRegisterSema::RegSizeTy &RegSizes) {
 
 X86RegisterSema::X86RegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
                                  const MCInstrInfo &MII, const DataLayout &DL)
-    : DCRegisterSema(Ctx, MRI, MII, DL, X86InitSpecialRegSizes),
+    : DCRegisterSema(Ctx, MRI, MII, DL, X86::RegClassVTs,
+                     X86InitSpecialRegSizes),
       LastEFLAGSChangingDef(0), LastEFLAGSDef(0),
       LastEFLAGSDefWasPartialINCDEC(false), SFVals(X86::MAX_FLAGS + 1),
       SFAssignments(X86::MAX_FLAGS + 1), CCVals(X86::COND_INVALID),

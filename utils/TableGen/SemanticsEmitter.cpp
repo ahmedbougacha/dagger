@@ -481,6 +481,8 @@ void SemanticsEmitter::run(raw_ostream &OS) {
   OS << "namespace " << TGName << " {\n";
   OS << "namespace {\n\n";
 
+  OS << "#ifdef GET_INSTR_SEMA\n";
+
   OS << "const unsigned InstSemantics[] = {\n";
   OS << "  DCINS::END_OF_INSTRUCTION,\n";
   CurSemaOffset = 1;
@@ -518,6 +520,26 @@ void SemanticsEmitter::run(raw_ostream &OS) {
   for (uint64_t Constant : Constants)
     OS.indent(2) << Constant << "ULL,\n";
   OS << "};\n\n";
+
+  OS << "#endif // GET_INSTR_SEMA\n";
+
+  OS << "#ifdef GET_REGISTER_SEMA\n";
+
+  // FIXME: Also generate the rest of DCRegisterSema here
+  OS << "const MVT::SimpleValueType RegClassVTs[] = {\n";
+  const std::list<CodeGenRegisterClass> RCs =
+      Target.getRegBank().getRegClasses();
+  std::vector<const CodeGenRegisterClass*> RCByEnumValue(RCs.size());
+  for (auto &RC : RCs)
+    RCByEnumValue[RC.EnumValue] = &RC;
+  for (auto *RC : RCByEnumValue) {
+    MVT::SimpleValueType VT = RC->VTs[0];
+    if (VT == MVT::x86mmx)
+      VT = MVT::i64;
+    OS.indent(2) << llvm::getName(VT) << ", // " << RC->getName() << " \n";
+  }
+  OS << "};\n\n";
+  OS << "#endif // GET_REGISTER_SEMA\n";
 
   OS << "\n} // end anonymous namespace\n";
   OS << "} // end namespace " << TGName << "\n";

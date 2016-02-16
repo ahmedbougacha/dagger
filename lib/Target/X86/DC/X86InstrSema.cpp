@@ -30,6 +30,8 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/TypeBuilder.h"
+
+#define GET_INSTR_SEMA
 #include "X86GenSema.inc"
 using namespace llvm;
 

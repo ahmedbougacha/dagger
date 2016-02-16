@@ -102,9 +102,7 @@ Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
       Builder->CreateAlloca(ArrayType::get(Builder->getInt8Ty(), kStackSize));
 
   // 64byte alignment ought to be enough for anybody.
-  // FIXME: this should probably be the maximum natural alignment of the
-  // non-int-coerced register types. As it is, large integer types are only
-  // aligned to the size of the largest legal integer, which isn't enough.
+  // FIXME: this should be the maximum natural alignment of the register types.
   Regset->setAlignment(64);
   Stack->setAlignment(64);
 
@@ -552,16 +550,15 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     unsigned MIOperandNo = Next();
     unsigned RegNo = getRegOp(MIOperandNo);
     Value *Res = getNextOperand();
-    Type *RegType = DRS.getRegType(RegNo);
+    IntegerType *RegType = DRS.getRegIntType(RegNo);
     if (Res->getType()->isPointerTy())
       Res = Builder->CreatePtrToInt(Res, RegType);
     if (!Res->getType()->isIntegerTy())
       Res = Builder->CreateBitCast(
           Res,
           IntegerType::get(Ctx, Res->getType()->getPrimitiveSizeInBits()));
-    if (Res->getType()->getPrimitiveSizeInBits() <
-        RegType->getPrimitiveSizeInBits())
-      Res = DRS.insertBitsInValue(getReg(RegNo), Res);
+    if (Res->getType()->getPrimitiveSizeInBits() < RegType->getBitWidth())
+      Res = DRS.insertBitsInValue(DRS.getRegAsInt(RegNo), Res);
     assert(Res->getType() == RegType);
     setReg(RegNo, Res);
     CurrentTInst->addRegOpDef(MIOperandNo, Res);
@@ -577,7 +574,7 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   case DCINS::GET_RC: {
     unsigned MIOperandNo = Next();
     Type *ResType = ResEVT.getTypeForEVT(Ctx);
-    Value *Reg = getReg(getRegOp(MIOperandNo));
+    Value *Reg = DRS.getRegAsInt(getRegOp(MIOperandNo));
     if (ResType->getPrimitiveSizeInBits() <
         Reg->getType()->getPrimitiveSizeInBits())
       Reg = Builder->CreateTrunc(

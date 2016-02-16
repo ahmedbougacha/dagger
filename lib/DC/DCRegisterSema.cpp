@@ -9,6 +9,7 @@
 
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
@@ -24,9 +25,11 @@ using namespace llvm;
 
 DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
                                const MCInstrInfo &MII, const DataLayout &DL,
+                               const MVT::SimpleValueType *RegClassVTs,
                                InitSpecialRegSizesFnTy InitSpecialRegSizesFn)
     : MRI(MRI), MII(MII), DL(DL), Ctx(Ctx), RegSetType(0),
       NumRegs(MRI.getNumRegs()), NumLargest(0), RegSizes(NumRegs),
+      RegTypes(NumRegs),
       RegLargestSupers(NumRegs), RegOffsetsInSet(NumRegs, -1), LargestRegs(),
       TheModule(0), Builder(new DCIRBuilder(Ctx)), RegPtrs(NumRegs),
       RegAllocas(NumRegs), RegInits(NumRegs), RegAssignments(NumRegs),
@@ -35,13 +38,17 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
   // First, determine the (spill) size of each register, in bits.
   // FIXME: the best (only) way to know the size of a reg is to find a
   // containing RC.
-  // FIXME: What about using the VTs?
+  // FIXME: This should go in tablegen.
   for (auto RCI = MRI.regclass_begin(), RCE = MRI.regclass_end();
        RCI != RCE; ++RCI) {
     unsigned SizeInBits = RCI->getSize() * 8;
+    EVT RCVT = RegClassVTs[RCI->getID()];
+    Type *RCTy = RCVT.getTypeForEVT(Ctx);
     for (auto Reg : *RCI) {
-      if (SizeInBits > RegSizes[Reg])
+      if (SizeInBits > RegSizes[Reg]) {
         RegSizes[Reg] = SizeInBits;
+        RegTypes[Reg] = RCTy;
+      }
     }
   }
 
@@ -154,7 +161,8 @@ void DCRegisterSema::FinalizeBasicBlock() {
     if (!RegVals[RI])
       continue;
     if (RegAllocas[RI])
-      Builder->CreateStore(RegVals[RI], RegAllocas[RI]);
+      Builder->CreateStore(Builder->CreateBitCast(RegVals[RI], getRegType(RI)),
+                           RegAllocas[RI]);
     RegVals[RI] = 0;
   }
   CurrentInst = nullptr;
@@ -216,6 +224,7 @@ void DCRegisterSema::createLocalValueForReg(unsigned RegNo) {
     Builder->SetInsertPoint(EntryBB->getTerminator());
     assert(RegInits[LargestSuper] != 0 && "Super-register non initialized!");
     RI = extractSubRegFromSuper(LargestSuper, RegNo, RegInits[LargestSuper]);
+    RI = Builder->CreateBitCast(RI, getRegType(RegNo));
   } else {
     // Else, it should be in the regset, load it from there.
     Builder->SetInsertPoint(EntryBB->getTerminator());
@@ -226,7 +235,7 @@ void DCRegisterSema::createLocalValueForReg(unsigned RegNo) {
     Value *Idx[] = { Builder->getInt32(0), Builder->getInt32(OffsetInRegSet) };
     RP = Builder->CreateInBoundsGEP(RegSetArg, Idx);
     RP->setName((RegName + "_ptr").str());
-    RI = Builder->CreateLoad(RP);
+    RI = Builder->CreateLoad(getRegType(RegNo), RP);
   }
   RI->setName((RegName + "_init").str());
   // Then, create an alloca for the register.
@@ -275,7 +284,9 @@ Value *DCRegisterSema::extractSubRegFromSuper(unsigned Super, unsigned Sub,
 
   // If no SuperValue was provided, get the current one.
   if (SRV == 0)
-    SRV = getReg(Super);
+    SRV = getRegAsInt(Super);
+  else
+    SRV = Builder->CreateBitCast(SRV, getRegIntType(Super));
 
   return extractBitsFromValue(Offset, Size, SRV);
 }
@@ -288,8 +299,8 @@ Value *DCRegisterSema::recreateSuperRegFromSub(unsigned Super, unsigned Sub) {
   if (Offset == (unsigned)-1 || Size == (unsigned)-1)
     llvm_unreachable("Used subreg index doesn't cover a bit range?");
 
-  Value *RV = getReg(Sub);
-  Value *SRV = getReg(Super);
+  Value *RV = getRegAsInt(Sub);
+  Value *SRV = getRegAsInt(Super);
 
   return insertBitsInValue(SRV, RV, Offset, doesSubRegIndexClearSuper(Idx));
 }
@@ -317,6 +328,12 @@ void DCRegisterSema::setReg(unsigned RegNo, Value *Val) {
 }
 
 Type *DCRegisterSema::getRegType(unsigned RegNo) {
+  if (Type *Ty = RegTypes[RegNo])
+    return Ty;
+  return getRegIntType(RegNo);
+}
+
+IntegerType *DCRegisterSema::getRegIntType(unsigned RegNo) {
   return IntegerType::get(Ctx, RegSizes[RegNo]);
 }
 
