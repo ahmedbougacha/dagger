@@ -14,6 +14,8 @@ foreach(l ${LLVMSupport_SYSTEM_LIBS})
   list(APPEND ALL_LIBRARIES_DEP "-l${l}")
 endforeach()
 
+# FIXME: For some reason, libDYN links with libLTO.dylib, unnecessarily.
+# One workaround is to disable LTO, with -DLLVM_TOOL_LTO_BUILD=0.
 set(LLVM_LINK_COMPONENTS
     ${LLVM_TARGETS_TO_BUILD}
     orcjit selectiondag native
