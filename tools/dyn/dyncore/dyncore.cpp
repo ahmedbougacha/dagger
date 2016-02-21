@@ -58,17 +58,15 @@ static std::string TripleName;
 
 static StringRef ToolName;
 
-static const Target *getTarget(const ObjectFile *Obj) {
+static const Target *getTarget(const ObjectFile &Obj) {
   // Figure out the target triple.
   Triple TheTriple("unknown-unknown-unknown");
   if (TripleName.empty()) {
-  if (Obj) {
-    TheTriple.setArch(Triple::ArchType(Obj->getArch()));
+    TheTriple.setArch(Triple::ArchType(Obj.getArch()));
     // TheTriple defaults to ELF, and COFF doesn't have an environment:
     // the best we can do here is indicate that it is mach-o.
-    if (Obj->isMachO())
+    if (Obj.isMachO())
       TheTriple.setObjectFormat(Triple::MachO);
-  }
   } else {
     TheTriple.setTriple(TripleName);
   }
@@ -84,6 +82,28 @@ static const Target *getTarget(const ObjectFile *Obj) {
   // Update the triple name and return the found target.
   TripleName = TheTriple.getTriple();
   return TheTarget;
+}
+
+static OwningBinary<MachOObjectFile> openObjectFileAtPath(StringRef Path) {
+  ErrorOr<OwningBinary<Binary>> BinaryOrErr = createBinary(Path);
+  if (std::error_code EC = BinaryOrErr.getError()) {
+    errs() << ToolName << ": '" << Path << "': " << EC.message() << ".\n";
+    exit(1);
+  }
+
+  std::unique_ptr<Binary> Binary;
+  std::unique_ptr<MemoryBuffer> Buffer;
+  std::tie(Binary, Buffer) = BinaryOrErr.get().takeBinary();
+
+  std::unique_ptr<MachOObjectFile> MOOF;
+  MOOF.reset(dyn_cast<MachOObjectFile>(Binary.release()));
+  if (!MOOF) {
+    errs() << ToolName << ": '" << Path << "': "
+           << "Unrecognized file type.\n";
+    exit(1);
+  }
+
+  return OwningBinary<MachOObjectFile>(std::move(MOOF), std::move(Buffer));
 }
 
 template <typename T>
@@ -228,22 +248,11 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   std::string InputFilename = argv[0];
 
-  ErrorOr<OwningBinary<Binary>> BinaryOrErr = createBinary(InputFilename);
-  if (std::error_code EC = BinaryOrErr.getError()) {
-    errs() << ToolName << ": '" << InputFilename << "': " << EC.message() << ".\n";
-    exit(1);
-  }
-  Binary &Binary = *BinaryOrErr.get().getBinary();
+  OwningBinary<MachOObjectFile> MOOFAndBuffer =
+      openObjectFileAtPath(InputFilename);
+  MachOObjectFile &MOOF = *MOOFAndBuffer.getBinary();
 
-
-  ObjectFile *Obj;
-  if (!(Obj = dyn_cast<ObjectFile>(&Binary))) {
-    errs() << ToolName << ": '" << InputFilename << "': "
-           << "Unrecognized file type.\n";
-    exit(1);
-  }
-
-  const Target *TheTarget = getTarget(Obj);
+  const Target *TheTarget = getTarget(MOOF);
 
   // FIXME: why are there unique_ptrs everywhere?
 
@@ -307,18 +316,12 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   // The first image is the main executable.
   uint64_t VMAddrSlide = _dyld_get_image_vmaddr_slide(0);
 
-  MachOObjectFile *MOOF = dyn_cast<MachOObjectFile>(Obj);
-  if (!MOOF) {
-    errs() << "error: unrecognized object file " << InputFilename << "\n";
-    exit(1);
-  }
-
   // Explicitly use a Mach-O-specific symbolizer to give it dyld info.
   std::unique_ptr<MCMachObjectSymbolizer> MOS(new MCMachObjectSymbolizer(
-      Ctx, std::move(RelInfo), *MOOF, VMAddrSlide));
+      Ctx, std::move(RelInfo), MOOF, VMAddrSlide));
 
   std::unique_ptr<MCObjectDisassembler> OD(
-      new MCObjectDisassembler(*Obj, *DisAsm, *MIA));
+      new MCObjectDisassembler(MOOF, *DisAsm, *MIA));
   OD->setSymbolizer(MOS.get());
   // FIXME: We need either:
   //  - a custom non-contiguous memory object, for every mapped region.
