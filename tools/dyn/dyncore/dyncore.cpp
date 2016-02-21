@@ -29,6 +29,7 @@
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Object/MachO.h"
+#include "llvm/Object/MachOUniversal.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
@@ -91,19 +92,38 @@ static OwningBinary<MachOObjectFile> openObjectFileAtPath(StringRef Path) {
     exit(1);
   }
 
-  std::unique_ptr<Binary> Binary;
-  std::unique_ptr<MemoryBuffer> Buffer;
-  std::tie(Binary, Buffer) = BinaryOrErr.get().takeBinary();
+  std::unique_ptr<Binary> Bin;
+  std::unique_ptr<MemoryBuffer> Buf;
+  std::tie(Bin, Buf) = BinaryOrErr.get().takeBinary();
 
+  auto *BinPtr = Bin.release();
   std::unique_ptr<MachOObjectFile> MOOF;
-  MOOF.reset(dyn_cast<MachOObjectFile>(Binary.release()));
+
+  if (auto *FatBinPtr = dyn_cast<MachOUniversalBinary>(BinPtr)) {
+    for (auto &Obj : FatBinPtr->objects()) {
+      // FIXME: Realistically, we only support x86_64 for now.
+      // This won't be hardest place to fix.
+      if (Obj.getArchTypeName() != "x86_64")
+        continue;
+      auto SliceOrErr = Obj.getAsObjectFile();
+      if (std::error_code EC = SliceOrErr.getError()) {
+        errs() << ToolName << ": '" << Path << "': " << EC.message() << ".\n";
+        exit(1);
+      }
+      MOOF = std::move(SliceOrErr.get());
+      break;
+    }
+  } else if (auto *MOOFPtr = dyn_cast<MachOObjectFile>(BinPtr)) {
+    MOOF.reset(MOOFPtr);
+  }
+
   if (!MOOF) {
     errs() << ToolName << ": '" << Path << "': "
            << "Unrecognized file type.\n";
     exit(1);
   }
 
-  return OwningBinary<MachOObjectFile>(std::move(MOOF), std::move(Buffer));
+  return OwningBinary<MachOObjectFile>(std::move(MOOF), std::move(Buf));
 }
 
 template <typename T>
