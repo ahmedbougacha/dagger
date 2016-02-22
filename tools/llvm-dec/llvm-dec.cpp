@@ -190,7 +190,7 @@ int main(int argc, char **argv) {
       TheTarget->createMCInstrAnalysis(MII.get()));
 
   std::unique_ptr<MCObjectDisassembler> OD(
-      new MCObjectDisassembler(*Obj, *DisAsm, *MIA));
+      new MCObjectDisassembler(*Obj, *DisAsm, *MIA, MOS.get()));
   std::unique_ptr<MCModule> MCM(OD->buildModule());
 
   if (!MCM)

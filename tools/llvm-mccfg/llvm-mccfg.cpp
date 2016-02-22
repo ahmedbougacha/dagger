@@ -324,6 +324,7 @@ static void DumpObject(const ObjectFile *Obj) {
     return;
   }
 
+  // FIXME: Why no MOS?
   std::unique_ptr<MCObjectDisassembler> OD(
       new MCObjectDisassembler(*Obj, *DisAsm, *MIA));
   std::unique_ptr<MCModule> Mod(OD->buildModule());

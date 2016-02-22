@@ -41,9 +41,13 @@ class MCObjectSymbolizer;
 /// consisting of MCFunctions and MCBasicBlocks.
 class MCObjectDisassembler {
 public:
+  /// Usage of a symbolizer is optional. Note that it isn't used to do
+  /// instruction-level symbolization (that is, plugged into MCDisassembler),
+  /// but to symbolize function call targets.
   MCObjectDisassembler(const object::ObjectFile &Obj,
                        const MCDisassembler &Dis,
-                       const MCInstrAnalysis &MIA);
+                       const MCInstrAnalysis &MIA,
+                       MCObjectSymbolizer *MOS = nullptr);
   virtual ~MCObjectDisassembler() {}
 
   /// \brief Build an MCModule, representing an MC-level Control Flow Graph.
@@ -63,13 +67,6 @@ public:
   /// This is used for dynamic disassembly.
   void setFallbackRegion(uint64_t BeginAddr, ArrayRef<uint8_t> Region) {
     FallbackRegion = { BeginAddr, Region };
-  }
-
-  /// \brief Set the symbolizer to use to get information on external functions.
-  /// Note that this isn't used to do instruction-level symbolization (that is,
-  /// plugged into MCDisassembler), but to symbolize function call targets.
-  void setSymbolizer(MCObjectSymbolizer *ObjectSymbolizer) {
-    MOS = ObjectSymbolizer;
   }
 
 protected:

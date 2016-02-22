@@ -36,8 +36,9 @@ using namespace object;
 
 MCObjectDisassembler::MCObjectDisassembler(const ObjectFile &Obj,
                                            const MCDisassembler &Dis,
-                                           const MCInstrAnalysis &MIA)
-    : Obj(Obj), Dis(Dis), MIA(MIA), MOS(nullptr) {}
+                                           const MCInstrAnalysis &MIA,
+                                           MCObjectSymbolizer *MOS)
+    : Obj(Obj), Dis(Dis), MIA(MIA), MOS(MOS) {}
 
 const MCObjectDisassembler::MemoryRegion &
 MCObjectDisassembler::getRegionFor(uint64_t Addr) {

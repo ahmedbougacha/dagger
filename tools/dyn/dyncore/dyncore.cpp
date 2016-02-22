@@ -342,8 +342,8 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
       Ctx, std::move(RelInfo), MOOF, VMAddrSlide));
 
   std::unique_ptr<MCObjectDisassembler> OD(
-      new MCObjectDisassembler(MOOF, *DisAsm, *MIA));
-  OD->setSymbolizer(MOS.get());
+      new MCObjectDisassembler(MOOF, *DisAsm, *MIA, MOS.get()));
+
   // FIXME: We need either:
   //  - a custom non-contiguous memory object, for every mapped region.
   //  - a "raw" memory object, that just forwards to memory accesses.
