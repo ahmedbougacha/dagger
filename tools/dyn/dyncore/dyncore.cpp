@@ -214,8 +214,9 @@ static DYNJIT *__dc_JIT;
 //static DenseMap<void *, void *> TranslationCache(128);
 
 static void *__llvm_dc_translate_at(void *addr) {
-  void *ptr;
+  void *ptr = nullptr;
   Function *F = __dc_DT->translateRecursivelyAt((uint64_t)addr);
+  DEBUG(dbgs() << "__llvm_dc_translate_at " << addr << "\n");
   DEBUG(dbgs() << "Jumping to " << F->getName() << "\n");
   ptr = (void*)__dc_JIT->findUnmangledSymbol(F->getName()).getAddress();
   if (!ptr) {
@@ -427,10 +428,17 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   RunInitRegSet();
 
-  auto RunIRFunction = [&](Function *Fn) {
+  auto GetIRFunction = [&](Function *Fn) {
     auto FnSymbol = J.findUnmangledSymbol(Fn->getName());
+    uint64_t Addr = FnSymbol.getAddress();
+    DEBUG(dbgs() << "Jitted " << (void *)Addr << " for " << Fn->getName()
+                 << "\n");
+    return Addr;
+  };
+
+  auto RunIRFunction = [&](Function *Fn) {
     DEBUG(dbgs() << "Jumping to " << Fn->getName() << "\n");
-    auto FnPointer = (void (*)(uint8_t *))(intptr_t)FnSymbol.getAddress();
+    auto FnPointer = (void (*)(uint8_t *))(intptr_t)GetIRFunction(Fn);
     return FnPointer(RegSet.data());
   };
 
