@@ -597,6 +597,8 @@ void X86InstrSema::translateAddr(unsigned MIOperandNo,
   if (Base)
     Res = (Res ? Builder->CreateAdd(Base, Res) : Base);
 
+  assert(Res);
+
   if (VT != MVT::iPTRAny) {
     Type *PtrTy = EVT(VT).getTypeForEVT(Ctx)->getPointerTo();
     Res = Builder->CreateIntToPtr(Res, PtrTy);
