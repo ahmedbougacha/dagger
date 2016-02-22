@@ -826,7 +826,6 @@ static bool translateRM(MCInst &mcInst, const OperandSpecifier &operand,
   case TYPE_R64:
   case TYPE_Rv:
   case TYPE_MM64:
-  case TYPE_XMM:
   case TYPE_XMM32:
   case TYPE_XMM64:
   case TYPE_XMM128:
@@ -911,14 +910,6 @@ static bool translateOperand(MCInst &mcInst, const OperandSpecifier &operand,
     return translateMaskRegister(mcInst, insn.writemask);
   CASE_ENCODING_RM:
     return translateRM(mcInst, operand, insn, Dis);
-  case ENCODING_CB:
-  case ENCODING_CW:
-  case ENCODING_CD:
-  case ENCODING_CP:
-  case ENCODING_CO:
-  case ENCODING_CT:
-    debug("Translation of code offsets isn't supported.");
-    return true;
   case ENCODING_IB:
   case ENCODING_IW:
   case ENCODING_ID:

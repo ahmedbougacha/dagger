@@ -364,6 +364,10 @@ protected:
   /// Copy and widen the instructions from the old loop.
   virtual void vectorizeLoop();
 
+  /// Fix a first-order recurrence. This is the second phase of vectorizing
+  /// this phi node.
+  void fixFirstOrderRecurrence(PHINode *Phi);
+
   /// \brief The Loop exit block may have single value PHI nodes where the
   /// incoming value is 'Undef'. While vectorizing we only handled real values
   /// that were defined inside the loop. Here we fix the 'undef case'.
@@ -1201,6 +1205,10 @@ public:
   /// induction descriptor.
   typedef MapVector<PHINode*, InductionDescriptor> InductionList;
 
+  /// RecurrenceSet contains the phi nodes that are recurrences other than
+  /// inductions and reductions.
+  typedef SmallPtrSet<const PHINode *, 8> RecurrenceSet;
+
   /// Returns true if it is legal to vectorize this loop.
   /// This does not mean that it is profitable to vectorize this
   /// loop, only that it is legal to do so.
@@ -1215,6 +1223,9 @@ public:
   /// Returns the induction variables found in the loop.
   InductionList *getInductionVars() { return &Inductions; }
 
+  /// Return the first-order recurrences found in the loop.
+  RecurrenceSet *getFirstOrderRecurrences() { return &FirstOrderRecurrences; }
+
   /// Returns the widest induction type.
   Type *getWidestInductionType() { return WidestIndTy; }
 
@@ -1223,6 +1234,9 @@ public:
 
   /// Returns True if PN is a reduction variable in this loop.
   bool isReductionVariable(PHINode *PN) { return Reductions.count(PN); }
+
+  /// Returns True if Phi is a first-order recurrence in this loop.
+  bool isFirstOrderRecurrence(const PHINode *Phi);
 
   /// Return true if the block BB needs to be predicated in order for the loop
   /// to be vectorized.
@@ -1282,6 +1296,17 @@ public:
   bool isLegalMaskedLoad(Type *DataType, Value *Ptr) {
     return isConsecutivePtr(Ptr) && TTI->isLegalMaskedLoad(DataType);
   }
+  /// Returns true if the target machine supports masked scatter operation
+  /// for the given \p DataType.
+  bool isLegalMaskedScatter(Type *DataType) {
+    return TTI->isLegalMaskedScatter(DataType);
+  }
+  /// Returns true if the target machine supports masked gather operation
+  /// for the given \p DataType.
+  bool isLegalMaskedGather(Type *DataType) {
+    return TTI->isLegalMaskedGather(DataType);
+  }
+
   /// Returns true if vector representation of the instruction \p I
   /// requires mask.
   bool isMaskRequired(const Instruction* I) {
@@ -1373,6 +1398,8 @@ private:
   /// Notice that inductions don't need to start at zero and that induction
   /// variables can be pointers.
   InductionList Inductions;
+  /// Holds the phi nodes that are first-order recurrences.
+  RecurrenceSet FirstOrderRecurrences;
   /// Holds the widest induction type encountered.
   Type *WidestIndTy;
 
@@ -1409,14 +1436,15 @@ private:
 /// different operations.
 class LoopVectorizationCostModel {
 public:
-  LoopVectorizationCostModel(Loop *L, PredicatedScalarEvolution &PSE,
-                             LoopInfo *LI, LoopVectorizationLegality *Legal,
+  LoopVectorizationCostModel(Loop *L, ScalarEvolution *SE, LoopInfo *LI,
+                             LoopVectorizationLegality *Legal,
                              const TargetTransformInfo &TTI,
                              const TargetLibraryInfo *TLI, DemandedBits *DB,
                              AssumptionCache *AC, const Function *F,
-                             const LoopVectorizeHints *Hints)
-      : TheLoop(L), PSE(PSE), LI(LI), Legal(Legal), TTI(TTI), TLI(TLI), DB(DB),
-        AC(AC), TheFunction(F), Hints(Hints) {}
+                             const LoopVectorizeHints *Hints,
+                             SmallPtrSetImpl<const Value *> &ValuesToIgnore)
+      : TheLoop(L), SE(SE), LI(LI), Legal(Legal), TTI(TTI), TLI(TLI), DB(DB),
+        TheFunction(F), Hints(Hints), ValuesToIgnore(ValuesToIgnore) {}
 
   /// Information about vectorization costs
   struct VectorizationFactor {
@@ -1464,9 +1492,6 @@ public:
   SmallVector<RegisterUsage, 8>
   calculateRegisterUsage(const SmallVector<unsigned, 8> &VFs);
 
-  /// Collect values we want to ignore in the cost model.
-  void collectValuesToIgnore();
-
 private:
   /// Returns the expected execution cost. The unit of the cost does
   /// not matter because we use the 'cost' units to compare different
@@ -1498,8 +1523,8 @@ public:
 
   /// The loop that we evaluate.
   Loop *TheLoop;
-  /// Predicated scalar evolution analysis.
-  PredicatedScalarEvolution &PSE;
+  /// Scev analysis.
+  ScalarEvolution *SE;
   /// Loop Info analysis.
   LoopInfo *LI;
   /// Vectorization legality.
@@ -1508,17 +1533,13 @@ public:
   const TargetTransformInfo &TTI;
   /// Target Library Info.
   const TargetLibraryInfo *TLI;
-  /// Demanded bits analysis.
+  /// Demanded bits analysis
   DemandedBits *DB;
-  /// Assumption cache.
-  AssumptionCache *AC;
   const Function *TheFunction;
-  /// Loop Vectorize Hint.
+  // Loop Vectorize Hint.
   const LoopVectorizeHints *Hints;
-  /// Values to ignore in the cost model.
-  SmallPtrSet<const Value *, 16> ValuesToIgnore;
-  /// Values to ignore in the cost model when VF > 1.
-  SmallPtrSet<const Value *, 16> VecValuesToIgnore;
+  // Values to ignore in the cost model.
+  const SmallPtrSetImpl<const Value *> &ValuesToIgnore;
 };
 
 /// \brief This holds vectorization requirements that must be verified late in
@@ -1763,10 +1784,19 @@ struct LoopVectorize : public FunctionPass {
       return false;
     }
 
+    // Collect values we want to ignore in the cost model. This includes
+    // type-promoting instructions we identified during reduction detection.
+    SmallPtrSet<const Value *, 32> ValuesToIgnore;
+    CodeMetrics::collectEphemeralValues(L, AC, ValuesToIgnore);
+    for (auto &Reduction : *LVL.getReductionVars()) {
+      RecurrenceDescriptor &RedDes = Reduction.second;
+      SmallPtrSetImpl<Instruction *> &Casts = RedDes.getCastInsts();
+      ValuesToIgnore.insert(Casts.begin(), Casts.end());
+    }
+
     // Use the cost model.
-    LoopVectorizationCostModel CM(L, PSE, LI, &LVL, *TTI, TLI, DB, AC, F,
-                                  &Hints);
-    CM.collectValuesToIgnore();
+    LoopVectorizationCostModel CM(L, PSE.getSE(), LI, &LVL, *TTI, TLI, DB, AC,
+                                  F, &Hints, ValuesToIgnore);
 
     // Check the function attributes to find out if this function should be
     // optimized for size.
@@ -2379,70 +2409,107 @@ void InnerLoopVectorizer::vectorizeMemoryInstruction(Instruction *Instr) {
   if (ScalarAllocatedSize != VectorElementSize)
     return scalarizeInstruction(Instr);
 
-  // If the pointer is loop invariant or if it is non-consecutive,
-  // scalarize the load.
+  // If the pointer is loop invariant scalarize the load.
+  if (LI && Legal->isUniform(Ptr))
+    return scalarizeInstruction(Instr);
+
+  // If the pointer is non-consecutive and gather/scatter is not supported
+  // scalarize the instruction.
   int ConsecutiveStride = Legal->isConsecutivePtr(Ptr);
   bool Reverse = ConsecutiveStride < 0;
-  bool UniformLoad = LI && Legal->isUniform(Ptr);
-  if (!ConsecutiveStride || UniformLoad)
+  bool CreateGatherScatter = !ConsecutiveStride &&
+    ((LI && Legal->isLegalMaskedGather(ScalarDataTy)) ||
+     (SI && Legal->isLegalMaskedScatter(ScalarDataTy)));
+ 
+  if (!ConsecutiveStride && !CreateGatherScatter)
     return scalarizeInstruction(Instr);
 
   Constant *Zero = Builder.getInt32(0);
   VectorParts &Entry = WidenMap.get(Instr);
+  VectorParts VectorGep;
 
   // Handle consecutive loads/stores.
   GetElementPtrInst *Gep = getGEPInstruction(Ptr);
-  if (Gep && Legal->isInductionVariable(Gep->getPointerOperand())) {
-    setDebugLocFromInst(Builder, Gep);
-    Value *PtrOperand = Gep->getPointerOperand();
-    Value *FirstBasePtr = getVectorValue(PtrOperand)[0];
-    FirstBasePtr = Builder.CreateExtractElement(FirstBasePtr, Zero);
+  if (ConsecutiveStride) {
+    if (Gep && Legal->isInductionVariable(Gep->getPointerOperand())) {
+      setDebugLocFromInst(Builder, Gep);
+        Value *PtrOperand = Gep->getPointerOperand();
+        Value *FirstBasePtr = getVectorValue(PtrOperand)[0];
+        FirstBasePtr = Builder.CreateExtractElement(FirstBasePtr, Zero);
 
-    // Create the new GEP with the new induction variable.
-    GetElementPtrInst *Gep2 = cast<GetElementPtrInst>(Gep->clone());
-    Gep2->setOperand(0, FirstBasePtr);
-    Gep2->setName("gep.indvar.base");
-    Ptr = Builder.Insert(Gep2);
-  } else if (Gep) {
-    setDebugLocFromInst(Builder, Gep);
-    assert(PSE.getSE()->isLoopInvariant(PSE.getSCEV(Gep->getPointerOperand()),
-                                        OrigLoop) &&
-           "Base ptr must be invariant");
+        // Create the new GEP with the new induction variable.
+        GetElementPtrInst *Gep2 = cast<GetElementPtrInst>(Gep->clone());
+        Gep2->setOperand(0, FirstBasePtr);
+        Gep2->setName("gep.indvar.base");
+        Ptr = Builder.Insert(Gep2);
+      } else if (Gep) {
+       setDebugLocFromInst(Builder, Gep);
+       assert(PSE.getSE()->isLoopInvariant(PSE.getSCEV(Gep->getPointerOperand()),
+                                           OrigLoop) &&
+              "Base ptr must be invariant");
+        // The last index does not have to be the induction. It can be
+        // consecutive and be a function of the index. For example A[I+1];
+        unsigned NumOperands = Gep->getNumOperands();
+        unsigned InductionOperand = getGEPInductionOperand(Gep);
+        // Create the new GEP with the new induction variable.
+        GetElementPtrInst *Gep2 = cast<GetElementPtrInst>(Gep->clone());
 
-    // The last index does not have to be the induction. It can be
-    // consecutive and be a function of the index. For example A[I+1];
-    unsigned NumOperands = Gep->getNumOperands();
-    unsigned InductionOperand = getGEPInductionOperand(Gep);
-    // Create the new GEP with the new induction variable.
-    GetElementPtrInst *Gep2 = cast<GetElementPtrInst>(Gep->clone());
+        for (unsigned i = 0; i < NumOperands; ++i) {
+          Value *GepOperand = Gep->getOperand(i);
+          Instruction *GepOperandInst = dyn_cast<Instruction>(GepOperand);
 
-    for (unsigned i = 0; i < NumOperands; ++i) {
-      Value *GepOperand = Gep->getOperand(i);
-      Instruction *GepOperandInst = dyn_cast<Instruction>(GepOperand);
+          // Update last index or loop invariant instruction anchored in loop.
+          if (i == InductionOperand ||
+              (GepOperandInst && OrigLoop->contains(GepOperandInst))) {
+            assert((i == InductionOperand ||
+                    PSE.getSE()->isLoopInvariant(PSE.getSCEV(GepOperandInst),
+                                                 OrigLoop)) &&
+                    "Must be last index or loop invariant");
 
-      // Update last index or loop invariant instruction anchored in loop.
-      if (i == InductionOperand ||
-          (GepOperandInst && OrigLoop->contains(GepOperandInst))) {
-        assert((i == InductionOperand ||
-                PSE.getSE()->isLoopInvariant(PSE.getSCEV(GepOperandInst),
-                                             OrigLoop)) &&
-               "Must be last index or loop invariant");
-
-        VectorParts &GEPParts = getVectorValue(GepOperand);
-        Value *Index = GEPParts[0];
-        Index = Builder.CreateExtractElement(Index, Zero);
-        Gep2->setOperand(i, Index);
-        Gep2->setName("gep.indvar.idx");
+            VectorParts &GEPParts = getVectorValue(GepOperand);
+            Value *Index = GEPParts[0];
+            Index = Builder.CreateExtractElement(Index, Zero);
+            Gep2->setOperand(i, Index);
+            Gep2->setName("gep.indvar.idx");
+          }
+        }
+        Ptr = Builder.Insert(Gep2);
+      } else { // No GEP
+        // Use the induction element ptr.
+        assert(isa<PHINode>(Ptr) && "Invalid induction ptr");
+        setDebugLocFromInst(Builder, Ptr);
+        VectorParts &PtrVal = getVectorValue(Ptr);
+        Ptr = Builder.CreateExtractElement(PtrVal[0], Zero);
       }
+    } else {
+      // At this point we should vector version of GEP for Gather or Scatter
+      assert(CreateGatherScatter && "The instruction should be scalarized");
+      if (Gep) {
+        SmallVector<VectorParts, 4> OpsV;
+        // Vectorizing GEP, across UF parts, we want to keep each loop-invariant
+        // base or index of GEP scalar
+        for (Value *Op : Gep->operands()) {
+          if (PSE.getSE()->isLoopInvariant(PSE.getSCEV(Op), OrigLoop))
+            OpsV.push_back(VectorParts(UF, Op));
+          else
+            OpsV.push_back(getVectorValue(Op));
+        }
+
+        for (unsigned Part = 0; Part < UF; ++Part) {
+          SmallVector<Value*, 4> Ops;
+          Value *GEPBasePtr = OpsV[0][Part];
+          for (unsigned i = 1; i < Gep->getNumOperands(); i++)
+            Ops.push_back(OpsV[i][Part]);
+          Value *NewGep = Builder.CreateGEP(nullptr, GEPBasePtr, Ops,
+                                            "VectorGep");
+          assert(NewGep->getType()->isVectorTy() && "Expected vector GEP");
+          NewGep = Builder.CreateBitCast(NewGep,
+                                         VectorType::get(Ptr->getType(), VF));
+          VectorGep.push_back(NewGep);
+        }
+      } else
+        VectorGep = getVectorValue(Ptr);
     }
-    Ptr = Builder.Insert(Gep2);
-  } else {
-    // Use the induction element ptr.
-    assert(isa<PHINode>(Ptr) && "Invalid induction ptr");
-    setDebugLocFromInst(Builder, Ptr);
-    VectorParts &PtrVal = getVectorValue(Ptr);
-    Ptr = Builder.CreateExtractElement(PtrVal[0], Zero);
-  }
 
   VectorParts Mask = createBlockInMask(Instr->getParent());
   // Handle Stores:
@@ -2455,30 +2522,37 @@ void InnerLoopVectorizer::vectorizeMemoryInstruction(Instruction *Instr) {
     VectorParts StoredVal = getVectorValue(SI->getValueOperand());
 
     for (unsigned Part = 0; Part < UF; ++Part) {
-      // Calculate the pointer for the specific unroll-part.
-      Value *PartPtr =
+      Instruction *NewSI = nullptr;
+      if (CreateGatherScatter) {
+        Value *MaskPart = Legal->isMaskRequired(SI) ? Mask[Part] : nullptr;
+        NewSI = Builder.CreateMaskedScatter(StoredVal[Part], VectorGep[Part],
+                                            Alignment, MaskPart);
+      } else {
+        // Calculate the pointer for the specific unroll-part.
+        Value *PartPtr =
           Builder.CreateGEP(nullptr, Ptr, Builder.getInt32(Part * VF));
 
-      if (Reverse) {
-        // If we store to reverse consecutive memory locations, then we need
-        // to reverse the order of elements in the stored value.
-        StoredVal[Part] = reverseVector(StoredVal[Part]);
-        // If the address is consecutive but reversed, then the
-        // wide store needs to start at the last vector element.
-        PartPtr = Builder.CreateGEP(nullptr, Ptr, Builder.getInt32(-Part * VF));
-        PartPtr = Builder.CreateGEP(nullptr, PartPtr, Builder.getInt32(1 - VF));
-        Mask[Part] = reverseVector(Mask[Part]);
+        if (Reverse) {
+          // If we store to reverse consecutive memory locations, then we need
+          // to reverse the order of elements in the stored value.
+          StoredVal[Part] = reverseVector(StoredVal[Part]);
+          // If the address is consecutive but reversed, then the
+          // wide store needs to start at the last vector element.
+          PartPtr = Builder.CreateGEP(nullptr, Ptr, Builder.getInt32(-Part * VF));
+          PartPtr = Builder.CreateGEP(nullptr, PartPtr, Builder.getInt32(1 - VF));
+          Mask[Part] = reverseVector(Mask[Part]);
+        }
+
+        Value *VecPtr = Builder.CreateBitCast(PartPtr,
+                                              DataTy->getPointerTo(AddressSpace));
+
+        if (Legal->isMaskRequired(SI))
+          NewSI = Builder.CreateMaskedStore(StoredVal[Part], VecPtr, Alignment,
+                                            Mask[Part]);
+        else 
+          NewSI = Builder.CreateAlignedStore(StoredVal[Part], VecPtr,
+                                             Alignment);
       }
-
-      Value *VecPtr = Builder.CreateBitCast(PartPtr,
-                                            DataTy->getPointerTo(AddressSpace));
-
-      Instruction *NewSI;
-      if (Legal->isMaskRequired(SI))
-        NewSI = Builder.CreateMaskedStore(StoredVal[Part], VecPtr, Alignment,
-                                          Mask[Part]);
-      else
-        NewSI = Builder.CreateAlignedStore(StoredVal[Part], VecPtr, Alignment);
       propagateMetadata(NewSI, SI);
     }
     return;
@@ -2488,29 +2562,36 @@ void InnerLoopVectorizer::vectorizeMemoryInstruction(Instruction *Instr) {
   assert(LI && "Must have a load instruction");
   setDebugLocFromInst(Builder, LI);
   for (unsigned Part = 0; Part < UF; ++Part) {
-    // Calculate the pointer for the specific unroll-part.
-    Value *PartPtr =
+    Instruction* NewLI;
+    if (CreateGatherScatter) {
+      Value *MaskPart = Legal->isMaskRequired(LI) ? Mask[Part] : nullptr;
+      NewLI = Builder.CreateMaskedGather(VectorGep[Part], Alignment,
+                                         MaskPart, 0, "wide.masked.gather");
+      Entry[Part] = NewLI;
+    } else {
+      // Calculate the pointer for the specific unroll-part.
+      Value *PartPtr =
         Builder.CreateGEP(nullptr, Ptr, Builder.getInt32(Part * VF));
 
-    if (Reverse) {
-      // If the address is consecutive but reversed, then the
-      // wide load needs to start at the last vector element.
-      PartPtr = Builder.CreateGEP(nullptr, Ptr, Builder.getInt32(-Part * VF));
-      PartPtr = Builder.CreateGEP(nullptr, PartPtr, Builder.getInt32(1 - VF));
-      Mask[Part] = reverseVector(Mask[Part]);
-    }
+      if (Reverse) {
+        // If the address is consecutive but reversed, then the
+        // wide load needs to start at the last vector element.
+        PartPtr = Builder.CreateGEP(nullptr, Ptr, Builder.getInt32(-Part * VF));
+        PartPtr = Builder.CreateGEP(nullptr, PartPtr, Builder.getInt32(1 - VF));
+        Mask[Part] = reverseVector(Mask[Part]);
+      }
 
-    Instruction* NewLI;
-    Value *VecPtr = Builder.CreateBitCast(PartPtr,
-                                          DataTy->getPointerTo(AddressSpace));
-    if (Legal->isMaskRequired(LI))
-      NewLI = Builder.CreateMaskedLoad(VecPtr, Alignment, Mask[Part],
-                                       UndefValue::get(DataTy),
-                                       "wide.masked.load");
-    else
-      NewLI = Builder.CreateAlignedLoad(VecPtr, Alignment, "wide.load");
+      Value *VecPtr = Builder.CreateBitCast(PartPtr,
+                                            DataTy->getPointerTo(AddressSpace));
+      if (Legal->isMaskRequired(LI))
+        NewLI = Builder.CreateMaskedLoad(VecPtr, Alignment, Mask[Part],
+                                         UndefValue::get(DataTy),
+                                         "wide.masked.load");
+      else
+        NewLI = Builder.CreateAlignedLoad(VecPtr, Alignment, "wide.load");
+      Entry[Part] = Reverse ? reverseVector(NewLI) :  NewLI;
+    }
     propagateMetadata(NewLI, LI);
-    Entry[Part] = Reverse ? reverseVector(NewLI) :  NewLI;
   }
 }
 
@@ -3324,8 +3405,14 @@ void InnerLoopVectorizer::vectorizeLoop() {
   for (PHINode *Phi : PHIsToFix) {
     assert(Phi && "Unable to recover vectorized PHI");
 
-    // We currently only handle reductions. Ensure the PHI node to be fixed is
-    // a reduction, and get its reduction variable descriptor.
+    // Handle first-order recurrences that need to be fixed.
+    if (Legal->isFirstOrderRecurrence(Phi)) {
+      fixFirstOrderRecurrence(Phi);
+      continue;
+    }
+
+    // If the phi node is not a first-order recurrence, it must be a reduction.
+    // Get it's reduction variable descriptor.
     assert(Legal->isReductionVariable(Phi) &&
            "Unable to find the reduction variable");
     RecurrenceDescriptor RdxDesc = (*Legal->getReductionVars())[Phi];
@@ -3551,6 +3638,158 @@ void InnerLoopVectorizer::vectorizeLoop() {
   cse(LoopVectorBody);
 }
 
+void InnerLoopVectorizer::fixFirstOrderRecurrence(PHINode *Phi) {
+
+  // This is the second phase of vectorizing first-order rececurrences. An
+  // overview of the transformation is described below. Suppose we have the
+  // following loop.
+  //
+  //   for (int i = 0; i < n; ++i)
+  //     b[i] = a[i] - a[i - 1];
+  //
+  // There is a first-order recurrence on "a". For this loop, the shorthand
+  // scalar IR looks like:
+  //
+  //   scalar.ph:
+  //     s_init = a[-1]
+  //     br scalar.body
+  //
+  //   scalar.body:
+  //     i = phi [0, scalar.ph], [i+1, scalar.body]
+  //     s1 = phi [s_init, scalar.ph], [s2, scalar.body]
+  //     s2 = a[i]
+  //     b[i] = s2 - s1
+  //     br cond, scalar.body, ...
+  //
+  // In this example, s1 is a recurrence because it's value depends on the
+  // previous iteration. In the first phase of vectorization, we created a
+  // temporary value for s1. We now complete the vectorization and produce the
+  // shorthand vector IR shown below (for VF = 4, UF = 1).
+  //
+  //   vector.ph:
+  //     v_init = vector(..., ..., ..., a[-1])
+  //     br vector.body
+  //
+  //   vector.body
+  //     i = phi [0, vector.ph], [i+4, vector.body]
+  //     v1 = phi [v_init, vector.ph], [v2, vector.body]
+  //     v2 = a[i, i+1, i+2, i+3];
+  //     v3 = vector(v1(3), v2(0, 1, 2))
+  //     b[i, i+1, i+2, i+3] = v2 - v3
+  //     br cond, vector.body, middle.block
+  //
+  //   middle.block:
+  //     x = v2(3)
+  //     br scalar.ph
+  //
+  //   scalar.ph:
+  //     s_init = phi [x, middle.block], [a[-1], otherwise]
+  //     br scalar.body
+  //
+  // After execution completes the vector loop, we extract the next value of
+  // the recurrence (x) to use as the initial value in the scalar loop.
+
+  // Get the original loop preheader and single loop latch.
+  auto *Preheader = OrigLoop->getLoopPreheader();
+  auto *Latch = OrigLoop->getLoopLatch();
+
+  // Get the initial and previous values of the scalar recurrence.
+  auto *ScalarInit = Phi->getIncomingValueForBlock(Preheader);
+  auto *Previous = Phi->getIncomingValueForBlock(Latch);
+
+  // Create a vector from the initial value.
+  auto *VectorInit = ScalarInit;
+  if (VF > 1) {
+    Builder.SetInsertPoint(LoopVectorPreHeader->getTerminator());
+    VectorInit = Builder.CreateInsertElement(
+        UndefValue::get(VectorType::get(VectorInit->getType(), VF)), VectorInit,
+        Builder.getInt32(VF - 1), "vector.recur.init");
+  }
+
+  // We constructed a temporary phi node in the first phase of vectorization.
+  // This phi node will eventually be deleted.
+  auto &PhiParts = getVectorValue(Phi);
+  Builder.SetInsertPoint(cast<Instruction>(PhiParts[0]));
+
+  // Create a phi node for the new recurrence. The current value will either be
+  // the initial value inserted into a vector or loop-varying vector value.
+  auto *VecPhi = Builder.CreatePHI(VectorInit->getType(), 2, "vector.recur");
+  VecPhi->addIncoming(VectorInit, LoopVectorPreHeader);
+
+  // Get the vectorized previous value. We ensured the previous values was an
+  // instruction when detecting the recurrence.
+  auto &PreviousParts = getVectorValue(Previous);
+
+  // Set the insertion point to be after this instruction. We ensured the
+  // previous value dominated all uses of the phi when detecting the
+  // recurrence.
+  Builder.SetInsertPoint(
+      &*++BasicBlock::iterator(cast<Instruction>(PreviousParts[UF - 1])));
+
+  // We will construct a vector for the recurrence by combining the values for
+  // the current and previous iterations. This is the required shuffle mask.
+  SmallVector<Constant *, 8> ShuffleMask(VF);
+  ShuffleMask[0] = Builder.getInt32(VF - 1);
+  for (unsigned I = 1; I < VF; ++I)
+    ShuffleMask[I] = Builder.getInt32(I + VF - 1);
+
+  // The vector from which to take the initial value for the current iteration
+  // (actual or unrolled). Initially, this is the vector phi node.
+  Value *Incoming = VecPhi;
+
+  // Shuffle the current and previous vector and update the vector parts.
+  for (unsigned Part = 0; Part < UF; ++Part) {
+    auto *Shuffle =
+        VF > 1
+            ? Builder.CreateShuffleVector(Incoming, PreviousParts[Part],
+                                          ConstantVector::get(ShuffleMask))
+            : Incoming;
+    PhiParts[Part]->replaceAllUsesWith(Shuffle);
+    cast<Instruction>(PhiParts[Part])->eraseFromParent();
+    PhiParts[Part] = Shuffle;
+    Incoming = PreviousParts[Part];
+  }
+
+  // Fix the latch value of the new recurrence in the vector loop.
+  VecPhi->addIncoming(Incoming,
+                      LI->getLoopFor(LoopVectorBody[0])->getLoopLatch());
+
+  // Extract the last vector element in the middle block. This will be the
+  // initial value for the recurrence when jumping to the scalar loop.
+  auto *Extract = Incoming;
+  if (VF > 1) {
+    Builder.SetInsertPoint(LoopMiddleBlock->getTerminator());
+    Extract = Builder.CreateExtractElement(Extract, Builder.getInt32(VF - 1),
+                                           "vector.recur.extract");
+  }
+
+  // Fix the initial value of the original recurrence in the scalar loop.
+  Builder.SetInsertPoint(&*LoopScalarPreHeader->begin());
+  auto *Start = Builder.CreatePHI(Phi->getType(), 2, "scalar.recur.init");
+  for (auto *BB : predecessors(LoopScalarPreHeader)) {
+    auto *Incoming = BB == LoopMiddleBlock ? Extract : ScalarInit;
+    Start->addIncoming(Incoming, BB);
+  }
+
+  Phi->setIncomingValue(Phi->getBasicBlockIndex(LoopScalarPreHeader), Start);
+  Phi->setName("scalar.recur");
+
+  // Finally, fix users of the recurrence outside the loop. The users will need
+  // either the last value of the scalar recurrence or the last value of the
+  // vector recurrence we extracted in the middle block. Since the loop is in
+  // LCSSA form, we just need to find the phi node for the original scalar
+  // recurrence in the exit block, and then add an edge for the middle block.
+  for (auto &I : *LoopExitBlock) {
+    auto *LCSSAPhi = dyn_cast<PHINode>(&I);
+    if (!LCSSAPhi)
+      break;
+    if (LCSSAPhi->getIncomingValue(0) == Phi) {
+      LCSSAPhi->addIncoming(Extract, LoopMiddleBlock);
+      break;
+    }
+  }
+}
+
 void InnerLoopVectorizer::fixLCSSAPHIs() {
   for (BasicBlock::iterator LEI = LoopExitBlock->begin(),
        LEE = LoopExitBlock->end(); LEI != LEE; ++LEI) {
@@ -3625,8 +3864,8 @@ void InnerLoopVectorizer::widenPHIInstruction(
     Instruction *PN, InnerLoopVectorizer::VectorParts &Entry, unsigned UF,
     unsigned VF, PhiVector *PV) {
   PHINode* P = cast<PHINode>(PN);
-  // Handle reduction variables:
-  if (Legal->isReductionVariable(P)) {
+  // Handle recurrences.
+  if (Legal->isReductionVariable(P) || Legal->isFirstOrderRecurrence(P)) {
     for (unsigned part = 0; part < UF; ++part) {
       // This is phase one of vectorizing PHIs.
       Type *VecTy = (VF == 1) ? PN->getType() :
@@ -4322,6 +4561,11 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
           continue;
         }
 
+        if (RecurrenceDescriptor::isFirstOrderRecurrence(Phi, TheLoop, DT)) {
+          FirstOrderRecurrences.insert(Phi);
+          continue;
+        }
+
         emitAnalysis(VectorizationReport(&*it) <<
                      "value that could not be identified as "
                      "reduction is used outside the loop");
@@ -4499,6 +4743,10 @@ bool LoopVectorizationLegality::isInductionVariable(const Value *V) {
   return Inductions.count(PN);
 }
 
+bool LoopVectorizationLegality::isFirstOrderRecurrence(const PHINode *Phi) {
+  return FirstOrderRecurrences.count(Phi);
+}
+
 bool LoopVectorizationLegality::blockNeedsPredication(BasicBlock *BB)  {
   return LoopAccessInfo::blockNeedsPredication(BB, TheLoop, DT);
 }
@@ -4520,7 +4768,8 @@ bool LoopVectorizationLegality::blockCanBePredicated(BasicBlock *BB,
       if (!LI)
         return false;
       if (!SafePtrs.count(LI->getPointerOperand())) {
-        if (isLegalMaskedLoad(LI->getType(), LI->getPointerOperand())) {
+        if (isLegalMaskedLoad(LI->getType(), LI->getPointerOperand()) ||
+            isLegalMaskedGather(LI->getType())) {
           MaskedOp.insert(LI);
           continue;
         }
@@ -4545,7 +4794,8 @@ bool LoopVectorizationLegality::blockCanBePredicated(BasicBlock *BB,
         // scalarize the block.
         bool isLegalMaskedOp =
           isLegalMaskedStore(SI->getValueOperand()->getType(),
-                             SI->getPointerOperand());
+                             SI->getPointerOperand()) ||
+          isLegalMaskedScatter(SI->getValueOperand()->getType());
         if (isLegalMaskedOp) {
           --NumPredStores;
           MaskedOp.insert(SI);
@@ -4655,6 +4905,8 @@ void InterleavedAccessInfo::analyzeInterleaving(
 
   // Holds all interleaved store groups temporarily.
   SmallSetVector<InterleaveGroup *, 4> StoreGroups;
+  // Holds all interleaved load groups temporarily.
+  SmallSetVector<InterleaveGroup *, 4> LoadGroups;
 
   // Search the load-load/write-write pair B-A in bottom-up order and try to
   // insert B into the interleave group of A according to 3 rules:
@@ -4682,6 +4934,8 @@ void InterleavedAccessInfo::analyzeInterleaving(
 
     if (A->mayWriteToMemory())
       StoreGroups.insert(Group);
+    else
+      LoadGroups.insert(Group);
 
     for (auto II = std::next(I); II != E; ++II) {
       Instruction *B = II->first;
@@ -4729,6 +4983,12 @@ void InterleavedAccessInfo::analyzeInterleaving(
   for (InterleaveGroup *Group : StoreGroups)
     if (Group->getNumMembers() != Group->getFactor())
       releaseGroup(Group);
+
+  // Remove interleaved load groups that don't have the first and last member.
+  // This guarantees that we won't do speculative out of bounds loads.
+  for (InterleaveGroup *Group : LoadGroups)
+    if (!Group->getMember(0) || !Group->getMember(Group->getFactor() - 1))
+      releaseGroup(Group);
 }
 
 LoopVectorizationCostModel::VectorizationFactor
@@ -4753,7 +5013,7 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize) {
   }
 
   // Find the trip count.
-  unsigned TC = PSE.getSE()->getSmallConstantTripCount(TheLoop);
+  unsigned TC = SE->getSmallConstantTripCount(TheLoop);
   DEBUG(dbgs() << "LV: Found trip count: " << TC << '\n');
 
   MinBWs = computeMinimumValueSizes(TheLoop->getBlocks(), *DB, &TTI);
@@ -4955,7 +5215,7 @@ unsigned LoopVectorizationCostModel::selectInterleaveCount(bool OptForSize,
     return 1;
 
   // Do not interleave loops with a relatively small trip count.
-  unsigned TC = PSE.getSE()->getSmallConstantTripCount(TheLoop);
+  unsigned TC = SE->getSmallConstantTripCount(TheLoop);
   if (TC > 1 && TC < TinyTripCountInterleaveThreshold)
     return 1;
 
@@ -5183,14 +5443,14 @@ LoopVectorizationCostModel::calculateRegisterUsage(
     // Ignore instructions that are never used within the loop.
     if (!Ends.count(I)) continue;
 
+    // Skip ignored values.
+    if (ValuesToIgnore.count(I))
+      continue;
+
     // Remove all of the instructions that end at this location.
     InstrList &List = TransposeEnds[i];
     for (unsigned int j = 0, e = List.size(); j < e; ++j)
       OpenIntervals.erase(List[j]);
-
-    // Skip ignored values.
-    if (ValuesToIgnore.count(I))
-      continue;
 
     // For each VF find the maximum usage of registers.
     for (unsigned j = 0, e = VFs.size(); j < e; ++j) {
@@ -5201,12 +5461,8 @@ LoopVectorizationCostModel::calculateRegisterUsage(
 
       // Count the number of live intervals.
       unsigned RegUsage = 0;
-      for (auto Inst : OpenIntervals) {
-        // Skip ignored values for VF > 1.
-        if (VecValuesToIgnore.count(Inst))
-          continue;
+      for (auto Inst : OpenIntervals)
         RegUsage += GetRegUsage(Inst->getType(), VFs[j]);
-      }
       MaxUsages[j] = std::max(MaxUsages[j], RegUsage);
     }
 
@@ -5281,6 +5537,19 @@ unsigned LoopVectorizationCostModel::expectedCost(unsigned VF) {
   return Cost;
 }
 
+/// \brief Check if the load/store instruction \p I may be translated into
+/// gather/scatter during vectorization.
+///
+/// Pointer \p Ptr specifies address in memory for the given scalar memory
+/// instruction. We need it to retrieve data type.
+/// Using gather/scatter is possible when it is supported by target.
+static bool isGatherOrScatterLegal(Instruction *I, Value *Ptr,
+                                   LoopVectorizationLegality *Legal) {
+  Type *DataTy = cast<PointerType>(Ptr->getType())->getElementType();
+  return (isa<LoadInst>(I) && Legal->isLegalMaskedGather(DataTy)) ||
+    (isa<StoreInst>(I) && Legal->isLegalMaskedScatter(DataTy));
+}
+
 /// \brief Check whether the address computation for a non-consecutive memory
 /// access looks like an unlikely candidate for being merged into the indexing
 /// mode.
@@ -5350,7 +5619,6 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
   if (VF > 1 && MinBWs.count(I))
     RetTy = IntegerType::get(RetTy->getContext(), MinBWs[I]);
   Type *VectorTy = ToVectorTy(RetTy, VF);
-  auto SE = PSE.getSE();
 
   // TODO: We need to estimate the cost of intrinsic calls.
   switch (I->getOpcode()) {
@@ -5363,9 +5631,17 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
   case Instruction::Br: {
     return TTI.getCFInstrCost(I->getOpcode());
   }
-  case Instruction::PHI:
-    //TODO: IF-converted IFs become selects.
+  case Instruction::PHI: {
+    auto *Phi = cast<PHINode>(I);
+
+    // First-order recurrences are replaced by vector shuffles inside the loop.
+    if (VF > 1 && Legal->isFirstOrderRecurrence(Phi))
+      return TTI.getShuffleCost(TargetTransformInfo::SK_ExtractSubvector,
+                                VectorTy, VF - 1, VectorTy);
+
+    // TODO: IF-converted IFs become selects.
     return 0;
+  }
   case Instruction::Add:
   case Instruction::FAdd:
   case Instruction::Sub:
@@ -5500,11 +5776,15 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
 
     // Scalarized loads/stores.
     int ConsecutiveStride = Legal->isConsecutivePtr(Ptr);
+    bool UseGatherOrScatter = (ConsecutiveStride == 0) &&
+      isGatherOrScatterLegal(I, Ptr, Legal);
+
     bool Reverse = ConsecutiveStride < 0;
     const DataLayout &DL = I->getModule()->getDataLayout();
     unsigned ScalarAllocatedSize = DL.getTypeAllocSize(ValTy);
     unsigned VectorElementSize = DL.getTypeStoreSize(VectorTy) / VF;
-    if (!ConsecutiveStride || ScalarAllocatedSize != VectorElementSize) {
+    if ((!ConsecutiveStride && !UseGatherOrScatter) ||
+        ScalarAllocatedSize != VectorElementSize) {
       bool IsComplexComputation =
         isLikelyComplexAddressComputation(Ptr, Legal, SE, TheLoop);
       unsigned Cost = 0;
@@ -5528,8 +5808,15 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
       return Cost;
     }
 
-    // Wide load/stores.
     unsigned Cost = TTI.getAddressComputationCost(VectorTy);
+    if (UseGatherOrScatter) {
+      assert(ConsecutiveStride == 0 &&
+             "Gather/Scatter are not used for consecutive stride");
+      return Cost +
+        TTI.getGatherScatterOpCost(I->getOpcode(), VectorTy, Ptr,
+                                   Legal->isMaskRequired(I), Alignment);
+    }
+    // Wide load/stores.
     if (Legal->isMaskRequired(I))
       Cost += TTI.getMaskedMemoryOpCost(I->getOpcode(), VectorTy, Alignment,
                                         AS);
@@ -5652,79 +5939,6 @@ bool LoopVectorizationCostModel::isConsecutiveLoadOrStore(Instruction *Inst) {
   return false;
 }
 
-void LoopVectorizationCostModel::collectValuesToIgnore() {
-  // Ignore ephemeral values.
-  CodeMetrics::collectEphemeralValues(TheLoop, AC, ValuesToIgnore);
-
-  // Ignore type-promoting instructions we identified during reduction
-  // detection.
-  for (auto &Reduction : *Legal->getReductionVars()) {
-    RecurrenceDescriptor &RedDes = Reduction.second;
-    SmallPtrSetImpl<Instruction *> &Casts = RedDes.getCastInsts();
-    VecValuesToIgnore.insert(Casts.begin(), Casts.end());
-  }
-
-  // Ignore induction phis that are only used in either GetElementPtr or ICmp
-  // instruction to exit loop. Induction variables usually have large types and
-  // can have big impact when estimating register usage.
-  // This is for when VF > 1.
-  for (auto &Induction : *Legal->getInductionVars()) {
-    auto *PN = Induction.first;
-    auto *UpdateV = PN->getIncomingValueForBlock(TheLoop->getLoopLatch());
-
-    // Check that the PHI is only used by the induction increment (UpdateV) or
-    // by GEPs. Then check that UpdateV is only used by a compare instruction or
-    // the loop header PHI.
-    // FIXME: Need precise def-use analysis to determine if this instruction
-    // variable will be vectorized.
-    if (std::all_of(PN->user_begin(), PN->user_end(),
-                    [&](const User *U) -> bool {
-                      return U == UpdateV || isa<GetElementPtrInst>(U);
-                    }) &&
-        std::all_of(UpdateV->user_begin(), UpdateV->user_end(),
-                    [&](const User *U) -> bool {
-                      return U == PN || isa<ICmpInst>(U);
-                    })) {
-      VecValuesToIgnore.insert(PN);
-      VecValuesToIgnore.insert(UpdateV);
-    }
-  }
-
-  // Ignore instructions that will not be vectorized.
-  // This is for when VF > 1.
-  for (auto bb = TheLoop->block_begin(), be = TheLoop->block_end(); bb != be;
-       ++bb) {
-    for (auto &Inst : **bb) {
-      switch (Inst.getOpcode()) {
-      case Instruction::GetElementPtr: {
-        // Ignore GEP if its last operand is an induction variable so that it is
-        // a consecutive load/store and won't be vectorized as scatter/gather
-        // pattern.
-
-        GetElementPtrInst *Gep = cast<GetElementPtrInst>(&Inst);
-        unsigned NumOperands = Gep->getNumOperands();
-        unsigned InductionOperand = getGEPInductionOperand(Gep);
-        bool GepToIgnore = true;
-
-        // Check that all of the gep indices are uniform except for the
-        // induction operand.
-        for (unsigned i = 0; i != NumOperands; ++i) {
-          if (i != InductionOperand &&
-              !PSE.getSE()->isLoopInvariant(PSE.getSCEV(Gep->getOperand(i)),
-                                            TheLoop)) {
-            GepToIgnore = false;
-            break;
-          }
-        }
-
-        if (GepToIgnore)
-          VecValuesToIgnore.insert(&Inst);
-        break;
-      }
-      }
-    }
-  }
-}
 
 void InnerLoopUnroller::scalarizeInstruction(Instruction *Instr,
                                              bool IfPredicateStore) {

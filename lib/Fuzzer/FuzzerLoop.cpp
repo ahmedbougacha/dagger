@@ -101,6 +101,8 @@ void Fuzzer::StaticAlarmCallback() {
 
 void Fuzzer::AlarmCallback() {
   assert(Options.UnitTimeoutSec > 0);
+  if (!CurrentUnitSize)
+    return; // We have not started running units yet.
   size_t Seconds =
       duration_cast<seconds>(system_clock::now() - UnitStartTime).count();
   if (Seconds == 0)
@@ -164,7 +166,7 @@ void Fuzzer::RereadOutputCorpus() {
     return;
   std::vector<Unit> AdditionalCorpus;
   ReadDirToVectorOfUnits(Options.OutputCorpus.c_str(), &AdditionalCorpus,
-                         &EpochOfLastReadOfOutputCorpus);
+                         &EpochOfLastReadOfOutputCorpus, Options.MaxLen);
   if (Corpus.empty()) {
     Corpus = AdditionalCorpus;
     return;
@@ -382,7 +384,7 @@ void Fuzzer::Merge(const std::vector<std::string> &Corpora) {
     return;
   }
   auto InitialCorpusDir = Corpora[0];
-  ReadDir(InitialCorpusDir, nullptr);
+  ReadDir(InitialCorpusDir, nullptr, Options.MaxLen);
   Printf("Merge: running the initial corpus '%s' of %d units\n",
          InitialCorpusDir.c_str(), Corpus.size());
   for (auto &U : Corpus)
@@ -394,7 +396,7 @@ void Fuzzer::Merge(const std::vector<std::string> &Corpora) {
   size_t NumMerged = 0;
   for (auto &C : ExtraCorpora) {
     Corpus.clear();
-    ReadDir(C, nullptr);
+    ReadDir(C, nullptr, Options.MaxLen);
     Printf("Merge: merging the extra corpus '%s' of %zd units\n", C.c_str(),
            Corpus.size());
     for (auto &U : Corpus) {

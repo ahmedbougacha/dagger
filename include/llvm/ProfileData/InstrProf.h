@@ -681,14 +681,6 @@ struct Header {
   uint64_t HashOffset;
 };
 
-static const uint32_t SummaryCutoffs[] = {
-    10000,  /*  1% */
-    100000, /* 10% */
-    200000, 300000, 400000, 500000, 600000, 500000, 600000, 700000,
-    800000, 900000, 950000, 990000, 999000, 999900, 999990, 999999};
-static const uint32_t NumSummaryCutoffs =
-    sizeof(SummaryCutoffs) / sizeof(*SummaryCutoffs);
-
 // Profile summary data recorded in the profile data file in indexed
 // format. It is introduced in version 4. The summary data follows
 // right after the profile file header.
@@ -757,8 +749,8 @@ struct Summary {
   void setEntry(uint32_t I, const ProfileSummaryEntry &E) {
     Entry &ER = getCutoffEntryBase()[I];
     ER.Cutoff = E.Cutoff;
-    ER.MinBlockCount = E.MinBlockCount;
-    ER.NumBlocks = E.NumBlocks;
+    ER.MinBlockCount = E.MinCount;
+    ER.NumBlocks = E.NumCounts;
   }
 
   Summary(uint32_t Size) { memset(this, 0, Size); }

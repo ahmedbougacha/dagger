@@ -42,6 +42,11 @@ Non-comprehensive list of changes in this release
 
 * The C API function LLVMLinkModules has been removed.
 
+* The C API function LLVMAddTargetData has been removed.
+
+* The C API function LLVMGetDataLayout is deprecated
+  in favor of LLVMGetDataLayoutStr.
+
 .. NOTE
    For small 1-3 sentence descriptions, just add an entry at the end of
    this list. If your description won't fit comfortably in one bullet
@@ -95,6 +100,12 @@ Changes to the OCaml bindings
 
  During this release ...
 
+Support for attribute 'notail' has been added
+---------------------------------------------
+
+This marker prevents optimization passes from adding 'tail' or
+'musttail' markers to a call. It is used to prevent tail call
+optimization from being performed on the call.
 
 External Open Source Projects Using LLVM 3.9
 ============================================

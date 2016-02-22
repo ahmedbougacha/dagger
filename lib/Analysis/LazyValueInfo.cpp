@@ -102,7 +102,7 @@ public:
   }
   static LVILatticeVal getRange(ConstantRange CR) {
     LVILatticeVal Res;
-    Res.markConstantRange(CR);
+    Res.markConstantRange(std::move(CR));
     return Res;
   }
   static LVILatticeVal getOverdefined() {
@@ -176,13 +176,13 @@ public:
   }
 
   /// Return true if this is a change in status.
-  bool markConstantRange(const ConstantRange NewR) {
+  bool markConstantRange(ConstantRange NewR) {
     if (isConstantRange()) {
       if (NewR.isEmptySet())
         return markOverdefined();
 
       bool changed = Range != NewR;
-      Range = NewR;
+      Range = std::move(NewR);
       return changed;
     }
 
@@ -191,7 +191,7 @@ public:
       return markOverdefined();
 
     Tag = constantrange;
-    Range = NewR;
+    Range = std::move(NewR);
     return true;
   }
 
@@ -354,7 +354,7 @@ static LVILatticeVal intersect(LVILatticeVal A, LVILatticeVal B) {
   // Note: An empty range is implicitly converted to overdefined internally.
   // TODO: We could instead use Undefined here since we've proven a conflict
   // and thus know this path must be unreachable. 
-  return LVILatticeVal::getRange(Range);
+  return LVILatticeVal::getRange(std::move(Range));
 }
 
 //===----------------------------------------------------------------------===//
@@ -612,8 +612,7 @@ static LVILatticeVal getFromRangeMetadata(Instruction *BBI) {
   case Instruction::Invoke:
     if (MDNode *Ranges = BBI->getMetadata(LLVMContext::MD_range)) 
       if (isa<IntegerType>(BBI->getType())) {
-        ConstantRange Result = getConstantRangeFromMetadata(*Ranges);
-        return LVILatticeVal::getRange(Result);
+        return LVILatticeVal::getRange(getConstantRangeFromMetadata(*Ranges));
       }
     break;
   };
@@ -961,27 +960,6 @@ bool LazyValueInfoCache::solveBlockValueConstantRange(LVILatticeVal &BBLV,
   if (isa<BinaryOperator>(BBI)) {
     if (ConstantInt *RHS = dyn_cast<ConstantInt>(BBI->getOperand(1))) {
       RHSRange = ConstantRange(RHS->getValue());
-
-      // Try to use information about wrap flags to refine the range LHS can
-      // legally have.  This is a slightly weird way to implement forward
-      // propagation over overflowing instructions, but it seems to be the only
-      // clean one we have.  NOTE: Because we may have speculated the
-      // instruction, we can't constrain other uses of LHS even if they would
-      // seem to be equivelent control dependent with this op.
-      if (auto *OBO = dyn_cast<OverflowingBinaryOperator>(BBI)) {
-        unsigned WrapKind = 0;
-        if (OBO->hasNoSignedWrap())
-          WrapKind |= OverflowingBinaryOperator::NoSignedWrap;
-        if (OBO->hasNoUnsignedWrap())
-          WrapKind |= OverflowingBinaryOperator::NoUnsignedWrap;
-
-        if (WrapKind) {
-          auto OpCode = static_cast<Instruction::BinaryOps>(BBI->getOpcode());
-          auto NoWrapCR =
-            ConstantRange::makeNoWrapRegion(OpCode, RHS->getValue(), WrapKind);
-          LHSRange = LHSRange.intersectWith(NoWrapCR);
-        }
-      }
     } else {
       BBLV.markOverdefined();
       return true;
@@ -1075,7 +1053,7 @@ bool getValueFromFromCondition(Value *Val, ICmpInst *ICI,
       // If we're interested in the false dest, invert the condition.
       if (!isTrueDest) TrueValues = TrueValues.inverse();
 
-      Result = LVILatticeVal::getRange(TrueValues);
+      Result = LVILatticeVal::getRange(std::move(TrueValues));
       return true;
     }
   }
@@ -1135,7 +1113,7 @@ static bool getEdgeValueLocal(Value *Val, BasicBlock *BBFrom,
       } else if (i.getCaseSuccessor() == BBTo)
         EdgesVals = EdgesVals.unionWith(EdgeVal);
     }
-    Result = LVILatticeVal::getRange(EdgesVals);
+    Result = LVILatticeVal::getRange(std::move(EdgesVals));
     return true;
   }
   return false;

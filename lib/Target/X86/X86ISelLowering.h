@@ -191,9 +191,6 @@ namespace llvm {
       /// Bitwise Logical AND NOT of Packed FP values.
       ANDNP,
 
-      /// Copy integer sign.
-      PSIGN,
-
       /// Blend where the selector is an immediate.
       BLENDI,
 
@@ -1140,6 +1137,9 @@ namespace llvm {
 
     MachineBasicBlock *EmitLoweredSegAlloca(MachineInstr *MI,
                                             MachineBasicBlock *BB) const;
+
+    MachineBasicBlock *EmitLoweredTLSAddr(MachineInstr *MI,
+                                          MachineBasicBlock *BB) const;
 
     MachineBasicBlock *EmitLoweredTLSCall(MachineInstr *MI,
                                           MachineBasicBlock *BB) const;

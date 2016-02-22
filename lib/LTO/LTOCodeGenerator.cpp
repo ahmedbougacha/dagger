@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/LTO/LTOCodeGenerator.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -92,7 +93,7 @@ void LTOCodeGenerator::initializeLTOPasses() {
   initializeSROALegacyPassPass(R);
   initializeSROA_DTPass(R);
   initializeSROA_SSAUpPass(R);
-  initializePostOrderFunctionAttrsPass(R);
+  initializePostOrderFunctionAttrsLegacyPassPass(R);
   initializeReversePostOrderFunctionAttrsPass(R);
   initializeGlobalsAAWrapperPassPass(R);
   initializeLICMPass(R);
@@ -552,6 +553,10 @@ bool LTOCodeGenerator::compileOptimized(ArrayRef<raw_pwrite_stream *> Out) {
       splitCodeGen(std::move(MergedModule), Out, MCpu, FeatureStr, Options,
                    RelocModel, CodeModel::Default, CGOptLevel, FileType,
                    ShouldRestoreGlobalsLinkage);
+
+  // If statistics were requested, print them out after codegen.
+  if (llvm::AreStatisticsEnabled())
+    llvm::PrintStatistics();
 
   return true;
 }

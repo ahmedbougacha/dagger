@@ -192,7 +192,8 @@ MCInstrDesc const &HexagonMCInstrInfo::getDesc(MCInstrInfo const &MCII,
 }
 
 MCExpr const &HexagonMCInstrInfo::getExpr(MCExpr const &Expr) {
-  HexagonMCExpr const &HExpr = *llvm::cast<HexagonMCExpr>(&Expr);
+  const auto &HExpr = cast<HexagonMCExpr>(Expr);
+  assert(HExpr.getExpr());
   return *HExpr.getExpr();
 }
 
@@ -430,6 +431,9 @@ bool HexagonMCInstrInfo::isConstExtended(MCInstrInfo const &MCII,
   // object we are going to end up with here for now.
   // In the future we probably should add isSymbol(), etc.
   assert(!MO.isImm());
+  if (isa<HexagonMCExpr>(MO.getExpr()) &&
+      HexagonMCInstrInfo::mustNotExtend(*MO.getExpr()))
+    return false;
   int64_t Value;
   if (!MO.getExpr()->evaluateAsAbsolute(Value))
     return true;
@@ -582,21 +586,21 @@ int64_t HexagonMCInstrInfo::minConstant(MCInst const &MCI, size_t Index) {
 }
  
 void HexagonMCInstrInfo::setMustExtend(MCExpr &Expr, bool Val) {
-  HexagonMCExpr &HExpr = *llvm::cast<HexagonMCExpr>(&Expr);
+  HexagonMCExpr &HExpr = cast<HexagonMCExpr>(Expr);
   HExpr.setMustExtend(Val);
 }
 
 bool HexagonMCInstrInfo::mustExtend(MCExpr const &Expr) {
-  HexagonMCExpr const &HExpr = *llvm::cast<HexagonMCExpr>(&Expr);
+  HexagonMCExpr const &HExpr = cast<HexagonMCExpr>(Expr);
   return HExpr.mustExtend();
 }
 void HexagonMCInstrInfo::setMustNotExtend(MCExpr const &Expr, bool Val) {
   HexagonMCExpr &HExpr =
-      const_cast<HexagonMCExpr &>(*llvm::cast<HexagonMCExpr>(&Expr));
+      const_cast<HexagonMCExpr &>(cast<HexagonMCExpr>(Expr));
   HExpr.setMustNotExtend(Val);
 }
 bool HexagonMCInstrInfo::mustNotExtend(MCExpr const &Expr) {
-  HexagonMCExpr const &HExpr = *llvm::cast<HexagonMCExpr>(&Expr);
+  HexagonMCExpr const &HExpr = cast<HexagonMCExpr>(Expr);
   return HExpr.mustNotExtend();
 }
 
@@ -663,6 +667,15 @@ void HexagonMCInstrInfo::setMemStoreReorderEnabled(MCInst &MCI) {
   MCOperand &Operand = MCI.getOperand(0);
   Operand.setImm(Operand.getImm() | memStoreReorderEnabledMask);
   assert(isMemStoreReorderEnabled(MCI));
+}
+void HexagonMCInstrInfo::setS23_2_reloc(MCExpr const &Expr, bool Val) {
+  HexagonMCExpr &HExpr =
+      const_cast<HexagonMCExpr &>(*llvm::cast<HexagonMCExpr>(&Expr));
+  HExpr.setS23_2_reloc(Val);
+}
+bool HexagonMCInstrInfo::s23_2_reloc(MCExpr const &Expr) {
+  HexagonMCExpr const &HExpr = *llvm::cast<HexagonMCExpr>(&Expr);
+  return HExpr.s23_2_reloc();
 }
 
 void HexagonMCInstrInfo::setOuterLoop(MCInst &MCI) {

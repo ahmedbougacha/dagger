@@ -357,8 +357,8 @@ Hexagon::Fixups getFixupNoBits(MCInstrInfo const &MCII, const MCInst &MI,
   // The only relocs left should be GP relative:
   default:
     if (MCID.mayStore() || MCID.mayLoad()) {
-      for (const MCPhysReg *ImpUses = MCID.getImplicitUses();
-           *ImpUses && *ImpUses; ++ImpUses) {
+      for (const MCPhysReg *ImpUses = MCID.getImplicitUses(); *ImpUses;
+           ++ImpUses) {
         if (*ImpUses != Hexagon::GP)
           continue;
         switch (HexagonMCInstrInfo::getAccessSize(MCII, MI)) {
@@ -550,6 +550,13 @@ unsigned HexagonMCCodeEmitter::getExprOpValue(const MCInst &MI,
       }
     } else
       switch (kind) {
+      case MCSymbolRefExpr::VK_None: {
+        if (HexagonMCInstrInfo::s23_2_reloc(*MO.getExpr()))
+          FixupKind = Hexagon::fixup_Hexagon_23_REG;
+        else
+          raise_relocation_error(bits, kind);
+        break;
+      }
       case MCSymbolRefExpr::VK_DTPREL:
         FixupKind = Hexagon::fixup_Hexagon_DTPREL_16;
         break;

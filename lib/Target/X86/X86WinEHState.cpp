@@ -15,14 +15,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86.h"
+#include "llvm/ADT/PostOrderIterator.h"
+#include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/WinEHFuncInfo.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/Debug.h"
+#include <deque>
 
 using namespace llvm;
 
@@ -33,6 +39,8 @@ void initializeWinEHStatePassPass(PassRegistry &);
 }
 
 namespace {
+const int OverdefinedState = INT_MIN;
+
 class WinEHStatePass : public FunctionPass {
 public:
   static char ID; // Pass identification, replacement for typeid.
@@ -82,6 +90,8 @@ private:
   // Per-function state
   EHPersonality Personality = EHPersonality::Unknown;
   Function *PersonalityFn = nullptr;
+  bool UseStackGuard = false;
+  int ParentBaseState;
 
   /// The stack allocation containing all EH data, including the link in the
   /// fs:00 chain and the current state.
@@ -104,9 +114,6 @@ INITIALIZE_PASS(WinEHStatePass, "x86-winehstate",
 
 bool WinEHStatePass::doInitialization(Module &M) {
   TheModule = &M;
-  FrameEscape = Intrinsic::getDeclaration(TheModule, Intrinsic::localescape);
-  FrameRecover = Intrinsic::getDeclaration(TheModule, Intrinsic::localrecover);
-  FrameAddress = Intrinsic::getDeclaration(TheModule, Intrinsic::frameaddress);
   return false;
 }
 
@@ -152,6 +159,10 @@ bool WinEHStatePass::runOnFunction(Function &F) {
   if (!HasPads)
     return false;
 
+  FrameEscape = Intrinsic::getDeclaration(TheModule, Intrinsic::localescape);
+  FrameRecover = Intrinsic::getDeclaration(TheModule, Intrinsic::localrecover);
+  FrameAddress = Intrinsic::getDeclaration(TheModule, Intrinsic::frameaddress);
+
   // Disable frame pointer elimination in this function.
   // FIXME: Do the nested handlers need to keep the parent ebp in ebp, or can we
   // use an arbitrary register?
@@ -170,6 +181,7 @@ bool WinEHStatePass::runOnFunction(Function &F) {
   // Reset per-function state.
   PersonalityFn = nullptr;
   Personality = EHPersonality::Unknown;
+  UseStackGuard = false;
   return true;
 }
 
@@ -247,7 +259,6 @@ void WinEHStatePass::emitExceptionRegistrationRecord(Function *F) {
   // Struct type of RegNode. Used for GEPing.
   Type *RegNodeTy;
 
-  StringRef PersonalityName = PersonalityFn->getName();
   IRBuilder<> Builder(&F->getEntryBlock(), F->getEntryBlock().begin());
   Type *Int8PtrType = Builder.getInt8PtrTy();
   if (Personality == EHPersonality::MSVC_CXX) {
@@ -259,7 +270,8 @@ void WinEHStatePass::emitExceptionRegistrationRecord(Function *F) {
     Builder.CreateStore(SP, Builder.CreateStructGEP(RegNodeTy, RegNode, 0));
     // TryLevel = -1
     StateFieldIndex = 2;
-    insertStateNumberStore(&*Builder.GetInsertPoint(), -1);
+    ParentBaseState = -1;
+    insertStateNumberStore(&*Builder.GetInsertPoint(), ParentBaseState);
     // Handler = __ehhandler$F
     Function *Trampoline = generateLSDAInEAXThunk(F);
     Link = Builder.CreateStructGEP(RegNodeTy, RegNode, 1);
@@ -267,7 +279,6 @@ void WinEHStatePass::emitExceptionRegistrationRecord(Function *F) {
   } else if (Personality == EHPersonality::MSVC_X86SEH) {
     // If _except_handler4 is in use, some additional guard checks and prologue
     // stuff is required.
-    bool UseStackGuard = (PersonalityName == "_except_handler4");
     RegNodeTy = getSEHRegistrationType();
     RegNode = Builder.CreateAlloca(RegNodeTy);
     // SavedESP = llvm.stacksave()
@@ -276,7 +287,10 @@ void WinEHStatePass::emitExceptionRegistrationRecord(Function *F) {
     Builder.CreateStore(SP, Builder.CreateStructGEP(RegNodeTy, RegNode, 0));
     // TryLevel = -2 / -1
     StateFieldIndex = 4;
-    insertStateNumberStore(&*Builder.GetInsertPoint(), UseStackGuard ? -2 : -1);
+    StringRef PersonalityName = PersonalityFn->getName();
+    UseStackGuard = (PersonalityName == "_except_handler4");
+    ParentBaseState = UseStackGuard ? -2 : -1;
+    insertStateNumberStore(&*Builder.GetInsertPoint(), ParentBaseState);
     // ScopeTable = llvm.x86.seh.lsda(F)
     Value *FI8 = Builder.CreateBitCast(F, Int8PtrType);
     Value *LSDA = Builder.CreateCall(
@@ -388,6 +402,124 @@ void WinEHStatePass::unlinkExceptionRegistration(IRBuilder<> &Builder) {
   Builder.CreateStore(Next, FSZero);
 }
 
+// Figure out what state we should assign calls in this block.
+static int getBaseStateForBB(DenseMap<BasicBlock *, ColorVector> &BlockColors,
+                             WinEHFuncInfo &FuncInfo, BasicBlock *BB) {
+  int BaseState = -1;
+  auto &BBColors = BlockColors[BB];
+
+  assert(BBColors.size() == 1 && "multi-color BB not removed by preparation");
+  BasicBlock *FuncletEntryBB = BBColors.front();
+  if (auto *FuncletPad =
+          dyn_cast<FuncletPadInst>(FuncletEntryBB->getFirstNonPHI())) {
+    auto BaseStateI = FuncInfo.FuncletBaseStateMap.find(FuncletPad);
+    if (BaseStateI != FuncInfo.FuncletBaseStateMap.end())
+      BaseState = BaseStateI->second;
+  }
+
+  return BaseState;
+}
+
+// Calculate the state a call-site is in.
+static int getStateForCallSite(DenseMap<BasicBlock *, ColorVector> &BlockColors,
+                               WinEHFuncInfo &FuncInfo, CallSite CS) {
+  if (auto *II = dyn_cast<InvokeInst>(CS.getInstruction())) {
+    // Look up the state number of the EH pad this unwinds to.
+    assert(FuncInfo.InvokeStateMap.count(II) && "invoke has no state!");
+    return FuncInfo.InvokeStateMap[II];
+  }
+  // Possibly throwing call instructions have no actions to take after
+  // an unwind. Ensure they are in the -1 state.
+  return getBaseStateForBB(BlockColors, FuncInfo, CS.getParent());
+}
+
+// Calculate the intersection of all the FinalStates for a BasicBlock's
+// predecessors.
+static int getPredState(DenseMap<BasicBlock *, int> &FinalStates, Function &F,
+                        int ParentBaseState, BasicBlock *BB) {
+  // The entry block has no predecessors but we know that the prologue always
+  // sets us up with a fixed state.
+  if (&F.getEntryBlock() == BB)
+    return ParentBaseState;
+
+  // This is an EH Pad, conservatively report this basic block as overdefined.
+  if (BB->isEHPad())
+    return OverdefinedState;
+
+  int CommonState = OverdefinedState;
+  for (BasicBlock *PredBB : predecessors(BB)) {
+    // We didn't manage to get a state for one of these predecessors,
+    // conservatively report this basic block as overdefined.
+    auto PredEndState = FinalStates.find(PredBB);
+    if (PredEndState == FinalStates.end())
+      return OverdefinedState;
+
+    // This code is reachable via exceptional control flow,
+    // conservatively report this basic block as overdefined.
+    if (isa<CatchReturnInst>(PredBB->getTerminator()))
+      return OverdefinedState;
+
+    int PredState = PredEndState->second;
+    assert(PredState != OverdefinedState &&
+           "overdefined BBs shouldn't be in FinalStates");
+    if (CommonState == OverdefinedState)
+      CommonState = PredState;
+
+    // At least two predecessors have different FinalStates,
+    // conservatively report this basic block as overdefined.
+    if (CommonState != PredState)
+      return OverdefinedState;
+  }
+
+  return CommonState;
+}
+
+// Calculate the intersection of all the InitialStates for a BasicBlock's
+// successors.
+static int getSuccState(DenseMap<BasicBlock *, int> &InitialStates, Function &F,
+                        int ParentBaseState, BasicBlock *BB) {
+  // This block rejoins normal control flow,
+  // conservatively report this basic block as overdefined.
+  if (isa<CatchReturnInst>(BB->getTerminator()))
+    return OverdefinedState;
+
+  int CommonState = OverdefinedState;
+  for (BasicBlock *SuccBB : successors(BB)) {
+    // We didn't manage to get a state for one of these predecessors,
+    // conservatively report this basic block as overdefined.
+    auto SuccStartState = InitialStates.find(SuccBB);
+    if (SuccStartState == InitialStates.end())
+      return OverdefinedState;
+
+    // This is an EH Pad, conservatively report this basic block as overdefined.
+    if (SuccBB->isEHPad())
+      return OverdefinedState;
+
+    int SuccState = SuccStartState->second;
+    assert(SuccState != OverdefinedState &&
+           "overdefined BBs shouldn't be in FinalStates");
+    if (CommonState == OverdefinedState)
+      CommonState = SuccState;
+
+    // At least two successors have different InitialStates,
+    // conservatively report this basic block as overdefined.
+    if (CommonState != SuccState)
+      return OverdefinedState;
+  }
+
+  return CommonState;
+}
+
+static bool isStateStoreNeeded(EHPersonality Personality, CallSite CS) {
+  if (!CS)
+    return false;
+
+  if (isAsynchronousEHPersonality(Personality))
+    return !CS.doesNotAccessMemory();
+
+  return !CS.doesNotThrow();
+}
+
 void WinEHStatePass::addStateStores(Function &F, WinEHFuncInfo &FuncInfo) {
   // Mark the registration node. The backend needs to know which alloca it is so
   // that it can recover the original frame pointer.
@@ -405,39 +537,104 @@ void WinEHStatePass::addStateStores(Function &F, WinEHFuncInfo &FuncInfo) {
 
   // Iterate all the instructions and emit state number stores.
   DenseMap<BasicBlock *, ColorVector> BlockColors = colorEHFunclets(F);
-  for (BasicBlock &BB : F) {
-    // Figure out what state we should assign calls in this block.
-    int BaseState = -1;
-    auto &BBColors = BlockColors[&BB];
+  ReversePostOrderTraversal<Function *> RPOT(&F);
 
-    assert(BBColors.size() == 1 &&
-           "multi-color BB not removed by preparation");
-    BasicBlock *FuncletEntryBB = BBColors.front();
-    if (auto *FuncletPad =
-            dyn_cast<FuncletPadInst>(FuncletEntryBB->getFirstNonPHI())) {
-      // We do not support nesting funclets within cleanuppads.
-      if (isa<CleanupPadInst>(FuncletPad))
+  // InitialStates yields the state of the first call-site for a BasicBlock.
+  DenseMap<BasicBlock *, int> InitialStates;
+  // FinalStates yields the state of the last call-site for a BasicBlock.
+  DenseMap<BasicBlock *, int> FinalStates;
+  // Worklist used to revisit BasicBlocks with indeterminate
+  // Initial/Final-States.
+  std::deque<BasicBlock *> Worklist;
+  // Fill in InitialStates and FinalStates for BasicBlocks with call-sites.
+  for (BasicBlock *BB : RPOT) {
+    int InitialState = OverdefinedState;
+    int FinalState;
+    if (&F.getEntryBlock() == BB)
+      InitialState = FinalState = ParentBaseState;
+    for (Instruction &I : *BB) {
+      CallSite CS(&I);
+      if (!isStateStoreNeeded(Personality, CS))
         continue;
 
-      auto BaseStateI = FuncInfo.FuncletBaseStateMap.find(FuncletPad);
-      if (BaseStateI != FuncInfo.FuncletBaseStateMap.end())
-        BaseState = BaseStateI->second;
+      int State = getStateForCallSite(BlockColors, FuncInfo, CS);
+      if (InitialState == OverdefinedState)
+        InitialState = State;
+      FinalState = State;
+    }
+    // No call-sites in this basic block? That's OK, we will come back to these
+    // in a later pass.
+    if (InitialState == OverdefinedState) {
+      Worklist.push_back(BB);
+      continue;
+    }
+    DEBUG(dbgs() << "X86WinEHState: " << BB->getName()
+                 << " InitialState=" << InitialState << '\n');
+    DEBUG(dbgs() << "X86WinEHState: " << BB->getName()
+                 << " FinalState=" << FinalState << '\n');
+    InitialStates.insert({BB, InitialState});
+    FinalStates.insert({BB, FinalState});
+  }
+
+  // Try to fill-in InitialStates and FinalStates which have no call-sites.
+  while (!Worklist.empty()) {
+    BasicBlock *BB = Worklist.front();
+    Worklist.pop_front();
+    // This BasicBlock has already been figured out, nothing more we can do.
+    if (InitialStates.count(BB) != 0)
+      continue;
+
+    int PredState = getPredState(FinalStates, F, ParentBaseState, BB);
+    if (PredState == OverdefinedState)
+      continue;
+
+    // We successfully inferred this BasicBlock's state via it's predecessors;
+    // enqueue it's successors to see if we can infer their states.
+    InitialStates.insert({BB, PredState});
+    FinalStates.insert({BB, PredState});
+    for (BasicBlock *SuccBB : successors(BB))
+      Worklist.push_back(SuccBB);
+  }
+
+  // Try to hoist stores from successors.
+  for (BasicBlock *BB : RPOT) {
+    int SuccState = getSuccState(InitialStates, F, ParentBaseState, BB);
+    if (SuccState == OverdefinedState)
+      continue;
+
+    // Update our FinalState to reflect the common InitialState of our
+    // successors.
+    FinalStates.insert({BB, SuccState});
+  }
+
+  // Finally, insert state stores before call-sites which transition us to a new
+  // state.
+  for (BasicBlock *BB : RPOT) {
+    auto &BBColors = BlockColors[BB];
+    BasicBlock *FuncletEntryBB = BBColors.front();
+    if (isa<CleanupPadInst>(FuncletEntryBB->getFirstNonPHI()))
+      continue;
+
+    int PrevState = getPredState(FinalStates, F, ParentBaseState, BB);
+    DEBUG(dbgs() << "X86WinEHState: " << BB->getName()
+                 << " PrevState=" << PrevState << '\n');
+
+    for (Instruction &I : *BB) {
+      CallSite CS(&I);
+      if (!isStateStoreNeeded(Personality, CS))
+        continue;
+
+      int State = getStateForCallSite(BlockColors, FuncInfo, CS);
+      if (State != PrevState)
+        insertStateNumberStore(&I, State);
+      PrevState = State;
     }
 
-    for (Instruction &I : BB) {
-      if (auto *CI = dyn_cast<CallInst>(&I)) {
-        // Possibly throwing call instructions have no actions to take after
-        // an unwind. Ensure they are in the -1 state.
-        if (CI->doesNotThrow())
-          continue;
-        insertStateNumberStore(CI, BaseState);
-      } else if (auto *II = dyn_cast<InvokeInst>(&I)) {
-        // Look up the state number of the landingpad this unwinds to.
-        assert(FuncInfo.InvokeStateMap.count(II) && "invoke has no state!");
-        int State = FuncInfo.InvokeStateMap[II];
-        insertStateNumberStore(II, State);
-      }
-    }
+    // We might have hoisted a state store into this block, emit it now.
+    auto EndState = FinalStates.find(BB);
+    if (EndState != FinalStates.end())
+      if (EndState->second != PrevState)
+        insertStateNumberStore(BB->getTerminator(), EndState->second);
   }
 }
 

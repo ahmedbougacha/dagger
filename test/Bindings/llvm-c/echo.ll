@@ -2,7 +2,19 @@
 ; RUN: llvm-as < %s | llvm-c-test --echo > %t.echo
 ; RUN: diff -w %t.orig %t.echo
 
+target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-apple-macosx10.11.0"
+
 %S = type { i64, %S* }
+
+@var = global i32 42
+@ext = external global i32*
+@cst = constant %S { i64 1, %S* @cst }
+@tl = thread_local global { i64, %S* } { i64 1, %S* @cst }
+@hidden = hidden global i32 7
+@protected = protected global i32 23
+@section = global i32 27, section ".custom"
+@align = global i32 31, align 4
 
 define { i64, %S* } @unpackrepack(%S %s) {
   %1 = extractvalue %S %s, 0

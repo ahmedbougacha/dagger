@@ -59,7 +59,7 @@ void initializeCodeGen(PassRegistry&);
 /// initializeCodeGen - Initialize all passes linked into the CodeGen library.
 void initializeTarget(PassRegistry&);
 
-void initializeAAEvalPass(PassRegistry&);
+void initializeAAEvalLegacyPassPass(PassRegistry&);
 void initializeAddDiscriminatorsPass(PassRegistry&);
 void initializeADCELegacyPassPass(PassRegistry&);
 void initializeBDCEPass(PassRegistry&);
@@ -163,6 +163,7 @@ void initializeLiveStacksPass(PassRegistry&);
 void initializeLiveVariablesPass(PassRegistry&);
 void initializeLoaderPassPass(PassRegistry&);
 void initializeLocalStackSlotPassPass(PassRegistry&);
+void initializeLoopPassPass(PassRegistry&);
 void initializeLoopDeletionPass(PassRegistry&);
 void initializeLoopExtractorPass(PassRegistry&);
 void initializeLoopInfoWrapperPassPass(PassRegistry&);
@@ -231,7 +232,7 @@ void initializePostDomOnlyViewerPass(PassRegistry&);
 void initializePostDomPrinterPass(PassRegistry&);
 void initializePostDomViewerPass(PassRegistry&);
 void initializePostDominatorTreePass(PassRegistry&);
-void initializePostOrderFunctionAttrsPass(PassRegistry&);
+void initializePostOrderFunctionAttrsLegacyPassPass(PassRegistry&);
 void initializePostRASchedulerPass(PassRegistry&);
 void initializePostMachineSchedulerPass(PassRegistry&);
 void initializePrintFunctionPassWrapperPass(PassRegistry&);

@@ -26,8 +26,8 @@
 #include "llvm/Analysis/DemandedBits.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/LoopAccessAnalysis.h"
-#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopAccessAnalysis.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -3282,45 +3282,48 @@ void BoUpSLP::computeMinimumValueSizes() {
   // This means that if a tree entry other than a root is used externally, it
   // must have multiple uses and InstCombine will not rewrite it. The code
   // below ensures that only the roots are used externally.
-  SmallPtrSet<Value *, 16> Expr(TreeRoot.begin(), TreeRoot.end());
+  SmallPtrSet<Value *, 32> Expr(TreeRoot.begin(), TreeRoot.end());
   for (auto &EU : ExternalUses)
     if (!Expr.erase(EU.Scalar))
       return;
   if (!Expr.empty())
     return;
 
-  // Collect the scalar values in one lane of the vectorizable expression. We
-  // will use this context to determine which values can be demoted. If we see
-  // a truncation, we mark it as seeding another demotion.
+  // Collect the scalar values of the vectorizable expression. We will use this
+  // context to determine which values can be demoted. If we see a truncation,
+  // we mark it as seeding another demotion.
   for (auto &Entry : VectorizableTree)
-    Expr.insert(Entry.Scalars[0]);
+    Expr.insert(Entry.Scalars.begin(), Entry.Scalars.end());
 
-  // Ensure the root of the vectorizable tree doesn't form a cycle. It must
+  // Ensure the roots of the vectorizable tree don't form a cycle. They must
   // have a single external user that is not in the vectorizable tree.
-  if (!TreeRoot[0]->hasOneUse() || Expr.count(*TreeRoot[0]->user_begin()))
-    return;
+  for (auto *Root : TreeRoot)
+    if (!Root->hasOneUse() || Expr.count(*Root->user_begin()))
+      return;
 
-  // Conservatively determine if we can actually truncate the root of the
+  // Conservatively determine if we can actually truncate the roots of the
   // expression. Collect the values that can be demoted in ToDemote and
   // additional roots that require investigating in Roots.
   SmallVector<Value *, 32> ToDemote;
-  SmallVector<Value *, 2> Roots;
-  if (!collectValuesToDemote(TreeRoot[0], Expr, ToDemote, Roots))
-    return;
+  SmallVector<Value *, 4> Roots;
+  for (auto *Root : TreeRoot)
+    if (!collectValuesToDemote(Root, Expr, ToDemote, Roots))
+      return;
 
   // The maximum bit width required to represent all the values that can be
-  // demoted without loss of precision. It would be safe to truncate the root
+  // demoted without loss of precision. It would be safe to truncate the roots
   // of the expression to this width.
   auto MaxBitWidth = 8u;
 
-  // We first check if all the bits of the root are demanded. If they're not,
-  // we can truncate the root to this narrower type.
-  auto Mask = DB->getDemandedBits(cast<Instruction>(TreeRoot[0]));
-  if (Mask.countLeadingZeros() > 0)
+  // We first check if all the bits of the roots are demanded. If they're not,
+  // we can truncate the roots to this narrower type.
+  for (auto *Root : TreeRoot) {
+    auto Mask = DB->getDemandedBits(cast<Instruction>(Root));
     MaxBitWidth = std::max<unsigned>(
         Mask.getBitWidth() - Mask.countLeadingZeros(), MaxBitWidth);
+  }
 
-  // If all the bits of the root are demanded, we can try a little harder to
+  // If all the bits of the roots are demanded, we can try a little harder to
   // compute a narrower type. This can happen, for example, if the roots are
   // getelementptr indices. InstCombine promotes these indices to the pointer
   // width. Thus, all their bits are technically demanded even though the
@@ -3329,12 +3332,14 @@ void BoUpSLP::computeMinimumValueSizes() {
   // We start by looking at each entry that can be demoted. We compute the
   // maximum bit width required to store the scalar by using ValueTracking to
   // compute the number of high-order bits we can truncate.
-  else
+  if (MaxBitWidth == DL.getTypeSizeInBits(TreeRoot[0]->getType())) {
+    MaxBitWidth = 8u;
     for (auto *Scalar : ToDemote) {
       auto NumSignBits = ComputeNumSignBits(Scalar, DL, 0, AC, 0, DT);
       auto NumTypeBits = DL.getTypeSizeInBits(Scalar->getType());
       MaxBitWidth = std::max<unsigned>(NumTypeBits - NumSignBits, MaxBitWidth);
     }
+  }
 
   // Round MaxBitWidth up to the next power-of-two.
   if (!isPowerOf2_64(MaxBitWidth))

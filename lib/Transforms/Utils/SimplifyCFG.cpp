@@ -811,11 +811,9 @@ static int ConstantIntSortPredicate(ConstantInt *const *P1,
                                     ConstantInt *const *P2) {
   const ConstantInt *LHS = *P1;
   const ConstantInt *RHS = *P2;
-  if (LHS->getValue().ult(RHS->getValue()))
-    return 1;
-  if (LHS->getValue() == RHS->getValue())
+  if (LHS == RHS)
     return 0;
-  return -1;
+  return LHS->getValue().ult(RHS->getValue()) ? 1 : -1;
 }
 
 static inline bool HasBranchWeights(const Instruction* I) {
@@ -1384,7 +1382,7 @@ static bool SinkThenElseCodeToEnd(BranchInst *BI1) {
 
     // We need to update RE1 and RE2 if we are going to sink the first
     // instruction in the basic block down.
-    bool UpdateRE1 = (I1 == BB1->begin()), UpdateRE2 = (I2 == BB2->begin());
+    bool UpdateRE1 = (I1 == &BB1->front()), UpdateRE2 = (I2 == &BB2->front());
     // Sink the instruction.
     BBEnd->getInstList().splice(FirstNonPhiInBBEnd->getIterator(),
                                 BB1->getInstList(), I1);
@@ -2136,7 +2134,7 @@ bool llvm::FoldBranchToCommonDest(BranchInst *BI, unsigned BonusInstThreshold) {
   // as "bonus instructions", and only allow this transformation when the
   // number of the bonus instructions does not exceed a certain threshold.
   unsigned NumBonusInsts = 0;
-  for (auto I = BB->begin(); Cond != I; ++I) {
+  for (auto I = BB->begin(); Cond != &*I; ++I) {
     // Ignore dbg intrinsics.
     if (isa<DbgInfoIntrinsic>(I))
       continue;
@@ -2190,16 +2188,19 @@ bool llvm::FoldBranchToCommonDest(BranchInst *BI, unsigned BonusInstThreshold) {
     bool InvertPredCond = false;
 
     if (BI->isConditional()) {
-      if (PBI->getSuccessor(0) == TrueDest)
+      if (PBI->getSuccessor(0) == TrueDest) {
         Opc = Instruction::Or;
-      else if (PBI->getSuccessor(1) == FalseDest)
+      } else if (PBI->getSuccessor(1) == FalseDest) {
         Opc = Instruction::And;
-      else if (PBI->getSuccessor(0) == FalseDest)
-        Opc = Instruction::And, InvertPredCond = true;
-      else if (PBI->getSuccessor(1) == TrueDest)
-        Opc = Instruction::Or, InvertPredCond = true;
-      else
+      } else if (PBI->getSuccessor(0) == FalseDest) {
+        Opc = Instruction::And;
+        InvertPredCond = true;
+      } else if (PBI->getSuccessor(1) == TrueDest) {
+        Opc = Instruction::Or;
+        InvertPredCond = true;
+      } else {
         continue;
+      }
     } else {
       if (PBI->getSuccessor(0) != TrueDest && PBI->getSuccessor(1) != TrueDest)
         continue;
@@ -2231,7 +2232,7 @@ bool llvm::FoldBranchToCommonDest(BranchInst *BI, unsigned BonusInstThreshold) {
     // We already make sure Cond is the last instruction before BI. Therefore,
     // all instructions before Cond other than DbgInfoIntrinsic are bonus
     // instructions.
-    for (auto BonusInst = BB->begin(); Cond != BonusInst; ++BonusInst) {
+    for (auto BonusInst = BB->begin(); Cond != &*BonusInst; ++BonusInst) {
       if (isa<DbgInfoIntrinsic>(BonusInst))
         continue;
       Instruction *NewBonusInst = BonusInst->clone();
@@ -2750,16 +2751,21 @@ static bool SimplifyCondBranchToCondBranch(BranchInst *PBI, BranchInst *BI,
     return false;
 
   int PBIOp, BIOp;
-  if (PBI->getSuccessor(0) == BI->getSuccessor(0))
-    PBIOp = BIOp = 0;
-  else if (PBI->getSuccessor(0) == BI->getSuccessor(1))
-    PBIOp = 0, BIOp = 1;
-  else if (PBI->getSuccessor(1) == BI->getSuccessor(0))
-    PBIOp = 1, BIOp = 0;
-  else if (PBI->getSuccessor(1) == BI->getSuccessor(1))
-    PBIOp = BIOp = 1;
-  else
+  if (PBI->getSuccessor(0) == BI->getSuccessor(0)) {
+    PBIOp = 0;
+    BIOp = 0;
+  } else if (PBI->getSuccessor(0) == BI->getSuccessor(1)) {
+    PBIOp = 0;
+    BIOp = 1;
+  } else if (PBI->getSuccessor(1) == BI->getSuccessor(0)) {
+    PBIOp = 1;
+    BIOp = 0;
+  } else if (PBI->getSuccessor(1) == BI->getSuccessor(1)) {
+    PBIOp = 1;
+    BIOp = 1;
+  } else {
     return false;
+  }
 
   // Check to make sure that the other destination of this branch
   // isn't BB itself.  If so, this is an infinite loop that will
@@ -3363,7 +3369,7 @@ bool SimplifyCFGOpt::SimplifySingleResume(ResumeInst *RI) {
   return true;
 }
 
-bool SimplifyCFGOpt::SimplifyCleanupReturn(CleanupReturnInst *RI) {
+static bool removeEmptyCleanup(CleanupReturnInst *RI) {
   // If this is a trivial cleanup pad that executes no instructions, it can be
   // eliminated.  If the cleanup pad continues to the caller, any predecessor
   // that is an EH pad will be updated to continue to the caller and any
@@ -3479,6 +3485,49 @@ bool SimplifyCFGOpt::SimplifyCleanupReturn(CleanupReturnInst *RI) {
   // The cleanup pad is now unreachable.  Zap it.
   BB->eraseFromParent();
   return true;
+}
+
+// Try to merge two cleanuppads together.
+static bool mergeCleanupPad(CleanupReturnInst *RI) {
+  // Skip any cleanuprets which unwind to caller, there is nothing to merge
+  // with.
+  BasicBlock *UnwindDest = RI->getUnwindDest();
+  if (!UnwindDest)
+    return false;
+
+  // This cleanupret isn't the only predecessor of this cleanuppad, it wouldn't
+  // be safe to merge without code duplication.
+  if (UnwindDest->getSinglePredecessor() != RI->getParent())
+    return false;
+
+  // Verify that our cleanuppad's unwind destination is another cleanuppad.
+  auto *SuccessorCleanupPad = dyn_cast<CleanupPadInst>(&UnwindDest->front());
+  if (!SuccessorCleanupPad)
+    return false;
+
+  CleanupPadInst *PredecessorCleanupPad = RI->getCleanupPad();
+  // Replace any uses of the successor cleanupad with the predecessor pad
+  // The only cleanuppad uses should be this cleanupret, it's cleanupret and
+  // funclet bundle operands.
+  SuccessorCleanupPad->replaceAllUsesWith(PredecessorCleanupPad);
+  // Remove the old cleanuppad.
+  SuccessorCleanupPad->eraseFromParent();
+  // Now, we simply replace the cleanupret with a branch to the unwind
+  // destination.
+  BranchInst::Create(UnwindDest, RI->getParent());
+  RI->eraseFromParent();
+
+  return true;
+}
+
+bool SimplifyCFGOpt::SimplifyCleanupReturn(CleanupReturnInst *RI) {
+  if (removeEmptyCleanup(RI))
+    return true;
+
+  if (mergeCleanupPad(RI))
+    return true;
+
+  return false;
 }
 
 bool SimplifyCFGOpt::SimplifyReturn(ReturnInst *RI, IRBuilder<> &Builder) {
@@ -4970,7 +5019,7 @@ static bool TryToMergeLandingPad(LandingPadInst *LPad, BranchInst *BI,
     if (!BI2 || !BI2->isIdenticalTo(BI))
       continue;
 
-    // We've found an identical block.  Update our predeccessors to take that
+    // We've found an identical block.  Update our predecessors to take that
     // path instead and make ourselves dead.
     SmallSet<BasicBlock *, 16> Preds;
     Preds.insert(pred_begin(BB), pred_end(BB));

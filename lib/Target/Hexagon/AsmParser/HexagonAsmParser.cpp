@@ -278,6 +278,7 @@ public:
 
   bool isf32Ext() const { return false; }
   bool iss32Imm() const { return CheckImmRange(32, 0, true, true, false); }
+  bool iss23_2Imm() const { return CheckImmRange(23, 2, true, true, false); }
   bool iss8Imm() const { return CheckImmRange(8, 0, true, false, false); }
   bool iss8Imm64() const { return CheckImmRange(8, 0, true, true, false); }
   bool iss7Imm() const { return CheckImmRange(7, 0, true, false, false); }
@@ -382,6 +383,9 @@ public:
   }
 
   void adds32ImmOperands(MCInst &Inst, unsigned N) const {
+    addSignedImmOperands(Inst, N);
+  }
+  void adds23_2ImmOperands(MCInst &Inst, unsigned N) const {
     addSignedImmOperands(Inst, N);
   }
   void adds8ImmOperands(MCInst &Inst, unsigned N) const {
@@ -592,7 +596,6 @@ public:
 
   static std::unique_ptr<HexagonOperand> CreateImm(const MCExpr *Val, SMLoc S,
                                                    SMLoc E) {
-    assert(&HexagonMCInstrInfo::getExpr(*Val) != nullptr);
     HexagonOperand *Op = new HexagonOperand(Immediate);
     Op->Imm.Val = Val;
     Op->Imm.MustExtend = false;
@@ -1544,6 +1547,18 @@ int HexagonAsmParser::processInstruction(MCInst &Inst,
   default:
     break;
 
+  case Hexagon::A2_iconst: {
+    Inst.setOpcode(Hexagon::A2_addi);
+    MCOperand Reg = Inst.getOperand(0);
+    MCOperand S16 = Inst.getOperand(1);
+    HexagonMCInstrInfo::setMustNotExtend(*S16.getExpr());
+    HexagonMCInstrInfo::setS23_2_reloc(*S16.getExpr());
+    Inst.clear();
+    Inst.addOperand(Reg);
+    Inst.addOperand(MCOperand::createReg(Hexagon::R0));
+    Inst.addOperand(S16);
+    break;
+  }
   case Hexagon::M4_mpyrr_addr:
   case Hexagon::S4_addi_asl_ri:
   case Hexagon::S4_addi_lsr_ri:
@@ -1588,31 +1603,6 @@ int HexagonAsmParser::processInstruction(MCInst &Inst,
       MO.setExpr(HexagonMCExpr::create(MCBinaryExpr::createSub(
           MO.getExpr(), MCConstantExpr::create(1, Context), Context), Context));
       Inst.setOpcode(Hexagon::C2_cmpgtui);
-    }
-    break;
-  }
-  case Hexagon::J2_loop1r:
-  case Hexagon::J2_loop1i:
-  case Hexagon::J2_loop0r:
-  case Hexagon::J2_loop0i: {
-    MCOperand &MO = Inst.getOperand(0);
-    // Loop has different opcodes for extended vs not extended, but we should
-    //   not use the other opcode as it is a legacy artifact of TD files.
-    int64_t Value;
-    if (MO.getExpr()->evaluateAsAbsolute(Value)) {
-      // if the operand can fit within a 7:2 field
-      if (Value < (1 << 8) && Value >= -(1 << 8)) {
-        SMLoc myLoc = Operands[2]->getStartLoc();
-        // # is left in startLoc in the case of ##
-        // If '##' found then force extension.
-        if (*myLoc.getPointer() == '#') {
-          MustExtend = true;
-          break;
-        }
-      } else {
-        // If immediate and out of 7:2 range.
-        MustExtend = true;
-      }
     }
     break;
   }

@@ -1,5 +1,5 @@
-; RUN: llc -verify-machineinstrs -mtriple=i686-pc-windows-msvc < %s | FileCheck --check-prefix=X86 %s
-; RUN: llc -verify-machineinstrs -mtriple=x86_64-pc-windows-msvc < %s | FileCheck --check-prefix=X64 %s
+; RUN: llc -stack-symbol-ordering=0 -verify-machineinstrs -mtriple=i686-pc-windows-msvc < %s | FileCheck --check-prefix=X86 %s
+; RUN: llc -stack-symbol-ordering=0 -verify-machineinstrs -mtriple=x86_64-pc-windows-msvc < %s | FileCheck --check-prefix=X64 %s
 
 ; Loosely based on IR for this C++ source code:
 ;   void f(int p);
@@ -255,8 +255,8 @@ try.cont:
 ; X86: pushl %ebp
 ; X86: subl $8, %esp
 ; X86: addl $12, %ebp
-; X86: LBB1_[[loopbb:[0-9]+]]: # %loop
 ; X86: movl    $1, -16(%ebp)
+; X86: LBB1_[[loopbb:[0-9]+]]: # %loop
 ; X86: calll   _getbool
 ; X86: testb   $1, %al
 ; X86: jne LBB1_[[loopbb]]

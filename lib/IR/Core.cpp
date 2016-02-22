@@ -160,12 +160,16 @@ void LLVMDisposeModule(LLVMModuleRef M) {
 }
 
 /*--.. Data layout .........................................................--*/
-const char * LLVMGetDataLayout(LLVMModuleRef M) {
+const char *LLVMGetDataLayoutStr(LLVMModuleRef M) {
   return unwrap(M)->getDataLayoutStr().c_str();
 }
 
-void LLVMSetDataLayout(LLVMModuleRef M, const char *Triple) {
-  unwrap(M)->setDataLayout(Triple);
+const char *LLVMGetDataLayout(LLVMModuleRef M) {
+  return LLVMGetDataLayoutStr(M);
+}
+
+void LLVMSetDataLayout(LLVMModuleRef M, const char *DataLayoutStr) {
+  unwrap(M)->setDataLayout(DataLayoutStr);
 }
 
 /*--.. Target triple .......................................................--*/
@@ -1697,6 +1701,10 @@ void LLVMDeleteFunction(LLVMValueRef Fn) {
   unwrap<Function>(Fn)->eraseFromParent();
 }
 
+LLVMBool LLVMHasPersonalityFn(LLVMValueRef Fn) {
+  return unwrap<Function>(Fn)->hasPersonalityFn();
+}
+
 LLVMValueRef LLVMGetPersonalityFn(LLVMValueRef Fn) {
   return wrap(unwrap<Function>(Fn)->getPersonalityFn());
 }
@@ -2103,6 +2111,24 @@ void LLVMSetTailCall(LLVMValueRef Call, LLVMBool isTailCall) {
   unwrap<CallInst>(Call)->setTailCall(isTailCall);
 }
 
+/*--.. Operations on invoke instructions (only) ............................--*/
+
+LLVMBasicBlockRef LLVMGetNormalDest(LLVMValueRef Invoke) {
+  return wrap(unwrap<InvokeInst>(Invoke)->getNormalDest());
+}
+
+LLVMBasicBlockRef LLVMGetUnwindDest(LLVMValueRef Invoke) {
+  return wrap(unwrap<InvokeInst>(Invoke)->getUnwindDest());
+}
+
+void LLVMSetNormalDest(LLVMValueRef Invoke, LLVMBasicBlockRef B) {
+  unwrap<InvokeInst>(Invoke)->setNormalDest(unwrap(B));
+}
+
+void LLVMSetUnwindDest(LLVMValueRef Invoke, LLVMBasicBlockRef B) {
+  unwrap<InvokeInst>(Invoke)->setUnwindDest(unwrap(B));
+}
+
 /*--.. Operations on terminators ...........................................--*/
 
 unsigned LLVMGetNumSuccessors(LLVMValueRef Term) {
@@ -2143,6 +2169,16 @@ LLVMTypeRef LLVMGetAllocatedType(LLVMValueRef Alloca) {
   return wrap(unwrap<AllocaInst>(Alloca)->getAllocatedType());
 }
 
+/*--.. Operations on gep instructions (only) ...............................--*/
+
+LLVMBool LLVMIsInBounds(LLVMValueRef GEP) {
+  return unwrap<GetElementPtrInst>(GEP)->isInBounds();
+}
+
+void LLVMSetIsInBounds(LLVMValueRef GEP, LLVMBool b) {
+  return unwrap<GetElementPtrInst>(GEP)->setIsInBounds(b);
+}
+
 /*--.. Operations on phi nodes .............................................--*/
 
 void LLVMAddIncoming(LLVMValueRef PhiNode, LLVMValueRef *IncomingValues,
@@ -2168,6 +2204,8 @@ LLVMBasicBlockRef LLVMGetIncomingBlock(LLVMValueRef PhiNode, unsigned Index) {
 
 unsigned LLVMGetNumIndices(LLVMValueRef Inst) {
   auto *I = unwrap(Inst);
+  if (auto *GEP = dyn_cast<GetElementPtrInst>(I))
+    return GEP->getNumIndices();
   if (auto *EV = dyn_cast<ExtractValueInst>(I))
     return EV->getNumIndices();
   if (auto *IV = dyn_cast<InsertValueInst>(I))
@@ -2326,9 +2364,21 @@ void LLVMAddDestination(LLVMValueRef IndirectBr, LLVMBasicBlockRef Dest) {
   unwrap<IndirectBrInst>(IndirectBr)->addDestination(unwrap(Dest));
 }
 
+unsigned LLVMGetNumClauses(LLVMValueRef LandingPad) {
+  return unwrap<LandingPadInst>(LandingPad)->getNumClauses();
+}
+
+LLVMValueRef LLVMGetClause(LLVMValueRef LandingPad, unsigned Idx) {
+  return wrap(unwrap<LandingPadInst>(LandingPad)->getClause(Idx));
+}
+
 void LLVMAddClause(LLVMValueRef LandingPad, LLVMValueRef ClauseVal) {
   unwrap<LandingPadInst>(LandingPad)->
     addClause(cast<Constant>(unwrap(ClauseVal)));
+}
+
+LLVMBool LLVMIsCleanup(LLVMValueRef LandingPad) {
+  return unwrap<LandingPadInst>(LandingPad)->isCleanup();
 }
 
 void LLVMSetCleanup(LLVMValueRef LandingPad, LLVMBool Val) {

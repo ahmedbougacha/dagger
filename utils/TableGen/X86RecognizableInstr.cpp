@@ -225,7 +225,6 @@ RecognizableInstr::RecognizableInstr(DisassemblerTables &tables,
   CD8_Scale        = byteFromRec(Rec, "CD8_Scale");
 
   Name      = Rec->getName();
-  AsmString = Rec->getValueAsString("AsmString");
 
   Operands = &insn.Operands.OperandList;
 
@@ -477,7 +476,7 @@ void RecognizableInstr::adjustOperandEncoding(OperandEncoding &encoding) {
 
 void RecognizableInstr::handleOperand(bool optional, unsigned &operandIndex,
                                       unsigned &physicalOperandIndex,
-                                      unsigned &numPhysicalOperands,
+                                      unsigned numPhysicalOperands,
                                       const unsigned *operandMapping,
                                       OperandEncoding (*encodingFromString)
                                         (const std::string&,
@@ -562,6 +561,7 @@ void RecognizableInstr::emitInstructionSpecifier() {
   // physicalOperandIndex should always be < numPhysicalOperands
   unsigned physicalOperandIndex = 0;
 
+#ifndef NDEBUG
   // Given the set of prefix bits, how many additional operands does the
   // instruction have?
   unsigned additionalOperands = 0;
@@ -569,6 +569,7 @@ void RecognizableInstr::emitInstructionSpecifier() {
     ++additionalOperands;
   if (HasEVEX_K)
     ++additionalOperands;
+#endif
 
   switch (Form) {
   default: llvm_unreachable("Unhandled form");
@@ -584,11 +585,9 @@ void RecognizableInstr::emitInstructionSpecifier() {
     return;
   case X86Local::RawFrm:
     // Operand 1 (optional) is an address or immediate.
-    // Operand 2 (optional) is an immediate.
-    assert(numPhysicalOperands <= 2 &&
+    assert(numPhysicalOperands <= 1 &&
            "Unexpected number of operands for RawFrm");
     HANDLE_OPTIONAL(relocation)
-    HANDLE_OPTIONAL(immediate)
     break;
   case X86Local::RawFrmMemOffs:
     // Operand 1 is an address.
@@ -800,8 +799,8 @@ void RecognizableInstr::emitInstructionSpecifier() {
   case X86Local::MRM_F1: case X86Local::MRM_F2: case X86Local::MRM_F3:
   case X86Local::MRM_F4: case X86Local::MRM_F5: case X86Local::MRM_F6:
   case X86Local::MRM_F7: case X86Local::MRM_F9: case X86Local::MRM_FA:
-  case X86Local::MRM_FB:  case X86Local::MRM_FC: case X86Local::MRM_FD:
-  case X86Local::MRM_FE:  case X86Local::MRM_FF:
+  case X86Local::MRM_FB: case X86Local::MRM_FC: case X86Local::MRM_FD:
+  case X86Local::MRM_FE: case X86Local::MRM_FF:
     // Ignored.
     break;
   }
@@ -1024,9 +1023,7 @@ OperandType RecognizableInstr::typeFromString(const std::string &s,
   TYPE("VK32WM",              TYPE_VK32)
   TYPE("VK64",                TYPE_VK64)
   TYPE("VK64WM",              TYPE_VK64)
-  TYPE("GR16_NOAX",           TYPE_Rv)
   TYPE("GR32_NOAX",           TYPE_Rv)
-  TYPE("GR64_NOAX",           TYPE_R64)
   TYPE("vx32mem",             TYPE_M32)
   TYPE("vx32xmem",            TYPE_M32)
   TYPE("vy32mem",             TYPE_M32)
@@ -1288,9 +1285,7 @@ RecognizableInstr::opcodeModifierEncodingFromString(const std::string &s,
   ENCODING("GR64",            ENCODING_RO)
   ENCODING("GR16",            ENCODING_Rv)
   ENCODING("GR8",             ENCODING_RB)
-  ENCODING("GR16_NOAX",       ENCODING_Rv)
   ENCODING("GR32_NOAX",       ENCODING_Rv)
-  ENCODING("GR64_NOAX",       ENCODING_RO)
   errs() << "Unhandled opcode modifier encoding " << s << "\n";
   llvm_unreachable("Unhandled opcode modifier encoding");
 }
