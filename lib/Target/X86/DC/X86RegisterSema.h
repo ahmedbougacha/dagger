@@ -39,8 +39,10 @@ public:
   // If they are float values, this is an unordered comparison (UCOMI).
   Value *getEFLAGSforCMP(Value *LHS, Value *RHS);
 
+  Value *getSF(X86::StatusFlag SF);
+  Value *getCC(X86::CondCode CC);
+
   void updateEFLAGS(Value *Def, bool IsINCDEC = false);
-  Value *testCondCode(unsigned CondCode);
 
   void insertInitRegSetCode(Function *InitFn) override;
   void insertFiniRegSetCode(Function *FiniFn) override;
@@ -70,10 +72,7 @@ private:
   SmallVector<unsigned, 16> CCAssignments;
 
   void setSF(X86::StatusFlag SF, Value *Val);
-  Value *getSF(X86::StatusFlag SF);
-
   void setCC(X86::CondCode CC, Value *Val);
-  Value *getCC(X86::CondCode CC);
 
   Value *computeEFLAGSForDef(Value *Def, Value *OldEFLAGS,
                              bool DontUpdateCF = false);

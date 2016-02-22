@@ -248,7 +248,7 @@ void X86InstrSema::translateTargetOpcode() {
            "Conditional mov predicate register isn't EFLAGS!");
     (void)Op4;
     unsigned CC = cast<ConstantInt>(Op3)->getValue().getZExtValue();
-    Value *Pred = X86DRS.testCondCode(CC);
+    Value *Pred = X86DRS.getCC((X86::CondCode)CC);
     registerResult(Builder->CreateSelect(Pred, Op2, Op1));
     break;
   }
@@ -273,7 +273,7 @@ void X86InstrSema::translateTargetOpcode() {
     uint64_t Target = cast<ConstantInt>(Op1)->getValue().getZExtValue();
     unsigned CC = cast<ConstantInt>(Op2)->getValue().getZExtValue();
     setReg(X86::RIP, Op1);
-    Builder->CreateCondBr(X86DRS.testCondCode(CC),
+    Builder->CreateCondBr(X86DRS.getCC((X86::CondCode)CC),
                           getOrCreateBasicBlock(Target),
                           getOrCreateBasicBlock(getBasicBlockEndAddress()));
     break;
@@ -290,7 +290,7 @@ void X86InstrSema::translateTargetOpcode() {
            "SetCC predicate register isn't EFLAGS!");
     (void)Op2;
     unsigned CC = cast<ConstantInt>(Op1)->getValue().getZExtValue();
-    Value *Pred = X86DRS.testCondCode(CC);
+    Value *Pred = X86DRS.getCC((X86::CondCode)CC);
     registerResult(Builder->CreateZExt(Pred, Builder->getInt8Ty()));
     break;
   }
@@ -301,8 +301,7 @@ void X86InstrSema::translateTargetOpcode() {
     assert(Op3 == getReg(X86::EFLAGS) &&
            "SBB borrow register isn't EFLAGS!");
     (void)Op3;
-    Value *Borrow =
-        Builder->CreateZExt(X86DRS.testCondCode(X86::CF), Op1->getType());
+    Value *Borrow = Builder->CreateZExt(X86DRS.getSF(X86::CF), Op1->getType());
     Value *Res = Builder->CreateSub(Op1, Op2);
     registerResult(Builder->CreateSub(Res, Borrow));
     registerResult(getReg(X86::EFLAGS));

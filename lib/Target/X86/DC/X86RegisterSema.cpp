@@ -135,10 +135,6 @@ static StringRef getCCName(X86::CondCode CC) {
   }
 }
 
-Value *X86RegisterSema::testCondCode(unsigned CondCode) {
-  return getCC((X86::CondCode)CondCode);
-}
-
 Value *X86RegisterSema::getCC(X86::CondCode CC) {
   Value *CCV = CCVals[CC];
   if (CCV)
