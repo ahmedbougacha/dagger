@@ -34,6 +34,7 @@ namespace llvm {
 class MCFunction;
 class MCInstPrinter;
 class MCModule;
+class MCObjectSymbolizer;
 }
 
 namespace llvm {
@@ -57,6 +58,7 @@ class DCTranslator {
   std::vector<std::unique_ptr<Module>> ModuleSet;
 
   MCObjectDisassembler *MCOD;
+  MCObjectSymbolizer *MOS;
   MCModule &MCM;
 
   Module *CurrentModule;
@@ -70,10 +72,12 @@ class DCTranslator {
   TransOpt::Level OptLevel;
 
 public:
-  DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
-               TransOpt::Level OptLevel, DCInstrSema &DIS, DCRegisterSema &DRS,
-               MCInstPrinter &IP, const MCSubtargetInfo &STI, MCModule &MCM,
-               MCObjectDisassembler *MCOD = 0, bool EnableIRAnnotation = false);
+  DCTranslator(LLVMContext &Ctx, const DataLayout &DL, TransOpt::Level OptLevel,
+               DCInstrSema &DIS, DCRegisterSema &DRS, MCInstPrinter &IP,
+               const MCSubtargetInfo &STI, MCModule &MCM,
+               MCObjectDisassembler *MCOD = nullptr,
+               MCObjectSymbolizer *MOS = nullptr,
+               bool EnableIRAnnotation = false);
   ~DCTranslator();
 
   Function *getInitRegSetFunction();

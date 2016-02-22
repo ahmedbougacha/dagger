@@ -396,7 +396,7 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   std::unique_ptr<DCTranslator> DT(
     new DCTranslator(getGlobalContext(), DL,
                      TransOpt::Default, *DIS, *DRS,
-                     *MIP, *STI, *MCM, OD.get()));
+                     *MIP, *STI, *MCM, OD.get(), MOS.get()));
 
   __dc_DT = DT.get();
   __dc_JIT = &J;

@@ -14,6 +14,7 @@
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
+#include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
 #include "llvm/MC/MCObjectDisassembler.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
@@ -32,8 +33,9 @@ DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                            TransOpt::Level TransOptLevel, DCInstrSema &DIS,
                            DCRegisterSema &DRS, MCInstPrinter &IP,
                            const MCSubtargetInfo &STI, MCModule &MCM,
-                           MCObjectDisassembler *MCOD, bool EnableIRAnnotation)
-    : Ctx(Ctx), DL(DL), ModuleSet(), MCOD(MCOD), MCM(MCM),
+                           MCObjectDisassembler *MCOD, MCObjectSymbolizer *MOS,
+                           bool EnableIRAnnotation)
+    : Ctx(Ctx), DL(DL), ModuleSet(), MCOD(MCOD), MOS(MOS), MCM(MCM),
       CurrentModule(nullptr), CurrentFPM(),
       EnableIRAnnotation(EnableIRAnnotation), DTIT(), DIS(DIS),
       OptLevel(TransOptLevel) {

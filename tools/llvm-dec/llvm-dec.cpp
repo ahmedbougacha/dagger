@@ -226,7 +226,7 @@ int main(int argc, char **argv) {
   std::unique_ptr<DCTranslator> DT(
     new DCTranslator(getGlobalContext(), DL,
                      TOLvl, *DIS, *DRS, *MIP, *STI, *MCM,
-                     OD.get(), AnnotateIROutput));
+                     OD.get(), MOS.get(), AnnotateIROutput));
 
   if (!TranslationEntrypoint)
     TranslationEntrypoint = MOS->getEntrypoint();
