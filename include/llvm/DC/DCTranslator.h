@@ -27,7 +27,7 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
-#include "llvm/MC/MCObjectDisassembler.h"
+#include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
 #include <vector>
 
 namespace llvm {

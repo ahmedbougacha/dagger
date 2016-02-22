@@ -1,4 +1,4 @@
-//===- lib/MC/MCObjectDisassembler.cpp ------------------------------------===//
+//===- lib/MC/MCAnalysis/MCObjectDisassembler.cpp -------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,9 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Support/Format.h"
-
-#include "llvm/MC/MCObjectDisassembler.h"
+#include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
