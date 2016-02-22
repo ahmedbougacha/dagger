@@ -62,7 +62,10 @@ public:
   Function *getOrCreateInitRegSetFunction();
   Function *getOrCreateFiniRegSetFunction();
 
-  void createExternalWrapperFunction(uint64_t Addr, StringRef Name);
+  Function *createExternalWrapperFunction(uint64_t Addr, Value *ExtFn);
+  Function *createExternalWrapperFunction(uint64_t Addr, StringRef Name);
+  Function *createExternalWrapperFunction(uint64_t Addr);
+
   void createExternalTailCallBB(uint64_t Addr);
 
         DCRegisterSema &getDRS()       { return DRS; }

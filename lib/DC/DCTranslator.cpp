@@ -122,23 +122,34 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t Addr) {
 
     DEBUG(dbgs() << "Translating function at " << utohexstr(Addr) << "\n");
 
-    if (!MCOD) {
-      llvm_unreachable(("Unable to translate unknown function at " +
-                        utohexstr(Addr) + " without a disassembler!").c_str());
+    if (!MCOD)
+      report_fatal_error(("Unable to translate unknown function at " +
+                          utohexstr(Addr) + " without a disassembler!")
+                             .c_str());
+
+    // Look for an external function.
+    // If the function isn't even in the main object, just call it by address.
+    // FIXME: original/effective?
+    if (MOS) {
+      if (!MOS->isInObject(MOS->getOriginalLoadAddr(Addr))) {
+        DEBUG(dbgs() << "Found external (not in object) function: " << Addr << "\n");
+        DIS.createExternalWrapperFunction(Addr);
+        continue;
+      }
+
+      // If the function is explicitly referenced by the main object, emit a
+      // direct call to the function, by name.
+      StringRef ExtFnName = MOS->findExternalFunctionAt(Addr);
+      if (!ExtFnName.empty()) {
+        DEBUG(dbgs() << "Found external function: " << ExtFnName << "\n");
+        DIS.createExternalWrapperFunction(Addr, ExtFnName);
+        continue;
+      }
     }
 
     MCObjectDisassembler::AddressSetTy CallTargets, TailCallTargets;
     MCFunction *MCFN =
         MCOD->createFunction(&MCM, Addr, CallTargets, TailCallTargets);
-
-    // If the function is empty, it is the declaration of an external function.
-    if (MCFN->empty()) {
-      StringRef ExtFnName = MCFN->getName();
-      assert(!ExtFnName.empty() && "Unnamed function declaration!");
-      DEBUG(dbgs() << "Found external function: " << ExtFnName << "\n");
-      DIS.createExternalWrapperFunction(Addr, ExtFnName);
-      continue;
-    }
 
     translateFunction(MCFN, TailCallTargets);
     for (auto CallTarget : CallTargets)

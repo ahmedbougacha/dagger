@@ -166,7 +166,7 @@ public:
   virtual void insertFiniRegSetCode(Function *FiniFn) = 0;
 
   virtual void insertExternalWrapperAsm(BasicBlock *WrapperBB,
-                                        Function *ExtFn) {}
+                                        Value *ExtFn) = 0;
 
 public:
   // Helper methods.

@@ -158,16 +158,32 @@ Function *DCInstrSema::getOrCreateFiniRegSetFunction() {
   return FiniFn;
 }
 
-void DCInstrSema::createExternalWrapperFunction(uint64_t Addr, StringRef Name) {
+Function *DCInstrSema::createExternalWrapperFunction(uint64_t Addr,
+                                                     StringRef Name) {
   Function *ExtFn = cast<Function>(TheModule->getOrInsertFunction(
       Name, FunctionType::get(Builder->getVoidTy(), /*isVarArg=*/false)));
+  return createExternalWrapperFunction(Addr, ExtFn);
+}
+
+Function *DCInstrSema::createExternalWrapperFunction(uint64_t Addr) {
+  Value *ExtFn = ConstantExpr::getIntToPtr(
+      Builder->getInt64(Addr),
+      FunctionType::get(Builder->getVoidTy(), /*isVarArg=*/false)
+          ->getPointerTo());
+
+  return createExternalWrapperFunction(Addr, ExtFn);
+}
+
+Function *DCInstrSema::createExternalWrapperFunction(uint64_t Addr,
+                                                     Value *ExtFn) {
   Function *Fn = getFunction(Addr);
   if (!Fn->isDeclaration())
-    return;
+    return Fn;
 
   BasicBlock *BB = BasicBlock::Create(Ctx, "", Fn);
   DRS.insertExternalWrapperAsm(BB, ExtFn);
   ReturnInst::Create(Ctx, BB);
+  return Fn;
 }
 
 void DCInstrSema::createExternalTailCallBB(uint64_t Addr) {

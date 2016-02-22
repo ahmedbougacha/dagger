@@ -377,7 +377,7 @@ void X86RegisterSema::insertFiniRegSetCode(Function *FiniFn) {
 }
 
 void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
-                                               Function *ExtFn) {
+                                               Value *ExtFn) {
   DCIRBuilder WBuilder(WrapperBB);
 
   SmallVector<Type *, 20> IAArgTypes;
