@@ -49,7 +49,9 @@ public:
   /// - SetVector, because knowing whether a key exists isn't enough,
   ///   we also need an efficient way to get its index.
   /// - DenseMap, because there is no acceptable tombstone key.
+  /// There is no element at index 0.
   std::map<uint64_t, unsigned> ConstantIdx;
+  unsigned CurConstantIdx;
 
   SemanticsTarget(RecordKeeper &Records);
 };
@@ -204,11 +206,9 @@ private:
       setNSTypeFromNode(Mov, TPN);
       Mov.Opcode = "DCINS::MOV_CONSTANT";
       unsigned &Idx = Target.ConstantIdx[OpInt->getValue()];
-      // If we haven't seen this constant yet, the [] access above inserted it
-      // into the map, growing its size(), so that it gives us an unused index.
       if (Idx == 0)
-        Idx = Target.ConstantIdx.size();
-      Mov.addOperand(utostr(Idx));
+        Idx = ++Target.CurConstantIdx;
+      Mov.addOperand(utostr(Idx - 1));
       addResOperand(*Parent, Mov);
       return;
     }
@@ -509,9 +509,10 @@ void SemanticsEmitter::run(raw_ostream &OS) {
     OS << InstIdx[I] << ", \t// " << CGIByEnum[I]->TheDef->getName() << "\n";
   OS << "};\n\n";
 
-  std::vector<uint64_t> Constants(SemaTarget.ConstantIdx.size());
+  assert(SemaTarget.CurConstantIdx == SemaTarget.ConstantIdx.size());
+  std::vector<uint64_t> Constants(SemaTarget.CurConstantIdx);
   for (auto &CI : SemaTarget.ConstantIdx)
-    Constants[CI.second] = CI.first;
+    Constants[CI.second - 1] = CI.first;
   OS << "const uint64_t ConstantArray[] = {\n";
   for (uint64_t Constant : Constants)
     OS.indent(2) << Constant << "ULL,\n";
@@ -526,7 +527,8 @@ void SemanticsEmitter::run(raw_ostream &OS) {
 
 SemanticsTarget::SemanticsTarget(RecordKeeper &Records)
     : Records(Records), CGPatterns(Records),
-      CGTarget(CGPatterns.getTargetInfo()), SDNodeEquiv(), ConstantIdx() {
+      CGTarget(CGPatterns.getTargetInfo()), SDNodeEquiv(), ConstantIdx(),
+      CurConstantIdx(0) {
   for (Record *Equiv : Records.getAllDerivedDefinitions("SDNodeEquiv"))
     SDNodeEquiv[Equiv->getValueAsDef("TargetSpecific")] =
         Equiv->getValueAsDef("TargetIndependent");
