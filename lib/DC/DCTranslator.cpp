@@ -94,6 +94,18 @@ Function *DCTranslator::createMainFunctionWrapper(Function *Entrypoint) {
   return DIS.getOrCreateMainFunction(Entrypoint);
 }
 
+static bool
+isDefinedInModuleSet(std::vector<std::unique_ptr<Module>> &ModuleSet,
+                     Function *F) {
+  for (auto &M : ModuleSet) {
+    if (Function *MF = M->getFunction(F->getName())) {
+      if (!MF->isDeclaration())
+        return true;
+    }
+  }
+  return false;
+}
+
 Function *DCTranslator::translateRecursivelyAt(uint64_t Addr) {
   SmallSetVector<uint64_t, 16> WorkList;
   WorkList.insert(Addr);
@@ -102,11 +114,9 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t Addr) {
     Function *F = DIS.getFunction(Addr);
     if (F && !F->isDeclaration())
       continue;
-#ifndef NDEBUG
-    for (std::unique_ptr<Module> &M : ModuleSet)
-      assert((M.get() == CurrentModule || !M->getFunction(F->getName())) &&
-             "Found function to translate in another module!");
-#endif /* NDEBUG */
+
+    if (isDefinedInModuleSet(ModuleSet, F))
+      continue;
 
     DEBUG(dbgs() << "Translating function at " << utohexstr(Addr) << "\n");
 
