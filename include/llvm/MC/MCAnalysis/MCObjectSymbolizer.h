@@ -59,6 +59,10 @@ public:
                                        uint64_t Address) override;
   /// @}
 
+  // FIXME: Why aren't these const? Get rid of the usage-initialized ivars.
+  /// \brief Return whether \p Addr is part of this objects load memory.
+  virtual bool isInObject(uint64_t Addr);
+
   /// \brief Look for an external function symbol at \p Addr.
   /// (References through the ELF PLT, Mach-O stubs, and similar).
   /// \returns The function's name, or the empty string if not found.

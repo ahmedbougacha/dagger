@@ -344,6 +344,13 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream,
                                 int64_t Value, uint64_t Address) {
 }
 
+bool MCObjectSymbolizer::isInObject(uint64_t Addr) {
+  // FIXME: Finding the section is convenient, but overkill.
+  // FIXME: Once this function is made efficient, it should be checked to
+  // return early in all the other expensive methods.
+  return findSectionContaining(Addr) != nullptr;
+}
+
 StringRef MCObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
   return StringRef();
 }
