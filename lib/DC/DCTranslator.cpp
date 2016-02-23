@@ -78,12 +78,6 @@ void DCTranslator::initializeTranslationModule() {
     DTIT.reset(new DCTranslatedInstTracker);
 }
 
-void DCTranslator::translateAllKnownFunctions() {
-  MCObjectDisassembler::AddressSetTy DummyTailCallTargets;
-  for (const auto &F : MCM.funcs())
-    translateFunction(&*F, DummyTailCallTargets);
-}
-
 DCTranslator::~DCTranslator() {}
 
 Function *DCTranslator::getInitRegSetFunction() {
@@ -108,9 +102,9 @@ isDefinedInModuleSet(std::vector<std::unique_ptr<Module>> &ModuleSet,
   return false;
 }
 
-Function *DCTranslator::translateRecursivelyAt(uint64_t Addr) {
+Function *DCTranslator::translateRecursivelyAt(uint64_t EntryAddr) {
   SmallSetVector<uint64_t, 16> WorkList;
-  WorkList.insert(Addr);
+  WorkList.insert(EntryAddr);
   for (size_t i = 0; i < WorkList.size(); ++i) {
     uint64_t Addr = WorkList[i];
     Function *F = DIS.getFunction(Addr);
@@ -121,11 +115,6 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t Addr) {
       continue;
 
     DEBUG(dbgs() << "Translating function at " << utohexstr(Addr) << "\n");
-
-    if (!MCOD)
-      report_fatal_error(("Unable to translate unknown function at " +
-                          utohexstr(Addr) + " without a disassembler!")
-                             .c_str());
 
     // Look for an external function.
     // If the function isn't even in the main object, just call it by address.
@@ -147,15 +136,23 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t Addr) {
       }
     }
 
-    MCObjectDisassembler::AddressSetTy CallTargets, TailCallTargets;
-    MCFunction *MCFN =
-        MCOD->createFunction(&MCM, Addr, CallTargets, TailCallTargets);
+    // Now look for the function if it was already in the module.
+    MCFunction *MCFN = MCM.findFunctionAt(Addr);
+    // If it wasn't, we need to disassemble it.
+    if (!MCFN) {
+      if (!MCOD)
+        report_fatal_error(("Unable to translate unknown function at " +
+                            utohexstr(Addr) + " without a disassembler!")
+                               .c_str());
+      MCFN = MCOD->createFunction(&MCM, Addr);
+    }
+    assert(MCFN && "Wasn't able to translate function!");
 
-    translateFunction(MCFN, TailCallTargets);
-    for (auto CallTarget : CallTargets)
+    translateFunction(*MCFN);
+    for (uint64_t CallTarget : MCFN->callees())
       WorkList.insert(CallTarget);
   }
-  return DIS.getFunction(Addr);
+  return DIS.getFunction(EntryAddr);
 }
 
 namespace {
@@ -189,27 +186,23 @@ static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
   return LHS->getStartAddr() < RHS->getStartAddr();
 }
 
-void DCTranslator::translateFunction(
-    MCFunction *MCFN,
-    const MCObjectDisassembler::AddressSetTy &TailCallTargets) {
-
-  AddrPrettyStackTraceEntry X(MCFN->getEntryBlock()->getStartAddr(),
-                              "Function");
+void DCTranslator::translateFunction(const MCFunction &MCFN) {
+  AddrPrettyStackTraceEntry X(MCFN.getStartAddr(), "Function");
 
   // If we already translated this function, bail out.
-  if (!DIS.getFunction(MCFN->getEntryBlock()->getStartAddr())->empty())
+  if (!DIS.getFunction(MCFN.getStartAddr())->empty())
     return;
 
-  DIS.SwitchToFunction(MCFN);
+  DIS.SwitchToFunction(&MCFN);
 
   // First, make sure all basic blocks are created, and sorted.
   std::vector<const MCBasicBlock *> BasicBlocks;
-  std::copy(MCFN->begin(), MCFN->end(), std::back_inserter(BasicBlocks));
+  std::copy(MCFN.begin(), MCFN.end(), std::back_inserter(BasicBlocks));
   std::sort(BasicBlocks.begin(), BasicBlocks.end(), BBBeginAddrLess);
   for (auto &BB : BasicBlocks)
     DIS.getOrCreateBasicBlock(BB->getStartAddr());
 
-  for (auto &BB : *MCFN) {
+  for (auto &BB : MCFN) {
     AddrPrettyStackTraceEntry X(BB->getStartAddr(), "Basic Block");
 
     DEBUG(dbgs() << "Translating basic block starting at "
@@ -231,7 +224,7 @@ void DCTranslator::translateFunction(
     DIS.FinalizeBasicBlock();
   }
 
-  for (auto TailCallTarget : TailCallTargets)
+  for (uint64_t TailCallTarget : MCFN.tailcallees())
     DIS.createExternalTailCallBB(TailCallTarget);
 
   Function *Fn = DIS.FinalizeFunction();

@@ -234,7 +234,8 @@ int main(int argc, char **argv) {
   DT->createMainFunctionWrapper(
       DT->translateRecursivelyAt(TranslationEntrypoint));
 
-  DT->translateAllKnownFunctions();
+  for (auto &F : MCM->funcs())
+    DT->translateRecursivelyAt(F->getStartAddr());
 
   std::unique_ptr<DCTranslatedInstTracker> DTIT;
   Module *M = DT->finalizeTranslationModule(&DTIT);

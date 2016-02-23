@@ -50,12 +50,13 @@ public:
   ~MCModule();
 
   /// \brief Create a new MCFunction.
-  MCFunction *createFunction(StringRef Name, uint64_t BeginAddr);
+  MCFunction *createFunction(StringRef Name, uint64_t StartAddr);
 
-  MCFunction *findFunctionAt(uint64_t BeginAddr);
+  MCFunction *findFunctionAt(uint64_t StartAddr);
 
   /// \name Access to the owned function list.
   /// @{
+  // FIXME: Iterating on unique_ptrs is a pain, could it be hidden?
   typedef FunctionListTy::const_iterator const_func_iterator;
   typedef FunctionListTy::      iterator       func_iterator;
   const_func_iterator func_begin() const { return Functions.begin(); }

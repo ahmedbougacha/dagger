@@ -86,7 +86,7 @@ MCModule *MCObjectDisassembler::buildModule() {
               });
   }
 
-  buildCFG(Module);
+  buildCFG(*Module);
   return Module;
 }
 
@@ -110,9 +110,8 @@ static void RemoveDupsFromAddressVector(MCObjectDisassembler::AddressSetTy &V) {
   V.erase(std::unique(V.begin(), V.end()), V.end());
 }
 
-void MCObjectDisassembler::buildCFG(MCModule *Module) {
+void MCObjectDisassembler::buildCFG(MCModule &Module) {
   AddressSetTy CallTargets;
-  AddressSetTy TailCallTargets;
 
   for (const SymbolRef &Symbol : Obj.symbols()) {
     SymbolRef::Type SymType = Symbol.getType();
@@ -125,12 +124,13 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
         SymAddr = MOS->getEffectiveLoadAddr(SymAddr);
       if (getRegionFor(SymAddr).Bytes.empty())
         continue;
-      createFunction(Module, SymAddr, CallTargets, TailCallTargets);
+      MCFunction *MCFN = createFunction(&Module, SymAddr);
+      for (uint64_t Callee : MCFN->callees())
+        CallTargets.push_back(Callee);
     }
   }
 
   RemoveDupsFromAddressVector(CallTargets);
-  RemoveDupsFromAddressVector(TailCallTargets);
 
   AddressSetTy NewCallTargets;
 
@@ -139,7 +139,9 @@ void MCObjectDisassembler::buildCFG(MCModule *Module) {
     for (uint64_t CallTarget : CallTargets) {
       if (MOS)
         CallTarget = MOS->getEffectiveLoadAddr(CallTarget);
-      createFunction(Module, CallTarget, NewCallTargets, TailCallTargets);
+      MCFunction *MCFN = createFunction(&Module, CallTarget);
+      for (uint64_t Callee : MCFN->callees())
+        NewCallTargets.push_back(Callee);
     }
     // Next, forget about those targets, since we just handled them.
     CallTargets.clear();
@@ -178,14 +180,17 @@ namespace {
 // for all elements in the worklist:
 // - create basic block, update preds/succs, etc..
 //
-void MCObjectDisassembler::disassembleFunctionAt(
-    MCModule *Module, MCFunction *MCFN, uint64_t BBBeginAddr,
-    AddressSetTy &CallTargets, AddressSetTy &TailCallTargets) {
+void MCObjectDisassembler::disassembleFunctionAt(MCModule *Module,
+                                                 MCFunction *MCFN,
+                                                 uint64_t BBBeginAddr) {
   std::map<uint64_t, BBInfo> BBInfos;
 
   typedef SmallSetVector<uint64_t, 16> AddrWorklistTy;
 
   AddrWorklistTy Worklist;
+
+  AddressSetTy CallTargets;
+  AddressSetTy TailCallTargets;
 
   DEBUG(dbgs() << "Starting CFG at " << utohexstr(BBBeginAddr) << "\n");
 
@@ -360,12 +365,17 @@ void MCObjectDisassembler::disassembleFunctionAt(
       Succ->Predecessors.push_back(MCBB);
     }
   }
+
+  RemoveDupsFromAddressVector(CallTargets);
+  // Finally, keep track of all our callees.
+  MCFN->Callees.insert(MCFN->Callees.begin(), CallTargets.begin(),
+                       CallTargets.end());
+  MCFN->TailCallees.insert(MCFN->TailCallees.begin(), TailCallTargets.begin(),
+                           TailCallTargets.end());
 }
 
 MCFunction *
-MCObjectDisassembler::createFunction(MCModule *Module, uint64_t BeginAddr,
-                                     AddressSetTy &CallTargets,
-                                     AddressSetTy &TailCallTargets) {
+MCObjectDisassembler::createFunction(MCModule *Module, uint64_t BeginAddr) {
   AddrPrettyStackTraceEntry X(BeginAddr, "Function");
 
   // First, check if this is an external function.
@@ -382,6 +392,6 @@ MCObjectDisassembler::createFunction(MCModule *Module, uint64_t BeginAddr,
   // Finally, just create a new one.
   MCFunction *MCFN =
       Module->createFunction(("fn_" + utohexstr(BeginAddr)).c_str(), BeginAddr);
-  disassembleFunctionAt(Module, MCFN, BeginAddr, CallTargets, TailCallTargets);
+  disassembleFunctionAt(Module, MCFN, BeginAddr);
   return MCFN;
 }

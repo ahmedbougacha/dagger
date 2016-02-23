@@ -14,15 +14,15 @@
 
 using namespace llvm;
 
-MCFunction *MCModule::createFunction(StringRef Name, uint64_t BeginAddr) {
-  std::unique_ptr<MCFunction> MCF(new MCFunction(Name, this));
-  FunctionsByAddr.insert(std::make_pair(BeginAddr, MCF.get()));
+MCFunction *MCModule::createFunction(StringRef Name, uint64_t StartAddr) {
+  std::unique_ptr<MCFunction> MCF(new MCFunction(Name, StartAddr, this));
+  FunctionsByAddr.insert(std::make_pair(StartAddr, MCF.get()));
   Functions.push_back(std::move(MCF));
   return Functions.back().get();
 }
 
-MCFunction *MCModule::findFunctionAt(uint64_t BeginAddr) {
-  auto FnIt = FunctionsByAddr.find(BeginAddr);
+MCFunction *MCModule::findFunctionAt(uint64_t StartAddr) {
+  auto FnIt = FunctionsByAddr.find(StartAddr);
   if (FnIt == FunctionsByAddr.end())
     return nullptr;
   return FnIt->second;

@@ -27,13 +27,13 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
-#include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
 #include <vector>
 
 namespace llvm {
 class MCFunction;
 class MCInstPrinter;
 class MCModule;
+class MCObjectDisassembler;
 class MCObjectSymbolizer;
 }
 
@@ -94,14 +94,10 @@ public:
   Module *finalizeTranslationModule(
       std::unique_ptr<DCTranslatedInstTracker> *OldDTIT = nullptr);
 
-  Function *translateRecursivelyAt(uint64_t Addr);
-
-  void translateAllKnownFunctions();
+  Function *translateRecursivelyAt(uint64_t EntryAddr);
 
 private:
-  void
-  translateFunction(MCFunction *MCFN,
-                    const MCObjectDisassembler::AddressSetTy &TailCallTargets);
+  void translateFunction(const MCFunction &MCFN);
 
   // Create and setup a new module for translation.
   void initializeTranslationModule();

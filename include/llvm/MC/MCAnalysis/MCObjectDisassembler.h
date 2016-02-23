@@ -58,9 +58,8 @@ public:
 
   typedef std::vector<uint64_t> AddressSetTy;
   /// \name Create a new MCFunction.
-  MCFunction *createFunction(MCModule *Module, uint64_t BeginAddr,
-                             AddressSetTy &CallTargets,
-                             AddressSetTy &TailCallTargets);
+  // FIXME: This doesn't always "create", what about getOrCreate?
+  MCFunction *createFunction(MCModule *Module, uint64_t BeginAddr);
 
   /// \brief Set the region on which to fallback if disassembly was requested
   /// somewhere not accessible in the object file.
@@ -101,11 +100,10 @@ private:
   /// NOTE: Each MCBasicBlock in a MCFunction is backed by a single MCTextAtom.
   /// When the CFG is built, contiguous instructions that were previously in a
   /// single MCTextAtom will be split in multiple basic block atoms.
-  void buildCFG(MCModule *Module);
+  void buildCFG(MCModule &Module);
 
   void disassembleFunctionAt(MCModule *Module, MCFunction *MCFN,
-                             uint64_t BeginAddr, AddressSetTy &CallTargets,
-                             AddressSetTy &TailCallTargets);
+                             uint64_t BeginAddr);
 };
 
 }

@@ -15,8 +15,8 @@ using namespace llvm;
 
 // MCFunction
 
-MCFunction::MCFunction(StringRef Name, MCModule *Parent)
-  : Name(Name), ParentModule(Parent)
+MCFunction::MCFunction(StringRef Name, uint64_t StartAddr, MCModule *Parent)
+  : Name(Name), StartAddr(StartAddr), ParentModule(Parent)
 {}
 
 MCFunction::~MCFunction() {
@@ -59,8 +59,11 @@ const MCBasicBlock *MCFunction::findFirstAfter(uint64_t Addr) const {
   return const_cast<MCFunction *>(this)->findFirstAfter(Addr);
 }
 
-MCBasicBlock &MCFunction::createBlock(uint64_t StartAddr) {
-  Blocks.push_back(new MCBasicBlock(StartAddr, this));
+MCBasicBlock &MCFunction::createBlock(uint64_t BlockStartAddr) {
+  // FIXME: Can we avoid this with a better API?
+  assert((!empty() || BlockStartAddr == StartAddr) &&
+         "First block and function should start at the same address!");
+  Blocks.push_back(new MCBasicBlock(BlockStartAddr, this));
   return *Blocks.back();
 }
 

@@ -121,13 +121,18 @@ class MCFunction {
   MCFunction& operator=(const MCFunction&) = delete;
 
   std::string Name;
+  uint64_t StartAddr;
   MCModule *ParentModule;
   typedef std::vector<MCBasicBlock *> BasicBlockListTy;
   BasicBlockListTy Blocks;
 
+  typedef std::vector<uint64_t> CalleeListTy;
+  CalleeListTy Callees;
+  CalleeListTy TailCallees;
+
   // MCModule owns the function.
   friend class MCModule;
-  MCFunction(StringRef Name, MCModule *Parent);
+  MCFunction(StringRef Name, uint64_t StartAddr, MCModule *Parent);
 
   // MCObjectDisassembler fills in the function.
   friend class MCObjectDisassembler;
@@ -141,6 +146,8 @@ public:
   MCBasicBlock &createBlock(uint64_t StartAddr);
 
   StringRef getName() const { return Name; }
+
+  uint64_t getStartAddr() const { return StartAddr; }
 
   /// \name Get the owning MC Module.
   /// @{
@@ -181,6 +188,36 @@ public:
   /// \brief Find the first basic block, if any, that follows \p Addr.
   const MCBasicBlock *findFirstAfter(uint64_t Addr) const;
         MCBasicBlock *findFirstAfter(uint64_t Addr);
+  /// @}
+
+  /// \name Access to the function's callees.
+  /// @{
+  typedef CalleeListTy::const_iterator const_callee_iterator;
+  typedef CalleeListTy::      iterator       callee_iterator;
+
+  const_callee_iterator callee_begin() const { return Callees.begin(); }
+        callee_iterator callee_begin()       { return Callees.begin(); }
+  const_callee_iterator   callee_end() const { return Callees.end(); }
+        callee_iterator   callee_end()       { return Callees.end(); }
+
+  iterator_range<callee_iterator> callees() {
+    return make_range(callee_begin(), callee_end());
+  }
+  iterator_range<const_callee_iterator> callees() const {
+    return make_range(callee_begin(), callee_end());
+  }
+
+  const_callee_iterator tailcallee_begin() const { return TailCallees.begin(); }
+        callee_iterator tailcallee_begin()       { return TailCallees.begin(); }
+  const_callee_iterator   tailcallee_end() const { return TailCallees.end(); }
+        callee_iterator   tailcallee_end()       { return TailCallees.end(); }
+
+  iterator_range<callee_iterator> tailcallees() {
+    return make_range(tailcallee_begin(), tailcallee_end());
+  }
+  iterator_range<const_callee_iterator> tailcallees() const {
+    return make_range(tailcallee_begin(), tailcallee_end());
+  }
   /// @}
 };
 

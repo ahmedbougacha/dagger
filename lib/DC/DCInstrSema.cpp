@@ -210,7 +210,7 @@ extern "C" uintptr_t __llvm_dc_current_instr = 0;
 
 void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
   assert(!MCFN->empty() && "Trying to translate empty MC function");
-  const uint64_t StartAddr = MCFN->getEntryBlock()->getStartAddr();
+  const uint64_t StartAddr = MCFN->getStartAddr();
 
   TheFunction = getFunction(StartAddr);
   TheFunction->setDoesNotAlias(1);
