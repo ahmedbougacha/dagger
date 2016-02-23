@@ -158,6 +158,18 @@ public:
        << "\n";
   }
 };
+class InstPrettyStackTraceEntry : public PrettyStackTraceEntry {
+public:
+  uint64_t Addr;
+  unsigned Opcode;
+  InstPrettyStackTraceEntry(uint64_t Addr, unsigned Opcode)
+      : PrettyStackTraceEntry(), Addr(Addr), Opcode(Opcode) {}
+
+  void print(raw_ostream &OS) const override {
+    OS << "DC: Translating instruction " << Opcode << " at address "
+       << utohexstr(Addr) << "\n";
+  }
+};
 } // end anonymous namespace
 
 static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
@@ -192,6 +204,7 @@ void DCTranslator::translateFunction(
                  << " instructions.\n");
     DIS.SwitchToBasicBlock(BB);
     for (auto &I : *BB) {
+      InstPrettyStackTraceEntry X(I.Address, I.Inst.getOpcode());
       DEBUG(dbgs() << "Translating instruction:\n "; dbgs() << I.Inst << "\n";);
       DCTranslatedInst TI(I);
       if (!DIS.translateInst(I, TI)) {
