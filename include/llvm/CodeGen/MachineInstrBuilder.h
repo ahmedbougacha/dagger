@@ -428,28 +428,26 @@ class MIBundleBuilder {
 public:
   /// Create an MIBundleBuilder that inserts instructions into a new bundle in
   /// BB above the bundle or instruction at Pos.
-  MIBundleBuilder(MachineBasicBlock &BB,
-                  MachineBasicBlock::iterator Pos)
-    : MBB(BB), Begin(Pos.getInstrIterator()), End(Begin) {}
+  MIBundleBuilder(MachineBasicBlock &BB, MachineBasicBlock::iterator Pos)
+      : MBB(BB), Begin(Pos.getInstrIterator()), End(Begin) {}
 
   /// Create a bundle from the sequence of instructions between B and E.
-  MIBundleBuilder(MachineBasicBlock &BB,
-                  MachineBasicBlock::iterator B,
+  MIBundleBuilder(MachineBasicBlock &BB, MachineBasicBlock::iterator B,
                   MachineBasicBlock::iterator E)
-    : MBB(BB), Begin(B.getInstrIterator()), End(E.getInstrIterator()) {
+      : MBB(BB), Begin(B.getInstrIterator()), End(E.getInstrIterator()) {
     assert(B != E && "No instructions to bundle");
     ++B;
     while (B != E) {
-      MachineInstr *MI = B;
+      MachineInstr &MI = *B;
       ++B;
-      MI->bundleWithPred();
+      MI.bundleWithPred();
     }
   }
 
   /// Create an MIBundleBuilder representing an existing instruction or bundle
   /// that has MI as its head.
   explicit MIBundleBuilder(MachineInstr *MI)
-    : MBB(*MI->getParent()), Begin(MI), End(getBundleEnd(MI)) {}
+      : MBB(*MI->getParent()), Begin(MI), End(getBundleEnd(*MI)) {}
 
   /// Return a reference to the basic block containing this bundle.
   MachineBasicBlock &getMBB() const { return MBB; }
@@ -472,7 +470,7 @@ public:
     if (I == Begin) {
       if (!empty())
         MI->bundleWithSucc();
-      Begin = MI->getInstrIterator();
+      Begin = MI->getIterator();
       return *this;
     }
     if (I == End) {

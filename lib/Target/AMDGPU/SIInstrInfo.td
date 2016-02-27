@@ -371,6 +371,10 @@ def IMM16bit : PatLeaf <(imm),
   [{return isUInt<16>(N->getZExtValue());}]
 >;
 
+def SIMM16bit : PatLeaf <(imm),
+  [{return isInt<16>(N->getSExtValue());}]
+>;
+
 def IMM20bit : PatLeaf <(imm),
   [{return isUInt<20>(N->getZExtValue());}]
 >;
@@ -435,6 +439,7 @@ def MubufOffsetMatchClass : AsmOperandClass {
   let Name = "MubufOffset";
   let ParserMethod = "parseMubufOptionalOps";
   let RenderMethod = "addImmOperands";
+  let IsOptional = 1;
 }
 
 class DSOffsetBaseMatchClass <string parser> : AsmOperandClass {
@@ -442,6 +447,7 @@ class DSOffsetBaseMatchClass <string parser> : AsmOperandClass {
   let ParserMethod = parser;
   let RenderMethod = "addImmOperands";
   let PredicateMethod = "isDSOffset";
+  let IsOptional = 1;
 }
 
 def DSOffsetMatchClass : DSOffsetBaseMatchClass <"parseDSOptionalOps">;
@@ -452,6 +458,7 @@ def DSOffset01MatchClass : AsmOperandClass {
   let ParserMethod = "parseDSOff01OptionalOps";
   let RenderMethod = "addImmOperands";
   let PredicateMethod = "isDSOffset01";
+  let IsOptional = 1;
 }
 
 class GDSBaseMatchClass <string parser> : AsmOperandClass {
@@ -459,6 +466,7 @@ class GDSBaseMatchClass <string parser> : AsmOperandClass {
   let PredicateMethod = "isImm";
   let ParserMethod = parser;
   let RenderMethod = "addImmOperands";
+  let IsOptional = 1;
 }
 
 def GDSMatchClass : GDSBaseMatchClass <"parseDSOptionalOps">;
@@ -469,6 +477,7 @@ class GLCBaseMatchClass <string parser> : AsmOperandClass {
   let PredicateMethod = "isImm";
   let ParserMethod = parser;
   let RenderMethod = "addImmOperands";
+  let IsOptional = 1;
 }
 
 def GLCMubufMatchClass : GLCBaseMatchClass <"parseMubufOptionalOps">;
@@ -479,6 +488,7 @@ class SLCBaseMatchClass <string parser> : AsmOperandClass {
   let PredicateMethod = "isImm";
   let ParserMethod = parser;
   let RenderMethod = "addImmOperands";
+  let IsOptional = 1;
 }
 
 def SLCMubufMatchClass : SLCBaseMatchClass <"parseMubufOptionalOps">;
@@ -490,6 +500,7 @@ class TFEBaseMatchClass <string parser> : AsmOperandClass {
   let PredicateMethod = "isImm";
   let ParserMethod = parser;
   let RenderMethod = "addImmOperands";
+  let IsOptional = 1;
 }
 
 def TFEMubufMatchClass : TFEBaseMatchClass <"parseMubufOptionalOps">;
@@ -523,13 +534,42 @@ def SMRDLiteralOffsetMatchClass : SMRDOffsetBaseMatchClass <
   "isSMRDLiteralOffset"
 >;
 
+class OptionalImmAsmOperand <string OpName> : AsmOperandClass {
+  let Name = "Imm"#OpName;
+  let PredicateMethod = "isImm";
+  let RenderMethod = "addImmOperands";
+  let IsOptional = 1;
+}
+
+def DMaskMatchClass : AsmOperandClass {
+  let Name = "DMask";
+  let PredicateMethod = "isDMask";
+  let ParserMethod = "parseDMask";
+  let RenderMethod = "addImmOperands";
+  let IsOptional = 1;
+}
+
+class NamedBitMatchClass<string BitName> : AsmOperandClass {
+  let Name = "Imm"#BitName;
+  let PredicateMethod = "is"#BitName;
+  let ParserMethod = "parse"#BitName;
+  let RenderMethod = "addImmOperands";
+  let IsOptional = 1;
+}
+
+class NamedBitOperand<string BitName> : Operand<i1> {
+  let PrintMethod = "print"#BitName;
+}
+
 let OperandType = "OPERAND_IMMEDIATE" in {
 
 def offen : Operand<i1> {
   let PrintMethod = "printOffen";
+  let ParserMatchClass = OptionalImmAsmOperand<"offen">;
 }
 def idxen : Operand<i1> {
   let PrintMethod = "printIdxen";
+  let ParserMatchClass = OptionalImmAsmOperand<"idxen">;
 }
 def addr64 : Operand<i1> {
   let PrintMethod = "printAddr64";
@@ -607,7 +647,29 @@ def smrd_literal_offset : Operand <i32> {
   let ParserMatchClass = SMRDLiteralOffsetMatchClass;
 }
 
+def dmask : Operand <i32> {
+  let PrintMethod = "printDMask";
+  let ParserMatchClass = DMaskMatchClass;
+}
+
+def unorm : NamedBitOperand<"UNorm"> {
+  let ParserMatchClass = NamedBitMatchClass<"UNorm">;
+}
+
+def da : NamedBitOperand<"DA"> {
+  let ParserMatchClass = NamedBitMatchClass<"DA">;
+}
+
+def r128 : NamedBitOperand<"R128"> {
+  let ParserMatchClass = NamedBitMatchClass<"R128">;
+}
+
+def lwe : NamedBitOperand<"LWE"> {
+  let ParserMatchClass = NamedBitMatchClass<"LWE">;
+}
+
 } // End OperandType = "OPERAND_IMMEDIATE"
+
 
 def VOPDstS64 : VOPDstOperand <SReg_64>;
 
@@ -861,6 +923,11 @@ multiclass SOP2_64_32 <sop2 op, string opName, list<dag> pattern> : SOP2_m <
     opName#" $dst, $src0, $src1", pattern
 >;
 
+multiclass SOP2_64_32_32 <sop2 op, string opName, list<dag> pattern> : SOP2_m <
+    op, opName, (outs SReg_64:$dst), (ins SSrc_32:$src0, SSrc_32:$src1),
+    opName#" $dst, $src0, $src1", pattern
+>;
+
 class SOPC_Helper <bits<7> op, RegisterOperand rc, ValueType vt,
                     string opName, PatLeaf cond> : SOPC <
   op, (outs), (ins rc:$src0, rc:$src1),
@@ -1014,20 +1081,28 @@ multiclass SMRD_m <smrd op, string opName, bit imm, dag outs, dag ins,
   }
 }
 
-multiclass SMRD_Inval <smrd op, string opName,
-                       SDPatternOperator node> {
-  let hasSideEffects = 1, mayStore = 1 in {
-    def "" : SMRD_Pseudo <opName, (outs), (ins), [(node)]>;
+multiclass SMRD_Special <smrd op, string opName, dag outs,
+                       string opStr = "",
+                       list<dag> pattern = []> {
+  let hasSideEffects = 1 in {
+    def "" : SMRD_Pseudo <opName, outs, (ins), pattern>;
 
     let sbase = 0, offset = 0 in {
       let sdst = 0 in {
-        def _si : SMRD_Real_si <op.SI, opName, 0, (outs), (ins), opName>;
+        def _si : SMRD_Real_si <op.SI, opName, 0, outs, (ins), opName#opStr>;
       }
 
       let glc = 0, sdata = 0 in {
-        def _vi : SMRD_Real_vi <op.VI, opName, 0, (outs), (ins), opName>;
+        def _vi : SMRD_Real_vi <op.VI, opName, 0, outs, (ins), opName#opStr>;
       }
     }
+  }
+}
+
+multiclass SMRD_Inval <smrd op, string opName,
+                     SDPatternOperator node> {
+  let mayStore = 1 in {
+    defm : SMRD_Special<op, opName, (outs), "", [(node)]>;
   }
 }
 
@@ -1035,6 +1110,18 @@ class SMEM_Inval <bits<8> op, string opName, SDPatternOperator node> :
   SMRD_Real_vi<op, opName, 0, (outs), (ins), opName, [(node)]> {
   let hasSideEffects = 1;
   let mayStore = 1;
+  let sbase = 0;
+  let sdata = 0;
+  let glc = 0;
+  let offset = 0;
+}
+
+class SMEM_Ret <bits<8> op, string opName, SDPatternOperator node> :
+  SMRD_Real_vi<op, opName, 0, (outs SReg_64:$dst), (ins),
+  opName#" $dst", [(set i64:$dst, (node))]> {
+  let hasSideEffects = 1;
+  let mayStore = ?;
+  let mayLoad = ?;
   let sbase = 0;
   let sdata = 0;
   let glc = 0;
@@ -1646,7 +1733,7 @@ class VOP3_C_Real_si <bits<9> op, dag outs, dag ins, string asm, string opName,
 }
 
 class VOP3_C_Real_vi <bits<10> op, dag outs, dag ins, string asm, string opName,
-                     bit HasMods = 0, bit VOP3Only = 0> :
+                      bit HasMods = 0, bit VOP3Only = 0> :
   VOP3Common <outs, ins, asm, [], HasMods, VOP3Only>,
   VOP3ce_vi <op>,
   SIMCInstr <opName#"_e64", SISubtarget.VI> {
@@ -2866,7 +2953,7 @@ multiclass FLAT_ATOMIC <flat op, string asm_name, RegisterClass vdst_rc,
     dag outs_noret = (outs),
     string asm_noret = asm_name#" $addr, $data"#"$slc"#"$tfe"> {
 
-  let mayLoad = 1, mayStore = 1, glc = 0, vdst = 0 in {
+  let mayLoad = 1, mayStore = 1, glc = 0, vdst = 0, AsmMatchConverter = "cvtFlatAtomic" in {
     def "" : FLAT_Pseudo <NAME, outs_noret,
                           (ins VReg_64:$addr, data_rc:$data,
                                slc_flat_atomic:$slc, tfe_flat_atomic:$tfe), []>,
@@ -2883,7 +2970,7 @@ multiclass FLAT_ATOMIC <flat op, string asm_name, RegisterClass vdst_rc,
                             asm_noret>;
   }
 
-  let glc = 1, hasPostISelHook = 1 in {
+  let glc = 1, hasPostISelHook = 1, AsmMatchConverter = "cvtFlatAtomic" in {
     defm _RTN : FLAT_AtomicRet_m <op, (outs vdst_rc:$vdst),
                         (ins VReg_64:$addr, data_rc:$data, slc_flat_atomic:$slc,
                              tfe_flat_atomic:$tfe),
@@ -2903,6 +2990,7 @@ class MIMG_Helper <bits<7> op, dag outs, dag ins, string asm,
   let hasPostISelHook = 1;
   let DecoderNamespace = dns;
   let isAsmParserOnly = !if(!eq(dns,""), 1, 0);
+  let AsmMatchConverter = "cvtMIMG";
 }
 
 class MIMG_NoSampler_Helper <bits<7> op, string asm,
@@ -2911,11 +2999,10 @@ class MIMG_NoSampler_Helper <bits<7> op, string asm,
                              string dns=""> : MIMG_Helper <
   op,
   (outs dst_rc:$vdata),
-  (ins i32imm:$dmask, i1imm:$unorm, i1imm:$glc, i1imm:$da, i1imm:$r128,
-       i1imm:$tfe, i1imm:$lwe, i1imm:$slc, addr_rc:$vaddr,
-       SReg_256:$srsrc),
-  asm#" $vdata, $dmask, $unorm, $glc, $da, $r128,"
-     #" $tfe, $lwe, $slc, $vaddr, $srsrc",
+  (ins addr_rc:$vaddr, SReg_256:$srsrc,
+       dmask:$dmask, unorm:$unorm, glc:$glc, slc:$slc,
+       r128:$r128, tfe:$tfe, lwe:$lwe, da:$da),
+  asm#" $vdata, $vaddr, $srsrc$dmask$unorm$glc$slc$r128$tfe$lwe$da",
   dns> {
   let ssamp = 0;
 }
@@ -2944,11 +3031,11 @@ class MIMG_Store_Helper <bits<7> op, string asm,
                          RegisterClass addr_rc> : MIMG_Helper <
   op,
   (outs),
-  (ins data_rc:$vdata, i32imm:$dmask, i1imm:$unorm, i1imm:$glc, i1imm:$da, i1imm:$r128,
-       i1imm:$tfe, i1imm:$lwe, i1imm:$slc, addr_rc:$vaddr,
-       SReg_256:$srsrc),
-  asm#" $vdata, $dmask, $unorm, $glc, $da, $r128,"
-     #" $tfe, $lwe, $slc, $vaddr, $srsrc"> {
+  (ins data_rc:$vdata, addr_rc:$vaddr, SReg_256:$srsrc,
+       dmask:$dmask, unorm:$unorm, glc:$glc, slc:$slc,
+       r128:$r128, tfe:$tfe, lwe:$lwe, da:$da),
+  asm#" $vdata, $vaddr, $srsrc$dmask$unorm$glc$slc$r128$tfe$lwe$da"
+     > {
   let ssamp = 0;
   let mayLoad = 1; // TableGen requires this for matching with the intrinsics
   let mayStore = 1;
@@ -2981,11 +3068,10 @@ class MIMG_Sampler_Helper <bits<7> op, string asm,
                            string dns=""> : MIMG_Helper <
   op,
   (outs dst_rc:$vdata),
-  (ins i32imm:$dmask, i1imm:$unorm, i1imm:$glc, i1imm:$da, i1imm:$r128,
-       i1imm:$tfe, i1imm:$lwe, i1imm:$slc, src_rc:$vaddr,
-       SReg_256:$srsrc, SReg_128:$ssamp),
-  asm#" $vdata, $dmask, $unorm, $glc, $da, $r128,"
-     #" $tfe, $lwe, $slc, $vaddr, $srsrc, $ssamp",
+  (ins src_rc:$vaddr, SReg_256:$srsrc, SReg_128:$ssamp,
+       dmask:$dmask, unorm:$unorm, glc:$glc, slc:$slc,
+       r128:$r128, tfe:$tfe, lwe:$lwe, da:$da),
+  asm#" $vdata, $vaddr, $srsrc, $ssamp$dmask$unorm$glc$slc$r128$tfe$lwe$da",
   dns> {
   let WQM = wqm;
 }
@@ -3020,11 +3106,10 @@ class MIMG_Gather_Helper <bits<7> op, string asm,
                           RegisterClass src_rc, int wqm> : MIMG <
   op,
   (outs dst_rc:$vdata),
-  (ins i32imm:$dmask, i1imm:$unorm, i1imm:$glc, i1imm:$da, i1imm:$r128,
-       i1imm:$tfe, i1imm:$lwe, i1imm:$slc, src_rc:$vaddr,
-       SReg_256:$srsrc, SReg_128:$ssamp),
-  asm#" $vdata, $dmask, $unorm, $glc, $da, $r128,"
-     #" $tfe, $lwe, $slc, $vaddr, $srsrc, $ssamp",
+  (ins src_rc:$vaddr, SReg_256:$srsrc, SReg_128:$ssamp,
+       dmask:$dmask, unorm:$unorm, glc:$glc, slc:$slc,
+       r128:$r128, tfe:$tfe, lwe:$lwe, da:$da),
+  asm#" $vdata, $vaddr, $srsrc, $ssamp$dmask$unorm$glc$slc$r128$tfe$lwe$da",
   []> {
   let mayLoad = 1;
   let mayStore = 0;

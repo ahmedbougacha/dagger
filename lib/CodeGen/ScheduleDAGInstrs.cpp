@@ -929,7 +929,7 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
       RegisterOperands RegOpers;
       RegOpers.collect(*MI, *TRI, MRI, TrackLaneMasks, false);
       if (TrackLaneMasks) {
-        SlotIndex SlotIdx = LIS->getInstructionIndex(MI);
+        SlotIndex SlotIdx = LIS->getInstructionIndex(*MI);
         RegOpers.adjustLaneLiveness(*LIS, MRI, SlotIdx);
       }
       if (PDiffs != nullptr)
@@ -1200,8 +1200,8 @@ static void toggleBundleKillFlag(MachineInstr *MI, unsigned Reg,
   // Once we set a kill flag on an instruction, we bail out, as otherwise we
   // might set it on too many operands.  We will clear as many flags as we
   // can though.
-  auto Begin = MI->getInstrIterator();
-  auto End = getBundleEnd(MI);
+  MachineBasicBlock::instr_iterator Begin = MI->getIterator();
+  MachineBasicBlock::instr_iterator End = getBundleEnd(*MI);
   while (Begin != End) {
     for (MachineOperand &MO : (--End)->operands()) {
       if (!MO.isReg() || MO.isDef() || Reg != MO.getReg())
@@ -1334,8 +1334,8 @@ void ScheduleDAGInstrs::fixupKills(MachineBasicBlock *MBB) {
         toggleKillFlag(MI, MO);
         DEBUG(MI->dump());
         DEBUG(if (MI->getOpcode() == TargetOpcode::BUNDLE) {
-          auto Begin = MI->getInstrIterator();
-          auto End = getBundleEnd(MI);
+          MachineBasicBlock::instr_iterator Begin = MI->getIterator();
+          MachineBasicBlock::instr_iterator End = getBundleEnd(*MI);
           while (++Begin != End)
             DEBUG(Begin->dump());
         });

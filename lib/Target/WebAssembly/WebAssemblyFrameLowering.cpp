@@ -34,7 +34,6 @@ using namespace llvm;
 
 #define DEBUG_TYPE "wasm-frame-info"
 
-// TODO: Implement a red zone?
 // TODO: wasm64
 // TODO: Emit TargetOpcode::CFI_INSTRUCTION instructions
 
@@ -59,12 +58,58 @@ bool WebAssemblyFrameLowering::hasReservedCallFrame(
   return !MF.getFrameInfo()->hasVarSizedObjects();
 }
 
+
+/// Returns true if this function needs a local user-space stack pointer.
+/// Unlike a machine stack pointer, the wasm user stack pointer is a global
+/// variable, so it is loaded into a register in the prolog.
+bool WebAssemblyFrameLowering::needsSP(const MachineFunction &MF,
+                                       const MachineFrameInfo &MFI) const {
+  return MFI.getStackSize() || MFI.adjustsStack() || hasFP(MF);
+}
+
+/// Returns true if the local user-space stack pointer needs to be written back
+/// to memory by this function (this is not meaningful if needsSP is false). If
+/// false, the stack red zone can be used and only a local SP is needed.
+bool WebAssemblyFrameLowering::needsSPWriteback(
+    const MachineFunction &MF, const MachineFrameInfo &MFI) const {
+  return MFI.getStackSize() > RedZoneSize || MFI.hasCalls() ||
+         MF.getFunction()->hasFnAttribute(Attribute::NoRedZone);
+}
+
+static void writeSPToMemory(unsigned SrcReg, MachineFunction &MF,
+                            MachineBasicBlock &MBB,
+                            MachineBasicBlock::iterator &InsertPt,
+                            DebugLoc DL) {
+  auto *SPSymbol = MF.createExternalSymbolName("__stack_pointer");
+  unsigned SPAddr =
+      MF.getRegInfo().createVirtualRegister(&WebAssembly::I32RegClass);
+  const auto *TII = MF.getSubtarget<WebAssemblySubtarget>().getInstrInfo();
+
+  BuildMI(MBB, InsertPt, DL, TII->get(WebAssembly::CONST_I32), SPAddr)
+      .addExternalSymbol(SPSymbol);
+  auto *MMO = new MachineMemOperand(MachinePointerInfo(),
+                                    MachineMemOperand::MOStore, 4, 4);
+  BuildMI(MBB, InsertPt, DL, TII->get(WebAssembly::STORE_I32),
+          WebAssembly::SP32)
+      .addImm(0)
+      .addReg(SPAddr)
+      .addImm(2)  // p2align
+      .addReg(SrcReg)
+      .addMemOperand(MMO);
+  MF.getInfo<WebAssemblyFunctionInfo>()->stackifyVReg(SPAddr);
+}
+
 void WebAssemblyFrameLowering::eliminateCallFramePseudoInstr(
     MachineFunction &MF, MachineBasicBlock &MBB,
     MachineBasicBlock::iterator I) const {
-  // TODO: can we avoid using call frame pseudos altogether?
-  assert(!I->getOperand(0).getImm() &&
-         "Stack should not be adjusted around calls");
+  assert(!I->getOperand(0).getImm() && hasFP(MF) &&
+         "Call frame pseudos should only be used for dynamic stack adjustment");
+  const auto *TII = MF.getSubtarget<WebAssemblySubtarget>().getInstrInfo();
+  if (I->getOpcode() == TII->getCallFrameDestroyOpcode() &&
+      needsSPWriteback(MF, *MF.getFrameInfo())) {
+    DebugLoc DL = I->getDebugLoc();
+    writeSPToMemory(WebAssembly::SP32, MF, MBB, I, DL);
+  }
   MBB.erase(I);
 }
 
@@ -76,8 +121,8 @@ void WebAssemblyFrameLowering::emitPrologue(MachineFunction &MF,
          "WebAssembly should not have callee-saved registers");
   auto *WFI = MF.getInfo<WebAssemblyFunctionInfo>();
 
+  if (!needsSP(MF, *MFI)) return;
   uint64_t StackSize = MFI->getStackSize();
-  if (!StackSize && !MFI->adjustsStack() && !hasFP(MF)) return;
 
   const auto *TII = MF.getSubtarget<WebAssemblySubtarget>().getInstrInfo();
   auto &MRI = MF.getRegInfo();
@@ -125,21 +170,8 @@ void WebAssemblyFrameLowering::emitPrologue(MachineFunction &MF,
             WebAssembly::FP32)
         .addReg(WebAssembly::SP32);
   }
-  if (StackSize || hasFP(MF)) {
-    SPAddr = MRI.createVirtualRegister(&WebAssembly::I32RegClass);
-    // The SP32 register now has the new stacktop. Also write it back to memory.
-    BuildMI(MBB, InsertPt, DL, TII->get(WebAssembly::CONST_I32), SPAddr)
-        .addExternalSymbol(SPSymbol);
-    auto *MMO = new MachineMemOperand(MachinePointerInfo(),
-                                      MachineMemOperand::MOStore, 4, 4);
-    BuildMI(MBB, InsertPt, DL, TII->get(WebAssembly::STORE_I32),
-            WebAssembly::SP32)
-        .addImm(0)
-        .addReg(SPAddr)
-        .addImm(2)  // p2align
-        .addReg(WebAssembly::SP32)
-        .addMemOperand(MMO);
-    WFI->stackifyVReg(SPAddr);
+  if (StackSize && needsSPWriteback(MF, *MFI)) {
+    writeSPToMemory(WebAssembly::SP32, MF, MBB, InsertPt, DL);
   }
 }
 
@@ -147,7 +179,7 @@ void WebAssemblyFrameLowering::emitEpilogue(MachineFunction &MF,
                                             MachineBasicBlock &MBB) const {
   auto *MFI = MF.getFrameInfo();
   uint64_t StackSize = MFI->getStackSize();
-  if (!StackSize && !MFI->adjustsStack() && !hasFP(MF)) return;
+  if (!needsSP(MF, *MFI) || !needsSPWriteback(MF, *MFI)) return;
   auto *WFI = MF.getInfo<WebAssemblyFunctionInfo>();
   const auto *TII = MF.getSubtarget<WebAssemblySubtarget>().getInstrInfo();
   auto &MRI = MF.getRegInfo();
@@ -171,18 +203,7 @@ void WebAssemblyFrameLowering::emitEpilogue(MachineFunction &MF,
     WFI->stackifyVReg(OffsetReg);
   }
 
-  auto *SPSymbol = MF.createExternalSymbolName("__stack_pointer");
-  unsigned SPAddr = MRI.createVirtualRegister(&WebAssembly::I32RegClass);
-  BuildMI(MBB, InsertPt, DL, TII->get(WebAssembly::CONST_I32), SPAddr)
-      .addExternalSymbol(SPSymbol);
-  auto *MMO = new MachineMemOperand(MachinePointerInfo(),
-                                    MachineMemOperand::MOStore, 4, 4);
-  BuildMI(MBB, InsertPt, DL, TII->get(WebAssembly::STORE_I32),
-          WebAssembly::SP32)
-      .addImm(0)
-      .addReg(SPAddr)
-      .addImm(2)  // p2align
-      .addReg((!StackSize && hasFP(MF)) ? WebAssembly::FP32 : WebAssembly::SP32)
-      .addMemOperand(MMO);
-  WFI->stackifyVReg(SPAddr);
+  writeSPToMemory(
+      (!StackSize && hasFP(MF)) ? WebAssembly::FP32 : WebAssembly::SP32, MF,
+      MBB, InsertPt, DL);
 }
