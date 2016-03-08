@@ -625,20 +625,6 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     translateImplicit(Next());
     break;
   }
-  case ISD::INTRINSIC_VOID: {
-    Value *IndexV = getNextOperand();
-    // FIXME: the intrinsics sdnodes have variable numbers of arguments.
-    // FIXME: handle overloaded intrinsics, but how?
-    if (ConstantInt *IndexCI = dyn_cast<ConstantInt>(IndexV)) {
-      uint64_t IntID = IndexCI->getZExtValue();
-      Value *IntDecl =
-          Intrinsic::getDeclaration(TheModule, Intrinsic::ID(IntID));
-      registerResult(Builder->CreateCall(IntDecl));
-    } else {
-      llvm_unreachable("Unable to translate non-constant intrinsic ID");
-    }
-    break;
-  }
   case ISD::BSWAP: {
     Type *ResType = ResEVT.getTypeForEVT(Ctx);
     Value *Op = getNextOperand();
