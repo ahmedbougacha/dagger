@@ -25,8 +25,9 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
-#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
+#include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
@@ -37,6 +38,13 @@ EnableRegSetDiff("enable-dc-regset-diff", cl::desc(""), cl::init(false));
 
 static cl::opt<bool> EnableInstAddrSave("enable-dc-pc-save", cl::desc(""),
                                         cl::init(false));
+
+static cl::opt<bool> TranslateUnknownToUndef(
+    "dc-translate-unknown-to-undef",
+    cl::desc("Translate unknown instruction or unknown opcode in an "
+             "instruction's semantics with undef+unreachable. If false, "
+             "abort."),
+    cl::init(false));
 
 DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
                          const unsigned *SemanticsArray,
@@ -395,8 +403,17 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
 
   Idx = OpcodeToSemaIdx[CurrentInst->Inst.getOpcode()];
   if (!translateTargetInst()) {
-    if (Idx == ~0U)
-      return false;
+    if (Idx == ~0U) {
+      if (!TranslateUnknownToUndef)
+        return false;
+      errs() << "Couldn't translate instruction: \n  ";
+      errs() << "  " << DRS.MII.getName(CurrentInst->Inst.getOpcode()) << ": "
+             << CurrentInst->Inst << "\n";
+      Builder->CreateCall(
+          Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+      Builder->CreateUnreachable();
+      return true;
+    }
 
     {
       // Increment the PC before anything.
@@ -631,8 +648,16 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   default:
-    llvm_unreachable(
-        ("Unknown opcode found in semantics: " + utostr(Opcode)).c_str());
+    if (!TranslateUnknownToUndef)
+      llvm_unreachable(
+          ("Unknown opcode found in semantics: " + utostr(Opcode)).c_str());
+
+    errs() << "Couldn't translate opcode for instruction: \n  ";
+    errs() << "  " << DRS.MII.getName(CurrentInst->Inst.getOpcode()) << ": "
+           << CurrentInst->Inst << "\n";
+    errs() << "Opcode: " << Opcode << "\n";
+    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateUnreachable();
   }
 }
 
