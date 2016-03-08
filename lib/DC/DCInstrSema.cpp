@@ -395,7 +395,7 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
 
   Idx = OpcodeToSemaIdx[CurrentInst->Inst.getOpcode()];
   if (!translateTargetInst()) {
-    if (Idx == 0)
+    if (Idx == ~0U)
       return false;
 
     {

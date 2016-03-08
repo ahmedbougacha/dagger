@@ -56,10 +56,22 @@ public:
   SemanticsTarget(RecordKeeper &Records);
 };
 
-/// The semantics of a single SDNode, as an operation, taking operands and
-/// producing typed results.
-class NodeSemantics {
-public:
+struct LSResult {
+  // The index of this result in the linear semantics definitions.
+  unsigned char DefNo;
+  // The MVT::SimpleValueType of this result.
+  // 'Any' is 256, but it's never a concrete type.
+  unsigned char VT;
+
+  LSResult(unsigned char DefNo, MVT::SimpleValueType VT)
+      : DefNo(DefNo), VT(VT) {}
+};
+
+typedef std::vector<LSResult> LSResults;
+
+struct LSNode {
+  const TreePatternNode *TPN = nullptr;
+
   /// The opcode for this operation: either an ISD (for SDNodes), or DCINS
   /// (for other operations, like manipulating operands, registers, etc..)
   /// opcode.
@@ -72,24 +84,44 @@ public:
   std::vector<std::string> Operands;
 
   void addOperand(StringRef Op) { Operands.push_back(Op); }
+
+  LSNode(const TreePatternNode &TPN) : TPN(&TPN) {
+    if (TPN.getNumTypes()) {
+      for (auto &Ty : TPN.getExtTypes())
+        Types.push_back(Ty.getConcrete());
+    } else {
+      Types.push_back(MVT::isVoid);
+    }
+  }
 };
 
 class InstSemantics {
 public:
-  std::vector<NodeSemantics> Semantics;
+  const TreePattern *Pattern = nullptr;
 
-  /// Construct semantics for the pattern \p TP, for instruction \p CGI.
-  InstSemantics(SemanticsTarget &Target, const CodeGenInstruction &CGI,
-                const TreePattern &TP);
-  /// Default constructor for empty semantics.
-  InstSemantics();
+  std::vector<LSNode> Semantics;
+
+  SmallVector<Record *, 1> ExplicitDefs;
+  SmallVector<Record *, 1> ImplicitDefs;
+
+  // A reference to the last op that had at least one non-void definition,
+  // as its index in the Semantics list.
+  unsigned LastDefSemaIdx = ~0U;
+  // As well as its first def index.
+  unsigned LastDefNo = ~0U;
+
+  // Whether these semantics use an intrinsic.
+  bool HasIntrinsic = false;
+  // Whether these semantics use a complex pattern.
+  bool HasComplexPattern = false;
 };
 
-/// The core of the Pattern->Semantics translation, the "flattener".
-class Flattener {
+/// The core of the Pattern->Semantics translation: a linearization of the
+/// semantics pattern DAG.
+class LinearSemantics {
 public:
-  Flattener(SemanticsTarget &Target, const CodeGenInstruction &CGI,
-            InstSemantics &I)
+  LinearSemantics(SemanticsTarget &Target, const CodeGenInstruction &CGI,
+                  InstSemantics &I)
       : Target(Target), CGI(CGI), I(I), CurDefNo(0) {}
 
 private:
@@ -97,7 +129,6 @@ private:
   const CodeGenInstruction &CGI;
   InstSemantics &I;
 
-  SmallPtrSet<Record *, 1> EliminatedImplicitRegs;
   StringMap<unsigned> OperandByName;
 
   unsigned CurDefNo;
@@ -113,34 +144,18 @@ private:
     return nullptr;
   }
 
-  /// Set the types of \p NS to what was inferred for \p TPN, or MVT::isVoid if
-  /// the node has no result.
-  void setNSTypeFromNode(NodeSemantics &NS, const TreePatternNode *TPN) {
-    if (TPN->getNumTypes()) {
-      for (auto &Ty : TPN->getExtTypes())
-        NS.Types.push_back(Ty.getConcrete());
-    } else {
-      NS.Types.push_back(MVT::isVoid);
-    }
-  }
-
   /// Add the operation \p NS to the instruction semantics, keeping track of
   /// the defined values.
-  void addSemantics(const NodeSemantics &NS) {
+  void addSemantics(const LSNode &NS) {
+    const unsigned FirstDefNo = CurDefNo;
     for (auto &Ty : NS.Types)
       if (Ty != MVT::isVoid)
         ++CurDefNo;
-    I.Semantics.push_back(NS);
-  }
-
-  /// Add the results of \p Prev as operands to \p NS.
-  void addResOperand(NodeSemantics &NS, const NodeSemantics &Prev) {
-    unsigned FirstDefNo = CurDefNo - (Prev.Types.size() - 1);
-    for (unsigned i = 0, e = Prev.Types.size(); i != e; ++i) {
-      if (Prev.Types[i] != MVT::isVoid)
-        NS.addOperand(utostr(FirstDefNo + i));
+    if (FirstDefNo != CurDefNo) {
+      I.LastDefNo = FirstDefNo;
+      I.LastDefSemaIdx = I.Semantics.size();
     }
-    addSemantics(Prev);
+    I.Semantics.push_back(NS);
   }
 
   /// Make node semantics from an Operand patern:
@@ -153,13 +168,12 @@ private:
   /// - if \p TPN is an OPERAND_IMMEDIATE Operand, generate:
   ///     DCINS::CONSTANT_OP, <inferred type>, <MIOperandNo of the Operand>
   ///
-  /// Also, add the values defined by this node as operands to \p Parent.
-  ///
-  void flattenOperand(const TreePatternNode *TPN, NodeSemantics *Parent,
-                      const CGIOperandList::OperandInfo *OpInfo) {
+  LSResult flattenOperand(const TreePatternNode &TPN,
+                          const CGIOperandList::OperandInfo *OpInfo) {
     Record *OpRec = OpInfo->Rec;
-    NodeSemantics Op;
-    setNSTypeFromNode(Op, TPN);
+    LSNode Op(TPN);
+
+    assert(TPN.getExtTypes().size() == 1);
 
     // RegisterOperands are the same thing as RegisterClasses.
     if (OpRec->isSubClassOf("RegisterOperand"))
@@ -176,8 +190,7 @@ private:
           OperandByName[OpInfo->Name] = CurDefNo;
         } else {
           // If we already found it, no need to generate the operation again.
-          Parent->addOperand(utostr(It->getValue()));
-          return;
+          return LSResult(It->getValue(), Op.Types[0]);
         }
       }
     } else if (OpRec->isSubClassOf("RegisterClass")) {
@@ -185,8 +198,10 @@ private:
     } else {
       llvm_unreachable("Unknown operand type");
     }
+    LSResult R(CurDefNo, Op.Types[0]);
     Op.addOperand(utostr(OpInfo->MIOperandNo));
-    addResOperand(*Parent, Op);
+    addSemantics(Op);
+    return R;
   }
 
   /// Make node semantics from a leaf pattern:
@@ -197,25 +212,25 @@ private:
   ///   The constant index points in an uint64_t array, where all compile-time
   ///   constants are uniqued (so that the semantics array remains unsigned[].)
   ///
-  void flattenLeaf(const TreePatternNode *TPN, NodeSemantics *Parent) {
-    DefInit *OpDef = dyn_cast<DefInit>(TPN->getLeafValue());
+  LSResult flattenLeaf(const TreePatternNode &TPN) {
+    LSNode Op(TPN);
+    DefInit *OpDef = dyn_cast<DefInit>(TPN.getLeafValue());
+
+    assert(TPN.getExtTypes().size() == 1);
 
     if (OpDef == nullptr) {
-      IntInit *OpInt = cast<IntInit>(TPN->getLeafValue());
-      NodeSemantics Mov;
-      setNSTypeFromNode(Mov, TPN);
-      Mov.Opcode = "DCINS::MOV_CONSTANT";
+      IntInit *OpInt = cast<IntInit>(TPN.getLeafValue());
+      Op.Opcode = "DCINS::MOV_CONSTANT";
       unsigned &Idx = Target.ConstantIdx[OpInt->getValue()];
       if (Idx == 0)
         Idx = ++Target.CurConstantIdx;
-      Mov.addOperand(utostr(Idx - 1));
-      addResOperand(*Parent, Mov);
-      return;
+      Op.addOperand(utostr(Idx - 1));
+      LSResult R(CurDefNo, Op.Types[0]);
+      addSemantics(Op);
+      return R;
     }
 
     Record *OpRec = OpDef->getDef();
-    NodeSemantics Op;
-    setNSTypeFromNode(Op, TPN);
 
     if (OpRec->isSubClassOf("Register")) {
       Op.Opcode = "DCINS::GET_REG";
@@ -223,18 +238,9 @@ private:
     } else {
       llvm_unreachable("Unknown operand type");
     }
-    addResOperand(*Parent, Op);
-  }
-
-  /// Make an operation for "implicit" nodes, generate:
-  ///   DCINS::IMPLICIT, MVT::isVoid, <imp-def'd Target::Register>
-  ///
-  void flattenImplicit(const TreePatternNode *TPN, NodeSemantics &NS) {
-    NS.Opcode = "DCINS::IMPLICIT";
-    // FIXME: If TPN had something like getChildren(), we could range-ify this.
-    for (unsigned i = 0, e = TPN->getNumChildren(); i != e; ++i)
-      NS.addOperand(CGI.Namespace + "::" +
-                    TPN->getChild(i)->getLeafValue()->getAsString());
+    LSResult R(CurDefNo, Op.Types[0]);
+    addSemantics(Op);
+    return R;
   }
 
   /// Make node semantics for "set" nodes. For all defined values to be set:
@@ -246,28 +252,33 @@ private:
   /// Keep track of the results that were dropped from the SDNode child because
   /// of SDNodeEquiv definitions.
   ///
-  void flattenSet(const TreePatternNode *TPN) {
-    unsigned NumNodeDefs = TPN->getNumChildren() - 1;
-    const TreePatternNode *LastChild = TPN->getChild(TPN->getNumChildren() - 1);
+  void flattenSet(const TreePatternNode &TPN) {
+    unsigned NumNodeDefs = TPN.getNumChildren() - 1;
+    const TreePatternNode &LastChild = *TPN.getChild(TPN.getNumChildren() - 1);
 
-    assert(NumNodeDefs == LastChild->getNumTypes() &&
+    assert(NumNodeDefs == LastChild.getNumTypes() &&
            "Invalid 'set': last child needs to define all the others.");
 
-    // NS will be thrown away, we just use the def indices of the last child.
-    NodeSemantics DummyNS;
-
-    flatten(LastChild, &DummyNS);
-    // We count what the child defined, because when replacing equivalent
-    // SDNodes, it doesn't define all the children.
-    unsigned NumDefs = DummyNS.Operands.size();
-    unsigned FirstDefNo = CurDefNo - NumDefs;
+    // Visit the last (non-register) child, that defined the values for all
+    // the other children.
+    LSResults ChildResults = flattenSubtree(LastChild);
+    // Count what the child defined, because equivalent SDNodes might not
+    // define all the children.
+    const unsigned NumDefs = TPN.getNumChildren() - 1;
+    const unsigned NumOps = ChildResults.size();
 
     for (unsigned i = 0, e = NumDefs; i != e; ++i) {
-      const TreePatternNode *Child = TPN->getChild(i);
-      Record *OpRec = cast<DefInit>(TPN->getChild(i)->getLeafValue())->getDef();
+      const TreePatternNode *Child = TPN.getChild(i);
+      Record *OpRec = cast<DefInit>(TPN.getChild(i)->getLeafValue())->getDef();
 
-      NodeSemantics NS;
-      NS.Types.push_back(MVT::isVoid);
+      if (i >= NumOps) {
+        assert(OpRec->isSubClassOf("Register") &&
+               "Dropped implicit-def wasn't an explicit register set?");
+        I.ImplicitDefs.push_back(OpRec);
+        continue;
+      }
+
+      LSNode NS(TPN);
 
       // RegisterOperands are the same thing as RegisterClasses.
       if (OpRec->isSubClassOf("RegisterOperand"))
@@ -282,19 +293,14 @@ private:
       } else if (OpRec->isSubClassOf("Register")) {
         NS.Opcode = "DCINS::PUT_REG";
         NS.addOperand(CGI.Namespace + "::" + OpRec->getName());
+        I.ExplicitDefs.push_back(OpRec);
+      } else {
+        llvm_unreachable("SET operator should only set registers!");
       }
-      NS.addOperand(utostr(FirstDefNo + i));
-      addSemantics(NS);
-    }
 
-    // Keep track of the registers removed from the target-specific SDNode.
-    for (unsigned i = NumDefs, e = NumNodeDefs; i != e; ++i) {
-      assert(TPN->getChild(i)->isLeaf() &&
-             "Invalid SDNode equivalence: dropped non-leaf node!");
-      Record *OpRec = cast<DefInit>(TPN->getChild(i)->getLeafValue())->getDef();
-      assert(OpRec->isSubClassOf("Register") &&
-             "Dropped SDNode result isn't an imp-def'd register.");
-      EliminatedImplicitRegs.insert(OpRec);
+      LSResult Op = ChildResults[i];
+      NS.addOperand(utostr(Op.DefNo));
+      addSemantics(NS);
     }
   }
 
@@ -304,8 +310,18 @@ private:
   /// Also, try to make an equivalence between the SDNode's operator and
   /// one with less results, as defined by the SDNodeEquiv tablegen definitions.
   ///
-  void flattenSDNode(const TreePatternNode *TPN, NodeSemantics &NS) {
-    Record *Operator = TPN->getOperator();
+  LSResults flattenSDNode(const TreePatternNode &TPN) {
+    LSNode NS(TPN);
+
+    Record *Operator = TPN.getOperator();
+    if (!Operator->isSubClassOf("SDNode"))
+      llvm_unreachable("Unable to handle operator.");
+
+    if (TPN.getIntrinsicInfo(Target.CGPatterns))
+      I.HasIntrinsic = true;
+    if (TPN.getComplexPatternInfo(Target.CGPatterns))
+      I.HasComplexPattern = true;
+
     const SDNodeInfo &SDNI = Target.CGPatterns.getSDNodeInfo(Operator);
     NS.Opcode = SDNI.getEnumName();
     auto EquivIt = Target.SDNodeEquiv.find(Operator);
@@ -313,67 +329,93 @@ private:
       Record *EquivNode = EquivIt->second;
       const SDNodeInfo &EquivSDNI = Target.CGPatterns.getSDNodeInfo(EquivNode);
       NS.Opcode = EquivSDNI.getEnumName();
-      assert((TPN->getNumTypes() - EquivSDNI.getNumResults()) > 0);
+      assert((TPN.getNumTypes() - EquivSDNI.getNumResults()) > 0);
       NS.Types.resize(NS.Types.size() -
-                      (TPN->getNumTypes() - EquivSDNI.getNumResults()));
+                      (TPN.getNumTypes() - EquivSDNI.getNumResults()));
     }
-    for (unsigned i = 0, e = TPN->getNumChildren(); i != e; ++i)
-      flatten(TPN->getChild(i), &NS);
+
+    for (unsigned i = 0, e = TPN.getNumChildren(); i != e; ++i) {
+      LSResults ChildRes = flattenSubtree(*TPN.getChild(i));
+      assert(!ChildRes.empty() && "Subtree didn't defined anything?");
+
+      // Now add one result for each child only.
+      // For instance:
+      //   (store (umul_lohi x, y), addr)
+      // This ignores the second result of umul_lohi, and only stores the first.
+      NS.addOperand(utostr(ChildRes.front().DefNo));
+    }
+
+    // Now produce our results, ignoring Void "defs", and adjusting for
+    // the SDNode equivalence, if necessary.
+    LSResults R;
+    for (unsigned i = 0, e = NS.Types.size(); i != e; ++i) {
+      MVT::SimpleValueType ResVT = NS.Types[i];
+      assert(ResVT < MVT::Any);
+      if (ResVT != MVT::isVoid)
+        R.emplace_back(CurDefNo + i, ResVT);
+    }
+
+    addSemantics(NS);
+    return R;
   }
 
   /// Make node semantics for the whole tree \p TPN.
-  void flatten(const TreePatternNode *TPN, NodeSemantics *Parent) {
+  LSResults flattenSubtree(const TreePatternNode &TPN) {
     if (const CGIOperandList::OperandInfo *OpInfo =
-            getNamedOperand(TPN->getName())) {
-      assert(Parent != nullptr && "An operand node was at the top-level?");
-      flattenOperand(TPN, Parent, OpInfo);
-      return;
+            getNamedOperand(TPN.getName())) {
+      return LSResults(1, flattenOperand(TPN, OpInfo));
     }
-    if (TPN->isLeaf()) {
-      assert(Parent != nullptr && "A leaf node was at the top-level?");
-      flattenLeaf(TPN, Parent);
-      return;
+    if (TPN.isLeaf()) {
+      return LSResults(1, flattenLeaf(TPN));
     }
-    Record *Operator = TPN->getOperator();
-    NodeSemantics NS;
 
-    setNSTypeFromNode(NS, TPN);
+    return flattenSDNode(TPN);
+  }
+
+public:
+  void computeImplicitDefs() {
+    CodeGenRegBank &RegBank =  Target.CGTarget.getRegBank();
+
+    SmallPtrSet<CodeGenRegister *, 4> ExplicitDefs;
+    for (Record *R : I.ExplicitDefs)
+      ExplicitDefs.insert(RegBank.getReg(R));
+
+    // Remember any implicit-def we encountered (because of SDNodeEquiv),
+    // or that were in the instruction description.
+    SmallVector<Record *, 4> AllImplicitDefs;
+    AllImplicitDefs.append(CGI.ImplicitDefs.begin(), CGI.ImplicitDefs.end());
+    AllImplicitDefs.append(I.ImplicitDefs.begin(), I.ImplicitDefs.end());
+    I.ImplicitDefs.clear();
+
+    // And finally build our final list of implicit-def'd registers that weren't
+    // explicitly defined anywhere in the semantics.
+    SmallPtrSet<CodeGenRegister *, 4> ImplicitDefs;
+    for (Record *R : AllImplicitDefs) {
+      CodeGenRegister *CGR = RegBank.getReg(R);
+      if (ExplicitDefs.count(CGR) == 0 &&
+          ImplicitDefs.count(CGR) == 0) {
+        I.ImplicitDefs.push_back(R);
+        ImplicitDefs.insert(CGR);
+      }
+    }
+  }
+
+  void flatten(const TreePatternNode &TPN) {
+    Record *Operator = TPN.getOperator();
+
+    // Ignore "implicit" nodes: we'll handle implicit-def'd regs uniformly.
+    if (Operator->getName() == "implicit")
+      return;
 
     if (Operator->getName() == "set") {
-      assert(Parent == nullptr && "A 'set' node wasn't at the top-level?");
       flattenSet(TPN);
       return;
     }
 
-    if (Operator->getName() == "implicit") {
-      assert(Parent == nullptr &&
-             "An 'implicit' node wasn't at the top-level?");
-      flattenImplicit(TPN, NS);
-    } else if (Operator->isSubClassOf("SDNode")) {
-      flattenSDNode(TPN, NS);
-    } else {
-      llvm_unreachable("Unable to handle operator.");
-    }
-    if (Parent)
-      addResOperand(*Parent, NS);
-    else
-      addSemantics(NS);
-  }
+    LSResults R = flattenSDNode(TPN);
 
-public:
-  void flatten(const TreePatternNode *TPN) {
-    flatten(TPN, nullptr);
-
-    // For all the implicit register definitions we dropped because of
-    // SDNode equivalences, add an 'implicit' node.
-    NodeSemantics NS;
-    NS.Opcode = "DCINS::IMPLICIT";
-    NS.Types.push_back(MVT::isVoid);
-    for (Record *ImpReg : EliminatedImplicitRegs) {
-      NS.Operands.clear();
-      NS.addOperand(CGI.Namespace + "::" + ImpReg->getName());
-      I.Semantics.push_back(NS);
-    }
+    (void)R;
+    assert(R.empty() && "Top-level SDNodes can't produce results!");
   }
 };
 
@@ -388,7 +430,9 @@ class SemanticsEmitter {
   std::vector<unsigned> InstIdx;
   unsigned CurSemaOffset;
 
-  void addInstSemantics(unsigned InstEnumValue, const InstSemantics &Sema);
+  void parseInstSemantics(unsigned InstEnumValue,
+                          const CodeGenInstruction &CGI,
+                          const TreePattern &TP);
 
 public:
   SemanticsEmitter(RecordKeeper &Records);
@@ -411,10 +455,7 @@ SemanticsEmitter::SemanticsEmitter(RecordKeeper &Records)
 
   const std::vector<const CodeGenInstruction *> &CGIByEnum =
       Target.getInstructionsByEnumValue();
-  InstIdx.resize(CGIByEnum.size());
-
-  // Add dummy semantics.
-  addInstSemantics(0, InstSemantics());
+  InstIdx.resize(CGIByEnum.size(), ~0U);
 
   // First, look for Semantics instances.
   ParseSemantics();
@@ -424,16 +465,37 @@ SemanticsEmitter::SemanticsEmitter(RecordKeeper &Records)
     const CodeGenInstruction &CGI = *CGIByEnum[i];
     Record *TheDef = CGI.TheDef;
     const DAGInstruction &DI = CGPatterns.getInstruction(TheDef);
-    if (InstIdx[i])
+    if (InstIdx[i] != ~0U)
       continue;
-    if (DI.getPattern() && !CGI.isCodeGenOnly) {
-      addInstSemantics(i, InstSemantics(SemaTarget, CGI, *DI.getPattern()));
-    }
+    if (DI.getPattern() && !CGI.isCodeGenOnly)
+      parseInstSemantics(i, CGI, *DI.getPattern());
   }
 }
 
-void SemanticsEmitter::addInstSemantics(unsigned InstEnumValue,
-                                        const InstSemantics &Sema) {
+void SemanticsEmitter::parseInstSemantics(unsigned InstEnumValue,
+                                          const CodeGenInstruction &CGI,
+                                          const TreePattern &TP) {
+  InstSemantics Sema;
+  Sema.Pattern = &TP;
+  LinearSemantics Flat(SemaTarget, CGI, Sema);
+  for (TreePatternNode *TPN : TP.getTrees())
+    Flat.flatten(*TPN);
+  Flat.computeImplicitDefs();
+
+  // Ignore semantics that would involve intrinsics or complex patterns, as
+  // we don't really support either yet.
+  if (Sema.HasIntrinsic || Sema.HasComplexPattern)
+    return;
+
+  // Ignore semantics that imp-def multiple registers.
+  if (Sema.ImplicitDefs.size() > 1)
+    return;
+
+  // Ignore semantics that imp-def registers without defining anything else:
+  // currently, we can only infer imp-defs from other defs.
+  if (!Sema.ImplicitDefs.empty() && Sema.LastDefNo == ~0U)
+    return;
+
   InstIdx[InstEnumValue] = InstSemas.size();
   InstSemas.push_back(Sema);
 }
@@ -463,8 +525,8 @@ void SemanticsEmitter::ParseSemantics() {
     auto It = std::find(CGIByEnum.begin(), CGIByEnum.end(), &CGI);
     assert(It != CGIByEnum.end() && *It == &CGI);
 
-    addInstSemantics(std::distance(CGIByEnum.begin(), It),
-                     InstSemantics(SemaTarget, CGI, *TheInst.getPattern()));
+    parseInstSemantics(std::distance(CGIByEnum.begin(), It),
+                       CGI, *TheInst.getPattern());
   }
 }
 
@@ -475,6 +537,8 @@ void SemanticsEmitter::run(raw_ostream &OS) {
   const std::vector<const CodeGenInstruction *> &CGIByEnum =
       Target.getInstructionsByEnumValue();
   assert(CGIByEnum.size() == InstIdx.size());
+
+  CodeGenRegBank &RegBank = Target.getRegBank();
 
   OS << "namespace llvm {\n";
 
@@ -487,14 +551,27 @@ void SemanticsEmitter::run(raw_ostream &OS) {
   OS << "  DCINS::END_OF_INSTRUCTION,\n";
   CurSemaOffset = 1;
   for (unsigned I = 1, E = InstIdx.size(); I != E; ++I) {
-    if (InstIdx[I] == 0) // FIXME: why?
+    // Don't emit opcodes for instructions without semantics.
+    if (InstIdx[I] == ~0U)
       continue;
     InstSemantics &Sema = InstSemas[InstIdx[I]];
     InstIdx[I] = CurSemaOffset++;
     OS << "  // " << CGIByEnum[I]->TheDef->getName() << "\n";
-    for (NodeSemantics &NS : Sema.Semantics) {
-      ++CurSemaOffset;
+    if (Sema.Pattern && 0) {
+      OS << "  /*\n";
+      Sema.Pattern->print(OS);
+      OS << "  */\n";
+    }
+
+    unsigned LastDefSemaOffset = ~0U;
+
+    for (unsigned I = 0, E = Sema.Semantics.size(); I != E; ++I) {
+      if (I == Sema.LastDefSemaIdx)
+        LastDefSemaOffset = CurSemaOffset;
+
+      LSNode &NS = Sema.Semantics[I];
       OS.indent(2) << NS.Opcode;
+      ++CurSemaOffset;
       for (auto &Ty : NS.Types)
         OS << ", " << llvm::getEnumName(Ty);
       CurSemaOffset += NS.Types.size();
@@ -503,13 +580,31 @@ void SemanticsEmitter::run(raw_ostream &OS) {
       CurSemaOffset += NS.Operands.size();
       OS << ",\n";
     }
+
+    assert(Sema.ImplicitDefs.size() <= 1 &&
+           "Can't handle multiple IMPLICITs yet!");
+    if (!Sema.ImplicitDefs.empty()) {
+      assert(Sema.LastDefNo != ~0U &&
+             "Can't handle IMPLICIT without any other def!");
+      Record *R = Sema.ImplicitDefs[0];
+      OS << "  DCINS::IMPLICIT, MVT::isVoid, "
+         << TGName << "::" << RegBank.getReg(R)->getName();
+      CurSemaOffset += 3;
+      OS << ",\n";
+    }
     OS << "  DCINS::END_OF_INSTRUCTION,\n";
   }
   OS << "};\n\n";
 
   OS << "const unsigned OpcodeToSemaIdx[] = {\n";
-  for (unsigned I = 0, E = InstIdx.size(); I != E; ++I)
-    OS << InstIdx[I] << ", \t// " << CGIByEnum[I]->TheDef->getName() << "\n";
+  for (unsigned I = 0, E = InstIdx.size(); I != E; ++I) {
+    unsigned Idx = InstIdx[I];
+    if (Idx == ~0U)
+      OS << "~0U";
+    else
+      OS << Idx;
+    OS << ", \t// " << CGIByEnum[I]->TheDef->getName() << "\n";
+  }
   OS << "};\n\n";
 
   assert(SemaTarget.CurConstantIdx == SemaTarget.ConstantIdx.size());
@@ -555,20 +650,6 @@ SemanticsTarget::SemanticsTarget(RecordKeeper &Records)
   for (Record *Equiv : Records.getAllDerivedDefinitions("SDNodeEquiv"))
     SDNodeEquiv[Equiv->getValueAsDef("TargetSpecific")] =
         Equiv->getValueAsDef("TargetIndependent");
-}
-
-InstSemantics::InstSemantics(SemanticsTarget &Target,
-                             const CodeGenInstruction &CGI,
-                             const TreePattern &TP) {
-  Flattener Flat(Target, CGI, *this);
-  for (TreePatternNode *TPN : TP.getTrees())
-    Flat.flatten(TPN);
-}
-
-InstSemantics::InstSemantics() {
-  NodeSemantics NS;
-  NS.Opcode = "DCINS::END_OF_INSTRUCTION";
-  Semantics.push_back(NS);
 }
 
 namespace llvm {
