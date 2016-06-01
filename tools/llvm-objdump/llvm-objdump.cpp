@@ -863,8 +863,10 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
   std::unique_ptr<const MCInstrInfo> MII(TheTarget->createMCInstrInfo());
   if (!MII)
     report_fatal_error("error: no instruction info for target " + TripleName);
-  std::unique_ptr<const MCObjectFileInfo> MOFI(new MCObjectFileInfo);
+  std::unique_ptr<MCObjectFileInfo> MOFI(new MCObjectFileInfo);
   MCContext Ctx(AsmInfo.get(), MRI.get(), MOFI.get());
+  MOFI->InitMCObjectFileInfo(Triple(TripleName), Reloc::Default,
+                             CodeModel::Default, Ctx);
 
   std::unique_ptr<MCDisassembler> DisAsm(
     TheTarget->createMCDisassembler(*STI, Ctx));
