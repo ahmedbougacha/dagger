@@ -12,9 +12,9 @@
 // walk memory instructions using a use/def graph.
 //
 // Memory SSA class builds an SSA form that links together memory access
-// instructions such loads, stores, atomics, and calls. Additionally, it does a
-// trivial form of "heap versioning" Every time the memory state changes in the
-// program, we generate a new heap version. It generates MemoryDef/Uses/Phis
+// instructions such as loads, stores, atomics, and calls. Additionally, it does
+// a trivial form of "heap versioning" Every time the memory state changes in
+// the program, we generate a new heap version. It generates MemoryDef/Uses/Phis
 // that are overlayed on top of the existing instructions.
 //
 // As a trivial example,
@@ -45,9 +45,9 @@
 //   store i32 5, i32* %2, align 4
 //   ; 4 = MemoryDef(3)
 //   store i32 7, i32* %4, align 4
-//   ; MemoryUse(4)
-//   %7 = load i32* %2, align 4
 //   ; MemoryUse(3)
+//   %7 = load i32* %2, align 4
+//   ; MemoryUse(4)
 //   %8 = load i32* %4, align 4
 //   %add = add nsw i32 %7, %8
 //   ret i32 %add
@@ -59,7 +59,7 @@
 //
 // Each def also has a list of users associated with it, so you can walk from
 // both def to users, and users to defs. Note that we disambiguate MemoryUses,
-// but not the RHS of MemoryDefs. You can see this above at %8, which would
+// but not the RHS of MemoryDefs. You can see this above at %7, which would
 // otherwise be a MemoryUse(4). Being disambiguated means that for a given
 // store, all the MemoryUses on its use lists are may-aliases of that store (but
 // the MemoryDefs on its use list may not be).
@@ -68,6 +68,7 @@
 // definitions, which would require multiple phis, and multiple memoryaccesses
 // per instruction.
 //===----------------------------------------------------------------------===//
+
 #ifndef LLVM_TRANSFORMS_UTILS_MEMORYSSA_H
 #define LLVM_TRANSFORMS_UTILS_MEMORYSSA_H
 
@@ -75,23 +76,41 @@
 #include "llvm/ADT/GraphTraits.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/ilist.h"
 #include "llvm/ADT/ilist_node.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/PHITransAddr.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/OperandTraits.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/Use.h"
 #include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Pass.h"
+#include "llvm/PassAnalysisSupport.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Compiler.h"
+#include "llvm/Support/ErrorHandling.h"
+#include <algorithm>
+#include <cassert>
+#include <cstddef>
+#include <iterator>
+#include <memory>
+#include <utility>
 
 namespace llvm {
-class BasicBlock;
+
 class DominatorTree;
 class Function;
+class Instruction;
 class MemoryAccess;
+class LLVMContext;
+class raw_ostream;
+
 template <class T> class memoryaccess_def_iterator_base;
 using memoryaccess_def_iterator = memoryaccess_def_iterator_base<MemoryAccess>;
 using const_memoryaccess_def_iterator =
@@ -112,7 +131,8 @@ public:
     return ID == MemoryUseVal || ID == MemoryPhiVal || ID == MemoryDefVal;
   }
 
-  virtual ~MemoryAccess();
+  ~MemoryAccess() override;
+
   BasicBlock *getBlock() const { return Block; }
 
   virtual void print(raw_ostream &OS) const = 0;
@@ -153,7 +173,8 @@ private:
 template <>
 struct ilist_traits<MemoryAccess> : public ilist_default_traits<MemoryAccess> {
   /// See details of the instruction class for why this trick works
-  /// FIXME: The downcast is UB.
+  // FIXME: This downcast is UB. See llvm.org/PR26753.
+  LLVM_NO_SANITIZE("object-size")
   MemoryAccess *createSentinel() const {
     return static_cast<MemoryAccess *>(&Sentinel);
   }
@@ -212,6 +233,7 @@ protected:
 private:
   Instruction *MemoryInst;
 };
+
 template <>
 struct OperandTraits<MemoryUseOrDef>
     : public FixedNumOperandTraits<MemoryUseOrDef, 1> {};
@@ -248,6 +270,7 @@ protected:
     llvm_unreachable("MemoryUses do not have IDs");
   }
 };
+
 template <>
 struct OperandTraits<MemoryUse> : public FixedNumOperandTraits<MemoryUse, 1> {};
 DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MemoryUse, MemoryAccess)
@@ -291,6 +314,7 @@ protected:
 private:
   const unsigned ID;
 };
+
 template <>
 struct OperandTraits<MemoryDef> : public FixedNumOperandTraits<MemoryDef, 1> {};
 DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MemoryDef, MemoryAccess)
@@ -445,7 +469,7 @@ protected:
 
   /// For debugging only. This gets used to give memory accesses pretty numbers
   /// when printing them out
-  virtual unsigned getID() const final { return ID; }
+  unsigned getID() const final { return ID; }
 
 private:
   // For debugging only
@@ -461,8 +485,8 @@ private:
     growHungoffUses(ReservedSpace, /* IsPhi */ true);
   }
 };
-template <> struct OperandTraits<MemoryPhi> : public HungoffOperandTraits<2> {};
 
+template <> struct OperandTraits<MemoryPhi> : public HungoffOperandTraits<2> {};
 DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MemoryPhi, MemoryAccess)
 
 class MemorySSAWalker;
@@ -471,15 +495,11 @@ class MemorySSAWalker;
 /// accesses.
 class MemorySSA {
 public:
-  MemorySSA(Function &);
+  MemorySSA(Function &, AliasAnalysis *, DominatorTree *);
+  MemorySSA(MemorySSA &&);
   ~MemorySSA();
 
-  /// \brief Build Memory SSA, and return the walker we used during building,
-  /// for later reuse. If MemorySSA is already built, just return the walker.
-  MemorySSAWalker *buildMemorySSA(AliasAnalysis *, DominatorTree *);
-
-  /// \brief Returns false if you need to call buildMemorySSA.
-  bool isFinishedBuilding() const { return Walker; }
+  MemorySSAWalker *getWalker();
 
   /// \brief Given a memory Mod/Ref'ing instruction, get the MemorySSA
   /// access associated with it. If passed a basic block gets the memory phi
@@ -516,6 +536,14 @@ public:
     return It == PerBlockAccesses.end() ? nullptr : It->second.get();
   }
 
+  /// \brief Remove a MemoryAccess from MemorySSA, including updating all
+  /// definitions and uses.
+  /// This should be called when a memory instruction that has a MemoryAccess
+  /// associated with it is erased from the program.  For example, if a store or
+  /// load is simply erased (not replaced), removeMemoryAccess should be called
+  /// on the MemoryAccess for that store/load.
+  void removeMemoryAccess(MemoryAccess *);
+
   enum InsertionPlace { Beginning, End };
 
   /// \brief Given two memory accesses in the same basic block, determine
@@ -529,7 +557,7 @@ public:
 protected:
   // Used by Memory SSA annotater, dumpers, and wrapper pass
   friend class MemorySSAAnnotatedWriter;
-  friend class MemorySSAPrinterPass;
+  friend class MemorySSAPrinterLegacyPass;
   void verifyDefUses(Function &F) const;
   void verifyDomination(Function &F) const;
 
@@ -543,8 +571,9 @@ private:
   void computeDomLevels(DenseMap<DomTreeNode *, unsigned> &DomLevels);
   void markUnreachableAsLiveOnEntry(BasicBlock *BB);
   bool dominatesUse(const MemoryAccess *, const MemoryAccess *) const;
-  MemoryAccess *createNewAccess(Instruction *, bool ignoreNonMemory = false);
+  MemoryUseOrDef *createNewAccess(Instruction *);
   MemoryAccess *findDominatingDef(BasicBlock *, enum InsertionPlace);
+  void removeFromLookups(MemoryAccess *);
 
   MemoryAccess *renameBlock(BasicBlock *, MemoryAccess *);
   void renamePass(DomTreeNode *, MemoryAccess *IncomingVal,
@@ -560,49 +589,51 @@ private:
   std::unique_ptr<MemoryAccess> LiveOnEntryDef;
 
   // Memory SSA building info
-  MemorySSAWalker *Walker;
+  std::unique_ptr<MemorySSAWalker> Walker;
   unsigned NextID;
 };
 
-// This pass does eager building and then printing of MemorySSA. It is used by
-// the tests to be able to build, dump, and verify Memory SSA.
-class MemorySSAPrinterPass : public FunctionPass {
+/// An analysis that produces \c MemorySSA for a function.
+///
+class MemorySSAAnalysis : public AnalysisInfoMixin<MemorySSAAnalysis> {
+  friend AnalysisInfoMixin<MemorySSAAnalysis>;
+  static char PassID;
+
 public:
-  MemorySSAPrinterPass();
+  typedef MemorySSA Result;
 
-  static char ID;
-  bool doInitialization(Module &M) override;
-  bool runOnFunction(Function &) override;
-  void releaseMemory() override;
-  void getAnalysisUsage(AnalysisUsage &AU) const override;
-  void print(raw_ostream &OS, const Module *M) const override;
-  static void registerOptions();
-  MemorySSA &getMSSA() { return *MSSA; }
-
-private:
-  bool VerifyMemorySSA;
-
-  std::unique_ptr<MemorySSA> MSSA;
-  // FIXME(gbiv): It seems that MemorySSA doesn't own the walker it returns?
-  std::unique_ptr<MemorySSAWalker> Walker;
-  Function *F;
+  MemorySSA run(Function &F, AnalysisManager<Function> &AM);
 };
 
-class MemorySSALazy : public FunctionPass {
+/// \brief Printer pass for \c MemorySSA.
+class MemorySSAPrinterPass : public PassInfoMixin<MemorySSAPrinterPass> {
+  raw_ostream &OS;
+
 public:
-  MemorySSALazy();
+  explicit MemorySSAPrinterPass(raw_ostream &OS) : OS(OS) {}
+  PreservedAnalyses run(Function &F, AnalysisManager<Function> &AM);
+};
+
+/// \brief Verifier pass for \c MemorySSA.
+struct MemorySSAVerifierPass : PassInfoMixin<MemorySSAVerifierPass> {
+  PreservedAnalyses run(Function &F, AnalysisManager<Function> &AM);
+};
+
+/// \brief Legacy analysis pass which computes \c MemorySSA.
+class MemorySSAWrapperPass : public FunctionPass {
+public:
+  MemorySSAWrapperPass();
 
   static char ID;
   bool runOnFunction(Function &) override;
   void releaseMemory() override;
-  MemorySSA &getMSSA() {
-    assert(MSSA);
-    return *MSSA;
-  }
+  MemorySSA &getMSSA() { return *MSSA; }
+  const MemorySSA &getMSSA() const { return *MSSA; }
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesAll();
-  }
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+  void verifyAnalysis() const override;
+  void print(raw_ostream &OS, const Module *M = nullptr) const override;
 
 private:
   std::unique_ptr<MemorySSA> MSSA;
@@ -664,7 +695,16 @@ public:
   virtual MemoryAccess *getClobberingMemoryAccess(MemoryAccess *,
                                                   MemoryLocation &) = 0;
 
+  /// \brief Given a memory access, invalidate anything this walker knows about
+  /// that access.
+  /// This API is used by walkers that store information to perform basic cache
+  /// invalidation.  This will be called by MemorySSA at appropriate times for
+  /// the walker it uses or returns.
+  virtual void invalidateInfo(MemoryAccess *) {}
+
 protected:
+  friend class MemorySSA; // For updating MSSA pointer in MemorySSA move
+                          // constructor.
   MemorySSA *MSSA;
 };
 
@@ -716,10 +756,12 @@ using ConstMemoryAccessPair = std::pair<const MemoryAccess *, MemoryLocation>;
 class CachingMemorySSAWalker final : public MemorySSAWalker {
 public:
   CachingMemorySSAWalker(MemorySSA *, AliasAnalysis *, DominatorTree *);
-  virtual ~CachingMemorySSAWalker();
+  ~CachingMemorySSAWalker() override;
+
   MemoryAccess *getClobberingMemoryAccess(const Instruction *) override;
   MemoryAccess *getClobberingMemoryAccess(MemoryAccess *,
                                           MemoryLocation &) override;
+  void invalidateInfo(MemoryAccess *) override;
 
 protected:
   struct UpwardsMemoryQuery;
@@ -738,6 +780,7 @@ private:
   MemoryAccess *getClobberingMemoryAccess(MemoryAccess *, UpwardsMemoryQuery &);
   bool instructionClobbersQuery(const MemoryDef *, UpwardsMemoryQuery &,
                                 const MemoryLocation &Loc) const;
+  void verifyRemoved(MemoryAccess *);
   SmallDenseMap<ConstMemoryAccessPair, MemoryAccess *>
       CachedUpwardsClobberingAccess;
   DenseMap<const MemoryAccess *, MemoryAccess *> CachedUpwardsClobberingCall;
@@ -802,6 +845,7 @@ private:
 inline memoryaccess_def_iterator MemoryAccess::defs_begin() {
   return memoryaccess_def_iterator(this);
 }
+
 inline const_memoryaccess_def_iterator MemoryAccess::defs_begin() const {
   return const_memoryaccess_def_iterator(this);
 }
@@ -921,7 +965,9 @@ private:
 inline upward_defs_iterator upward_defs_begin(const MemoryAccessPair &Pair) {
   return upward_defs_iterator(Pair);
 }
-inline upward_defs_iterator upward_defs_end() { return upward_defs_iterator(); }
-}
 
-#endif
+inline upward_defs_iterator upward_defs_end() { return upward_defs_iterator(); }
+
+} // end namespace llvm
+
+#endif // LLVM_TRANSFORMS_UTILS_MEMORYSSA_H

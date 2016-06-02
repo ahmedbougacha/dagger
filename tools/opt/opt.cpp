@@ -96,10 +96,14 @@ static cl::opt<bool>
 OutputAssembly("S", cl::desc("Write output as LLVM assembly"));
 
 static cl::opt<bool>
-NoVerify("disable-verify", cl::desc("Do not verify result module"), cl::Hidden);
+NoVerify("disable-verify", cl::desc("Do not run the verifier"), cl::Hidden);
 
 static cl::opt<bool>
 VerifyEach("verify-each", cl::desc("Verify after each transform"));
+
+static cl::opt<bool>
+    DisableDITypeMap("disable-debug-info-type-map",
+                     cl::desc("Don't use a uniquing type map for debug info"));
 
 static cl::opt<bool>
 StripDebug("strip-debug",
@@ -136,6 +140,10 @@ static cl::opt<bool>
 OptLevelO3("O3",
            cl::desc("Optimization level 3. Similar to clang -O3"));
 
+static cl::opt<unsigned>
+CodeGenOptLevel("codegen-opt-level",
+                cl::desc("Override optimization level for codegen hooks"));
+
 static cl::opt<std::string>
 TargetTriple("mtriple", cl::desc("Override target triple for module"));
 
@@ -158,6 +166,12 @@ DisableSLPVectorization("disable-slp-vectorization",
                         cl::desc("Disable the slp vectorization pass"),
                         cl::init(false));
 
+static cl::opt<bool> EmitSummaryIndex("module-summary",
+                                      cl::desc("Emit module summary index"),
+                                      cl::init(false));
+
+static cl::opt<bool> EmitModuleHash("module-hash", cl::desc("Emit module hash"),
+                                    cl::init(false));
 
 static cl::opt<bool>
 DisableSimplifyLibCalls("disable-simplify-libcalls",
@@ -196,6 +210,11 @@ static cl::opt<bool>
              cl::desc("Run all passes twice, re-using the same pass manager."),
              cl::init(false), cl::Hidden);
 
+static cl::opt<bool> DiscardValueNames(
+    "discard-value-names",
+    cl::desc("Discard names from Value (other than GlobalValue)."),
+    cl::init(false), cl::Hidden);
+
 static inline void addPass(legacy::PassManagerBase &PM, Pass *P) {
   // Add the pass to the pass manager...
   PM.add(P);
@@ -211,8 +230,10 @@ static inline void addPass(legacy::PassManagerBase &PM, Pass *P) {
 /// OptLevel - Optimization Level
 static void AddOptimizationPasses(legacy::PassManagerBase &MPM,
                                   legacy::FunctionPassManager &FPM,
-                                  unsigned OptLevel, unsigned SizeLevel) {
-  FPM.add(createVerifierPass()); // Verify that input is correct
+                                  TargetMachine *TM, unsigned OptLevel,
+                                  unsigned SizeLevel) {
+  if (!NoVerify || VerifyEach)
+    FPM.add(createVerifierPass()); // Verify that input is correct
 
   PassManagerBuilder Builder;
   Builder.OptLevel = OptLevel;
@@ -240,6 +261,14 @@ static void AddOptimizationPasses(legacy::PassManagerBase &MPM,
   Builder.SLPVectorize =
       DisableSLPVectorization ? false : OptLevel > 1 && SizeLevel < 2;
 
+  // Add target-specific passes that need to run as early as possible.
+  if (TM)
+    Builder.addExtension(
+        PassManagerBuilder::EP_EarlyAsPossible,
+        [&](const PassManagerBuilder &, legacy::PassManagerBase &PM) {
+          TM->addEarlyAsPossiblePasses(PM);
+        });
+
   Builder.populateFunctionPassManager(FPM);
   Builder.populateModulePassManager(MPM);
 }
@@ -260,6 +289,8 @@ static void AddStandardLinkPasses(legacy::PassManagerBase &PM) {
 //
 
 static CodeGenOpt::Level GetCodeGenOptLevel() {
+  if (CodeGenOptLevel.getNumOccurrences())
+    return static_cast<CodeGenOpt::Level>(unsigned(CodeGenOptLevel));
   if (OptLevelO1)
     return CodeGenOpt::Less;
   if (OptLevelO2)
@@ -281,10 +312,9 @@ static TargetMachine* GetTargetMachine(Triple TheTriple, StringRef CPUStr,
     return nullptr;
   }
 
-  return TheTarget->createTargetMachine(TheTriple.getTriple(),
-                                        CPUStr, FeaturesStr, Options,
-                                        RelocModel, CMModel,
-                                        GetCodeGenOptLevel());
+  return TheTarget->createTargetMachine(TheTriple.getTriple(), CPUStr,
+                                        FeaturesStr, Options, getRelocModel(),
+                                        CMModel, GetCodeGenOptLevel());
 }
 
 #ifdef LINK_POLLY_INTO_TOOLS
@@ -304,7 +334,7 @@ int main(int argc, char **argv) {
   EnableDebugBuffering = true;
 
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
-  LLVMContext &Context = getGlobalContext();
+  LLVMContext Context;
 
   InitializeAllTargets();
   InitializeAllTargetMCs();
@@ -331,6 +361,9 @@ int main(int argc, char **argv) {
   initializeDwarfEHPreparePass(Registry);
   initializeSafeStackPass(Registry);
   initializeSjLjEHPreparePass(Registry);
+  initializePreISelIntrinsicLoweringPass(Registry);
+  initializeGlobalMergePass(Registry);
+  initializeInterleavedAccessPass(Registry);
 
 #ifdef LINK_POLLY_INTO_TOOLS
   polly::initializePollyPasses(Registry);
@@ -345,6 +378,10 @@ int main(int argc, char **argv) {
   }
 
   SMDiagnostic Err;
+
+  Context.setDiscardValueNames(DiscardValueNames);
+  if (!DisableDITypeMap)
+    Context.enableDebugTypeODRUniquing();
 
   // Load the input module...
   std::unique_ptr<Module> M = parseIRFile(InputFilename, Err, Context);
@@ -492,27 +529,27 @@ int main(int argc, char **argv) {
     }
 
     if (OptLevelO1 && OptLevelO1.getPosition() < PassList.getPosition(i)) {
-      AddOptimizationPasses(Passes, *FPasses, 1, 0);
+      AddOptimizationPasses(Passes, *FPasses, TM.get(), 1, 0);
       OptLevelO1 = false;
     }
 
     if (OptLevelO2 && OptLevelO2.getPosition() < PassList.getPosition(i)) {
-      AddOptimizationPasses(Passes, *FPasses, 2, 0);
+      AddOptimizationPasses(Passes, *FPasses, TM.get(), 2, 0);
       OptLevelO2 = false;
     }
 
     if (OptLevelOs && OptLevelOs.getPosition() < PassList.getPosition(i)) {
-      AddOptimizationPasses(Passes, *FPasses, 2, 1);
+      AddOptimizationPasses(Passes, *FPasses, TM.get(), 2, 1);
       OptLevelOs = false;
     }
 
     if (OptLevelOz && OptLevelOz.getPosition() < PassList.getPosition(i)) {
-      AddOptimizationPasses(Passes, *FPasses, 2, 2);
+      AddOptimizationPasses(Passes, *FPasses, TM.get(), 2, 2);
       OptLevelOz = false;
     }
 
     if (OptLevelO3 && OptLevelO3.getPosition() < PassList.getPosition(i)) {
-      AddOptimizationPasses(Passes, *FPasses, 3, 0);
+      AddOptimizationPasses(Passes, *FPasses, TM.get(), 3, 0);
       OptLevelO3 = false;
     }
 
@@ -564,19 +601,19 @@ int main(int argc, char **argv) {
   }
 
   if (OptLevelO1)
-    AddOptimizationPasses(Passes, *FPasses, 1, 0);
+    AddOptimizationPasses(Passes, *FPasses, TM.get(), 1, 0);
 
   if (OptLevelO2)
-    AddOptimizationPasses(Passes, *FPasses, 2, 0);
+    AddOptimizationPasses(Passes, *FPasses, TM.get(), 2, 0);
 
   if (OptLevelOs)
-    AddOptimizationPasses(Passes, *FPasses, 2, 1);
+    AddOptimizationPasses(Passes, *FPasses, TM.get(), 2, 1);
 
   if (OptLevelOz)
-    AddOptimizationPasses(Passes, *FPasses, 2, 2);
+    AddOptimizationPasses(Passes, *FPasses, TM.get(), 2, 2);
 
   if (OptLevelO3)
-    AddOptimizationPasses(Passes, *FPasses, 3, 0);
+    AddOptimizationPasses(Passes, *FPasses, TM.get(), 3, 0);
 
   if (OptLevelO1 || OptLevelO2 || OptLevelOs || OptLevelOz || OptLevelO3) {
     FPasses->doInitialization();
@@ -606,10 +643,15 @@ int main(int argc, char **argv) {
       BOS = make_unique<raw_svector_ostream>(Buffer);
       OS = BOS.get();
     }
-    if (OutputAssembly)
+    if (OutputAssembly) {
+      if (EmitSummaryIndex)
+        report_fatal_error("Text output is incompatible with -module-summary");
+      if (EmitModuleHash)
+        report_fatal_error("Text output is incompatible with -module-hash");
       Passes.add(createPrintModulePass(*OS, "", PreserveAssemblyUseListOrder));
-    else
-      Passes.add(createBitcodeWriterPass(*OS, PreserveBitcodeUseListOrder));
+    } else
+      Passes.add(createBitcodeWriterPass(*OS, PreserveBitcodeUseListOrder,
+                                         EmitSummaryIndex, EmitModuleHash));
   }
 
   // Before executing passes, print the final values of the LLVM options.

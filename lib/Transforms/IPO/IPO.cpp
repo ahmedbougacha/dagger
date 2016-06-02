@@ -24,18 +24,18 @@ using namespace llvm;
 
 void llvm::initializeIPO(PassRegistry &Registry) {
   initializeArgPromotionPass(Registry);
-  initializeConstantMergePass(Registry);
+  initializeConstantMergeLegacyPassPass(Registry);
   initializeCrossDSOCFIPass(Registry);
   initializeDAEPass(Registry);
   initializeDAHPass(Registry);
   initializeForceFunctionAttrsLegacyPassPass(Registry);
-  initializeGlobalDCEPass(Registry);
-  initializeGlobalOptPass(Registry);
+  initializeGlobalDCELegacyPassPass(Registry);
+  initializeGlobalOptLegacyPassPass(Registry);
   initializeIPCPPass(Registry);
   initializeAlwaysInlinerPass(Registry);
   initializeSimpleInlinerPass(Registry);
   initializeInferFunctionAttrsLegacyPassPass(Registry);
-  initializeInternalizePassPass(Registry);
+  initializeInternalizeLegacyPassPass(Registry);
   initializeLoopExtractorPass(Registry);
   initializeBlockExtractorPassPass(Registry);
   initializeSingleLoopExtractorPass(Registry);
@@ -51,8 +51,8 @@ void llvm::initializeIPO(PassRegistry &Registry) {
   initializeStripDeadDebugInfoPass(Registry);
   initializeStripNonDebugSymbolsPass(Registry);
   initializeBarrierNoopPass(Registry);
-  initializeEliminateAvailableExternallyPass(Registry);
-  initializeSampleProfileLoaderPass(Registry);
+  initializeEliminateAvailableExternallyLegacyPassPass(Registry);
+  initializeSampleProfileLoaderLegacyPassPass(Registry);
   initializeFunctionImportPassPass(Registry);
   initializeWholeProgramDevirtPass(Registry);
 }
@@ -106,10 +106,10 @@ void LLVMAddIPSCCPPass(LLVMPassManagerRef PM) {
 }
 
 void LLVMAddInternalizePass(LLVMPassManagerRef PM, unsigned AllButMain) {
-  std::vector<const char *> Export;
-  if (AllButMain)
-    Export.push_back("main");
-  unwrap(PM)->add(createInternalizePass(Export));
+  auto PreserveMain = [=](const GlobalValue &GV) {
+    return AllButMain && GV.getName() == "main";
+  };
+  unwrap(PM)->add(createInternalizePass(PreserveMain));
 }
 
 void LLVMAddStripDeadPrototypesPass(LLVMPassManagerRef PM) {

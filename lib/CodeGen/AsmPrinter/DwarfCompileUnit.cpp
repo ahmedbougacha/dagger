@@ -185,7 +185,8 @@ DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(
     }
 
     addBlock(*VariableDIE, dwarf::DW_AT_location, Loc);
-    addLinkageName(*VariableDIE, GV->getLinkageName());
+    if (DD->useAllLinkageNames())
+      addLinkageName(*VariableDIE, GV->getLinkageName());
   } else if (const ConstantInt *CI =
                  dyn_cast_or_null<ConstantInt>(GV->getVariable())) {
     addConstantValue(*VariableDIE, CI, GTy);
@@ -286,7 +287,8 @@ DIE &DwarfCompileUnit::updateSubprogramScopeDIE(const DISubprogram *SP) {
   DIE *SPDie = getOrCreateSubprogramDIE(SP, includeMinimalInlineScopes());
 
   attachLowHighPC(*SPDie, Asm->getFunctionBegin(), Asm->getFunctionEnd());
-  if (!DD->getCurrentFunction()->getTarget().Options.DisableFramePointerElim(
+  if (DD->useAppleExtensionAttributes() &&
+      !DD->getCurrentFunction()->getTarget().Options.DisableFramePointerElim(
           *DD->getCurrentFunction()))
     addFlag(*SPDie, dwarf::DW_AT_APPLE_omit_frame_ptr);
 
@@ -538,7 +540,8 @@ DIE *DwarfCompileUnit::constructVariableDIEImpl(const DbgVariable &DV,
     const TargetFrameLowering *TFI = Asm->MF->getSubtarget().getFrameLowering();
     int Offset = TFI->getFrameIndexReference(*Asm->MF, FI, FrameReg);
     assert(Expr != DV.getExpression().end() && "Wrong number of expressions");
-    DwarfExpr.AddMachineRegIndirect(FrameReg, Offset);
+    DwarfExpr.AddMachineRegIndirect(*Asm->MF->getSubtarget().getRegisterInfo(),
+                                    FrameReg, Offset);
     DwarfExpr.AddExpression((*Expr)->expr_op_begin(), (*Expr)->expr_op_end());
     ++Expr;
   }
@@ -695,25 +698,6 @@ void DwarfCompileUnit::finishSubprogramDefinition(const DISubprogram *SP) {
       applySubprogramAttributesToDefinition(SP, *D);
   }
 }
-void DwarfCompileUnit::collectDeadVariables(const DISubprogram *SP) {
-  assert(SP && "CU's subprogram list contains a non-subprogram");
-  assert(SP->isDefinition() &&
-         "CU's subprogram list contains a subprogram declaration");
-  auto Variables = SP->getVariables();
-  if (Variables.size() == 0)
-    return;
-
-  DIE *SPDIE = DU->getAbstractSPDies().lookup(SP);
-  if (!SPDIE)
-    SPDIE = getDIE(SP);
-  assert(SPDIE);
-  for (const DILocalVariable *DV : Variables) {
-    DbgVariable NewVar(DV, /* IA */ nullptr, DD);
-    auto VariableDie = constructVariableDIE(NewVar);
-    applyVariableAttributes(NewVar, *VariableDie);
-    SPDIE->addChild(std::move(VariableDie));
-  }
-}
 
 void DwarfCompileUnit::emitHeader(bool UseOffsets) {
   // Don't bother labeling the .dwo unit, as its offset isn't used.
@@ -784,13 +768,14 @@ void DwarfCompileUnit::addComplexAddress(const DbgVariable &DV, DIE &Die,
   DIEDwarfExpression DwarfExpr(*Asm, *this, *Loc);
   const DIExpression *Expr = DV.getSingleExpression();
   bool ValidReg;
+  const TargetRegisterInfo &TRI = *Asm->MF->getSubtarget().getRegisterInfo();
   if (Location.getOffset()) {
-    ValidReg = DwarfExpr.AddMachineRegIndirect(Location.getReg(),
+    ValidReg = DwarfExpr.AddMachineRegIndirect(TRI, Location.getReg(),
                                                Location.getOffset());
     if (ValidReg)
       DwarfExpr.AddExpression(Expr->expr_op_begin(), Expr->expr_op_end());
   } else
-    ValidReg = DwarfExpr.AddMachineRegExpression(Expr, Location.getReg());
+    ValidReg = DwarfExpr.AddMachineRegExpression(TRI, Expr, Location.getReg());
 
   // Now attach the location information to the DIE.
   if (ValidReg)
@@ -835,7 +820,7 @@ bool DwarfCompileUnit::isDwoUnit() const {
 }
 
 bool DwarfCompileUnit::includeMinimalInlineScopes() const {
-  return getCUNode()->getEmissionKind() == DIBuilder::LineTablesOnly ||
+  return getCUNode()->getEmissionKind() == DICompileUnit::LineTablesOnly ||
          (DD->useSplitDwarf() && !Skeleton);
 }
 } // end llvm namespace

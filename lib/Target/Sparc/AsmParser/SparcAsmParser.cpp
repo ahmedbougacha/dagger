@@ -636,8 +636,12 @@ bool SparcAsmParser::ParseInstruction(ParseInstructionInfo &Info,
       return Error(Loc, "unexpected token");
     }
 
-    while (getLexer().is(AsmToken::Comma)) {
-      Parser.Lex(); // Eat the comma.
+    while (getLexer().is(AsmToken::Comma) || getLexer().is(AsmToken::Plus)) {
+      if (getLexer().is(AsmToken::Plus)) {
+      // Plus tokens are significant in software_traps (p83, sparcv8.pdf). We must capture them.
+        Operands.push_back(SparcOperand::CreateToken("+", Parser.getTok().getLoc()));
+      }
+      Parser.Lex(); // Eat the comma or plus.
       // Parse and remember the operand.
       if (parseOperand(Operands, Name) != MatchOperand_Success) {
         SMLoc Loc = getLexer().getLoc();
@@ -677,6 +681,12 @@ ParseDirective(AsmToken DirectiveID)
 
   if (IDVal == ".register") {
     // For now, ignore .register directive.
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+  if (IDVal == ".proc") {
+    // For compatibility, ignore this directive.
+    // (It's supposed to be an "optimization" in the Sun assembler)
     Parser.eatToEndOfStatement();
     return false;
   }
@@ -762,7 +772,7 @@ SparcAsmParser::parseOperand(OperandVector &Operands, StringRef Mnemonic) {
                                                  Parser.getTok().getLoc()));
     Parser.Lex(); // Eat the [
 
-    if (Mnemonic == "cas" || Mnemonic == "casx") {
+    if (Mnemonic == "cas" || Mnemonic == "casx" || Mnemonic == "casa") {
       SMLoc S = Parser.getTok().getLoc();
       if (getLexer().getKind() != AsmToken::Percent)
         return MatchOperand_NoMatch;
@@ -889,8 +899,7 @@ SparcAsmParser::parseSparcAsmOperand(std::unique_ptr<SparcOperand> &Op,
 
       const MCExpr *Res = MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_None,
                                                   getContext());
-      if (isCall &&
-          getContext().getObjectFileInfo()->getRelocM() == Reloc::PIC_)
+      if (isCall && getContext().getObjectFileInfo()->isPositionIndependent())
         Res = SparcMCExpr::create(SparcMCExpr::VK_Sparc_WPLT30, Res,
                                   getContext());
       Op = SparcOperand::CreateImm(Res, S, E);
@@ -1211,7 +1220,7 @@ SparcAsmParser::adjustPICRelocation(SparcMCExpr::VariantKind VK,
   // actually a %pc10 or %pc22 relocation. Otherwise, they are interpreted
   // as %got10 or %got22 relocation.
 
-  if (getContext().getObjectFileInfo()->getRelocM() == Reloc::PIC_) {
+  if (getContext().getObjectFileInfo()->isPositionIndependent()) {
     switch(VK) {
     default: break;
     case SparcMCExpr::VK_Sparc_LO:

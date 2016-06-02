@@ -257,8 +257,14 @@ class ARMAsmParser : public MCTargetAsmParser {
   bool hasThumb() const {
     return getSTI().getFeatureBits()[ARM::HasV4TOps];
   }
+  bool hasThumb2() const {
+    return getSTI().getFeatureBits()[ARM::FeatureThumb2];
+  }
   bool hasV6Ops() const {
     return getSTI().getFeatureBits()[ARM::HasV6Ops];
+  }
+  bool hasV6T2Ops() const {
+    return getSTI().getFeatureBits()[ARM::HasV6T2Ops];
   }
   bool hasV6MOps() const {
     return getSTI().getFeatureBits()[ARM::HasV6MOps];
@@ -296,6 +302,7 @@ class ARMAsmParser : public MCTargetAsmParser {
     uint64_t FB = ComputeAvailableFeatures(STI.ToggleFeature(ARM::ModeThumb));
     setAvailableFeatures(FB);
   }
+  void FixModeAfterArchChange(bool WasThumb, SMLoc Loc);
   bool isMClass() const {
     return getSTI().getFeatureBits()[ARM::FeatureMClass];
   }
@@ -426,8 +433,9 @@ class ARMOperand : public MCParsedAsmOperand {
     k_ShifterImmediate,
     k_RotateImmediate,
     k_ModifiedImmediate,
+    k_ConstantPoolImmediate,
     k_BitfieldDescriptor,
-    k_Token
+    k_Token,
   } Kind;
 
   SMLoc StartLoc, EndLoc, AlignmentLoc;
@@ -620,6 +628,11 @@ public:
     return Imm.Val;
   }
 
+  const MCExpr *getConstantPoolImm() const {
+    assert(isConstantPoolImm() && "Invalid access!");
+    return Imm.Val;
+  }
+
   unsigned getVectorIndex() const {
     assert(Kind == k_VectorIndex && "Invalid access!");
     return VectorIndex.Val;
@@ -657,7 +670,9 @@ public:
   bool isCCOut() const { return Kind == k_CCOut; }
   bool isITMask() const { return Kind == k_ITCondMask; }
   bool isITCondCode() const { return Kind == k_CondCode; }
-  bool isImm() const override { return Kind == k_Immediate; }
+  bool isImm() const override {
+    return Kind == k_Immediate;
+  }
   // checks whether this operand is an unsigned offset which fits is a field
   // of specified width and scaled by a specific number of bits
   template<unsigned width, unsigned scale>
@@ -1045,6 +1060,7 @@ public:
     return ARM_AM::getSOImmVal(Value) == -1 &&
       ARM_AM::getSOImmVal(-Value) != -1;
   }
+  bool isConstantPoolImm() const { return Kind == k_ConstantPoolImmediate; }
   bool isBitfield() const { return Kind == k_BitfieldDescriptor; }
   bool isPostIdxRegShifted() const { return Kind == k_PostIndexRegister; }
   bool isPostIdxReg() const {
@@ -1342,6 +1358,7 @@ public:
     // If we have an immediate that's not a constant, treat it as a label
     // reference needing a fixup. If it is a constant, it's something else
     // and we reject it.
+
     if (isImm() && !isa<MCConstantExpr>(getImm()))
       return true;
 
@@ -1351,6 +1368,11 @@ public:
     if (!Memory.OffsetImm) return true;
     int64_t Val = Memory.OffsetImm->getValue();
     return (Val > -4096 && Val < 4096) || (Val == INT32_MIN);
+  }
+  bool isConstPoolAsmImm() const {
+    // Delay processing of Constant Pool Immediate, this will turn into
+    // a constant. Match no other operand
+    return (isConstantPoolImm());
   }
   bool isPostIdxImm8() const {
     if (!isImm()) return false;
@@ -1964,6 +1986,7 @@ public:
       }
 
       const MCSymbolRefExpr *SR = dyn_cast<MCSymbolRefExpr>(Imm.Val);
+ 
       assert(SR && "Unknown value type!");
       Inst.addOperand(MCOperand::createExpr(SR));
       return;
@@ -2257,6 +2280,14 @@ public:
     int64_t Val = Memory.OffsetImm ? Memory.OffsetImm->getValue() : 0;
     Inst.addOperand(MCOperand::createReg(Memory.BaseRegNum));
     Inst.addOperand(MCOperand::createImm(Val));
+  }
+
+  void addConstPoolAsmImmOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    // This is container for the immediate that we will create the constant
+    // pool from
+    addExpr(Inst, getConstantPoolImm());
+    return;
   }
 
   void addMemTBBOperands(MCInst &Inst, unsigned N) const {
@@ -2639,6 +2670,15 @@ public:
   }
 
   static std::unique_ptr<ARMOperand>
+  CreateConstantPoolImm(const MCExpr *Val, SMLoc S, SMLoc E) {
+    auto Op = make_unique<ARMOperand>(k_ConstantPoolImmediate);
+    Op->Imm.Val = Val;
+    Op->StartLoc = S;
+    Op->EndLoc = E;
+    return Op;
+  }
+
+  static std::unique_ptr<ARMOperand>
   CreateBitfield(unsigned LSB, unsigned Width, SMLoc S, SMLoc E) {
     auto Op = make_unique<ARMOperand>(k_BitfieldDescriptor);
     Op->Bitfield.LSB = LSB;
@@ -2894,6 +2934,9 @@ void ARMOperand::print(raw_ostream &OS) const {
   case k_ModifiedImmediate:
     OS << "<mod_imm #" << ModImm.Bits << ", #"
        <<  ModImm.Rot << ")>";
+    break;
+  case k_ConstantPoolImmediate:
+    OS << "<constant_pool_imm #" << *getConstantPoolImm();
     break;
   case k_BitfieldDescriptor:
     OS << "<bitfield " << "lsb: " << Bitfield.LSB
@@ -5210,16 +5253,12 @@ bool ARMAsmParser::parseOperand(OperandVector &Operands, StringRef Mnemonic) {
     S = Parser.getTok().getLoc();
     if (Mnemonic != "ldr") // only parse for ldr pseudo (e.g. ldr r0, =val)
       return Error(S, "unexpected token in operand");
-
     Parser.Lex(); // Eat '='
     const MCExpr *SubExprVal;
     if (getParser().parseExpression(SubExprVal))
       return true;
     E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
-
-    const MCExpr *CPLoc =
-        getTargetStreamer().addConstantPoolEntry(SubExprVal, S);
-    Operands.push_back(ARMOperand::CreateImm(CPLoc, S, E));
+    Operands.push_back(ARMOperand::CreateConstantPoolImm(SubExprVal, S, E));
     return false;
   }
   }
@@ -6834,6 +6873,90 @@ bool ARMAsmParser::processInstruction(MCInst &Inst,
   case ARM::t2LDRSHpcrel:
     Inst.setOpcode(ARM::t2LDRSHpci);
     return true;
+  case ARM::LDRConstPool:
+  case ARM::tLDRConstPool:
+  case ARM::t2LDRConstPool: {
+    // Pseudo instruction ldr rt, =immediate is converted to a
+    // MOV rt, immediate if immediate is known and representable
+    // otherwise we create a constant pool entry that we load from.
+    MCInst TmpInst;
+    if (Inst.getOpcode() == ARM::LDRConstPool)
+      TmpInst.setOpcode(ARM::LDRi12);
+    else if (Inst.getOpcode() == ARM::tLDRConstPool)
+      TmpInst.setOpcode(ARM::tLDRpci);
+    else if (Inst.getOpcode() == ARM::t2LDRConstPool)
+      TmpInst.setOpcode(ARM::t2LDRpci);
+    const ARMOperand &PoolOperand =
+      static_cast<ARMOperand &>(*Operands[3]);
+    const MCExpr *SubExprVal = PoolOperand.getConstantPoolImm();
+    // If SubExprVal is a constant we may be able to use a MOV
+    if (isa<MCConstantExpr>(SubExprVal) &&
+        Inst.getOperand(0).getReg() != ARM::PC &&
+        Inst.getOperand(0).getReg() != ARM::SP) {
+      int64_t Value =
+        (int64_t) (cast<MCConstantExpr>(SubExprVal))->getValue();
+      bool UseMov  = true;
+      bool MovHasS = true;
+      if (Inst.getOpcode() == ARM::LDRConstPool) {
+        // ARM Constant
+        if (ARM_AM::getSOImmVal(Value) != -1) {
+          Value = ARM_AM::getSOImmVal(Value);
+          TmpInst.setOpcode(ARM::MOVi);
+        }
+        else if (ARM_AM::getSOImmVal(~Value) != -1) {
+          Value = ARM_AM::getSOImmVal(~Value);
+          TmpInst.setOpcode(ARM::MVNi);
+        }
+        else if (hasV6T2Ops() &&
+                 Value >=0 && Value < 65536) {
+          TmpInst.setOpcode(ARM::MOVi16);
+          MovHasS = false;
+        }
+        else
+          UseMov = false;
+      }
+      else {
+        // Thumb/Thumb2 Constant
+        if (hasThumb2() &&
+            ARM_AM::getT2SOImmVal(Value) != -1)
+          TmpInst.setOpcode(ARM::t2MOVi);
+        else if (hasThumb2() &&
+                 ARM_AM::getT2SOImmVal(~Value) != -1) {
+          TmpInst.setOpcode(ARM::t2MVNi);
+          Value = ~Value;
+        }
+        else if (hasV8MBaseline() &&
+                 Value >=0 && Value < 65536) {
+          TmpInst.setOpcode(ARM::t2MOVi16);
+          MovHasS = false;
+        }
+        else
+          UseMov = false;
+      }
+      if (UseMov) {
+        TmpInst.addOperand(Inst.getOperand(0));           // Rt
+        TmpInst.addOperand(MCOperand::createImm(Value));  // Immediate
+        TmpInst.addOperand(Inst.getOperand(2));           // CondCode
+        TmpInst.addOperand(Inst.getOperand(3));           // CondCode
+        if (MovHasS)
+          TmpInst.addOperand(MCOperand::createReg(0));    // S
+        Inst = TmpInst;
+        return true;
+      }
+    }
+    // No opportunity to use MOV/MVN create constant pool
+    const MCExpr *CPLoc =
+      getTargetStreamer().addConstantPoolEntry(SubExprVal,
+                                               PoolOperand.getStartLoc());
+    TmpInst.addOperand(Inst.getOperand(0));           // Rt
+    TmpInst.addOperand(MCOperand::createExpr(CPLoc)); // offset to constpool
+    if (TmpInst.getOpcode() == ARM::LDRi12)
+      TmpInst.addOperand(MCOperand::createImm(0));    // unused offset
+    TmpInst.addOperand(Inst.getOperand(2));           // CondCode
+    TmpInst.addOperand(Inst.getOperand(3));           // CondCode
+    Inst = TmpInst;
+    return true;
+  }
   // Handle NEON VST complex aliases.
   case ARM::VST1LNdWB_register_Asm_8:
   case ARM::VST1LNdWB_register_Asm_16:
@@ -9099,6 +9222,31 @@ bool ARMAsmParser::parseDirectiveUnreq(SMLoc L) {
   return false;
 }
 
+// After changing arch/CPU, try to put the ARM/Thumb mode back to what it was
+// before, if supported by the new target, or emit mapping symbols for the mode
+// switch.
+void ARMAsmParser::FixModeAfterArchChange(bool WasThumb, SMLoc Loc) {
+  if (WasThumb != isThumb()) {
+    if (WasThumb && hasThumb()) {
+      // Stay in Thumb mode
+      SwitchMode();
+    } else if (!WasThumb && hasARM()) {
+      // Stay in ARM mode
+      SwitchMode();
+    } else {
+      // Mode switch forced, because the new arch doesn't support the old mode.
+      getParser().getStreamer().EmitAssemblerFlag(isThumb() ? MCAF_Code16
+                                                            : MCAF_Code32);
+      // Warn about the implcit mode switch. GAS does not switch modes here,
+      // but instead stays in the old mode, reporting an error on any following
+      // instructions as the mode does not exist on the target.
+      Warning(Loc, Twine("new target does not support ") +
+                       (WasThumb ? "thumb" : "arm") + " mode, switching to " +
+                       (!WasThumb ? "thumb" : "arm") + " mode");
+    }
+  }
+}
+
 /// parseDirectiveArch
 ///  ::= .arch token
 bool ARMAsmParser::parseDirectiveArch(SMLoc L) {
@@ -9111,10 +9259,12 @@ bool ARMAsmParser::parseDirectiveArch(SMLoc L) {
     return false;
   }
 
+  bool WasThumb = isThumb();
   Triple T;
   MCSubtargetInfo &STI = copySTI();
   STI.setDefaultFeatures("", ("+" + ARM::getArchName(ID)).str());
   setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
+  FixModeAfterArchChange(WasThumb, L);
 
   getTargetStreamer().emitArch(ID);
   return false;
@@ -9245,9 +9395,11 @@ bool ARMAsmParser::parseDirectiveCPU(SMLoc L) {
     return false;
   }
 
+  bool WasThumb = isThumb();
   MCSubtargetInfo &STI = copySTI();
   STI.setDefaultFeatures(CPU, "");
   setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
+  FixModeAfterArchChange(WasThumb, L);
 
   return false;
 }
@@ -9931,7 +10083,9 @@ bool ARMAsmParser::parseDirectiveAlign(SMLoc L) {
     return true;
 
   // '.align' is target specifically handled to mean 2**2 byte alignment.
-  if (getStreamer().getCurrentSection().first->UseCodeAlign())
+  const MCSection *Section = getStreamer().getCurrentSection().first;
+  assert(Section && "must have section to emit alignment");
+  if (Section->UseCodeAlign())
     getStreamer().EmitCodeAlignment(4, 0);
   else
     getStreamer().EmitValueToAlignment(4, 0, 1, 0);

@@ -15,7 +15,6 @@
 #ifndef LLVM_TRANSFORMS_SCALAR_H
 #define LLVM_TRANSFORMS_SCALAR_H
 
-#include "llvm/ADT/StringRef.h"
 #include <functional>
 
 namespace llvm {
@@ -82,6 +81,16 @@ FunctionPass *createDeadStoreEliminationPass();
 //
 FunctionPass *createAggressiveDCEPass();
 
+
+//===----------------------------------------------------------------------===//
+//
+// GuardWidening - An optimization over the @llvm.experimental.guard intrinsic
+// that (optimistically) combines multiple guards into one to have fewer checks
+// at runtime.
+//
+FunctionPass *createGuardWideningPass();
+
+
 //===----------------------------------------------------------------------===//
 //
 // BitTrackingDCE - This pass uses a bit-tracking DCE algorithm in order to
@@ -132,7 +141,7 @@ Pass *createIndVarSimplifyPass();
 // into:
 //    %Z = add int 2, %X
 //
-FunctionPass *createInstructionCombiningPass();
+FunctionPass *createInstructionCombiningPass(bool ExpensiveCombines = true);
 
 //===----------------------------------------------------------------------===//
 //
@@ -335,13 +344,6 @@ FunctionPass *createMergedLoadStoreMotionPass();
 
 //===----------------------------------------------------------------------===//
 //
-// GVN - This pass performs global value numbering and redundant load
-// elimination cotemporaneously.
-//
-FunctionPass *createGVNPass(bool NoLoads = false);
-
-//===----------------------------------------------------------------------===//
-//
 // MemCpyOpt - This pass performs optimizations related to eliminating memcpy
 // calls and/or combining multiple stores into memset's.
 //
@@ -378,6 +380,12 @@ FunctionPass *createSinkingPass();
 // LowerAtomic - Lower atomic intrinsics to non-atomic form
 //
 Pass *createLowerAtomicPass();
+
+//===----------------------------------------------------------------------===//
+//
+// LowerGuardIntrinsic - Lower guard intrinsics to normal control flow.
+//
+Pass *createLowerGuardIntrinsicPass();
 
 //===----------------------------------------------------------------------===//
 //
@@ -431,6 +439,10 @@ createSeparateConstOffsetFromGEPPass(const TargetMachine *TM = nullptr,
 //
 FunctionPass *createSpeculativeExecutionPass();
 
+// Same as createSpeculativeExecutionPass, but does nothing unless
+// TargetTransformInfo::hasBranchDivergence() is true.
+FunctionPass *createSpeculativeExecutionIfHasBranchDivergencePass();
+
 //===----------------------------------------------------------------------===//
 //
 // LoadCombine - Combine loads into bigger loads.
@@ -477,7 +489,10 @@ FunctionPass *createNaryReassociatePass();
 //
 // LoopDistribute - Distribute loops.
 //
-FunctionPass *createLoopDistributePass();
+// ProcessAllLoopsByDefault instructs the pass to look for distribution
+// opportunities in all loops unless -enable-loop-distribute or the
+// llvm.loop.distribute.enable metadata data override this default.
+FunctionPass *createLoopDistributePass(bool ProcessAllLoopsByDefault);
 
 //===----------------------------------------------------------------------===//
 //
@@ -503,6 +518,9 @@ FunctionPass *createLoopVersioningPass();
 // LoopDataPrefetch - Perform data prefetching in loops.
 //
 FunctionPass *createLoopDataPrefetchPass();
+
+///===---------------------------------------------------------------------===//
+ModulePass *createNameAnonFunctionPass();
 
 } // End llvm namespace
 

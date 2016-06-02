@@ -15,10 +15,6 @@
 // Thumb specific DAG Nodes.
 //
 
-def ARMtcall : SDNode<"ARMISD::tCALL", SDT_ARMcall,
-                      [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue,
-                       SDNPVariadic]>;
-
 def imm_sr_XFORM: SDNodeXForm<imm, [{
   unsigned Imm = N->getZExtValue();
   return CurDAG->getTargetConstant((Imm == 32 ? 0 : Imm), SDLoc(N), MVT::i32);
@@ -468,7 +464,7 @@ let isCall = 1,
   def tBL  : TIx2<0b11110, 0b11, 1,
                   (outs), (ins pred:$p, t_bltarget:$func), IIC_Br,
                   "bl${p}\t$func",
-                  [(ARMtcall tglobaladdr:$func)]>,
+                  [(ARMcall tglobaladdr:$func)]>,
              Requires<[IsThumb]>, Sched<[WriteBrL]> {
     bits<24> func;
     let Inst{26} = func{23};
@@ -481,8 +477,7 @@ let isCall = 1,
   // ARMv5T and above, also used for Thumb2
   def tBLXi : TIx2<0b11110, 0b11, 0,
                  (outs), (ins pred:$p, t_blxtarget:$func), IIC_Br,
-                   "blx${p}\t$func",
-                   [(ARMcall tglobaladdr:$func)]>,
+                   "blx${p}\t$func", []>,
               Requires<[IsThumb, HasV5T, IsNotMClass]>, Sched<[WriteBrL]> {
     bits<24> func;
     let Inst{26} = func{23};
@@ -496,7 +491,7 @@ let isCall = 1,
   // Also used for Thumb2
   def tBLXr : TI<(outs), (ins pred:$p, GPR:$func), IIC_Br,
                   "blx${p}\t$func",
-                  [(ARMtcall GPR:$func)]>,
+                  [(ARMcall GPR:$func)]>,
               Requires<[IsThumb, HasV5T]>,
               T1Special<{1,1,1,?}>, Sched<[WriteBrL]> { // A6.2.3 & A8.6.24;
     bits<4> func;
@@ -682,19 +677,19 @@ multiclass thumb_st_rr_ri_enc<bits<3> reg_opc, bits<4> imm_opc,
 defm tLDR  : thumb_ld_rr_ri_enc<0b100, 0b0110, t_addrmode_rr,
                                 t_addrmode_is4, AddrModeT1_4,
                                 IIC_iLoad_r, IIC_iLoad_i, "ldr",
-                                UnOpFrag<(load node:$Src)>>;
+                                load>;
 
 // A8.6.64 & A8.6.61
 defm tLDRB : thumb_ld_rr_ri_enc<0b110, 0b0111, t_addrmode_rr,
                                 t_addrmode_is1, AddrModeT1_1,
                                 IIC_iLoad_bh_r, IIC_iLoad_bh_i, "ldrb",
-                                UnOpFrag<(zextloadi8 node:$Src)>>;
+                                zextloadi8>;
 
 // A8.6.76 & A8.6.73
 defm tLDRH : thumb_ld_rr_ri_enc<0b101, 0b1000, t_addrmode_rr,
                                 t_addrmode_is2, AddrModeT1_2,
                                 IIC_iLoad_bh_r, IIC_iLoad_bh_i, "ldrh",
-                                UnOpFrag<(zextloadi16 node:$Src)>>;
+                                zextloadi16>;
 
 let AddedComplexity = 10 in
 def tLDRSB :                    // A8.6.80
@@ -725,19 +720,19 @@ def tSTRspi : T1pIs<(outs), (ins tGPR:$Rt, t_addrmode_sp:$addr), IIC_iStore_i,
 defm tSTR  : thumb_st_rr_ri_enc<0b000, 0b0110, t_addrmode_rr,
                                 t_addrmode_is4, AddrModeT1_4,
                                 IIC_iStore_r, IIC_iStore_i, "str",
-                                BinOpFrag<(store node:$LHS, node:$RHS)>>;
+                                store>;
 
 // A8.6.197 & A8.6.195
 defm tSTRB : thumb_st_rr_ri_enc<0b010, 0b0111, t_addrmode_rr,
                                 t_addrmode_is1, AddrModeT1_1,
                                 IIC_iStore_bh_r, IIC_iStore_bh_i, "strb",
-                                BinOpFrag<(truncstorei8 node:$LHS, node:$RHS)>>;
+                                truncstorei8>;
 
 // A8.6.207 & A8.6.205
 defm tSTRH : thumb_st_rr_ri_enc<0b001, 0b1000, t_addrmode_rr,
                                t_addrmode_is2, AddrModeT1_2,
                                IIC_iStore_bh_r, IIC_iStore_bh_i, "strh",
-                               BinOpFrag<(truncstorei16 node:$LHS, node:$RHS)>>;
+                               truncstorei16>;
 
 
 //===----------------------------------------------------------------------===//
@@ -1329,7 +1324,14 @@ def tInt_eh_sjlj_longjmp : XI<(outs), (ins GPR:$src, GPR:$scratch),
                               AddrModeNone, 0, IndexModeNone,
                               Pseudo, NoItinerary, "", "",
                               [(ARMeh_sjlj_longjmp GPR:$src, GPR:$scratch)]>,
-                             Requires<[IsThumb]>;
+                             Requires<[IsThumb,IsNotWindows]>;
+
+let isBarrier = 1, hasSideEffects = 1, isTerminator = 1, isCodeGenOnly = 1,
+    Defs = [ R11, LR, SP ] in
+def tInt_WIN_eh_sjlj_longjmp
+  : XI<(outs), (ins GPR:$src, GPR:$scratch), AddrModeNone, 0, IndexModeNone,
+       Pseudo, NoItinerary, "", "", [(ARMeh_sjlj_longjmp GPR:$src, GPR:$scratch)]>,
+    Requires<[IsThumb,IsWindows]>;
 
 //===----------------------------------------------------------------------===//
 // Non-Instruction Patterns
@@ -1399,15 +1401,8 @@ def : T1Pat<(ARMWrapperJT tjumptable:$dst),
             (tLEApcrelJT tjumptable:$dst)>;
 
 // Direct calls
-def : T1Pat<(ARMtcall texternalsym:$func), (tBL texternalsym:$func)>,
+def : T1Pat<(ARMcall texternalsym:$func), (tBL texternalsym:$func)>,
       Requires<[IsThumb]>;
-
-def : Tv5Pat<(ARMcall texternalsym:$func), (tBLXi texternalsym:$func)>,
-      Requires<[IsThumb, HasV5T, IsNotMClass]>;
-
-// Indirect calls to ARM routines
-def : Tv5Pat<(ARMcall GPR:$dst), (tBLXr GPR:$dst)>,
-      Requires<[IsThumb, HasV5T]>;
 
 // zextload i1 -> zextload i8
 def : T1Pat<(zextloadi1 t_addrmode_is1:$addr),
@@ -1543,3 +1538,8 @@ def : tInstAlias<"lsr${s}${p} $Rdm, $imm",
              (tLSRri tGPR:$Rdm, cc_out:$s, tGPR:$Rdm, imm_sr:$imm, pred:$p)>;
 def : tInstAlias<"asr${s}${p} $Rdm, $imm",
              (tASRri tGPR:$Rdm, cc_out:$s, tGPR:$Rdm, imm_sr:$imm, pred:$p)>;
+
+// Pseudo instruction ldr Rt, =immediate
+def tLDRConstPool
+  : tAsmPseudo<"ldr${p} $Rt, $immediate",
+               (ins tGPR:$Rt, const_pool_asm_imm:$immediate, pred:$p)>;

@@ -133,6 +133,9 @@ namespace llvm {
 
     // copy - Allocate copy in Allocator and return StringRef to it.
     template <typename Allocator> StringRef copy(Allocator &A) const {
+      // Don't request a length 0 copy from the allocator.
+      if (empty())
+        return StringRef();
       char *S = A.template Allocate<char>(Length);
       std::copy(begin(), end(), S);
       return StringRef(S, Length);
@@ -443,9 +446,10 @@ namespace llvm {
     /// empty substring will be returned.
     ///
     /// \param End The index following the last character to include in the
-    /// substring. If this is npos, or less than \p Start, or exceeds the
-    /// number of characters remaining in the string, the string suffix
-    /// (starting with \p Start) will be returned.
+    /// substring. If this is npos or exceeds the number of characters
+    /// remaining in the string, the string suffix (starting with \p Start)
+    /// will be returned. If this is less than \p Start, an empty string will
+    /// be returned.
     LLVM_ATTRIBUTE_ALWAYS_INLINE
     StringRef slice(size_t Start, size_t End) const {
       Start = std::min(Start, Length);

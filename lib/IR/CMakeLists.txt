@@ -37,12 +37,14 @@ add_llvm_library(LLVMCore
   Mangler.cpp
   Metadata.cpp
   Module.cpp
+  ModuleSummaryIndex.cpp
   Operator.cpp
+  OptBisect.cpp
   Pass.cpp
   PassManager.cpp
   PassRegistry.cpp
+  ProfileSummary.cpp
   Statepoint.cpp
-  FunctionInfo.cpp
   Type.cpp
   TypeFinder.cpp
   Use.cpp

@@ -11,7 +11,6 @@
 #include "X86AsmInstrumentation.h"
 #include "X86AsmParserCommon.h"
 #include "X86Operand.h"
-#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -2304,6 +2303,7 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
     Name == "repne" || Name == "repnz" ||
     Name == "rex64" || Name == "data16";
 
+  bool CurlyAsEndOfStatement = false;
   // This does the actual operand parsing.  Don't parse any more if we have a
   // prefix juxtaposed with an operation like "lock incl 4(%rax)", because we
   // just want to parse the "lock" as the first instruction and the "incl" as
@@ -2331,7 +2331,12 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
         break;
      }
 
-    if (getLexer().isNot(AsmToken::EndOfStatement))
+    // In MS inline asm curly braces mark the begining/end of a block, therefore
+    // they should be interepreted as end of statement
+    CurlyAsEndOfStatement =
+        isParsingIntelSyntax() && isParsingInlineAsm() &&
+        (getLexer().is(AsmToken::LCurly) || getLexer().is(AsmToken::RCurly));
+    if (getLexer().isNot(AsmToken::EndOfStatement) && !CurlyAsEndOfStatement)
       return ErrorAndEatStatement(getLexer().getLoc(),
                                   "unexpected token in argument list");
    }
@@ -2340,6 +2345,10 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
   if (getLexer().is(AsmToken::EndOfStatement) ||
       (isPrefix && getLexer().is(AsmToken::Slash)))
     Parser.Lex();
+  else if (CurlyAsEndOfStatement)
+    // Add an actual EndOfStatement before the curly brace
+    Info.AsmRewrites->emplace_back(AOK_EndOfStatement,
+                                   getLexer().getTok().getLoc(), 0);
 
   // This is for gas compatibility and cannot be done in td.
   // Adding "p" for some floating point with no argument.
@@ -2518,60 +2527,7 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
 }
 
 bool X86AsmParser::processInstruction(MCInst &Inst, const OperandVector &Ops) {
-  switch (Inst.getOpcode()) {
-  default: return false;
-  case X86::VMOVZPQILo2PQIrr:
-  case X86::VMOVAPDrr:
-  case X86::VMOVAPDYrr:
-  case X86::VMOVAPSrr:
-  case X86::VMOVAPSYrr:
-  case X86::VMOVDQArr:
-  case X86::VMOVDQAYrr:
-  case X86::VMOVDQUrr:
-  case X86::VMOVDQUYrr:
-  case X86::VMOVUPDrr:
-  case X86::VMOVUPDYrr:
-  case X86::VMOVUPSrr:
-  case X86::VMOVUPSYrr: {
-    if (X86II::isX86_64ExtendedReg(Inst.getOperand(0).getReg()) ||
-        !X86II::isX86_64ExtendedReg(Inst.getOperand(1).getReg()))
-      return false;
-
-    unsigned NewOpc;
-    switch (Inst.getOpcode()) {
-    default: llvm_unreachable("Invalid opcode");
-    case X86::VMOVZPQILo2PQIrr: NewOpc = X86::VMOVPQI2QIrr;   break;
-    case X86::VMOVAPDrr:        NewOpc = X86::VMOVAPDrr_REV;  break;
-    case X86::VMOVAPDYrr:       NewOpc = X86::VMOVAPDYrr_REV; break;
-    case X86::VMOVAPSrr:        NewOpc = X86::VMOVAPSrr_REV;  break;
-    case X86::VMOVAPSYrr:       NewOpc = X86::VMOVAPSYrr_REV; break;
-    case X86::VMOVDQArr:        NewOpc = X86::VMOVDQArr_REV;  break;
-    case X86::VMOVDQAYrr:       NewOpc = X86::VMOVDQAYrr_REV; break;
-    case X86::VMOVDQUrr:        NewOpc = X86::VMOVDQUrr_REV;  break;
-    case X86::VMOVDQUYrr:       NewOpc = X86::VMOVDQUYrr_REV; break;
-    case X86::VMOVUPDrr:        NewOpc = X86::VMOVUPDrr_REV;  break;
-    case X86::VMOVUPDYrr:       NewOpc = X86::VMOVUPDYrr_REV; break;
-    case X86::VMOVUPSrr:        NewOpc = X86::VMOVUPSrr_REV;  break;
-    case X86::VMOVUPSYrr:       NewOpc = X86::VMOVUPSYrr_REV; break;
-    }
-    Inst.setOpcode(NewOpc);
-    return true;
-  }
-  case X86::VMOVSDrr:
-  case X86::VMOVSSrr: {
-    if (X86II::isX86_64ExtendedReg(Inst.getOperand(0).getReg()) ||
-        !X86II::isX86_64ExtendedReg(Inst.getOperand(2).getReg()))
-      return false;
-    unsigned NewOpc;
-    switch (Inst.getOpcode()) {
-    default: llvm_unreachable("Invalid opcode");
-    case X86::VMOVSDrr: NewOpc = X86::VMOVSDrr_REV;   break;
-    case X86::VMOVSSrr: NewOpc = X86::VMOVSSrr_REV;   break;
-    }
-    Inst.setOpcode(NewOpc);
-    return true;
-  }
-  }
+  return false;
 }
 
 static const char *getSubtargetFeatureName(uint64_t Val);

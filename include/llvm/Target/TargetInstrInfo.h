@@ -21,6 +21,7 @@
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/Support/BranchProbability.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/CodeGen/LiveIntervalAnalysis.h"
 
 namespace llvm {
 
@@ -256,6 +257,18 @@ public:
     return MI->isAsCheapAsAMove();
   }
 
+  /// Return true if the instruction should be sunk by MachineSink.
+  ///
+  /// MachineSink determines on its own whether the instruction is safe to sink;
+  /// this gives the target a hook to override the default behavior with regards
+  /// to which instructions should be sunk.
+  /// The default behavior is to not sink insert_subreg, subreg_to_reg, and
+  /// reg_sequence. These are meant to be close to the source to make it easier
+  /// to coalesce.
+  virtual bool shouldSink(const MachineInstr &MI) const {
+    return !MI.isInsertSubreg() && !MI.isSubregToReg() && !MI.isRegSequence();
+  }
+
   /// Re-issue the specified 'original' instruction at the
   /// specific location targeting a new destination register.
   /// The register in Orig->getOperand(0).getReg() will be substituted by
@@ -452,6 +465,8 @@ public:
   /// If AllowModify is true, then this routine is allowed to modify the basic
   /// block (e.g. delete instructions after the unconditional branch).
   ///
+  /// The CFG information in MBB.Predecessors and MBB.Successors must be valid
+  /// before calling this function.
   virtual bool AnalyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
                              MachineBasicBlock *&FBB,
                              SmallVectorImpl<MachineOperand> &Cond,
@@ -521,6 +536,9 @@ public:
   /// cases where AnalyzeBranch doesn't apply because there was no original
   /// branch to analyze.  At least this much must be implemented, else tail
   /// merging needs to be disabled.
+  ///
+  /// The CFG information in MBB.Predecessors and MBB.Successors must be valid
+  /// before calling this function.
   virtual unsigned InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
                                 MachineBasicBlock *FBB,
                                 ArrayRef<MachineOperand> Cond,
@@ -782,13 +800,15 @@ public:
   /// The new instruction is inserted before MI, and the client is responsible
   /// for removing the old instruction.
   MachineInstr *foldMemoryOperand(MachineBasicBlock::iterator MI,
-                                  ArrayRef<unsigned> Ops, int FrameIndex) const;
+                                  ArrayRef<unsigned> Ops, int FrameIndex,
+                                  LiveIntervals *LIS = nullptr) const;
 
   /// Same as the previous version except it allows folding of any load and
   /// store from / to any address, not just from a specific stack slot.
   MachineInstr *foldMemoryOperand(MachineBasicBlock::iterator MI,
                                   ArrayRef<unsigned> Ops,
-                                  MachineInstr *LoadMI) const;
+                                  MachineInstr *LoadMI,
+                                  LiveIntervals *LIS = nullptr) const;
 
   /// Return true when there is potentially a faster code sequence
   /// for an instruction chain ending in \p Root. All potential patterns are
@@ -800,6 +820,11 @@ public:
   virtual bool getMachineCombinerPatterns(
       MachineInstr &Root,
       SmallVectorImpl<MachineCombinerPattern> &Patterns) const;
+
+  /// Return true when a code sequence can improve throughput. It
+  /// should be called only for instructions in loops.
+  /// \param Pattern - combiner pattern
+  virtual bool isThroughputPattern(MachineCombinerPattern Pattern) const;
 
   /// Return true if the input \P Inst is part of a chain of dependent ops
   /// that are suitable for reassociation, otherwise return false.
@@ -862,7 +887,8 @@ protected:
   /// at InsertPt.
   virtual MachineInstr *foldMemoryOperandImpl(
       MachineFunction &MF, MachineInstr *MI, ArrayRef<unsigned> Ops,
-      MachineBasicBlock::iterator InsertPt, int FrameIndex) const {
+      MachineBasicBlock::iterator InsertPt, int FrameIndex,
+      LiveIntervals *LIS = nullptr) const {
     return nullptr;
   }
 
@@ -873,7 +899,8 @@ protected:
   /// at InsertPt.
   virtual MachineInstr *foldMemoryOperandImpl(
       MachineFunction &MF, MachineInstr *MI, ArrayRef<unsigned> Ops,
-      MachineBasicBlock::iterator InsertPt, MachineInstr *LoadMI) const {
+      MachineBasicBlock::iterator InsertPt, MachineInstr *LoadMI,
+      LiveIntervals *LIS = nullptr) const {
     return nullptr;
   }
 
@@ -973,16 +1000,18 @@ public:
   /// Get the base register and byte offset of an instruction that reads/writes
   /// memory.
   virtual bool getMemOpBaseRegImmOfs(MachineInstr *MemOp, unsigned &BaseReg,
-                                     unsigned &Offset,
+                                     int64_t &Offset,
                                      const TargetRegisterInfo *TRI) const {
     return false;
   }
 
   virtual bool enableClusterLoads() const { return false; }
 
-  virtual bool shouldClusterLoads(MachineInstr *FirstLdSt,
-                                  MachineInstr *SecondLdSt,
-                                  unsigned NumLoads) const {
+  virtual bool enableClusterStores() const { return false; }
+
+  virtual bool shouldClusterMemOps(MachineInstr *FirstLdSt,
+                                   MachineInstr *SecondLdSt,
+                                   unsigned NumLoads) const {
     return false;
   }
 
@@ -1080,6 +1109,13 @@ public:
   virtual ScheduleHazardRecognizer*
   CreateTargetPostRAHazardRecognizer(const InstrItineraryData*,
                                      const ScheduleDAG *DAG) const;
+
+  /// Allocate and return a hazard recognizer to use for by non-scheduling
+  /// passes.
+  virtual ScheduleHazardRecognizer*
+  CreateTargetPostRAHazardRecognizer(const MachineFunction &MF) const {
+    return nullptr;
+  }
 
   /// Provide a global flag for disabling the PreRA hazard recognizer that
   /// targets may choose to honor.

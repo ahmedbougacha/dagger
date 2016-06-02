@@ -55,6 +55,11 @@ namespace {
     }
     bool runOnMachineFunction(MachineFunction &MF) override;
 
+    MachineFunctionProperties getRequiredProperties() const override {
+      return MachineFunctionProperties().set(
+          MachineFunctionProperties::Property::AllVRegsAllocated);
+    }
+
     static char ID;
 
   private:
@@ -262,6 +267,9 @@ bool HexagonDCE::rewrite(NodeAddr<InstrNode*> IA, SetVector<NodeId> &Remove) {
 
 
 bool HexagonRDFOpt::runOnMachineFunction(MachineFunction &MF) {
+  if (skipFunction(*MF.getFunction()))
+    return false;
+
   if (RDFLimit.getPosition()) {
     if (RDFCount >= RDFLimit)
       return false;
@@ -281,7 +289,10 @@ bool HexagonRDFOpt::runOnMachineFunction(MachineFunction &MF) {
   HexagonRegisterAliasInfo HAI(HRI);
   TargetOperandInfo TOI(HII);
   DataFlowGraph G(MF, HII, HRI, *MDT, MDF, HAI, TOI);
-  G.build();
+  // Dead phi nodes are necessary for copy propagation: we can add a use
+  // of a register in a block where it would need a phi node, but which
+  // was dead (and removed) during the graph build time.
+  G.build(BuildOptions::KeepDeadPhis);
 
   if (RDFDump)
     dbgs() << "Starting copy propagation on: " << MF.getName() << '\n'

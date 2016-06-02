@@ -22,6 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Transforms/SampleProfile.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -35,6 +36,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Metadata.h"
@@ -100,29 +102,16 @@ typedef DenseMap<const BasicBlock *, SmallVector<const BasicBlock *, 8>>
 /// This pass reads profile data from the file specified by
 /// -sample-profile-file and annotates every affected function with the
 /// profile information found in that file.
-class SampleProfileLoader : public ModulePass {
+class SampleProfileLoader {
 public:
-  // Class identification, replacement for typeinfo
-  static char ID;
-
   SampleProfileLoader(StringRef Name = SampleProfileFile)
-      : ModulePass(ID), DT(nullptr), PDT(nullptr), LI(nullptr), Reader(),
-        Samples(nullptr), Filename(Name), ProfileIsValid(false),
-        TotalCollectedSamples(0) {
-    initializeSampleProfileLoaderPass(*PassRegistry::getPassRegistry());
-  }
+      : DT(nullptr), PDT(nullptr), LI(nullptr), Reader(), Samples(nullptr),
+        Filename(Name), ProfileIsValid(false), TotalCollectedSamples(0) {}
 
-  bool doInitialization(Module &M) override;
+  bool doInitialization(Module &M);
+  bool runOnModule(Module &M);
 
   void dump() { Reader->dump(); }
-
-  const char *getPassName() const override { return "Sample profile pass"; }
-
-  bool runOnModule(Module &M) override;
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesCFG();
-  }
 
 protected:
   bool runOnFunction(Function &F);
@@ -205,6 +194,29 @@ protected:
   uint64_t TotalCollectedSamples;
 };
 
+class SampleProfileLoaderLegacyPass : public ModulePass {
+public:
+  // Class identification, replacement for typeinfo
+  static char ID;
+
+  SampleProfileLoaderLegacyPass(StringRef Name = SampleProfileFile)
+      : ModulePass(ID), SampleLoader(Name) {
+    initializeSampleProfileLoaderLegacyPassPass(
+        *PassRegistry::getPassRegistry());
+  }
+
+  void dump() { SampleLoader.dump(); }
+
+  bool doInitialization(Module &M) override {
+    return SampleLoader.doInitialization(M);
+  }
+  const char *getPassName() const override { return "Sample profile pass"; }
+  bool runOnModule(Module &M) override;
+
+private:
+  SampleProfileLoader SampleLoader;
+};
+
 class SampleCoverageTracker {
 public:
   SampleCoverageTracker() : SampleCoverage(), TotalUsedSamples(0) {}
@@ -284,7 +296,6 @@ bool callsiteIsHot(const FunctionSamples *CallerFS,
       (double)CallsiteTotalSamples / (double)ParentTotalSamples * 100.0;
   return PercentSamples >= SampleProfileHotThreshold;
 }
-
 }
 
 /// Mark as used the sample record for the given function samples at
@@ -444,12 +455,17 @@ void SampleProfileLoader::printBlockWeight(raw_ostream &OS,
 /// \returns the weight of \p Inst.
 ErrorOr<uint64_t>
 SampleProfileLoader::getInstWeight(const Instruction &Inst) const {
-  DebugLoc DLoc = Inst.getDebugLoc();
+  const DebugLoc &DLoc = Inst.getDebugLoc();
   if (!DLoc)
     return std::error_code();
 
   const FunctionSamples *FS = findFunctionSamples(Inst);
   if (!FS)
+    return std::error_code();
+
+  // Ignore all dbg_value intrinsics.
+  const IntrinsicInst *II = dyn_cast<IntrinsicInst>(&Inst);
+  if (II && II->getIntrinsicID() == Intrinsic::dbg_value)
     return std::error_code();
 
   const DILocation *DIL = DLoc;
@@ -475,6 +491,13 @@ SampleProfileLoader::getInstWeight(const Instruction &Inst) const {
                  << Inst << " (line offset: " << Lineno - HeaderLineno << "."
                  << DIL->getDiscriminator() << " - weight: " << R.get()
                  << ")\n");
+  } else {
+    // If a call instruction is inlined in profile, but not inlined here,
+    // it means that the inlined callsite has no sample, thus the call
+    // instruction should have 0 count.
+    const CallInst *CI = dyn_cast<CallInst>(&Inst);
+    if (CI && findCalleeFunctionSamples(*CI))
+      R = 0;
   }
   return R;
 }
@@ -489,19 +512,22 @@ SampleProfileLoader::getInstWeight(const Instruction &Inst) const {
 /// \returns the weight for \p BB.
 ErrorOr<uint64_t>
 SampleProfileLoader::getBlockWeight(const BasicBlock *BB) const {
-  bool Found = false;
-  uint64_t Weight = 0;
+  DenseMap<uint64_t, uint64_t> CM;
   for (auto &I : BB->getInstList()) {
     const ErrorOr<uint64_t> &R = getInstWeight(I);
-    if (R && R.get() >= Weight) {
-      Weight = R.get();
-      Found = true;
+    if (R) CM[R.get()]++;
+  }
+  if (CM.size() == 0) return std::error_code();
+  uint64_t W = 0, C = 0;
+  for (const auto &C_W : CM) {
+    if (C_W.second == W) {
+      C = std::max(C, C_W.first);
+    } else if (C_W.second > W) {
+      C = C_W.first;
+      W = C_W.second;
     }
   }
-  if (Found)
-    return Weight;
-  else
-    return std::error_code();
+  return C;
 }
 
 /// \brief Compute and store the weights of every basic block.
@@ -548,19 +574,12 @@ SampleProfileLoader::findCalleeFunctionSamples(const CallInst &Inst) const {
   if (!SP)
     return nullptr;
 
-  Function *CalleeFunc = Inst.getCalledFunction();
-  if (!CalleeFunc) {
-    return nullptr;
-  }
-
-  StringRef CalleeName = CalleeFunc->getName();
   const FunctionSamples *FS = findFunctionSamples(Inst);
   if (FS == nullptr)
     return nullptr;
 
-  return FS->findFunctionSamplesAt(
-      CallsiteLocation(getOffset(DIL->getLine(), SP->getLine()),
-                       DIL->getDiscriminator(), CalleeName));
+  return FS->findFunctionSamplesAt(LineLocation(
+      getOffset(DIL->getLine(), SP->getLine()), DIL->getDiscriminator()));
 }
 
 /// \brief Get the FunctionSamples for an instruction.
@@ -574,22 +593,17 @@ SampleProfileLoader::findCalleeFunctionSamples(const CallInst &Inst) const {
 /// \returns the FunctionSamples pointer to the inlined instance.
 const FunctionSamples *
 SampleProfileLoader::findFunctionSamples(const Instruction &Inst) const {
-  SmallVector<CallsiteLocation, 10> S;
+  SmallVector<LineLocation, 10> S;
   const DILocation *DIL = Inst.getDebugLoc();
   if (!DIL) {
     return Samples;
   }
-  StringRef CalleeName;
-  for (const DILocation *DIL = Inst.getDebugLoc(); DIL;
-       DIL = DIL->getInlinedAt()) {
+  for (DIL = DIL->getInlinedAt(); DIL; DIL = DIL->getInlinedAt()) {
     DISubprogram *SP = DIL->getScope()->getSubprogram();
     if (!SP)
       return nullptr;
-    if (!CalleeName.empty()) {
-      S.push_back(CallsiteLocation(getOffset(DIL->getLine(), SP->getLine()),
-                                   DIL->getDiscriminator(), CalleeName));
-    }
-    CalleeName = SP->getLinkageName();
+    S.push_back(LineLocation(getOffset(DIL->getLine(), SP->getLine()),
+                             DIL->getDiscriminator()));
   }
   if (S.size() == 0)
     return Samples;
@@ -1083,7 +1097,7 @@ void SampleProfileLoader::propagateWeights(Function &F) {
 /// \returns the line number where \p F is defined. If it returns 0,
 ///          it means that there is no debug information available for \p F.
 unsigned SampleProfileLoader::getFunctionLoc(Function &F) {
-  if (DISubprogram *S = getDISubprogram(&F))
+  if (DISubprogram *S = F.getSubprogram())
     return S->getLine();
 
   // If the start of \p F is missing, emit a diagnostic to inform the user
@@ -1189,7 +1203,7 @@ bool SampleProfileLoader::emitAnnotations(Function &F) {
     unsigned Coverage = CoverageTracker.computeCoverage(Used, Total);
     if (Coverage < SampleProfileRecordCoverage) {
       F.getContext().diagnose(DiagnosticInfoSampleProfile(
-          getDISubprogram(&F)->getFilename(), getFunctionLoc(F),
+          F.getSubprogram()->getFilename(), getFunctionLoc(F),
           Twine(Used) + " of " + Twine(Total) + " available profile records (" +
               Twine(Coverage) + "%) were applied",
           DS_Warning));
@@ -1202,7 +1216,7 @@ bool SampleProfileLoader::emitAnnotations(Function &F) {
     unsigned Coverage = CoverageTracker.computeCoverage(Used, Total);
     if (Coverage < SampleProfileSampleCoverage) {
       F.getContext().diagnose(DiagnosticInfoSampleProfile(
-          getDISubprogram(&F)->getFilename(), getFunctionLoc(F),
+          F.getSubprogram()->getFilename(), getFunctionLoc(F),
           Twine(Used) + " of " + Twine(Total) + " available profile samples (" +
               Twine(Coverage) + "%) were applied",
           DS_Warning));
@@ -1211,12 +1225,9 @@ bool SampleProfileLoader::emitAnnotations(Function &F) {
   return Changed;
 }
 
-char SampleProfileLoader::ID = 0;
-INITIALIZE_PASS_BEGIN(SampleProfileLoader, "sample-profile",
-                      "Sample Profile loader", false, false)
-INITIALIZE_PASS_DEPENDENCY(AddDiscriminators)
-INITIALIZE_PASS_END(SampleProfileLoader, "sample-profile",
-                    "Sample Profile loader", false, false)
+char SampleProfileLoaderLegacyPass::ID = 0;
+INITIALIZE_PASS(SampleProfileLoaderLegacyPass, "sample-profile",
+                "Sample Profile loader", false, false)
 
 bool SampleProfileLoader::doInitialization(Module &M) {
   auto &Ctx = M.getContext();
@@ -1232,11 +1243,11 @@ bool SampleProfileLoader::doInitialization(Module &M) {
 }
 
 ModulePass *llvm::createSampleProfileLoaderPass() {
-  return new SampleProfileLoader(SampleProfileFile);
+  return new SampleProfileLoaderLegacyPass(SampleProfileFile);
 }
 
 ModulePass *llvm::createSampleProfileLoaderPass(StringRef Name) {
-  return new SampleProfileLoader(Name);
+  return new SampleProfileLoaderLegacyPass(Name);
 }
 
 bool SampleProfileLoader::runOnModule(Module &M) {
@@ -1256,10 +1267,27 @@ bool SampleProfileLoader::runOnModule(Module &M) {
   return retval;
 }
 
+bool SampleProfileLoaderLegacyPass::runOnModule(Module &M) {
+  return SampleLoader.runOnModule(M);
+}
+
 bool SampleProfileLoader::runOnFunction(Function &F) {
   F.setEntryCount(0);
   Samples = Reader->getSamplesFor(F);
   if (!Samples->empty())
     return emitAnnotations(F);
   return false;
+}
+
+PreservedAnalyses SampleProfileLoaderPass::run(Module &M,
+                                               AnalysisManager<Module> &AM) {
+
+  SampleProfileLoader SampleLoader(SampleProfileFile);
+
+  SampleLoader.doInitialization(M);
+
+  if (!SampleLoader.runOnModule(M))
+    return PreservedAnalyses::all();
+
+  return PreservedAnalyses::none();
 }

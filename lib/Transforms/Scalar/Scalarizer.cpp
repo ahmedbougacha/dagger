@@ -14,12 +14,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 using namespace llvm;
@@ -253,6 +252,8 @@ bool Scalarizer::doInitialization(Module &M) {
 }
 
 bool Scalarizer::runOnFunction(Function &F) {
+  if (skipFunction(F))
+    return false;
   assert(Gathered.empty() && Scattered.empty());
   for (BasicBlock &BB : F) {
     for (BasicBlock::iterator II = BB.begin(), IE = BB.end(); II != IE;) {

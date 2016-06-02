@@ -13,15 +13,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "RenderingSupport.h"
 #include "CoverageFilters.h"
 #include "CoverageReport.h"
 #include "CoverageViewOptions.h"
+#include "RenderingSupport.h"
 #include "SourceCoverageView.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/ProfileData/CoverageMapping.h"
+#include "llvm/ProfileData/Coverage/CoverageMapping.h"
 #include "llvm/ProfileData/InstrProfReader.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
@@ -210,10 +210,9 @@ std::unique_ptr<CoverageMapping> CodeCoverageTool::load() {
     errs() << "warning: profile data may be out of date - object is newer\n";
   auto CoverageOrErr = CoverageMapping::load(ObjectFilename, PGOFilename,
                                              CoverageArch);
-  if (std::error_code EC = CoverageOrErr.getError()) {
+  if (Error E = CoverageOrErr.takeError()) {
     colored_ostream(errs(), raw_ostream::RED)
-        << "error: Failed to load coverage: " << EC.message();
-    errs() << "\n";
+        << "error: Failed to load coverage: " << toString(std::move(E)) << "\n";
     return nullptr;
   }
   auto Coverage = std::move(CoverageOrErr.get());

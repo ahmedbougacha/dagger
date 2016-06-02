@@ -19,15 +19,6 @@
 namespace llvm {
 namespace dsymutil {
 
-Triple BinaryHolder::getTriple(const object::MachOObjectFile &Obj) {
-  // If a ThumbTriple is returned, use it instead of the standard
-  // one. This is because the thumb triple always allows to create a
-  // target, whereas the non-thumb one might not.
-  Triple ThumbTriple;
-  Triple T = Obj.getArch(nullptr, &ThumbTriple);
-  return ThumbTriple.getArch() ? ThumbTriple : T;
-}
-
 static std::vector<MemoryBufferRef>
 getMachOFatMemoryBuffers(StringRef Filename, MemoryBuffer &Mem,
                          object::MachOUniversalBinary &Fat) {
@@ -88,7 +79,8 @@ BinaryHolder::GetMemoryBuffersForFile(StringRef Filename,
   }
 
   CurrentFatBinary = std::move(*ErrOrFat);
-  return getMachOFatMemoryBuffers(Filename, *CurrentMemoryBuffer,
+  CurrentFatBinaryName = Filename;
+  return getMachOFatMemoryBuffers(CurrentFatBinaryName, *CurrentMemoryBuffer,
                                   *CurrentFatBinary);
 }
 
@@ -158,8 +150,9 @@ BinaryHolder::MapArchiveAndGetMemberBuffers(StringRef Filename,
     ArchiveBuffers.push_back(CurrentMemoryBuffer->getMemBufferRef());
   } else {
     CurrentFatBinary = std::move(*ErrOrFat);
+    CurrentFatBinaryName = ArchiveFilename;
     ArchiveBuffers = getMachOFatMemoryBuffers(
-        ArchiveFilename, *CurrentMemoryBuffer, *CurrentFatBinary);
+        CurrentFatBinaryName, *CurrentMemoryBuffer, *CurrentFatBinary);
   }
 
   for (auto MemRef : ArchiveBuffers) {
@@ -175,7 +168,7 @@ ErrorOr<const object::ObjectFile &>
 BinaryHolder::getObjfileForArch(const Triple &T) {
   for (const auto &Obj : CurrentObjectFiles) {
     if (const auto *MachO = dyn_cast<object::MachOObjectFile>(Obj.get())) {
-      if (getTriple(*MachO).str() == T.str())
+      if (MachO->getArchTriple().str() == T.str())
         return *MachO;
     } else if (Obj->getArch() == T.getArch())
       return *Obj;
@@ -196,8 +189,8 @@ BinaryHolder::GetObjectFiles(StringRef Filename, sys::TimeValue Timestamp) {
   CurrentObjectFiles.clear();
   for (auto MemBuf : *ErrOrMemBufferRefs) {
     auto ErrOrObjectFile = object::ObjectFile::createObjectFile(MemBuf);
-    if (auto Err = ErrOrObjectFile.getError())
-      return Err;
+    if (!ErrOrObjectFile)
+      return errorToErrorCode(ErrOrObjectFile.takeError());
 
     Objects.push_back(ErrOrObjectFile->get());
     CurrentObjectFiles.push_back(std::move(*ErrOrObjectFile));

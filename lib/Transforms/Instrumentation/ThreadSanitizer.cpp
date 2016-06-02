@@ -36,6 +36,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
@@ -243,6 +244,24 @@ static bool isVtableAccess(Instruction *I) {
   return false;
 }
 
+// Do not instrument known races/"benign races" that come from compiler
+// instrumentatin. The user has no way of suppressing them.
+static bool shouldInstrumentReadWriteFromAddress(Value *Addr) {
+  // Peel off GEPs and BitCasts.
+  Addr = Addr->stripInBoundsOffsets();
+
+  if (GlobalVariable *GV = dyn_cast<GlobalVariable>(Addr)) {
+    if (GV->hasSection()) {
+      StringRef SectionName = GV->getSection();
+      // Check if the global is in the PGO counters section.
+      if (SectionName.endswith(getInstrProfCountersSectionName(
+            /*AddSegment=*/false)))
+        return false;
+    }
+  }
+  return true;
+}
+
 bool ThreadSanitizer::addrPointsToConstantData(Value *Addr) {
   // If this is a GEP, just analyze its pointer operand.
   if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Addr))
@@ -285,10 +304,15 @@ void ThreadSanitizer::chooseInstructionsToInstrument(
        E = Local.rend(); It != E; ++It) {
     Instruction *I = *It;
     if (StoreInst *Store = dyn_cast<StoreInst>(I)) {
-      WriteTargets.insert(Store->getPointerOperand());
+      Value *Addr = Store->getPointerOperand();
+      if (!shouldInstrumentReadWriteFromAddress(Addr))
+        continue;
+      WriteTargets.insert(Addr);
     } else {
       LoadInst *Load = cast<LoadInst>(I);
       Value *Addr = Load->getPointerOperand();
+      if (!shouldInstrumentReadWriteFromAddress(Addr))
+        continue;
       if (WriteTargets.count(Addr)) {
         // We will write to this temp, so no reason to analyze the read.
         NumOmittedReadsBeforeWrite++;
@@ -456,14 +480,16 @@ bool ThreadSanitizer::instrumentLoadOrStore(Instruction *I,
 static ConstantInt *createOrdering(IRBuilder<> *IRB, AtomicOrdering ord) {
   uint32_t v = 0;
   switch (ord) {
-    case NotAtomic: llvm_unreachable("unexpected atomic ordering!");
-    case Unordered:              // Fall-through.
-    case Monotonic:              v = 0; break;
-    // case Consume:                v = 1; break;  // Not specified yet.
-    case Acquire:                v = 2; break;
-    case Release:                v = 3; break;
-    case AcquireRelease:         v = 4; break;
-    case SequentiallyConsistent: v = 5; break;
+    case AtomicOrdering::NotAtomic:
+      llvm_unreachable("unexpected atomic ordering!");
+    case AtomicOrdering::Unordered:              // Fall-through.
+    case AtomicOrdering::Monotonic:              v = 0; break;
+    // Not specified yet:
+    // case AtomicOrdering::Consume:                v = 1; break;
+    case AtomicOrdering::Acquire:                v = 2; break;
+    case AtomicOrdering::Release:                v = 3; break;
+    case AtomicOrdering::AcquireRelease:         v = 4; break;
+    case AtomicOrdering::SequentiallyConsistent: v = 5; break;
   }
   return IRB->getInt32(v);
 }
@@ -496,6 +522,11 @@ bool ThreadSanitizer::instrumentMemIntrinsic(Instruction *I) {
   return false;
 }
 
+static Value *createIntOrPtrToIntCast(Value *V, Type* Ty, IRBuilder<> &IRB) {
+  return isa<PointerType>(V->getType()) ?
+    IRB.CreatePtrToInt(V, Ty) : IRB.CreateIntCast(V, Ty, false);
+}
+
 // Both llvm and ThreadSanitizer atomic operations are based on C++11/C1x
 // standards.  For background see C++11 standard.  A slightly older, publicly
 // available draft of the standard (not entirely up-to-date, but close enough
@@ -517,9 +548,16 @@ bool ThreadSanitizer::instrumentAtomic(Instruction *I, const DataLayout &DL) {
     Type *PtrTy = Ty->getPointerTo();
     Value *Args[] = {IRB.CreatePointerCast(Addr, PtrTy),
                      createOrdering(&IRB, LI->getOrdering())};
-    CallInst *C = CallInst::Create(TsanAtomicLoad[Idx], Args);
-    ReplaceInstWithInst(I, C);
-
+    Type *OrigTy = cast<PointerType>(Addr->getType())->getElementType();
+    if (Ty == OrigTy) {
+      Instruction *C = CallInst::Create(TsanAtomicLoad[Idx], Args);
+      ReplaceInstWithInst(I, C);
+    } else {
+      // We are loading a pointer, so we need to cast the return value.
+      Value *C = IRB.CreateCall(TsanAtomicLoad[Idx], Args);
+      Instruction *Cast = CastInst::Create(Instruction::IntToPtr, C, OrigTy);
+      ReplaceInstWithInst(I, Cast);
+    }
   } else if (StoreInst *SI = dyn_cast<StoreInst>(I)) {
     Value *Addr = SI->getPointerOperand();
     int Idx = getMemoryAccessFuncIndex(Addr, DL);
@@ -530,7 +568,7 @@ bool ThreadSanitizer::instrumentAtomic(Instruction *I, const DataLayout &DL) {
     Type *Ty = Type::getIntNTy(IRB.getContext(), BitSize);
     Type *PtrTy = Ty->getPointerTo();
     Value *Args[] = {IRB.CreatePointerCast(Addr, PtrTy),
-                     IRB.CreateIntCast(SI->getValueOperand(), Ty, false),
+                     createIntOrPtrToIntCast(SI->getValueOperand(), Ty, IRB),
                      createOrdering(&IRB, SI->getOrdering())};
     CallInst *C = CallInst::Create(TsanAtomicStore[Idx], Args);
     ReplaceInstWithInst(I, C);
@@ -560,15 +598,26 @@ bool ThreadSanitizer::instrumentAtomic(Instruction *I, const DataLayout &DL) {
     const unsigned BitSize = ByteSize * 8;
     Type *Ty = Type::getIntNTy(IRB.getContext(), BitSize);
     Type *PtrTy = Ty->getPointerTo();
+    Value *CmpOperand =
+      createIntOrPtrToIntCast(CASI->getCompareOperand(), Ty, IRB);
+    Value *NewOperand =
+      createIntOrPtrToIntCast(CASI->getNewValOperand(), Ty, IRB);
     Value *Args[] = {IRB.CreatePointerCast(Addr, PtrTy),
-                     IRB.CreateIntCast(CASI->getCompareOperand(), Ty, false),
-                     IRB.CreateIntCast(CASI->getNewValOperand(), Ty, false),
+                     CmpOperand,
+                     NewOperand,
                      createOrdering(&IRB, CASI->getSuccessOrdering()),
                      createOrdering(&IRB, CASI->getFailureOrdering())};
     CallInst *C = IRB.CreateCall(TsanAtomicCAS[Idx], Args);
-    Value *Success = IRB.CreateICmpEQ(C, CASI->getCompareOperand());
+    Value *Success = IRB.CreateICmpEQ(C, CmpOperand);
+    Value *OldVal = C;
+    Type *OrigOldValTy = CASI->getNewValOperand()->getType();
+    if (Ty != OrigOldValTy) {
+      // The value is a pointer, so we need to cast the return value.
+      OldVal = IRB.CreateIntToPtr(C, OrigOldValTy);
+    }
 
-    Value *Res = IRB.CreateInsertValue(UndefValue::get(CASI->getType()), C, 0);
+    Value *Res =
+      IRB.CreateInsertValue(UndefValue::get(CASI->getType()), OldVal, 0);
     Res = IRB.CreateInsertValue(Res, Success, 1);
 
     I->replaceAllUsesWith(Res);

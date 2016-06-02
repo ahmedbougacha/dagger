@@ -30,7 +30,7 @@ define i32 @foo(i32 %p, i8 zeroext %x) nounwind {
 define i32 @bar(i32 %p, i16 zeroext %x) nounwind {
 ; X32-LABEL: bar:
 ; X32:       # BB#0:
-; X32-NEXT:    movw {{[0-9]+}}(%esp), %ax
+; X32-NEXT:    movzwl {{[0-9]+}}(%esp), %eax
 ; X32-NEXT:    xorl %edx, %edx
 ; X32-NEXT:    divw {{[0-9]+}}(%esp)
 ; X32-NEXT:    andl $1, %eax
@@ -39,7 +39,7 @@ define i32 @bar(i32 %p, i16 zeroext %x) nounwind {
 ; X64-LABEL: bar:
 ; X64:       # BB#0:
 ; X64-NEXT:    xorl %edx, %edx
-; X64-NEXT:    movw %di, %ax
+; X64-NEXT:    movl %edi, %eax
 ; X64-NEXT:    divw %si
 ; X64-NEXT:    andl $1, %eax
 ; X64-NEXT:    retq

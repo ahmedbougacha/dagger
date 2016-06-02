@@ -68,6 +68,8 @@ defm int_amdgcn_workgroup_id : AMDGPUReadPreloadRegisterIntrinsic_xyz <
 def int_amdgcn_s_barrier : GCCBuiltin<"__builtin_amdgcn_s_barrier">,
   Intrinsic<[], [], [IntrConvergent]>;
 
+def int_amdgcn_s_waitcnt : Intrinsic<[], [llvm_i32_ty], []>;
+
 def int_amdgcn_div_scale : Intrinsic<
   // 1st parameter: Numerator
   // 2nd parameter: Denominator
@@ -119,6 +121,21 @@ def int_amdgcn_ldexp : Intrinsic<
   [llvm_anyfloat_ty], [LLVMMatchType<0>, llvm_i32_ty], [IntrNoMem]
 >;
 
+def int_amdgcn_frexp_mant : Intrinsic<
+  [llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]
+>;
+
+def int_amdgcn_frexp_exp : Intrinsic<
+  [llvm_i32_ty], [llvm_anyfloat_ty], [IntrNoMem]
+>;
+
+// v_fract is buggy on SI/CI. It mishandles infinities, may return 1.0
+// and always uses rtz, so is not suitable for implementing the OpenCL
+// fract function. It should be ok on VI.
+def int_amdgcn_fract : Intrinsic<
+  [llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]
+>;
+
 def int_amdgcn_class : Intrinsic<
   [llvm_i1_ty], [llvm_anyfloat_ty, llvm_i32_ty], [IntrNoMem]
 >;
@@ -141,6 +158,17 @@ def int_amdgcn_cubesc : GCCBuiltin<"__builtin_amdgcn_cubesc">,
 def int_amdgcn_cubetc : GCCBuiltin<"__builtin_amdgcn_cubetc">,
   Intrinsic<[llvm_float_ty],
     [llvm_float_ty, llvm_float_ty, llvm_float_ty], [IntrNoMem]
+>;
+
+// TODO: Do we want an ordering for these?
+def int_amdgcn_atomic_inc : Intrinsic<[llvm_anyint_ty],
+  [llvm_anyptr_ty, LLVMMatchType<0>],
+  [IntrArgMemOnly, NoCapture<0>]
+>;
+
+def int_amdgcn_atomic_dec : Intrinsic<[llvm_anyint_ty],
+  [llvm_anyptr_ty, LLVMMatchType<0>],
+  [IntrArgMemOnly, NoCapture<0>]
 >;
 
 class AMDGPUImageLoad : Intrinsic <
@@ -172,6 +200,90 @@ class AMDGPUImageStore : Intrinsic <
 def int_amdgcn_image_store : AMDGPUImageStore;
 def int_amdgcn_image_store_mip : AMDGPUImageStore;
 
+class AMDGPUImageAtomic : Intrinsic <
+  [llvm_i32_ty],
+  [llvm_i32_ty,       // vdata(VGPR)
+   llvm_anyint_ty,    // vaddr(VGPR)
+   llvm_v8i32_ty,     // rsrc(SGPR)
+   llvm_i1_ty,        // r128(imm)
+   llvm_i1_ty,        // da(imm)
+   llvm_i1_ty],       // slc(imm)
+  []>;
+
+def int_amdgcn_image_atomic_swap : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_add : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_sub : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_smin : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_umin : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_smax : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_umax : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_and : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_or : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_xor : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_inc : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_dec : AMDGPUImageAtomic;
+def int_amdgcn_image_atomic_cmpswap : Intrinsic <
+  [llvm_i32_ty],
+  [llvm_i32_ty,       // src(VGPR)
+   llvm_i32_ty,       // cmp(VGPR)
+   llvm_anyint_ty,    // vaddr(VGPR)
+   llvm_v8i32_ty,     // rsrc(SGPR)
+   llvm_i1_ty,        // r128(imm)
+   llvm_i1_ty,        // da(imm)
+   llvm_i1_ty],       // slc(imm)
+  []>;
+
+class AMDGPUBufferLoad : Intrinsic <
+  [llvm_anyfloat_ty],
+  [llvm_v4i32_ty,     // rsrc(SGPR)
+   llvm_i32_ty,       // vindex(VGPR)
+   llvm_i32_ty,       // offset(SGPR/VGPR/imm)
+   llvm_i1_ty,        // glc(imm)
+   llvm_i1_ty],       // slc(imm)
+  [IntrReadMem]>;
+def int_amdgcn_buffer_load_format : AMDGPUBufferLoad;
+def int_amdgcn_buffer_load : AMDGPUBufferLoad;
+
+class AMDGPUBufferStore : Intrinsic <
+  [],
+  [llvm_anyfloat_ty,  // vdata(VGPR) -- can currently only select f32, v2f32, v4f32
+   llvm_v4i32_ty,     // rsrc(SGPR)
+   llvm_i32_ty,       // vindex(VGPR)
+   llvm_i32_ty,       // offset(SGPR/VGPR/imm)
+   llvm_i1_ty,        // glc(imm)
+   llvm_i1_ty],       // slc(imm)
+  [IntrWriteMem]>;
+def int_amdgcn_buffer_store_format : AMDGPUBufferStore;
+def int_amdgcn_buffer_store : AMDGPUBufferStore;
+
+class AMDGPUBufferAtomic : Intrinsic <
+  [llvm_i32_ty],
+  [llvm_i32_ty,       // vdata(VGPR)
+   llvm_v4i32_ty,     // rsrc(SGPR)
+   llvm_i32_ty,       // vindex(VGPR)
+   llvm_i32_ty,       // offset(SGPR/VGPR/imm)
+   llvm_i1_ty],       // slc(imm)
+  []>;
+def int_amdgcn_buffer_atomic_swap : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_add : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_sub : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_smin : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_umin : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_smax : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_umax : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_and : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_or : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_xor : AMDGPUBufferAtomic;
+def int_amdgcn_buffer_atomic_cmpswap : Intrinsic<
+  [llvm_i32_ty],
+  [llvm_i32_ty,       // src(VGPR)
+   llvm_i32_ty,       // cmp(VGPR)
+   llvm_v4i32_ty,     // rsrc(SGPR)
+   llvm_i32_ty,       // vindex(VGPR)
+   llvm_i32_ty,       // offset(SGPR/VGPR/imm)
+   llvm_i1_ty],       // slc(imm)
+  []>;
+
 def int_amdgcn_read_workdim : AMDGPUReadPreloadRegisterIntrinsic <
   "__builtin_amdgcn_read_workdim">;
 
@@ -197,8 +309,24 @@ def int_amdgcn_s_sleep :
   Intrinsic<[], [llvm_i32_ty], []> {
 }
 
+def int_amdgcn_s_getreg :
+  GCCBuiltin<"__builtin_amdgcn_s_getreg">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty], [IntrReadMem]>;
+
+def int_amdgcn_groupstaticsize :
+  GCCBuiltin<"__builtin_amdgcn_groupstaticsize">,
+  Intrinsic<[llvm_i32_ty], [], [IntrNoMem]>;
+
 def int_amdgcn_dispatch_ptr :
   GCCBuiltin<"__builtin_amdgcn_dispatch_ptr">,
+  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
+
+def int_amdgcn_queue_ptr :
+  GCCBuiltin<"__builtin_amdgcn_queue_ptr">,
+  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
+
+def int_amdgcn_kernarg_segment_ptr :
+  GCCBuiltin<"__builtin_amdgcn_kernarg_segment_ptr">,
   Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
 
 // __builtin_amdgcn_interp_p1 <i>, <attr_chan>, <attr>, <m0>
@@ -216,6 +344,13 @@ def int_amdgcn_interp_p2 :
             [llvm_float_ty, llvm_i32_ty, llvm_i32_ty, llvm_i32_ty, llvm_i32_ty],
             [IntrNoMem]>;  // See int_amdgcn_v_interp_p1 for why this is
                            // IntrNoMem.
+
+// Pixel shaders only: whether the current pixel is live (i.e. not a helper
+// invocation for derivative computation).
+def int_amdgcn_ps_live : Intrinsic <
+  [llvm_i1_ty],
+  [],
+  [IntrNoMem]>;
 
 def int_amdgcn_mbcnt_lo :
   GCCBuiltin<"__builtin_amdgcn_mbcnt_lo">,
@@ -241,11 +376,11 @@ def int_amdgcn_buffer_wbinvl1_vol :
 // VI Intrinsics
 //===----------------------------------------------------------------------===//
 
-// llvm.amdgcn.mov.dpp.i32 <src> <dpp_ctrl> <bound_ctrl> <bank_mask> <row_mask>
+// llvm.amdgcn.mov.dpp.i32 <src> <dpp_ctrl> <row_mask> <bank_mask> <bound_ctrl>
 def int_amdgcn_mov_dpp :
   Intrinsic<[llvm_anyint_ty],
-            [LLVMMatchType<0>, llvm_i32_ty, llvm_i1_ty, llvm_i32_ty,
-             llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
+            [LLVMMatchType<0>, llvm_i32_ty, llvm_i32_ty, llvm_i32_ty,
+             llvm_i1_ty], [IntrNoMem, IntrConvergent]>;
 
 def int_amdgcn_s_dcache_wb :
   GCCBuiltin<"__builtin_amdgcn_s_dcache_wb">,
@@ -258,4 +393,13 @@ def int_amdgcn_s_dcache_wb_vol :
 def int_amdgcn_s_memrealtime :
   GCCBuiltin<"__builtin_amdgcn_s_memrealtime">,
   Intrinsic<[llvm_i64_ty], [], []>;
+
+// llvm.amdgcn.ds.permute <index> <src>
+def int_amdgcn_ds_permute :
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
+
+// llvm.amdgcn.ds.bpermute <index> <src>
+def int_amdgcn_ds_bpermute :
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
+
 }

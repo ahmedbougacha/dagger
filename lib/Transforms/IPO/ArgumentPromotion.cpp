@@ -69,7 +69,7 @@ namespace {
     void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.addRequired<AssumptionCacheTracker>();
       AU.addRequired<TargetLibraryInfoWrapperPass>();
-      addUsedAAAnalyses(AU);
+      getAAResultsAnalysisUsage(AU);
       CallGraphSCCPass::getAnalysisUsage(AU);
     }
 
@@ -114,6 +114,9 @@ Pass *llvm::createArgumentPromotionPass(unsigned maxElements) {
 }
 
 bool ArgPromotion::runOnSCC(CallGraphSCC &SCC) {
+  if (skipSCC(SCC))
+    return false;
+
   bool Changed = false, LocalChange;
 
   do {  // Iterate until we stop promoting from this SCC.
@@ -854,15 +857,18 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
       AttributesVec.push_back(AttributeSet::get(Call->getContext(),
                                                 CallPAL.getFnAttributes()));
 
+    SmallVector<OperandBundleDef, 1> OpBundles;
+    CS.getOperandBundlesAsDefs(OpBundles);
+
     Instruction *New;
     if (InvokeInst *II = dyn_cast<InvokeInst>(Call)) {
       New = InvokeInst::Create(NF, II->getNormalDest(), II->getUnwindDest(),
-                               Args, "", Call);
+                               Args, OpBundles, "", Call);
       cast<InvokeInst>(New)->setCallingConv(CS.getCallingConv());
       cast<InvokeInst>(New)->setAttributes(AttributeSet::get(II->getContext(),
                                                             AttributesVec));
     } else {
-      New = CallInst::Create(NF, Args, "", Call);
+      New = CallInst::Create(NF, Args, OpBundles, "", Call);
       cast<CallInst>(New)->setCallingConv(CS.getCallingConv());
       cast<CallInst>(New)->setAttributes(AttributeSet::get(New->getContext(),
                                                           AttributesVec));

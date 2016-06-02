@@ -20,6 +20,7 @@
 
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/Support/MD5.h"
 #include <system_error>
 
 namespace llvm {
@@ -94,6 +95,30 @@ private:
   friend class Constant;
   void destroyConstantImpl();
   Value *handleOperandChangeImpl(Value *From, Value *To);
+
+  /// Returns true if the definition of this global may be replaced by a
+  /// differently optimized variant of the same source level function at link
+  /// time.
+  bool mayBeDerefined() const {
+    switch (getLinkage()) {
+    case WeakODRLinkage:
+    case LinkOnceODRLinkage:
+    case AvailableExternallyLinkage:
+      return true;
+
+    case WeakAnyLinkage:
+    case LinkOnceAnyLinkage:
+    case CommonLinkage:
+    case ExternalWeakLinkage:
+    case ExternalLinkage:
+    case AppendingLinkage:
+    case InternalLinkage:
+    case PrivateLinkage:
+      return isInterposable();
+    }
+
+    llvm_unreachable("Fully covered switch above!");
+  }
 
 protected:
   /// \brief The intrinsic ID for this subclass (which must be a Function).
@@ -173,14 +198,8 @@ public:
   }
   void setDLLStorageClass(DLLStorageClassTypes C) { DllStorageClass = C; }
 
-  bool hasSection() const { return !StringRef(getSection()).empty(); }
-  // It is unfortunate that we have to use "char *" in here since this is
-  // always non NULL, but:
-  // * The C API expects a null terminated string, so we cannot use StringRef.
-  // * The C API expects us to own it, so we cannot use a std:string.
-  // * For GlobalAliases we can fail to find the section and we have to
-  //   return "", so we cannot use a "const std::string &".
-  const char *getSection() const;
+  bool hasSection() const { return !getSection().empty(); }
+  StringRef getSection() const;
 
   /// Global values are always pointers.
   PointerType *getType() const { return cast<PointerType>(User::getType()); }
@@ -233,6 +252,34 @@ public:
   static bool isCommonLinkage(LinkageTypes Linkage) {
     return Linkage == CommonLinkage;
   }
+  static bool isValidDeclarationLinkage(LinkageTypes Linkage) {
+    return isExternalWeakLinkage(Linkage) || isExternalLinkage(Linkage);
+  }
+
+  /// Whether the definition of this global may be replaced by something
+  /// non-equivalent at link time. For example, if a function has weak linkage
+  /// then the code defining it may be replaced by different code.
+  static bool isInterposableLinkage(LinkageTypes Linkage) {
+    switch (Linkage) {
+    case WeakAnyLinkage:
+    case LinkOnceAnyLinkage:
+    case CommonLinkage:
+    case ExternalWeakLinkage:
+      return true;
+
+    case AvailableExternallyLinkage:
+    case LinkOnceODRLinkage:
+    case WeakODRLinkage:
+    // The above three cannot be overridden but can be de-refined.
+
+    case ExternalLinkage:
+    case AppendingLinkage:
+    case InternalLinkage:
+    case PrivateLinkage:
+      return false;
+    }
+    llvm_unreachable("Fully covered switch above!");
+  }
 
   /// Whether the definition of this global may be discarded if it is not used
   /// in its compilation unit.
@@ -241,23 +288,61 @@ public:
            isAvailableExternallyLinkage(Linkage);
   }
 
-  /// Whether the definition of this global may be replaced by something
-  /// non-equivalent at link time. For example, if a function has weak linkage
-  /// then the code defining it may be replaced by different code.
-  static bool mayBeOverridden(LinkageTypes Linkage) {
-    return Linkage == WeakAnyLinkage || Linkage == LinkOnceAnyLinkage ||
-           Linkage == CommonLinkage || Linkage == ExternalWeakLinkage;
-  }
-
   /// Whether the definition of this global may be replaced at link time.  NB:
   /// Using this method outside of the code generators is almost always a
-  /// mistake: when working at the IR level use mayBeOverridden instead as it
+  /// mistake: when working at the IR level use isInterposable instead as it
   /// knows about ODR semantics.
   static bool isWeakForLinker(LinkageTypes Linkage)  {
     return Linkage == WeakAnyLinkage || Linkage == WeakODRLinkage ||
            Linkage == LinkOnceAnyLinkage || Linkage == LinkOnceODRLinkage ||
            Linkage == CommonLinkage || Linkage == ExternalWeakLinkage;
   }
+
+  /// Return true if the currently visible definition of this global (if any) is
+  /// exactly the definition we will see at runtime.
+  ///
+  /// Non-exact linkage types inhibits most non-inlining IPO, since a
+  /// differently optimized variant of the same function can have different
+  /// observable or undefined behavior than in the variant currently visible.
+  /// For instance, we could have started with
+  ///
+  ///   void foo(int *v) {
+  ///     int t = 5 / v[0];
+  ///     (void) t;
+  ///   }
+  ///
+  /// and "refined" it to
+  ///
+  ///   void foo(int *v) { }
+  ///
+  /// However, we cannot infer readnone for `foo`, since that would justify
+  /// DSE'ing a store to `v[0]` across a call to `foo`, which can cause
+  /// undefined behavior if the linker replaces the actual call destination with
+  /// the unoptimized `foo`.
+  ///
+  /// Inlining is okay across non-exact linkage types as long as they're not
+  /// interposable (see \c isInterposable), since in such cases the currently
+  /// visible variant is *a* correct implementation of the original source
+  /// function; it just isn't the *only* correct implementation.
+  bool isDefinitionExact() const {
+    return !mayBeDerefined();
+  }
+
+  /// Return true if this global has an exact defintion.
+  bool hasExactDefinition() const {
+    // While this computes exactly the same thing as
+    // isStrongDefinitionForLinker, the intended uses are different.  This
+    // function is intended to help decide if specific inter-procedural
+    // transforms are correct, while isStrongDefinitionForLinker's intended use
+    // is in low level code generation.
+    return !isDeclaration() && isDefinitionExact();
+  }
+
+  /// Return true if this global's definition can be substituted with an
+  /// *arbitrary* definition at link time.  We cannot do any IPO or inlinining
+  /// across interposable call edges, since the callee can be replaced with
+  /// something arbitrary at link time.
+  bool isInterposable() const { return isInterposableLinkage(getLinkage()); }
 
   bool hasExternalLinkage() const { return isExternalLinkage(getLinkage()); }
   bool hasAvailableExternallyLinkage() const {
@@ -278,6 +363,9 @@ public:
     return isExternalWeakLinkage(getLinkage());
   }
   bool hasCommonLinkage() const { return isCommonLinkage(getLinkage()); }
+  bool hasValidDeclarationLinkage() const {
+    return isValidDeclarationLinkage(getLinkage());
+  }
 
   void setLinkage(LinkageTypes LT) {
     if (isLocalLinkage(LT))
@@ -289,8 +377,6 @@ public:
   bool isDiscardableIfUnused() const {
     return isDiscardableIfUnused(getLinkage());
   }
-
-  bool mayBeOverridden() const { return mayBeOverridden(getLinkage()); }
 
   bool isWeakForLinker() const { return isWeakForLinker(getLinkage()); }
 
@@ -307,11 +393,37 @@ public:
     return Name;
   }
 
-/// @name Materialization
-/// Materialization is used to construct functions only as they're needed. This
-/// is useful to reduce memory usage in LLVM or parsing work done by the
-/// BitcodeReader to load the Module.
-/// @{
+  /// Return the modified name for a global value suitable to be
+  /// used as the key for a global lookup (e.g. profile or ThinLTO).
+  /// The value's original name is \c Name and has linkage of type
+  /// \c Linkage. The value is defined in module \c FileName.
+  static std::string getGlobalIdentifier(StringRef Name,
+                                         GlobalValue::LinkageTypes Linkage,
+                                         StringRef FileName);
+
+  /// Return the modified name for this global value suitable to be
+  /// used as the key for a global lookup (e.g. profile or ThinLTO).
+  std::string getGlobalIdentifier() const;
+
+  /// Declare a type to represent a global unique identifier for a global value.
+  /// This is a 64 bits hash that is used by PGO and ThinLTO to have a compact
+  /// unique way to identify a symbol.
+  using GUID = uint64_t;
+
+  /// Return a 64-bit global unique ID constructed from global value name
+  /// (i.e. returned by getGlobalIdentifier()).
+  static GUID getGUID(StringRef GlobalName) { return MD5Hash(GlobalName); }
+
+  /// Return a 64-bit global unique ID constructed from global value name
+  /// (i.e. returned by getGlobalIdentifier()).
+  GUID getGUID() const { return getGUID(getGlobalIdentifier()); }
+
+  /// @name Materialization
+  /// Materialization is used to construct functions only as they're needed.
+  /// This
+  /// is useful to reduce memory usage in LLVM or parsing work done by the
+  /// BitcodeReader to load the Module.
+  /// @{
 
   /// If this function's Module is being lazily streamed in functions from disk
   /// or some other source, this method can be used to check to see if the
@@ -338,6 +450,10 @@ public:
 
   /// Returns true if this global's definition will be the one chosen by the
   /// linker.
+  ///
+  /// NB! Ideally this should not be used at the IR level at all.  If you're
+  /// interested in optimization constraints implied by the linker's ability to
+  /// choose an implementation, prefer using \c hasExactDefinition.
   bool isStrongDefinitionForLinker() const {
     return !(isDeclarationForLinker() || isWeakForLinker());
   }
@@ -361,7 +477,8 @@ public:
   static bool classof(const Value *V) {
     return V->getValueID() == Value::FunctionVal ||
            V->getValueID() == Value::GlobalVariableVal ||
-           V->getValueID() == Value::GlobalAliasVal;
+           V->getValueID() == Value::GlobalAliasVal ||
+           V->getValueID() == Value::GlobalIFuncVal;
   }
 };
 

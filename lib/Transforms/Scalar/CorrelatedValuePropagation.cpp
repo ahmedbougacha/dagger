@@ -35,22 +35,11 @@ STATISTIC(NumMemAccess, "Number of memory access targets propagated");
 STATISTIC(NumCmps,      "Number of comparisons propagated");
 STATISTIC(NumReturns,   "Number of return values propagated");
 STATISTIC(NumDeadCases, "Number of switch cases removed");
+STATISTIC(NumSDivs,     "Number of sdiv converted to udiv");
 
 namespace {
   class CorrelatedValuePropagation : public FunctionPass {
     LazyValueInfo *LVI;
-
-    bool processSelect(SelectInst *SI);
-    bool processPHI(PHINode *P);
-    bool processMemAccess(Instruction *I);
-    bool processCmp(CmpInst *C);
-    bool processSwitch(SwitchInst *SI);
-    bool processCallSite(CallSite CS);
-
-    /// Return a constant value for V usable at At and everything it
-    /// dominates.  If no such Constant can be found, return nullptr.
-    Constant *getConstantAt(Value *V, Instruction *At);
-
   public:
     static char ID;
     CorrelatedValuePropagation(): FunctionPass(ID) {
@@ -78,7 +67,7 @@ Pass *llvm::createCorrelatedValuePropagationPass() {
   return new CorrelatedValuePropagation();
 }
 
-bool CorrelatedValuePropagation::processSelect(SelectInst *S) {
+static bool processSelect(SelectInst *S, LazyValueInfo *LVI) {
   if (S->getType()->isVectorTy()) return false;
   if (isa<Constant>(S->getOperand(0))) return false;
 
@@ -101,7 +90,7 @@ bool CorrelatedValuePropagation::processSelect(SelectInst *S) {
   return true;
 }
 
-bool CorrelatedValuePropagation::processPHI(PHINode *P) {
+static bool processPHI(PHINode *P, LazyValueInfo *LVI) {
   bool Changed = false;
 
   BasicBlock *BB = P->getParent();
@@ -169,7 +158,7 @@ bool CorrelatedValuePropagation::processPHI(PHINode *P) {
   return Changed;
 }
 
-bool CorrelatedValuePropagation::processMemAccess(Instruction *I) {
+static bool processMemAccess(Instruction *I, LazyValueInfo *LVI) {
   Value *Pointer = nullptr;
   if (LoadInst *L = dyn_cast<LoadInst>(I))
     Pointer = L->getPointerOperand();
@@ -190,7 +179,7 @@ bool CorrelatedValuePropagation::processMemAccess(Instruction *I) {
 /// or range information is sufficient to prove this comparison.  Even for
 /// local conditions, this can sometimes prove conditions instcombine can't by
 /// exploiting range information.
-bool CorrelatedValuePropagation::processCmp(CmpInst *C) {
+static bool processCmp(CmpInst *C, LazyValueInfo *LVI) {
   Value *Op0 = C->getOperand(0);
   Constant *Op1 = dyn_cast<Constant>(C->getOperand(1));
   if (!Op1) return false;
@@ -225,7 +214,7 @@ bool CorrelatedValuePropagation::processCmp(CmpInst *C) {
 /// on that edge.  Cases that cannot fire no matter what the incoming edge can
 /// safely be removed.  If a case fires on every incoming edge then the entire
 /// switch can be removed and replaced with a branch to the case destination.
-bool CorrelatedValuePropagation::processSwitch(SwitchInst *SI) {
+static bool processSwitch(SwitchInst *SI, LazyValueInfo *LVI) {
   Value *Cond = SI->getCondition();
   BasicBlock *BB = SI->getParent();
 
@@ -306,7 +295,7 @@ bool CorrelatedValuePropagation::processSwitch(SwitchInst *SI) {
 
 /// processCallSite - Infer nonnull attributes for the arguments at the
 /// specified callsite.
-bool CorrelatedValuePropagation::processCallSite(CallSite CS) {
+static bool processCallSite(CallSite CS, LazyValueInfo *LVI) {
   SmallVector<unsigned, 4> Indices;
   unsigned ArgNo = 0;
 
@@ -337,7 +326,43 @@ bool CorrelatedValuePropagation::processCallSite(CallSite CS) {
   return true;
 }
 
-Constant *CorrelatedValuePropagation::getConstantAt(Value *V, Instruction *At) {
+/// See if LazyValueInfo's ability to exploit edge conditions, or range
+/// information is sufficient to prove the both operands of this SDiv are
+/// positive.  If this is the case, replace the SDiv with a UDiv. Even for local
+/// conditions, this can sometimes prove conditions instcombine can't by
+/// exploiting range information.
+static bool processSDiv(BinaryOperator *SDI, LazyValueInfo *LVI) {
+  if (SDI->getType()->isVectorTy())
+    return false;
+
+  for (Value *O : SDI->operands()) {
+    // As a policy choice, we choose not to waste compile time on anything where
+    // the operands are local defs.  While LVI can sometimes reason about such
+    // cases, it's not its primary purpose.
+    auto *I = dyn_cast<Instruction>(O);
+    if (I && I->getParent() == SDI->getParent())
+      return false;
+  }
+
+  Constant *Zero = ConstantInt::get(SDI->getType(), 0);
+  for (Value *O : SDI->operands()) {
+    LazyValueInfo::Tristate Result =
+        LVI->getPredicateAt(ICmpInst::ICMP_SGE, O, Zero, SDI);
+    if (Result != LazyValueInfo::True)
+      return false;
+  }
+
+  ++NumSDivs;
+  auto *BO = BinaryOperator::CreateUDiv(SDI->getOperand(0), SDI->getOperand(1),
+                                        SDI->getName(), SDI);
+  BO->setIsExact(SDI->isExact());
+  SDI->replaceAllUsesWith(BO);
+  SDI->eraseFromParent();
+
+  return true;
+}
+
+static Constant *getConstantAt(Value *V, Instruction *At, LazyValueInfo *LVI) {
   if (Constant *C = LVI->getConstant(V, At->getParent(), At))
     return C;
 
@@ -361,7 +386,7 @@ Constant *CorrelatedValuePropagation::getConstantAt(Value *V, Instruction *At) {
 }
 
 bool CorrelatedValuePropagation::runOnFunction(Function &F) {
-  if (skipOptnoneFunction(F))
+  if (skipFunction(F))
     return false;
 
   LVI = &getAnalysis<LazyValueInfo>();
@@ -374,22 +399,25 @@ bool CorrelatedValuePropagation::runOnFunction(Function &F) {
       Instruction *II = &*BI++;
       switch (II->getOpcode()) {
       case Instruction::Select:
-        BBChanged |= processSelect(cast<SelectInst>(II));
+        BBChanged |= processSelect(cast<SelectInst>(II), LVI);
         break;
       case Instruction::PHI:
-        BBChanged |= processPHI(cast<PHINode>(II));
+        BBChanged |= processPHI(cast<PHINode>(II), LVI);
         break;
       case Instruction::ICmp:
       case Instruction::FCmp:
-        BBChanged |= processCmp(cast<CmpInst>(II));
+        BBChanged |= processCmp(cast<CmpInst>(II), LVI);
         break;
       case Instruction::Load:
       case Instruction::Store:
-        BBChanged |= processMemAccess(II);
+        BBChanged |= processMemAccess(II, LVI);
         break;
       case Instruction::Call:
       case Instruction::Invoke:
-        BBChanged |= processCallSite(CallSite(II));
+        BBChanged |= processCallSite(CallSite(II), LVI);
+        break;
+      case Instruction::SDiv:
+        BBChanged |= processSDiv(cast<BinaryOperator>(II), LVI);
         break;
       }
     }
@@ -397,7 +425,7 @@ bool CorrelatedValuePropagation::runOnFunction(Function &F) {
     Instruction *Term = FI->getTerminator();
     switch (Term->getOpcode()) {
     case Instruction::Switch:
-      BBChanged |= processSwitch(cast<SwitchInst>(Term));
+      BBChanged |= processSwitch(cast<SwitchInst>(Term), LVI);
       break;
     case Instruction::Ret: {
       auto *RI = cast<ReturnInst>(Term);
@@ -407,7 +435,7 @@ bool CorrelatedValuePropagation::runOnFunction(Function &F) {
       auto *RetVal = RI->getReturnValue();
       if (!RetVal) break; // handle "ret void"
       if (isa<Constant>(RetVal)) break; // nothing to do
-      if (auto *C = getConstantAt(RetVal, RI)) {
+      if (auto *C = getConstantAt(RetVal, RI, LVI)) {
         ++NumReturns;
         RI->replaceUsesOfWith(RetVal, C);
         BBChanged = true;        

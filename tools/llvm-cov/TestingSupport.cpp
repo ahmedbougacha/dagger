@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Object/ObjectFile.h"
+#include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/LEB128.h"
 #include "llvm/Support/ManagedStatic.h"
@@ -36,8 +37,12 @@ int convertForTestingMain(int argc, const char *argv[]) {
   cl::ParseCommandLineOptions(argc, argv, "LLVM code coverage tool\n");
 
   auto ObjErr = llvm::object::ObjectFile::createObjectFile(InputSourceFile);
-  if (auto Err = ObjErr.getError()) {
-    errs() << "error: " << Err.message() << "\n";
+  if (!ObjErr) {
+    std::string Buf;
+    raw_string_ostream OS(Buf);
+    logAllUnhandledErrors(ObjErr.takeError(), OS, "");
+    OS.flush();
+    errs() << "error: " << Buf;
     return 1;
   }
   ObjectFile *OF = ObjErr.get().getBinary();
@@ -54,9 +59,9 @@ int convertForTestingMain(int argc, const char *argv[]) {
     StringRef Name;
     if (Section.getName(Name))
       return 1;
-    if (Name == "__llvm_prf_names") {
+    if (Name == llvm::getInstrProfNameSectionName(false)) {
       ProfileNames = Section;
-    } else if (Name == "__llvm_covmap") {
+    } else if (Name == llvm::getInstrProfCoverageSectionName(false)) {
       CoverageMapping = Section;
     } else
       continue;
@@ -84,7 +89,11 @@ int convertForTestingMain(int argc, const char *argv[]) {
   OS << "llvmcovmtestdata";
   encodeULEB128(ProfileNamesData.size(), OS);
   encodeULEB128(ProfileNamesAddress, OS);
-  OS << ProfileNamesData << CoverageMappingData;
+  OS << ProfileNamesData;
+  // Coverage mapping data is expected to have an alignment of 8.
+  for (unsigned Pad = OffsetToAlignment(OS.tell(), 8); Pad; --Pad)
+    OS.write(uint8_t(0));
+  OS << CoverageMappingData;
 
   return 0;
 }

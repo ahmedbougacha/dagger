@@ -119,6 +119,15 @@ void llvm::CloneFunctionInto(Function *NewFunc, const Function *OldFunc,
           .addAttributes(NewFunc->getContext(), AttributeSet::FunctionIndex,
                          OldAttrs.getFnAttributes()));
 
+  SmallVector<std::pair<unsigned, MDNode *>, 1> MDs;
+  OldFunc->getAllMetadata(MDs);
+  for (auto MD : MDs)
+    NewFunc->addMetadata(
+        MD.first,
+        *MapMetadata(MD.second, VMap,
+                     ModuleLevelChanges ? RF_None : RF_NoModuleLevelChanges,
+                     TypeMapper, Materializer));
+
   // Loop over all of the basic blocks in the function, cloning them as
   // appropriate.  Note that we save BE this way in order to handle cloning of
   // recursive functions into themselves.
@@ -163,65 +172,14 @@ void llvm::CloneFunctionInto(Function *NewFunc, const Function *OldFunc,
                        TypeMapper, Materializer);
 }
 
-// Find the MDNode which corresponds to the subprogram data that described F.
-static DISubprogram *FindSubprogram(const Function *F,
-                                    DebugInfoFinder &Finder) {
-  for (DISubprogram *Subprogram : Finder.subprograms()) {
-    if (Subprogram->describes(F))
-      return Subprogram;
-  }
-  return nullptr;
-}
-
-// Add an operand to an existing MDNode. The new operand will be added at the
-// back of the operand list.
-static void AddOperand(DICompileUnit *CU, DISubprogramArray SPs,
-                       Metadata *NewSP) {
-  SmallVector<Metadata *, 16> NewSPs;
-  NewSPs.reserve(SPs.size() + 1);
-  for (auto *SP : SPs)
-    NewSPs.push_back(SP);
-  NewSPs.push_back(NewSP);
-  CU->replaceSubprograms(MDTuple::get(CU->getContext(), NewSPs));
-}
-
-// Clone the module-level debug info associated with OldFunc. The cloned data
-// will point to NewFunc instead.
-void llvm::CloneDebugInfoMetadata(Function *NewFunc, const Function *OldFunc,
-                                  ValueToValueMapTy &VMap) {
-  DebugInfoFinder Finder;
-  Finder.processModule(*OldFunc->getParent());
-
-  const DISubprogram *OldSubprogramMDNode = FindSubprogram(OldFunc, Finder);
-  if (!OldSubprogramMDNode) return;
-
-  auto *NewSubprogram =
-      cast<DISubprogram>(MapMetadata(OldSubprogramMDNode, VMap));
-  NewFunc->setSubprogram(NewSubprogram);
-
-  for (auto *CU : Finder.compile_units()) {
-    auto Subprograms = CU->getSubprograms();
-    // If the compile unit's function list contains the old function, it should
-    // also contain the new one.
-    for (auto *SP : Subprograms) {
-      if (SP == OldSubprogramMDNode) {
-        AddOperand(CU, Subprograms, NewSubprogram);
-        break;
-      }
-    }
-  }
-}
-
-/// Return a copy of the specified function, but without
-/// embedding the function into another module.  Also, any references specified
-/// in the VMap are changed to refer to their mapped value instead of the
-/// original one.  If any of the arguments to the function are in the VMap,
-/// the arguments are deleted from the resultant function.  The VMap is
-/// updated to include mappings from all of the instructions and basicblocks in
-/// the function from their old to new values.
+/// Return a copy of the specified function and add it to that function's
+/// module.  Also, any references specified in the VMap are changed to refer to
+/// their mapped value instead of the original one.  If any of the arguments to
+/// the function are in the VMap, the arguments are deleted from the resultant
+/// function.  The VMap is updated to include mappings from all of the
+/// instructions and basicblocks in the function from their old to new values.
 ///
-Function *llvm::CloneFunction(const Function *F, ValueToValueMapTy &VMap,
-                              bool ModuleLevelChanges,
+Function *llvm::CloneFunction(Function *F, ValueToValueMapTy &VMap,
                               ClonedCodeInfo *CodeInfo) {
   std::vector<Type*> ArgTypes;
 
@@ -237,7 +195,8 @@ Function *llvm::CloneFunction(const Function *F, ValueToValueMapTy &VMap,
                                     ArgTypes, F->getFunctionType()->isVarArg());
 
   // Create the new function...
-  Function *NewF = Function::Create(FTy, F->getLinkage(), F->getName());
+  Function *NewF =
+      Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
 
   // Loop over the arguments, copying the names of the mapped arguments over...
   Function::arg_iterator DestI = NewF->arg_begin();
@@ -247,11 +206,10 @@ Function *llvm::CloneFunction(const Function *F, ValueToValueMapTy &VMap,
       VMap[&I] = &*DestI++;        // Add mapping to VMap
     }
 
-  if (ModuleLevelChanges)
-    CloneDebugInfoMetadata(NewF, F, VMap);
-
   SmallVector<ReturnInst*, 8> Returns;  // Ignore returns cloned.
-  CloneFunctionInto(NewF, F, VMap, ModuleLevelChanges, Returns, "", CodeInfo);
+  CloneFunctionInto(NewF, F, VMap, /*ModuleLevelChanges=*/false, Returns, "",
+                    CodeInfo);
+
   return NewF;
 }
 
@@ -372,7 +330,7 @@ void PruningFunctionCloner::CloneBlock(const BasicBlock *BB,
       ConstantInt *Cond = dyn_cast<ConstantInt>(BI->getCondition());
       // Or is a known constant in the caller...
       if (!Cond) {
-        Value *V = VMap[BI->getCondition()];
+        Value *V = VMap.lookup(BI->getCondition());
         Cond = dyn_cast_or_null<ConstantInt>(V);
       }
 
@@ -388,7 +346,7 @@ void PruningFunctionCloner::CloneBlock(const BasicBlock *BB,
     // If switching on a value known constant in the caller.
     ConstantInt *Cond = dyn_cast<ConstantInt>(SI->getCondition());
     if (!Cond) { // Or known constant after constant prop in the callee...
-      Value *V = VMap[SI->getCondition()];
+      Value *V = VMap.lookup(SI->getCondition());
       Cond = dyn_cast_or_null<ConstantInt>(V);
     }
     if (Cond) {     // Constant fold to uncond branch!
@@ -475,7 +433,7 @@ void llvm::CloneAndPruneIntoFromInst(Function *NewFunc, const Function *OldFunc,
   // Defer PHI resolution until rest of function is resolved.
   SmallVector<const PHINode*, 16> PHIToResolve;
   for (const BasicBlock &BI : *OldFunc) {
-    Value *V = VMap[&BI];
+    Value *V = VMap.lookup(&BI);
     BasicBlock *NewBB = cast_or_null<BasicBlock>(V);
     if (!NewBB) continue;  // Dead block.
 
@@ -519,7 +477,7 @@ void llvm::CloneAndPruneIntoFromInst(Function *NewFunc, const Function *OldFunc,
       OPN = PHIToResolve[phino];
       PHINode *PN = cast<PHINode>(VMap[OPN]);
       for (unsigned pred = 0, e = NumPreds; pred != e; ++pred) {
-        Value *V = VMap[PN->getIncomingBlock(pred)];
+        Value *V = VMap.lookup(PN->getIncomingBlock(pred));
         if (BasicBlock *MappedBlock = cast_or_null<BasicBlock>(V)) {
           Value *InVal = MapValue(PN->getIncomingValue(pred),
                                   VMap, 
@@ -685,7 +643,7 @@ void llvm::remapInstructionsInBlocks(
   for (auto *BB : Blocks)
     for (auto &Inst : *BB)
       RemapInstruction(&Inst, VMap,
-                       RF_NoModuleLevelChanges | RF_IgnoreMissingEntries);
+                       RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
 }
 
 /// \brief Clones a loop \p OrigLoop.  Returns the loop and the blocks in \p
@@ -698,6 +656,8 @@ Loop *llvm::cloneLoopWithPreheader(BasicBlock *Before, BasicBlock *LoopDomBB,
                                    const Twine &NameSuffix, LoopInfo *LI,
                                    DominatorTree *DT,
                                    SmallVectorImpl<BasicBlock *> &Blocks) {
+  assert(OrigLoop->getSubLoops().empty() && 
+         "Loop to be cloned cannot have inner loop");
   Function *F = OrigLoop->getHeader()->getParent();
   Loop *ParentLoop = OrigLoop->getParentLoop();
 

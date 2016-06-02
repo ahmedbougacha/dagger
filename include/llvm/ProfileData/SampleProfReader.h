@@ -134,8 +134,8 @@
 //        Total number of samples in the profile.
 //    MAX_COUNT (uint64_t)
 //        Maximum value of samples on a line.
-//    MAX_HEAD_SAMPLES (uint64_t)
-//        Maximum number of head samples.
+//    MAX_FUNCTION_COUNT (uint64_t)
+//        Maximum number of samples at function entry (head samples).
 //    NUM_COUNTS (uint64_t)
 //        Number of lines with samples.
 //    NUM_FUNCTIONS (uint64_t)
@@ -289,14 +289,14 @@ public:
 
   /// \brief Create a sample profile reader appropriate to the file format.
   static ErrorOr<std::unique_ptr<SampleProfileReader>>
-  create(StringRef Filename, LLVMContext &C);
+  create(const Twine &Filename, LLVMContext &C);
 
   /// \brief Create a sample profile reader from the supplied memory buffer.
   static ErrorOr<std::unique_ptr<SampleProfileReader>>
   create(std::unique_ptr<MemoryBuffer> &B, LLVMContext &C);
 
   /// \brief Return the profile summary.
-  SampleProfileSummary &getSummary() { return *(Summary.get()); }
+  ProfileSummary &getSummary() { return *(Summary.get()); }
 
 protected:
   /// \brief Map every function to its associated profile.
@@ -313,7 +313,7 @@ protected:
   std::unique_ptr<MemoryBuffer> Buffer;
 
   /// \brief Profile summary information.
-  std::unique_ptr<SampleProfileSummary> Summary;
+  std::unique_ptr<ProfileSummary> Summary;
 
   /// \brief Compute summary for this profile.
   void computeSummary();

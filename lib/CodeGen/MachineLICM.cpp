@@ -260,7 +260,7 @@ static bool LoopIsOuterMostWithPredecessor(MachineLoop *CurLoop) {
 }
 
 bool MachineLICM::runOnMachineFunction(MachineFunction &MF) {
-  if (skipOptnoneFunction(*MF.getFunction()))
+  if (skipFunction(*MF.getFunction()))
     return false;
 
   Changed = FirstInLoop = false;
@@ -581,14 +581,14 @@ bool MachineLICM::IsGuaranteedToExecute(MachineBasicBlock *BB) {
 }
 
 void MachineLICM::EnterScope(MachineBasicBlock *MBB) {
-  DEBUG(dbgs() << "Entering: " << MBB->getName() << '\n');
+  DEBUG(dbgs() << "Entering BB#" << MBB->getNumber() << '\n');
 
   // Remember livein register pressure.
   BackTrace.push_back(RegPressure);
 }
 
 void MachineLICM::ExitScope(MachineBasicBlock *MBB) {
-  DEBUG(dbgs() << "Exiting: " << MBB->getName() << '\n');
+  DEBUG(dbgs() << "Exiting BB#" << MBB->getNumber() << '\n');
   BackTrace.pop_back();
 }
 
@@ -1317,12 +1317,10 @@ bool MachineLICM::Hoist(MachineInstr *MI, MachineBasicBlock *Preheader) {
   // terminator instructions.
   DEBUG({
       dbgs() << "Hoisting " << *MI;
-      if (Preheader->getBasicBlock())
-        dbgs() << " to MachineBasicBlock "
-               << Preheader->getName();
       if (MI->getParent()->getBasicBlock())
-        dbgs() << " from MachineBasicBlock "
-               << MI->getParent()->getName();
+        dbgs() << " from BB#" << MI->getParent()->getNumber();
+      if (Preheader->getBasicBlock())
+        dbgs() << " to BB#" << Preheader->getNumber();
       dbgs() << "\n";
     });
 
@@ -1382,7 +1380,7 @@ MachineBasicBlock *MachineLICM::getCurPreheader() {
         return nullptr;
       }
 
-      CurPreheader = Pred->SplitCriticalEdge(CurLoop->getHeader(), this);
+      CurPreheader = Pred->SplitCriticalEdge(CurLoop->getHeader(), *this);
       if (!CurPreheader) {
         CurPreheader = reinterpret_cast<MachineBasicBlock *>(-1);
         return nullptr;

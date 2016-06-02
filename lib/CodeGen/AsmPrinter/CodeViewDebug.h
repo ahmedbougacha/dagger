@@ -17,10 +17,10 @@
 #include "DebugHandlerBase.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
+#include "llvm/DebugInfo/CodeView/MemoryTypeTableBuilder.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DebugLoc.h"
@@ -29,11 +29,13 @@
 
 namespace llvm {
 
+class StringRef;
 class LexicalScope;
 
 /// \brief Collects and handles line tables information in a CodeView format.
 class LLVM_LIBRARY_VISIBILITY CodeViewDebug : public DebugHandlerBase {
   MCStreamer &OS;
+  codeview::MemoryTypeTableBuilder TypeTable;
 
   /// Represents the most general definition range.
   struct LocalVarDefRange {
@@ -99,10 +101,26 @@ class LLVM_LIBRARY_VISIBILITY CodeViewDebug : public DebugHandlerBase {
   };
   FunctionInfo *CurFn;
 
+  /// The set of comdat .debug$S sections that we've seen so far. Each section
+  /// must start with a magic version number that must only be emitted once.
+  /// This set tracks which sections we've already opened.
+  DenseSet<MCSectionCOFF *> ComdatDebugSections;
+
+  /// Switch to the appropriate .debug$S section for GVSym. If GVSym, the symbol
+  /// of an emitted global value, is in a comdat COFF section, this will switch
+  /// to a new .debug$S section in that comdat. This method ensures that the
+  /// section starts with the magic version number on first use. If GVSym is
+  /// null, uses the main .debug$S section.
+  void switchToDebugSectionForSymbol(const MCSymbol *GVSym);
+
+  /// The next available function index for use with our .cv_* directives. Not
+  /// to be confused with type indices for LF_FUNC_ID records.
   unsigned NextFuncId = 0;
 
   InlineSite &getInlineSite(const DILocation *InlinedAt,
                             const DISubprogram *Inlinee);
+
+  codeview::TypeIndex getFuncIdForSubprogram(const DISubprogram *SP);
 
   static void collectInlineSiteChildren(SmallVectorImpl<unsigned> &Children,
                                         const FunctionInfo &FI,
@@ -115,17 +133,12 @@ class LLVM_LIBRARY_VISIBILITY CodeViewDebug : public DebugHandlerBase {
   /// Map from DIFile to .cv_file id.
   DenseMap<const DIFile *, unsigned> FileIdMap;
 
+  /// All inlined subprograms in the order they should be emitted.
   SmallSetVector<const DISubprogram *, 4> InlinedSubprograms;
 
-  DenseMap<const DISubprogram *, codeview::TypeIndex> SubprogramToFuncId;
-
-  unsigned TypeCount = 0;
-
-  /// Gets the next type index and increments the count of types streamed so
-  /// far.
-  codeview::TypeIndex getNextTypeIndex() {
-    return codeview::TypeIndex(codeview::TypeIndex::FirstNonSimpleIndex + TypeCount++);
-  }
+  /// Map from DI metadata nodes to CodeView type indices. Primarily indexed by
+  /// DIType* and DISubprogram*.
+  DenseMap<const DINode *, codeview::TypeIndex> TypeIndices;
 
   typedef std::map<const DIFile *, std::string> FileToFilepathMapTy;
   FileToFilepathMapTy FileToFilepathMap;
@@ -141,6 +154,10 @@ class LLVM_LIBRARY_VISIBILITY CodeViewDebug : public DebugHandlerBase {
     FnDebugInfo.clear();
     FileToFilepathMap.clear();
   }
+
+  /// Emit the magic version number at the start of a CodeView type or symbol
+  /// section. Appears at the front of every .debug$S or .debug$T section.
+  void emitCodeViewMagicVersion();
 
   void emitTypeInformation();
 
@@ -162,6 +179,18 @@ class LLVM_LIBRARY_VISIBILITY CodeViewDebug : public DebugHandlerBase {
   void recordLocalVariable(LocalVariable &&Var, const DILocation *Loc);
 
   void emitLocalVariable(const LocalVariable &Var);
+
+  /// Translates the DIType to codeview if necessary and returns a type index
+  /// for it.
+  codeview::TypeIndex getTypeIndex(DITypeRef Ty);
+
+  codeview::TypeIndex lowerType(const DIType *Ty);
+  codeview::TypeIndex lowerTypeAlias(const DIDerivedType *Ty);
+  codeview::TypeIndex lowerTypeBasic(const DIBasicType *Ty);
+  codeview::TypeIndex lowerTypePointer(const DIDerivedType *Ty);
+  codeview::TypeIndex lowerTypeMemberPointer(const DIDerivedType *Ty);
+  codeview::TypeIndex lowerTypeModifier(const DIDerivedType *Ty);
+  codeview::TypeIndex lowerTypeFunction(const DISubroutineType *Ty);
 
 public:
   CodeViewDebug(AsmPrinter *Asm);

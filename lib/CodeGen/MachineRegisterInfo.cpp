@@ -24,9 +24,8 @@ using namespace llvm;
 // Pin the vtable to this file.
 void MachineRegisterInfo::Delegate::anchor() {}
 
-MachineRegisterInfo::MachineRegisterInfo(const MachineFunction *MF)
-  : MF(MF), TheDelegate(nullptr), IsSSA(true), TracksLiveness(true),
-    TracksSubRegLiveness(false) {
+MachineRegisterInfo::MachineRegisterInfo(MachineFunction *MF)
+    : MF(MF), TheDelegate(nullptr), TracksSubRegLiveness(false) {
   unsigned NumRegs = getTargetRegisterInfo()->getNumRegs();
   VRegInfo.reserve(256);
   RegAllocHints.reserve(256);
@@ -40,6 +39,11 @@ void
 MachineRegisterInfo::setRegClass(unsigned Reg, const TargetRegisterClass *RC) {
   assert(RC && RC->isAllocatable() && "Invalid RC for virtual register");
   VRegInfo[Reg].first = RC;
+}
+
+void MachineRegisterInfo::setRegBank(unsigned Reg,
+                                     const RegisterBank &RegBank) {
+  VRegInfo[Reg].first = &RegBank;
 }
 
 const TargetRegisterClass *
@@ -103,12 +107,14 @@ MachineRegisterInfo::createVirtualRegister(const TargetRegisterClass *RegClass){
   return Reg;
 }
 
-#ifdef LLVM_BUILD_GLOBAL_ISEL
 unsigned
 MachineRegisterInfo::getSize(unsigned VReg) const {
-  DenseMap<unsigned, unsigned>::const_iterator SizeIt =
-    VRegToSize.find(VReg);
-  return SizeIt != VRegToSize.end()? SizeIt->second: 0;
+  VRegToSizeMap::const_iterator SizeIt = getVRegToSize().find(VReg);
+  return SizeIt != getVRegToSize().end() ? SizeIt->second : 0;
+}
+
+void MachineRegisterInfo::setSize(unsigned VReg, unsigned Size) {
+  getVRegToSize()[VReg] = Size;
 }
 
 unsigned
@@ -119,14 +125,13 @@ MachineRegisterInfo::createGenericVirtualRegister(unsigned Size) {
   unsigned Reg = TargetRegisterInfo::index2VirtReg(getNumVirtRegs());
   VRegInfo.grow(Reg);
   // FIXME: Should we use a dummy register class?
-  VRegInfo[Reg].first = nullptr;
-  VRegToSize[Reg] = Size;
+  VRegInfo[Reg].first = static_cast<TargetRegisterClass *>(nullptr);
+  getVRegToSize()[Reg] = Size;
   RegAllocHints.grow(Reg);
   if (TheDelegate)
     TheDelegate->MRI_NoteNewVirtualRegister(Reg);
   return Reg;
 }
-#endif // LLVM_BUILD_GLOBAL_ISEL
 
 /// clearVirtRegs - Remove all virtual registers (after physreg assignment).
 void MachineRegisterInfo::clearVirtRegs() {

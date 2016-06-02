@@ -75,7 +75,7 @@ MCInst createBundle();
 // Return the extender for instruction at Index or nullptr if none
 MCInst const *extenderForIndex(MCInst const &MCB, size_t Index);
 void extendIfNeeded(MCContext &Context, MCInstrInfo const &MCII, MCInst &MCB,
-                    MCInst const &MCI, bool MustExtend);
+                    MCInst const &MCI);
 
 // Create a duplex instruction given the two subinsts
 MCInst *deriveDuplex(MCContext &Context, unsigned iClass, MCInst const &inst0,
@@ -107,6 +107,7 @@ unsigned getDuplexCandidateGroup(MCInst const &MI);
 // Return a list of all possible instruction duplex combinations
 SmallVector<DuplexCandidate, 8> getDuplexPossibilties(MCInstrInfo const &MCII,
                                                       MCInst const &MCB);
+unsigned getDuplexRegisterNumbering(unsigned Reg);
 
 MCExpr const &getExpr(MCExpr const &Expr);
 
@@ -262,6 +263,7 @@ bool isSoloAX(MCInstrInfo const &MCII, MCInst const &MCI);
 
 /// Return whether the insn can be packaged only with an A-type insn in slot #1.
 bool isSoloAin1(MCInstrInfo const &MCII, MCInst const &MCI);
+bool isSubInstruction(MCInst const &MCI);
 bool isVector(MCInstrInfo const &MCII, MCInst const &MCI);
 bool mustExtend(MCExpr const &Expr);
 bool mustNotExtend(MCExpr const &Expr);
@@ -279,7 +281,7 @@ bool s23_2_reloc(MCExpr const &Expr);
 void setInnerLoop(MCInst &MCI);
 void setMemReorderDisabled(MCInst &MCI);
 void setMemStoreReorderEnabled(MCInst &MCI);
-void setMustExtend(MCExpr &Expr, bool Val = true);
+void setMustExtend(MCExpr const &Expr, bool Val = true);
 void setMustNotExtend(MCExpr const &Expr, bool Val = true);
 void setS23_2_reloc(MCExpr const &Expr, bool Val = true);
 
@@ -288,6 +290,8 @@ void setOuterLoop(MCInst &MCI);
 
 // Would duplexing this instruction create a requirement to extend
 bool subInstWouldBeExtended(MCInst const &potentialDuplex);
+unsigned SubregisterBit(unsigned Consumer, unsigned Producer,
+                        unsigned Producer2);
 
 // Attempt to find and replace compound pairs
 void tryCompound(MCInstrInfo const &MCII, MCContext &Context, MCInst &MCI);

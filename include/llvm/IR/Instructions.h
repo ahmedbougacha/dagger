@@ -25,6 +25,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
+#include "llvm/Support/AtomicOrdering.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <iterator>
 
@@ -36,37 +37,10 @@ class ConstantRange;
 class DataLayout;
 class LLVMContext;
 
-enum AtomicOrdering {
-  NotAtomic = 0,
-  Unordered = 1,
-  Monotonic = 2,
-  // Consume = 3,  // Not specified yet.
-  Acquire = 4,
-  Release = 5,
-  AcquireRelease = 6,
-  SequentiallyConsistent = 7
-};
-
 enum SynchronizationScope {
   SingleThread = 0,
   CrossThread = 1
 };
-
-/// Returns true if the ordering is at least as strong as acquire
-/// (i.e. acquire, acq_rel or seq_cst)
-inline bool isAtLeastAcquire(AtomicOrdering Ord) {
-   return (Ord == Acquire ||
-    Ord == AcquireRelease ||
-    Ord == SequentiallyConsistent);
-}
-
-/// Returns true if the ordering is at least as strong as release
-/// (i.e. release, acq_rel or seq_cst)
-inline bool isAtLeastRelease(AtomicOrdering Ord) {
-return (Ord == Release ||
-    Ord == AcquireRelease ||
-    Ord == SequentiallyConsistent);
-}
 
 //===----------------------------------------------------------------------===//
 //                                AllocaInst Class
@@ -150,6 +124,18 @@ public:
   void setUsedWithInAlloca(bool V) {
     setInstructionSubclassData((getSubclassDataFromInstruction() & ~32) |
                                (V ? 32 : 0));
+  }
+
+  /// \brief Return true if this alloca is used as a swifterror argument to a
+  /// call.
+  bool isSwiftError() const {
+    return getSubclassDataFromInstruction() & 64;
+  }
+
+  /// \brief Specify whether this alloca is used to represent a swifterror.
+  void setSwiftError(bool V) {
+    setInstructionSubclassData((getSubclassDataFromInstruction() & ~64) |
+                               (V ? 64 : 0));
   }
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
@@ -257,7 +243,7 @@ public:
   /// AcquireRelease.
   void setOrdering(AtomicOrdering Ordering) {
     setInstructionSubclassData((getSubclassDataFromInstruction() & ~(7 << 7)) |
-                               (Ordering << 7));
+                               ((unsigned)Ordering << 7));
   }
 
   SynchronizationScope getSynchScope() const {
@@ -280,7 +266,9 @@ public:
 
   bool isSimple() const { return !isAtomic() && !isVolatile(); }
   bool isUnordered() const {
-    return getOrdering() <= Unordered && !isVolatile();
+    return (getOrdering() == AtomicOrdering::NotAtomic ||
+            getOrdering() == AtomicOrdering::Unordered) &&
+           !isVolatile();
   }
 
   Value *getPointerOperand() { return getOperand(0); }
@@ -378,7 +366,7 @@ public:
   /// AcquireRelease.
   void setOrdering(AtomicOrdering Ordering) {
     setInstructionSubclassData((getSubclassDataFromInstruction() & ~(7 << 7)) |
-                               (Ordering << 7));
+                               ((unsigned)Ordering << 7));
   }
 
   SynchronizationScope getSynchScope() const {
@@ -401,7 +389,9 @@ public:
 
   bool isSimple() const { return !isAtomic() && !isVolatile(); }
   bool isUnordered() const {
-    return getOrdering() <= Unordered && !isVolatile();
+    return (getOrdering() == AtomicOrdering::NotAtomic ||
+            getOrdering() == AtomicOrdering::Unordered) &&
+           !isVolatile();
   }
 
   Value *getValueOperand() { return getOperand(0); }
@@ -477,7 +467,7 @@ public:
   /// AcquireRelease, or SequentiallyConsistent.
   void setOrdering(AtomicOrdering Ordering) {
     setInstructionSubclassData((getSubclassDataFromInstruction() & 1) |
-                               (Ordering << 1));
+                               ((unsigned)Ordering << 1));
   }
 
   SynchronizationScope getSynchScope() const {
@@ -572,17 +562,17 @@ public:
 
   /// Set the ordering constraint on this cmpxchg.
   void setSuccessOrdering(AtomicOrdering Ordering) {
-    assert(Ordering != NotAtomic &&
+    assert(Ordering != AtomicOrdering::NotAtomic &&
            "CmpXchg instructions can only be atomic.");
     setInstructionSubclassData((getSubclassDataFromInstruction() & ~0x1c) |
-                               (Ordering << 2));
+                               ((unsigned)Ordering << 2));
   }
 
   void setFailureOrdering(AtomicOrdering Ordering) {
-    assert(Ordering != NotAtomic &&
+    assert(Ordering != AtomicOrdering::NotAtomic &&
            "CmpXchg instructions can only be atomic.");
     setInstructionSubclassData((getSubclassDataFromInstruction() & ~0xe0) |
-                               (Ordering << 5));
+                               ((unsigned)Ordering << 5));
   }
 
   /// Specify whether this cmpxchg is atomic and orders other operations with
@@ -634,15 +624,16 @@ public:
   static AtomicOrdering
   getStrongestFailureOrdering(AtomicOrdering SuccessOrdering) {
     switch (SuccessOrdering) {
-    default: llvm_unreachable("invalid cmpxchg success ordering");
-    case Release:
-    case Monotonic:
-      return Monotonic;
-    case AcquireRelease:
-    case Acquire:
-      return Acquire;
-    case SequentiallyConsistent:
-      return SequentiallyConsistent;
+    default:
+      llvm_unreachable("invalid cmpxchg success ordering");
+    case AtomicOrdering::Release:
+    case AtomicOrdering::Monotonic:
+      return AtomicOrdering::Monotonic;
+    case AtomicOrdering::AcquireRelease:
+    case AtomicOrdering::Acquire:
+      return AtomicOrdering::Acquire;
+    case AtomicOrdering::SequentiallyConsistent:
+      return AtomicOrdering::SequentiallyConsistent;
     }
   }
 
@@ -758,10 +749,10 @@ public:
 
   /// Set the ordering constraint on this RMW.
   void setOrdering(AtomicOrdering Ordering) {
-    assert(Ordering != NotAtomic &&
+    assert(Ordering != AtomicOrdering::NotAtomic &&
            "atomicrmw instructions can only be atomic.");
     setInstructionSubclassData((getSubclassDataFromInstruction() & ~(7 << 2)) |
-                               (Ordering << 2));
+                               ((unsigned)Ordering << 2));
   }
 
   /// Specify whether this RMW orders other operations with respect to all
@@ -1490,9 +1481,29 @@ public:
                                    Value *AllocSize, Value *ArraySize = nullptr,
                                    Function* MallocF = nullptr,
                                    const Twine &Name = "");
+  static Instruction *CreateMalloc(Instruction *InsertBefore,
+                                   Type *IntPtrTy, Type *AllocTy,
+                                   Value *AllocSize, Value *ArraySize = nullptr,
+                                   ArrayRef<OperandBundleDef> Bundles = None,
+                                   Function* MallocF = nullptr,
+                                   const Twine &Name = "");
+  static Instruction *CreateMalloc(BasicBlock *InsertAtEnd,
+                                   Type *IntPtrTy, Type *AllocTy,
+                                   Value *AllocSize, Value *ArraySize = nullptr,
+                                   ArrayRef<OperandBundleDef> Bundles = None,
+                                   Function* MallocF = nullptr,
+                                   const Twine &Name = "");
   /// CreateFree - Generate the IR for a call to the builtin free function.
-  static Instruction* CreateFree(Value* Source, Instruction *InsertBefore);
-  static Instruction* CreateFree(Value* Source, BasicBlock *InsertAtEnd);
+  static Instruction *CreateFree(Value *Source,
+                                 Instruction *InsertBefore);
+  static Instruction *CreateFree(Value *Source,
+                                 BasicBlock *InsertAtEnd);
+  static Instruction *CreateFree(Value *Source,
+                                 ArrayRef<OperandBundleDef> Bundles,
+                                 Instruction *InsertBefore);
+  static Instruction *CreateFree(Value *Source,
+                                 ArrayRef<OperandBundleDef> Bundles,
+                                 BasicBlock *InsertAtEnd);
 
   ~CallInst() override;
 
@@ -1611,6 +1622,9 @@ public:
 
   /// addAttribute - adds the attribute to the list of attributes.
   void addAttribute(unsigned i, StringRef Kind, StringRef Value);
+
+  /// removeAttribute - removes the attribute from the list of attributes.
+  void removeAttribute(unsigned i, Attribute::AttrKind attr);
 
   /// removeAttribute - removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute attr);
@@ -2623,6 +2637,11 @@ public:
   /// same value, return the value, otherwise return null.
   Value *hasConstantValue() const;
 
+  /// hasConstantOrUndefValue - Whether the specified PHI node always merges
+  /// together the same value, assuming undefs are equal to a unique
+  /// non-undef value.
+  bool hasConstantOrUndefValue() const;
+
   /// Methods for support type inquiry through isa, cast, and dyn_cast:
   static inline bool classof(const Instruction *I) {
     return I->getOpcode() == Instruction::PHI;
@@ -2932,7 +2951,7 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(BranchInst, Value)
 //===----------------------------------------------------------------------===//
 
 //===---------------------------------------------------------------------------
-/// SwitchInst - Multiway switch
+/// Multiway switch
 ///
 class SwitchInst : public TerminatorInst {
   void *operator new(size_t, unsigned) = delete;
@@ -2948,17 +2967,17 @@ class SwitchInst : public TerminatorInst {
   void *operator new(size_t s) {
     return User::operator new(s);
   }
-  /// SwitchInst ctor - Create a new switch instruction, specifying a value to
-  /// switch on and a default destination.  The number of additional cases can
-  /// be specified here to make memory allocation more efficient.  This
-  /// constructor can also autoinsert before another instruction.
+  /// Create a new switch instruction, specifying a value to switch on and a
+  /// default destination. The number of additional cases can be specified here
+  /// to make memory allocation more efficient. This constructor can also
+  /// auto-insert before another instruction.
   SwitchInst(Value *Value, BasicBlock *Default, unsigned NumCases,
              Instruction *InsertBefore);
 
-  /// SwitchInst ctor - Create a new switch instruction, specifying a value to
-  /// switch on and a default destination.  The number of additional cases can
-  /// be specified here to make memory allocation more efficient.  This
-  /// constructor also autoinserts at the end of the specified BasicBlock.
+  /// Create a new switch instruction, specifying a value to switch on and a
+  /// default destination. The number of additional cases can be specified here
+  /// to make memory allocation more efficient. This constructor also
+  /// auto-inserts at the end of the specified BasicBlock.
   SwitchInst(Value *Value, BasicBlock *Default, unsigned NumCases,
              BasicBlock *InsertAtEnd);
 
@@ -3108,40 +3127,40 @@ public:
     setOperand(1, reinterpret_cast<Value*>(DefaultCase));
   }
 
-  /// getNumCases - return the number of 'cases' in this switch instruction,
-  /// except the default case
+  /// Return the number of 'cases' in this switch instruction, excluding the
+  /// default case.
   unsigned getNumCases() const {
     return getNumOperands()/2 - 1;
   }
 
-  /// Returns a read/write iterator that points to the first
-  /// case in SwitchInst.
+  /// Returns a read/write iterator that points to the first case in the
+  /// SwitchInst.
   CaseIt case_begin() {
     return CaseIt(this, 0);
   }
-  /// Returns a read-only iterator that points to the first
-  /// case in the SwitchInst.
+  /// Returns a read-only iterator that points to the first case in the
+  /// SwitchInst.
   ConstCaseIt case_begin() const {
     return ConstCaseIt(this, 0);
   }
 
-  /// Returns a read/write iterator that points one past the last
-  /// in the SwitchInst.
+  /// Returns a read/write iterator that points one past the last in the
+  /// SwitchInst.
   CaseIt case_end() {
     return CaseIt(this, getNumCases());
   }
-  /// Returns a read-only iterator that points one past the last
-  /// in the SwitchInst.
+  /// Returns a read-only iterator that points one past the last in the
+  /// SwitchInst.
   ConstCaseIt case_end() const {
     return ConstCaseIt(this, getNumCases());
   }
 
-  /// cases - iteration adapter for range-for loops.
+  /// Iteration adapter for range-for loops.
   iterator_range<CaseIt> cases() {
     return make_range(case_begin(), case_end());
   }
 
-  /// cases - iteration adapter for range-for loops.
+  /// Constant iteration adapter for range-for loops.
   iterator_range<ConstCaseIt> cases() const {
     return make_range(case_begin(), case_end());
   }
@@ -3158,10 +3177,10 @@ public:
     return ConstCaseIt(this, DefaultPseudoIndex);
   }
 
-  /// findCaseValue - Search all of the case values for the specified constant.
-  /// If it is explicitly handled, return the case iterator of it, otherwise
-  /// return default case iterator to indicate
-  /// that it is handled by the default handler.
+  /// Search all of the case values for the specified constant. If it is
+  /// explicitly handled, return the case iterator of it, otherwise return
+  /// default case iterator to indicate that it is handled by the default
+  /// handler.
   CaseIt findCaseValue(const ConstantInt *C) {
     for (CaseIt i = case_begin(), e = case_end(); i != e; ++i)
       if (i.getCaseValue() == C)
@@ -3175,8 +3194,8 @@ public:
     return case_default();
   }
 
-  /// findCaseDest - Finds the unique case value for a given successor. Returns
-  /// null if the successor is not found, not unique, or is the default case.
+  /// Finds the unique case value for a given successor. Returns null if the
+  /// successor is not found, not unique, or is the default case.
   ConstantInt *findCaseDest(BasicBlock *BB) {
     if (BB == getDefaultDest()) return nullptr;
 
@@ -3190,15 +3209,15 @@ public:
     return CI;
   }
 
-  /// addCase - Add an entry to the switch instruction...
+  /// Add an entry to the switch instruction.
   /// Note:
   /// This action invalidates case_end(). Old case_end() iterator will
   /// point to the added case.
   void addCase(ConstantInt *OnVal, BasicBlock *Dest);
 
-  /// removeCase - This method removes the specified case and its successor
-  /// from the switch instruction. Note that this operation may reorder the
-  /// remaining cases at index idx and above.
+  /// This method removes the specified case and its successor from the switch
+  /// instruction. Note that this operation may reorder the remaining cases at
+  /// index idx and above.
   /// Note:
   /// This action invalidates iterators for all cases following the one removed,
   /// including the case_end() iterator.
@@ -3544,6 +3563,9 @@ public:
 
   /// addAttribute - adds the attribute to the list of attributes.
   void addAttribute(unsigned i, Attribute::AttrKind attr);
+
+  /// removeAttribute - removes the attribute from the list of attributes.
+  void removeAttribute(unsigned i, Attribute::AttrKind attr);
 
   /// removeAttribute - removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute attr);
@@ -4841,6 +4863,31 @@ public:
   }
   static inline bool classof(const Value *V) {
     return isa<Instruction>(V) && classof(cast<Instruction>(V));
+  }
+
+  /// \brief Gets the pointer operand.
+  Value *getPointerOperand() {
+    return getOperand(0);
+  }
+
+  /// \brief Gets the pointer operand.
+  const Value *getPointerOperand() const {
+    return getOperand(0);
+  }
+
+  /// \brief Gets the operand index of the pointer operand.
+  static unsigned getPointerOperandIndex() {
+    return 0U;
+  }
+
+  /// \brief Returns the address space of the pointer operand.
+  unsigned getSrcAddressSpace() const {
+    return getPointerOperand()->getType()->getPointerAddressSpace();
+  }
+
+  /// \brief Returns the address space of the result.
+  unsigned getDestAddressSpace() const {
+    return getType()->getPointerAddressSpace();
   }
 };
 

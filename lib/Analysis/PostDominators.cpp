@@ -44,6 +44,8 @@ FunctionPass* llvm::createPostDomTree() {
   return new PostDominatorTreeWrapperPass();
 }
 
+char PostDominatorTreeAnalysis::PassID;
+
 PostDominatorTree PostDominatorTreeAnalysis::run(Function &F) {
   PostDominatorTree PDT;
   PDT.recalculate(F);
@@ -54,9 +56,9 @@ PostDominatorTreePrinterPass::PostDominatorTreePrinterPass(raw_ostream &OS)
   : OS(OS) {}
 
 PreservedAnalyses
-PostDominatorTreePrinterPass::run(Function &F, FunctionAnalysisManager *AM) {
+PostDominatorTreePrinterPass::run(Function &F, FunctionAnalysisManager &AM) {
   OS << "PostDominatorTree for function: " << F.getName() << "\n";
-  AM->getResult<PostDominatorTreeAnalysis>(F).print(OS);
+  AM.getResult<PostDominatorTreeAnalysis>(F).print(OS);
 
   return PreservedAnalyses::all();
 }

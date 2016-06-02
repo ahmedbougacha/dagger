@@ -12,11 +12,12 @@
 
 #include "PDBSymbol.h"
 #include "PDBTypes.h"
-#include <string>
 
 namespace llvm {
 
 class raw_ostream;
+
+namespace pdb {
 
 class PDBSymbolExe : public PDBSymbol {
 public:
@@ -41,5 +42,6 @@ private:
                     int Indent) const;
 };
 } // namespace llvm
+}
 
 #endif // LLVM_DEBUGINFO_PDB_PDBSYMBOLEXE_H

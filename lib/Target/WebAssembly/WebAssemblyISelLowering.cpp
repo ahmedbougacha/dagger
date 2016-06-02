@@ -26,7 +26,6 @@
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -95,7 +94,7 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
   for (auto T : {MVT::i32, MVT::i64}) {
     // Expand unavailable integer operations.
     for (auto Op :
-         {ISD::BSWAP, ISD::ROTL, ISD::ROTR, ISD::SMUL_LOHI, ISD::UMUL_LOHI,
+         {ISD::BSWAP, ISD::SMUL_LOHI, ISD::UMUL_LOHI,
           ISD::MULHS, ISD::MULHU, ISD::SDIVREM, ISD::UDIVREM, ISD::SHL_PARTS,
           ISD::SRA_PARTS, ISD::SRL_PARTS, ISD::ADDC, ISD::ADDE, ISD::SUBC,
           ISD::SUBE}) {
@@ -155,9 +154,11 @@ MVT WebAssemblyTargetLowering::getScalarShiftAmountTy(const DataLayout & /*DL*/,
   if (BitWidth > 1 && BitWidth < 8) BitWidth = 8;
 
   if (BitWidth > 64) {
-    BitWidth = 64;
+    // The shift will be lowered to a libcall, and compiler-rt libcalls expect
+    // the count to be an i32.
+    BitWidth = 32;
     assert(BitWidth >= Log2_32_Ceil(VT.getSizeInBits()) &&
-           "64-bit shift counts ought to be enough for anyone");
+           "32-bit shift counts ought to be enough for anyone");
   }
 
   MVT Result = MVT::getIntegerVT(BitWidth);
@@ -239,6 +240,12 @@ bool WebAssemblyTargetLowering::allowsMisalignedMemoryAccesses(
   // of constants, etc.), WebAssembly implementations will either want the
   // unaligned access or they'll split anyway.
   if (Fast) *Fast = true;
+  return true;
+}
+
+bool WebAssemblyTargetLowering::isIntDivCheap(EVT VT, AttributeSet Attr) const {
+  // The current thinking is that wasm engines will perform this optimization,
+  // so we can save on code size.
   return true;
 }
 
@@ -631,7 +638,7 @@ SDValue WebAssemblyTargetLowering::LowerExternalSymbol(
 SDValue WebAssemblyTargetLowering::LowerJumpTable(SDValue Op,
                                                   SelectionDAG &DAG) const {
   // There's no need for a Wrapper node because we always incorporate a jump
-  // table operand into a TABLESWITCH instruction, rather than ever
+  // table operand into a BR_TABLE instruction, rather than ever
   // materializing it in a register.
   const JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
   return DAG.getTargetJumpTable(JT->getIndex(), Op.getValueType(),
@@ -653,15 +660,15 @@ SDValue WebAssemblyTargetLowering::LowerBR_JT(SDValue Op,
   MachineJumpTableInfo *MJTI = DAG.getMachineFunction().getJumpTableInfo();
   const auto &MBBs = MJTI->getJumpTables()[JT->getIndex()].MBBs;
 
+  // Add an operand for each case.
+  for (auto MBB : MBBs) Ops.push_back(DAG.getBasicBlock(MBB));
+
   // TODO: For now, we just pick something arbitrary for a default case for now.
   // We really want to sniff out the guard and put in the real default case (and
   // delete the guard).
   Ops.push_back(DAG.getBasicBlock(MBBs[0]));
 
-  // Add an operand for each case.
-  for (auto MBB : MBBs) Ops.push_back(DAG.getBasicBlock(MBB));
-
-  return DAG.getNode(WebAssemblyISD::TABLESWITCH, DL, MVT::Other, Ops);
+  return DAG.getNode(WebAssemblyISD::BR_TABLE, DL, MVT::Other, Ops);
 }
 
 SDValue WebAssemblyTargetLowering::LowerVASTART(SDValue Op,

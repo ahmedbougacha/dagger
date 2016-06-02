@@ -19,7 +19,7 @@ namespace llvm {
 
   // Relocation model types.
   namespace Reloc {
-    enum Model { Default, Static, PIC_, DynamicNoPIC };
+  enum Model { Static, PIC_, DynamicNoPIC };
   }
 
   // Code model types.
@@ -29,6 +29,10 @@ namespace llvm {
   }
 
   namespace PICLevel {
+    enum Level { Default=0, Small=1, Large=2 };
+  }
+
+  namespace PIELevel {
     enum Level { Default=0, Small=1, Large=2 };
   }
 

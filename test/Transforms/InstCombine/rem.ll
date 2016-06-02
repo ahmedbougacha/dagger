@@ -1,4 +1,4 @@
-; This test makes sure that urem instructions are properly eliminated.
+; This test makes sure that rem instructions are properly eliminated.
 ;
 ; RUN: opt < %s -instcombine -S | FileCheck %s
 ; END.
@@ -23,6 +23,24 @@ define i32 @test3(i32 %A) {
 ; CHECK-NEXT: ret i32 [[AND]]
 	%B = urem i32 %A, 8
 	ret i32 %B
+}
+
+define <2 x i32> @vec_power_of_2_constant_splat_divisor(<2 x i32> %A) {
+; CHECK-LABEL: @vec_power_of_2_constant_splat_divisor(
+; CHECK-NEXT:    [[B:%.*]] = and <2 x i32> %A, <i32 7, i32 7>
+; CHECK-NEXT:    ret <2 x i32> [[B]]
+;
+  %B = urem <2 x i32> %A, <i32 8, i32 8>
+  ret <2 x i32> %B
+}
+
+define <2 x i19> @weird_vec_power_of_2_constant_splat_divisor(<2 x i19> %A) {
+; CHECK-LABEL: @weird_vec_power_of_2_constant_splat_divisor(
+; CHECK-NEXT:    [[B:%.*]] = and <2 x i19> %A, <i19 7, i19 7>
+; CHECK-NEXT:    ret <2 x i19> [[B]]
+;
+  %B = urem <2 x i19> %A, <i19 8, i19 8>
+  ret <2 x i19> %B
 }
 
 define i1 @test3a(i32 %A) {

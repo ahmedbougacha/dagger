@@ -436,10 +436,7 @@ SDValue DAGTypeLegalizer::PromoteIntRes_FP_TO_FP16(SDNode *N) {
   EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), N->getValueType(0));
   SDLoc dl(N);
 
-  SDValue Res = DAG.getNode(N->getOpcode(), dl, NVT, N->getOperand(0));
-
-  return DAG.getNode(ISD::AssertZext, dl,
-                     NVT, Res, DAG.getValueType(N->getValueType(0)));
+  return DAG.getNode(N->getOpcode(), dl, NVT, N->getOperand(0));
 }
 
 SDValue DAGTypeLegalizer::PromoteIntRes_INT_EXTEND(SDNode *N) {
@@ -1404,7 +1401,7 @@ void DAGTypeLegalizer::ExpandIntegerResult(SDNode *N, unsigned ResNo) {
 std::pair <SDValue, SDValue> DAGTypeLegalizer::ExpandAtomic(SDNode *Node) {
   unsigned Opc = Node->getOpcode();
   MVT VT = cast<AtomicSDNode>(Node)->getMemoryVT().getSimpleVT();
-  RTLIB::Libcall LC = RTLIB::getATOMIC(Opc, VT);
+  RTLIB::Libcall LC = RTLIB::getSYNC(Opc, VT);
   assert(LC != RTLIB::UNKNOWN_LIBCALL && "Unexpected atomic op or value type!");
 
   return ExpandChainLibCall(LC, Node, false);
@@ -2136,7 +2133,49 @@ void DAGTypeLegalizer::ExpandIntRes_MUL(SDNode *N,
     LC = RTLIB::MUL_I64;
   else if (VT == MVT::i128)
     LC = RTLIB::MUL_I128;
-  assert(LC != RTLIB::UNKNOWN_LIBCALL && "Unsupported MUL!");
+
+  if (LC == RTLIB::UNKNOWN_LIBCALL) {
+    // We'll expand the multiplication by brute force because we have no other
+    // options. This is a trivially-generalized version of the code from
+    // Hacker's Delight (itself derived from Knuth's Algorithm M from section
+    // 4.3.1).
+    SDValue Mask =
+      DAG.getConstant(APInt::getLowBitsSet(NVT.getSizeInBits(),
+                                           NVT.getSizeInBits() >> 1), dl, NVT);
+    SDValue LLL = DAG.getNode(ISD::AND, dl, NVT, LL, Mask);
+    SDValue RLL = DAG.getNode(ISD::AND, dl, NVT, RL, Mask);
+
+    SDValue T = DAG.getNode(ISD::MUL, dl, NVT, LLL, RLL);
+    SDValue TL = DAG.getNode(ISD::AND, dl, NVT, T, Mask);
+
+    SDValue Shift =
+      DAG.getConstant(NVT.getSizeInBits() >> 1, dl,
+                      TLI.getShiftAmountTy(NVT, DAG.getDataLayout()));
+    SDValue TH = DAG.getNode(ISD::SRL, dl, NVT, T, Shift);
+    SDValue LLH = DAG.getNode(ISD::SRL, dl, NVT, LL, Shift);
+    SDValue RLH = DAG.getNode(ISD::SRL, dl, NVT, RL, Shift);
+
+    SDValue U = DAG.getNode(ISD::ADD, dl, NVT,
+                            DAG.getNode(ISD::MUL, dl, NVT, LLH, RLL), TL);
+    SDValue UL = DAG.getNode(ISD::AND, dl, NVT, U, Mask);
+    SDValue UH = DAG.getNode(ISD::SRL, dl, NVT, U, Shift);
+
+    SDValue V = DAG.getNode(ISD::ADD, dl, NVT,
+                            DAG.getNode(ISD::MUL, dl, NVT, LLL, RLH), UL);
+    SDValue VH = DAG.getNode(ISD::SRL, dl, NVT, V, Shift);
+
+    SDValue W = DAG.getNode(ISD::ADD, dl, NVT,
+                            DAG.getNode(ISD::MUL, dl, NVT, LL, RL),
+                            DAG.getNode(ISD::ADD, dl, NVT, UH, VH));
+    Lo = DAG.getNode(ISD::ADD, dl, NVT, TH,
+                     DAG.getNode(ISD::SHL, dl, NVT, V, Shift));
+
+    Hi = DAG.getNode(ISD::ADD, dl, NVT, W,
+                     DAG.getNode(ISD::ADD, dl, NVT,
+                                 DAG.getNode(ISD::MUL, dl, NVT, RH, LL), 
+                                 DAG.getNode(ISD::MUL, dl, NVT, RL, LH)));
+    return;
+  }
 
   SDValue Ops[2] = { N->getOperand(0), N->getOperand(1) };
   SplitInteger(TLI.makeLibCall(DAG, LC, VT, Ops, true/*irrelevant*/, dl).first,

@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_LIB_TARGET_R600_R600ISELLOWERING_H
-#define LLVM_LIB_TARGET_R600_R600ISELLOWERING_H
+#ifndef LLVM_LIB_TARGET_AMDGPU_R600ISELLOWERING_H
+#define LLVM_LIB_TARGET_AMDGPU_R600ISELLOWERING_H
 
 #include "AMDGPUISelLowering.h"
 
@@ -21,7 +21,7 @@ namespace llvm {
 
 class R600InstrInfo;
 
-class R600TargetLowering : public AMDGPUTargetLowering {
+class R600TargetLowering final : public AMDGPUTargetLowering {
 public:
   R600TargetLowering(TargetMachine &TM, const AMDGPUSubtarget &STI);
   MachineBasicBlock * EmitInstrWithCustomInserter(MachineInstr *MI,
@@ -60,8 +60,11 @@ private:
                           SDLoc DL) const;
   SDValue vectorToVerticalVector(SelectionDAG &DAG, SDValue Vector) const;
 
+  SDValue lowerFrameIndex(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerINSERT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerGlobalAddress(AMDGPUMachineFunction *MFI, SDValue Op,
+                             SelectionDAG &DAG) const override;
   SDValue LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const;
 
   SDValue lowerPrivateTruncStore(StoreSDNode *Store, SelectionDAG &DAG) const;
@@ -82,6 +85,9 @@ private:
   void getStackAddress(unsigned StackWidth, unsigned ElemIdx,
                        unsigned &Channel, unsigned &PtrIncr) const;
   bool isZero(SDValue Op) const;
+  bool isHWTrueValue(SDValue Op) const;
+  bool isHWFalseValue(SDValue Op) const;
+
   SDNode *PostISelFolding(MachineSDNode *N, SelectionDAG &DAG) const override;
 };
 

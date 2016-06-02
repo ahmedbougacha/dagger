@@ -353,6 +353,10 @@ bool reverse_iterator::operator==(const reverse_iterator &RHS) const {
          Position == RHS.Position;
 }
 
+ptrdiff_t reverse_iterator::operator-(const reverse_iterator &RHS) const {
+  return Position - RHS.Position;
+}
+
 StringRef root_path(StringRef path) {
   const_iterator b = begin(path),
                  pos = b,
@@ -516,6 +520,29 @@ void replace_extension(SmallVectorImpl<char> &path, const Twine &extension) {
 
   // Append extension.
   path.append(ext.begin(), ext.end());
+}
+
+void replace_path_prefix(SmallVectorImpl<char> &Path,
+                         const StringRef &OldPrefix,
+                         const StringRef &NewPrefix) {
+  if (OldPrefix.empty() && NewPrefix.empty())
+    return;
+
+  StringRef OrigPath(Path.begin(), Path.size());
+  if (!OrigPath.startswith(OldPrefix))
+    return;
+
+  // If prefixes have the same size we can simply copy the new one over.
+  if (OldPrefix.size() == NewPrefix.size()) {
+    std::copy(NewPrefix.begin(), NewPrefix.end(), Path.begin());
+    return;
+  }
+
+  StringRef RelPath = OrigPath.substr(OldPrefix.size());
+  SmallString<256> NewPath;
+  path::append(NewPath, NewPrefix);
+  path::append(NewPath, RelPath);
+  Path.swap(NewPath);
 }
 
 void native(const Twine &path, SmallVectorImpl<char> &result) {

@@ -206,8 +206,15 @@ void MCJIT::generateCodeForModule(Module *M) {
 
   // Load the object into the dynamic linker.
   // MCJIT now owns the ObjectImage pointer (via its LoadedObjects list).
-  ErrorOr<std::unique_ptr<object::ObjectFile>> LoadedObject =
+  Expected<std::unique_ptr<object::ObjectFile>> LoadedObject =
     object::ObjectFile::createObjectFile(ObjectToLoad->getMemBufferRef());
+  if (!LoadedObject) {
+    std::string Buf;
+    raw_string_ostream OS(Buf);
+    logAllUnhandledErrors(LoadedObject.takeError(), OS, "");
+    OS.flush();
+    report_fatal_error(Buf);
+  }
   std::unique_ptr<RuntimeDyld::LoadedObjectInfo> L =
     Dyld.loadObject(*LoadedObject.get());
 
@@ -322,10 +329,13 @@ RuntimeDyld::SymbolInfo MCJIT::findSymbol(const std::string &Name,
       report_fatal_error(EC.message());
     if (ChildIt != A->child_end()) {
       // FIXME: Support nested archives?
-      ErrorOr<std::unique_ptr<object::Binary>> ChildBinOrErr =
+      Expected<std::unique_ptr<object::Binary>> ChildBinOrErr =
           (*ChildIt)->getAsBinary();
-      if (ChildBinOrErr.getError())
+      if (!ChildBinOrErr) {
+        // TODO: Actually report errors helpfully.
+        consumeError(ChildBinOrErr.takeError());
         continue;
+      }
       std::unique_ptr<object::Binary> &ChildBin = ChildBinOrErr.get();
       if (ChildBin->isObject()) {
         std::unique_ptr<object::ObjectFile> OF(

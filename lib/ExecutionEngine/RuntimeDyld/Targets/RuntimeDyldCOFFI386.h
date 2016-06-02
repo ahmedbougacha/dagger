@@ -34,21 +34,26 @@ public:
 
   unsigned getStubAlignment() override { return 1; }
 
-  relocation_iterator processRelocationRef(unsigned SectionID,
-                                           relocation_iterator RelI,
-                                           const ObjectFile &Obj,
-                                           ObjSectionToIDMap &ObjSectionToID,
-                                           StubMap &Stubs) override {
+  Expected<relocation_iterator>
+  processRelocationRef(unsigned SectionID,
+                       relocation_iterator RelI,
+                       const ObjectFile &Obj,
+                       ObjSectionToIDMap &ObjSectionToID,
+                       StubMap &Stubs) override {
+
     auto Symbol = RelI->getSymbol();
     if (Symbol == Obj.symbol_end())
       report_fatal_error("Unknown symbol in relocation");
 
-    ErrorOr<StringRef> TargetNameOrErr = Symbol->getName();
-    if (auto EC = TargetNameOrErr.getError())
-      report_fatal_error(EC.message());
+    Expected<StringRef> TargetNameOrErr = Symbol->getName();
+    if (!TargetNameOrErr)
+      return TargetNameOrErr.takeError();
     StringRef TargetName = *TargetNameOrErr;
 
-    auto Section = *Symbol->getSection();
+    auto SectionOrErr = Symbol->getSection();
+    if (!SectionOrErr)
+      return SectionOrErr.takeError();
+    auto Section = *SectionOrErr;
 
     uint64_t RelType = RelI->getType();
     uint64_t Offset = RelI->getOffset();
@@ -66,8 +71,11 @@ public:
       RelocationEntry RE(SectionID, Offset, RelType, 0, -1, 0, 0, 0, false, 0);
       addRelocationForSymbol(RE, TargetName);
     } else {
-      TargetSectionID =
-          findOrEmitSection(Obj, *Section, Section->isText(), ObjSectionToID);
+      if (auto TargetSectionIDOrErr =
+          findOrEmitSection(Obj, *Section, Section->isText(), ObjSectionToID))
+        TargetSectionID = *TargetSectionIDOrErr;
+      else
+        return TargetSectionIDOrErr.takeError();
 
       switch (RelType) {
       case COFF::IMAGE_REL_I386_ABSOLUTE:
@@ -190,9 +198,6 @@ public:
 
   void registerEHFrames() override {}
   void deregisterEHFrames() override {}
-
-  void finalizeLoad(const ObjectFile &Obj,
-                    ObjSectionToIDMap &SectionMap) override {}
 };
 
 }

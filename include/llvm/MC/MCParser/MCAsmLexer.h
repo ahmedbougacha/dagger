@@ -11,10 +11,13 @@
 #define LLVM_MC_MCPARSER_MCASMLEXER_H
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/SMLoc.h"
+#include <utility>
 
 namespace llvm {
 
@@ -64,7 +67,7 @@ private:
 public:
   AsmToken() {}
   AsmToken(TokenKind Kind, StringRef Str, APInt IntVal)
-      : Kind(Kind), Str(Str), IntVal(IntVal) {}
+      : Kind(Kind), Str(Str), IntVal(std::move(IntVal)) {}
   AsmToken(TokenKind Kind, StringRef Str, int64_t IntVal = 0)
       : Kind(Kind), Str(Str), IntVal(64, IntVal, true) {}
 

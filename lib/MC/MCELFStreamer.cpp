@@ -283,6 +283,9 @@ bool MCELFStreamer::EmitSymbolAttribute(MCSymbol *S, MCSymbolAttr Attribute) {
   case MCSA_Internal:
     Symbol->setVisibility(ELF::STV_INTERNAL);
     break;
+
+  case MCSA_AltEntry:
+    llvm_unreachable("ELF doesn't support the .alt_entry attribute");
   }
 
   return true;
@@ -409,10 +412,6 @@ void MCELFStreamer::fixSymbolsInTLSFixups(const MCExpr *expr) {
     case MCSymbolRefExpr::VK_TPREL:
     case MCSymbolRefExpr::VK_DTPOFF:
     case MCSymbolRefExpr::VK_DTPREL:
-    case MCSymbolRefExpr::VK_Mips_TLSGD:
-    case MCSymbolRefExpr::VK_Mips_GOTTPREL:
-    case MCSymbolRefExpr::VK_Mips_TPREL_HI:
-    case MCSymbolRefExpr::VK_Mips_TPREL_LO:
     case MCSymbolRefExpr::VK_PPC_DTPMOD:
     case MCSymbolRefExpr::VK_PPC_TPREL_LO:
     case MCSymbolRefExpr::VK_PPC_TPREL_HI:

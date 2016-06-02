@@ -231,11 +231,14 @@ writeSymbolTable(raw_fd_ostream &Out, object::Archive::Kind Kind,
   LLVMContext Context;
   for (unsigned MemberNum = 0, N = Members.size(); MemberNum < N; ++MemberNum) {
     MemoryBufferRef MemberBuffer = Buffers[MemberNum];
-    ErrorOr<std::unique_ptr<object::SymbolicFile>> ObjOrErr =
+    Expected<std::unique_ptr<object::SymbolicFile>> ObjOrErr =
         object::SymbolicFile::createSymbolicFile(
             MemberBuffer, sys::fs::file_magic::unknown, &Context);
-    if (!ObjOrErr)
-      continue;  // FIXME: check only for "not an object file" errors.
+    if (!ObjOrErr) {
+      // FIXME: check only for "not an object file" errors.
+      consumeError(ObjOrErr.takeError());
+      continue;
+    }
     object::SymbolicFile &Obj = *ObjOrErr.get();
 
     if (!HeaderStartOffset) {
@@ -304,7 +307,10 @@ std::pair<StringRef, std::error_code>
 llvm::writeArchive(StringRef ArcName,
                    std::vector<NewArchiveIterator> &NewMembers,
                    bool WriteSymtab, object::Archive::Kind Kind,
-                   bool Deterministic, bool Thin) {
+                   bool Deterministic, bool Thin,
+                   std::unique_ptr<MemoryBuffer> OldArchiveBuf) {
+  assert((!Thin || Kind == object::Archive::K_GNU) &&
+         "Only the gnu format has a thin mode");
   SmallString<128> TmpArchive;
   int TmpArchiveFD;
   if (auto EC = sys::fs::createUniqueFile(ArcName + ".temp-archive-%%%%%%%.a",
@@ -324,8 +330,7 @@ llvm::writeArchive(StringRef ArcName,
   std::vector<MemoryBufferRef> Members;
   std::vector<sys::fs::file_status> NewMemberStatus;
 
-  for (unsigned I = 0, N = NewMembers.size(); I < N; ++I) {
-    NewArchiveIterator &Member = NewMembers[I];
+  for (NewArchiveIterator &Member : NewMembers) {
     MemoryBufferRef MemberRef;
 
     if (Member.isNewMember()) {
@@ -439,6 +444,19 @@ llvm::writeArchive(StringRef ArcName,
 
   Output.keep();
   Out.close();
+
+  // At this point, we no longer need whatever backing memory
+  // was used to generate the NewMembers. On Windows, this buffer
+  // could be a mapped view of the file we want to replace (if
+  // we're updating an existing archive, say). In that case, the
+  // rename would still succeed, but it would leave behind a
+  // temporary file (actually the original file renamed) because
+  // a file cannot be deleted while there's a handle open on it,
+  // only renamed. So by freeing this buffer, this ensures that
+  // the last open handle on the destination file, if any, is
+  // closed before we attempt to rename.
+  OldArchiveBuf.reset();
+
   sys::fs::rename(TmpArchive, ArcName);
   return std::make_pair("", std::error_code());
 }

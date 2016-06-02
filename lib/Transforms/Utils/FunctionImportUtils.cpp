@@ -12,36 +12,29 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Analysis/ModuleSummaryAnalysis.h"
 #include "llvm/Transforms/Utils/FunctionImportUtils.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
 using namespace llvm;
 
 /// Checks if we should import SGV as a definition, otherwise import as a
 /// declaration.
 bool FunctionImportGlobalProcessing::doImportAsDefinition(
-    const GlobalValue *SGV, DenseSet<const GlobalValue *> *FunctionsToImport) {
-  auto *GA = dyn_cast<GlobalAlias>(SGV);
-  if (GA) {
+    const GlobalValue *SGV, DenseSet<const GlobalValue *> *GlobalsToImport) {
+
+  // For alias, we tie the definition to the base object. Extract it and recurse
+  if (auto *GA = dyn_cast<GlobalAlias>(SGV)) {
     if (GA->hasWeakAnyLinkage())
       return false;
     const GlobalObject *GO = GA->getBaseObject();
     if (!GO->hasLinkOnceODRLinkage())
       return false;
     return FunctionImportGlobalProcessing::doImportAsDefinition(
-        GO, FunctionsToImport);
+        GO, GlobalsToImport);
   }
-  // Always import GlobalVariable definitions, except for the special
-  // case of WeakAny which are imported as ExternalWeak declarations
-  // (see comments in FunctionImportGlobalProcessing::getLinkage). The linkage
-  // changes described in FunctionImportGlobalProcessing::getLinkage ensure the
-  // correct behavior (e.g. global variables with external linkage are
-  // transformed to available_externally definitions, which are ultimately
-  // turned into declarations after the EliminateAvailableExternally pass).
-  if (isa<GlobalVariable>(SGV) && !SGV->isDeclaration() &&
-      !SGV->hasWeakAnyLinkage())
-    return true;
-  // Only import the function requested for importing.
-  auto *SF = dyn_cast<Function>(SGV);
-  if (SF && FunctionsToImport->count(SF))
+  // Only import the globals requested for importing.
+  if (GlobalsToImport->count(SGV))
     return true;
   // Otherwise no.
   return false;
@@ -51,8 +44,8 @@ bool FunctionImportGlobalProcessing::doImportAsDefinition(
     const GlobalValue *SGV) {
   if (!isPerformingImport())
     return false;
-  return FunctionImportGlobalProcessing::doImportAsDefinition(
-      SGV, FunctionsToImport);
+  return FunctionImportGlobalProcessing::doImportAsDefinition(SGV,
+                                                              GlobalsToImport);
 }
 
 bool FunctionImportGlobalProcessing::doPromoteLocalToGlobal(
@@ -68,15 +61,20 @@ bool FunctionImportGlobalProcessing::doPromoteLocalToGlobal(
   // For now we are conservative in determining which variables are not
   // address taken by checking the unnamed addr flag. To be more aggressive,
   // the address taken information must be checked earlier during parsing
-  // of the module and recorded in the function index for use when importing
+  // of the module and recorded in the summary index for use when importing
   // from that module.
   auto *GVar = dyn_cast<GlobalVariable>(SGV);
   if (GVar && GVar->isConstant() && GVar->hasUnnamedAddr())
     return false;
 
+  if (GVar && GVar->hasSection())
+    // Some sections like "__DATA,__cfstring" are "magic" and promotion is not
+    // allowed. Just disable promotion on any GVar with sections right now.
+    return false;
+
   // Eventually we only need to promote functions in the exporting module that
   // are referenced by a potentially exported function (i.e. one that is in the
-  // function index).
+  // summary index).
   return true;
 }
 
@@ -88,9 +86,9 @@ std::string FunctionImportGlobalProcessing::getName(const GlobalValue *SGV) {
   // avoid naming conflicts between locals imported from different modules.
   if (SGV->hasLocalLinkage() &&
       (doPromoteLocalToGlobal(SGV) || isPerformingImport()))
-    return FunctionInfoIndex::getGlobalNameForLocal(
+    return ModuleSummaryIndex::getGlobalNameForLocal(
         SGV->getName(),
-        ImportIndex->getModuleId(SGV->getParent()->getModuleIdentifier()));
+        ImportIndex.getModuleHash(SGV->getParent()->getModuleIdentifier()));
   return SGV->getName();
 }
 
@@ -142,7 +140,7 @@ FunctionImportGlobalProcessing::getLinkage(const GlobalValue *SGV) {
     // linker. The module linking caller needs to enforce this.
     assert(!doImportAsDefinition(SGV));
     // If imported as a declaration, it becomes external_weak.
-    return GlobalValue::ExternalWeakLinkage;
+    return SGV->getLinkage();
 
   case GlobalValue::WeakODRLinkage:
     // For weak_odr linkage, there is a guarantee that all copies will be
@@ -198,8 +196,6 @@ void FunctionImportGlobalProcessing::processGlobalForThinLTO(GlobalValue &GV) {
     GV.setLinkage(getLinkage(&GV));
     if (!GV.hasLocalLinkage())
       GV.setVisibility(GlobalValue::HiddenVisibility);
-    if (isModuleExporting())
-      NewExportedValues.insert(&GV);
   } else
     GV.setLinkage(getLinkage(&GV));
 
@@ -218,6 +214,14 @@ void FunctionImportGlobalProcessing::processGlobalForThinLTO(GlobalValue &GV) {
 }
 
 void FunctionImportGlobalProcessing::processGlobalsForThinLTO() {
+  if (!moduleCanBeRenamedForThinLTO(M)) {
+    // We would have blocked importing from this module by suppressing index
+    // generation. We still may be able to import into this module though.
+    assert(!isPerformingImport() &&
+           "Should have blocked importing from module with local used in ASM");
+    return;
+  }
+
   for (GlobalVariable &GV : M.globals())
     processGlobalForThinLTO(GV);
   for (Function &SF : M)
@@ -231,7 +235,9 @@ bool FunctionImportGlobalProcessing::run() {
   return false;
 }
 
-bool llvm::renameModuleForThinLTO(Module &M, const FunctionInfoIndex *Index) {
-  FunctionImportGlobalProcessing ThinLTOProcessing(M, Index);
+bool llvm::renameModuleForThinLTO(
+    Module &M, const ModuleSummaryIndex &Index,
+    DenseSet<const GlobalValue *> *GlobalsToImport) {
+  FunctionImportGlobalProcessing ThinLTOProcessing(M, Index, GlobalsToImport);
   return ThinLTOProcessing.run();
 }

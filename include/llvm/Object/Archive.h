@@ -78,6 +78,7 @@ public:
     ErrorOr<Child> getNext() const;
 
     ErrorOr<StringRef> getName() const;
+    ErrorOr<std::string> getFullName() const;
     StringRef getRawName() const { return getHeader()->getName(); }
     sys::TimeValue getLastModified() const {
       return getHeader()->getLastModified();
@@ -100,7 +101,7 @@ public:
 
     ErrorOr<MemoryBufferRef> getMemoryBufferRef() const;
 
-    ErrorOr<std::unique_ptr<Binary>>
+    Expected<std::unique_ptr<Binary>>
     getAsBinary(LLVMContext *Context = nullptr) const;
   };
 
@@ -211,6 +212,10 @@ public:
   bool hasSymbolTable() const;
   StringRef getSymbolTable() const { return SymbolTable; }
   uint32_t getNumberOfSymbols() const;
+
+  std::vector<std::unique_ptr<MemoryBuffer>> takeThinBuffers() {
+    return std::move(ThinBuffers);
+  }
 
 private:
   StringRef SymbolTable;

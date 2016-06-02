@@ -110,6 +110,7 @@ namespace {
       AU.addRequired<LiveIntervals>();
       AU.addPreserved<LiveIntervals>();
       AU.addPreserved<SlotIndexes>();
+      AU.addPreservedID(MachineDominatorsID);
       MachineFunctionPass::getAnalysisUsage(AU);
     }
     virtual bool runOnMachineFunction(MachineFunction &MF);
@@ -166,7 +167,8 @@ namespace {
     bool canMoveOver(MachineInstr *MI, ReferenceMap &Defs, ReferenceMap &Uses);
     bool canMoveMemTo(MachineInstr *MI, MachineInstr *ToI, bool IsDown);
     void predicateAt(RegisterRef RD, MachineInstr *MI,
-        MachineBasicBlock::iterator Where, unsigned PredR, bool Cond);
+        MachineBasicBlock::iterator Where, unsigned PredR, bool Cond,
+        bool PredUndef);
     void renameInRange(RegisterRef RO, RegisterRef RN, unsigned PredR,
         bool Cond, MachineBasicBlock::iterator First,
         MachineBasicBlock::iterator Last);
@@ -186,6 +188,13 @@ namespace {
 
 char HexagonExpandCondsets::ID = 0;
 
+INITIALIZE_PASS_BEGIN(HexagonExpandCondsets, "expand-condsets",
+  "Hexagon Expand Condsets", false, false)
+INITIALIZE_PASS_DEPENDENCY(MachineDominatorTree)
+INITIALIZE_PASS_DEPENDENCY(SlotIndexes)
+INITIALIZE_PASS_DEPENDENCY(LiveIntervals)
+INITIALIZE_PASS_END(HexagonExpandCondsets, "expand-condsets",
+  "Hexagon Expand Condsets", false, false)
 
 unsigned HexagonExpandCondsets::getMaskForSub(unsigned Sub) {
   switch (Sub) {
@@ -884,7 +893,8 @@ bool HexagonExpandCondsets::canMoveMemTo(MachineInstr *TheI, MachineInstr *ToI,
 /// Generate a predicated version of MI (where the condition is given via
 /// PredR and Cond) at the point indicated by Where.
 void HexagonExpandCondsets::predicateAt(RegisterRef RD, MachineInstr *MI,
-      MachineBasicBlock::iterator Where, unsigned PredR, bool Cond) {
+      MachineBasicBlock::iterator Where, unsigned PredR, bool Cond,
+      bool PredUndef) {
   // The problem with updating live intervals is that we can move one def
   // past another def. In particular, this can happen when moving an A2_tfrt
   // over an A2_tfrf defining the same register. From the point of view of
@@ -912,7 +922,7 @@ void HexagonExpandCondsets::predicateAt(RegisterRef RD, MachineInstr *MI,
   // Add the new def, then the predicate register, then the rest of the
   // operands.
   MB.addReg(RD.Reg, RegState::Define, RD.Sub);
-  MB.addReg(PredR);
+  MB.addReg(PredR, PredUndef ? RegState::Undef : 0);
   while (Ox < NP) {
     MachineOperand &MO = MI->getOperand(Ox);
     if (!MO.isReg() || !MO.isImplicit())
@@ -980,6 +990,11 @@ bool HexagonExpandCondsets::predicate(MachineInstr *TfrI, bool Cond) {
   // but it makes things a lot simpler. Otherwise, we would need to rename
   // some registers, which would complicate the transformation considerably.
   if (!MS.isKill())
+    return false;
+  // Avoid predicating instructions that define a subregister. The code
+  // does not handle correctly cases where both subregisters of a register
+  // are defined by a condset.
+  if (MD.getSubReg())
     return false;
 
   RegisterRef RT(MS);
@@ -1070,9 +1085,9 @@ bool HexagonExpandCondsets::predicate(MachineInstr *TfrI, bool Cond) {
                << ", can move down: " << (CanDown ? "yes\n" : "no\n"));
   MachineBasicBlock::iterator PastDefIt = std::next(DefIt);
   if (CanUp)
-    predicateAt(RD, DefI, PastDefIt, PredR, Cond);
+    predicateAt(RD, DefI, PastDefIt, PredR, Cond, MP.isUndef());
   else if (CanDown)
-    predicateAt(RD, DefI, TfrIt, PredR, Cond);
+    predicateAt(RD, DefI, TfrIt, PredR, Cond, MP.isUndef());
   else
     return false;
 
@@ -1304,10 +1319,14 @@ bool HexagonExpandCondsets::coalesceSegments(MachineFunction &MF) {
 
 
 bool HexagonExpandCondsets::runOnMachineFunction(MachineFunction &MF) {
+  if (skipFunction(*MF.getFunction()))
+    return false;
+
   HII = static_cast<const HexagonInstrInfo*>(MF.getSubtarget().getInstrInfo());
   TRI = MF.getSubtarget().getRegisterInfo();
   LIS = &getAnalysis<LiveIntervals>();
   MRI = &MF.getRegInfo();
+  DEBUG(MF.print(dbgs() << "Before expand-condsets\n", LIS->getSlotIndexes()));
 
   bool Changed = false;
 
@@ -1330,6 +1349,10 @@ bool HexagonExpandCondsets::runOnMachineFunction(MachineFunction &MF) {
 
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I)
     postprocessUndefImplicitUses(*I);
+
+  if (Changed)
+    DEBUG(MF.print(dbgs() << "After expand-condsets\n", LIS->getSlotIndexes()));
+
   return Changed;
 }
 
@@ -1337,18 +1360,6 @@ bool HexagonExpandCondsets::runOnMachineFunction(MachineFunction &MF) {
 //===----------------------------------------------------------------------===//
 //                         Public Constructor Functions
 //===----------------------------------------------------------------------===//
-
-static void initializePassOnce(PassRegistry &Registry) {
-  const char *Name = "Hexagon Expand Condsets";
-  PassInfo *PI = new PassInfo(Name, "expand-condsets",
-        &HexagonExpandCondsets::ID, 0, false, false);
-  Registry.registerPass(*PI, true);
-}
-
-void llvm::initializeHexagonExpandCondsetsPass(PassRegistry &Registry) {
-  CALL_ONCE_INITIALIZATION(initializePassOnce)
-}
-
 
 FunctionPass *llvm::createHexagonExpandCondsets() {
   return new HexagonExpandCondsets();

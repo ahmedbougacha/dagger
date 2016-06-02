@@ -12,6 +12,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/Dwarf.h"
@@ -19,6 +20,7 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace llvm;
@@ -204,15 +206,14 @@ public:
       SmallString<8> AugmentationData, uint32_t FDEPointerEncoding,
       uint32_t LSDAPointerEncoding)
       : FrameEntry(FK_CIE, Offset, Length), Version(Version),
-        Augmentation(std::move(Augmentation)),
-        AddressSize(AddressSize),
+        Augmentation(std::move(Augmentation)), AddressSize(AddressSize),
         SegmentDescriptorSize(SegmentDescriptorSize),
         CodeAlignmentFactor(CodeAlignmentFactor),
         DataAlignmentFactor(DataAlignmentFactor),
         ReturnAddressRegister(ReturnAddressRegister),
-        AugmentationData(AugmentationData),
+        AugmentationData(std::move(AugmentationData)),
         FDEPointerEncoding(FDEPointerEncoding),
-        LSDAPointerEncoding(LSDAPointerEncoding) { }
+        LSDAPointerEncoding(LSDAPointerEncoding) {}
 
   ~CIE() override {}
 
@@ -244,8 +245,12 @@ public:
                  (int32_t)DataAlignmentFactor);
     OS << format("  Return address column: %d\n",
                  (int32_t)ReturnAddressRegister);
-    if (!AugmentationData.empty())
-      OS << "  Augmentation data:     " << AugmentationData << "\n";
+    if (!AugmentationData.empty()) {
+      OS << "  Augmentation data:    ";
+      for (uint8_t Byte : AugmentationData)
+        OS << ' ' << hexdigit(Byte >> 4) << hexdigit(Byte & 0xf);
+      OS << "\n";
+    }
     OS << "\n";
   }
 

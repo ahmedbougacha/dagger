@@ -568,6 +568,24 @@ def getDefaultSubstitutions(test, tmpDir, tmpBase, normalize_slashes=False):
             ('%/t', tmpBase.replace('\\', '/') + '.tmp'),
             ('%/T', tmpDir.replace('\\', '/')),
             ])
+
+    # "%:[STpst]" are paths without colons.
+    if kIsWindows:
+        substitutions.extend([
+                ('%:s', re.sub(r'^(.):', r'\1', sourcepath)),
+                ('%:S', re.sub(r'^(.):', r'\1', sourcedir)),
+                ('%:p', re.sub(r'^(.):', r'\1', sourcedir)),
+                ('%:t', re.sub(r'^(.):', r'\1', tmpBase) + '.tmp'),
+                ('%:T', re.sub(r'^(.):', r'\1', tmpDir)),
+                ])
+    else:
+        substitutions.extend([
+                ('%:s', sourcepath),
+                ('%:S', sourcedir),
+                ('%:p', sourcedir),
+                ('%:t', tmpBase + '.tmp'),
+                ('%:T', tmpDir),
+                ])
     return substitutions
 
 def applySubstitutions(script, substitutions):
@@ -598,8 +616,10 @@ def parseIntegratedTestScript(test, require_script=True):
     sourcepath = test.getSourcePath()
     script = []
     requires = []
+    requires_any = []
     unsupported = []
-    keywords = ['RUN:', 'XFAIL:', 'REQUIRES:', 'UNSUPPORTED:', 'END.']
+    keywords = ['RUN:', 'XFAIL:', 'REQUIRES:', 'REQUIRES-ANY:',
+                'UNSUPPORTED:', 'END.']
     for line_number, command_type, ln in \
             parseIntegratedTestScriptCommands(sourcepath, keywords):
         if command_type == 'RUN':
@@ -624,6 +644,8 @@ def parseIntegratedTestScript(test, require_script=True):
             test.xfails.extend([s.strip() for s in ln.split(',')])
         elif command_type == 'REQUIRES':
             requires.extend([s.strip() for s in ln.split(',')])
+        elif command_type == 'REQUIRES-ANY':
+            requires_any.extend([s.strip() for s in ln.split(',')])
         elif command_type == 'UNSUPPORTED':
             unsupported.extend([s.strip() for s in ln.split(',')])
         elif command_type == 'END':
@@ -650,6 +672,12 @@ def parseIntegratedTestScript(test, require_script=True):
         msg = ', '.join(missing_required_features)
         return lit.Test.Result(Test.UNSUPPORTED,
                                "Test requires the following features: %s" % msg)
+    requires_any_features = [f for f in requires_any
+                             if f in test.config.available_features]
+    if requires_any and not requires_any_features:
+        msg = ' ,'.join(requires_any)
+        return lit.Test.Result(Test.UNSUPPORTED,
+            "Test requires any of the following features: %s" % msg)
     unsupported_features = [f for f in unsupported
                             if f in test.config.available_features]
     if unsupported_features:

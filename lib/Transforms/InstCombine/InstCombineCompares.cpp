@@ -18,14 +18,14 @@
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/VectorUtils.h"
 #include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/PatternMatch.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
 
 using namespace llvm;
 using namespace PatternMatch;
@@ -112,6 +112,15 @@ static bool SubWithOverflow(Constant *&Result, Constant *In1,
   return HasSubOverflow(cast<ConstantInt>(Result),
                         cast<ConstantInt>(In1), cast<ConstantInt>(In2),
                         IsSigned);
+}
+
+/// Given an icmp instruction, return true if any use of this comparison is a
+/// branch on sign bit comparison.
+static bool isBranchOnSignBitCheck(ICmpInst &I, bool isSignBit) {
+  for (auto *U : I.users())
+    if (isa<BranchInst>(U))
+      return isSignBit;
+  return false;
 }
 
 /// isSignBitCheck - Given an exploded icmp instruction, return true if the
@@ -661,6 +670,9 @@ static bool canRewriteGEPAsOffset(Value *Start, Value *Base,
       }
 
       if (auto *PN = dyn_cast<PHINode>(V)) {
+        // We cannot transform PHIs on unsplittable basic blocks.
+        if (isa<CatchSwitchInst>(PN->getParent()->getTerminator()))
+          return false;
         Explored.insert(PN);
         PHIs.insert(PN);
       }
@@ -2081,8 +2093,28 @@ Instruction *InstCombiner::visitICmpInstWithInstAndIntCst(ICmpInst &ICI,
     break;
   }
 
-  case Instruction::SDiv:
   case Instruction::UDiv:
+    if (ConstantInt *DivLHS = dyn_cast<ConstantInt>(LHSI->getOperand(0))) {
+      Value *X = LHSI->getOperand(1);
+      APInt C1 = RHS->getValue();
+      APInt C2 = DivLHS->getValue();
+      assert(C2 != 0 && "udiv 0, X should have been simplified already.");
+      // (icmp ugt (udiv C2, X), C1) -> (icmp ule X, C2/(C1+1))
+      if (ICI.getPredicate() == ICmpInst::ICMP_UGT) {
+        assert(!C1.isMaxValue() &&
+               "icmp ugt X, UINT_MAX should have been simplified already.");
+        return new ICmpInst(ICmpInst::ICMP_ULE, X,
+                            ConstantInt::get(X->getType(), C2.udiv(C1 + 1)));
+      }
+      // (icmp ult (udiv C2, X), C1) -> (icmp ugt X, C2/C1)
+      if (ICI.getPredicate() == ICmpInst::ICMP_ULT) {
+        assert(C1 != 0 && "icmp ult X, 0 should have been simplified already.");
+        return new ICmpInst(ICmpInst::ICMP_UGT, X,
+                            ConstantInt::get(X->getType(), C2.udiv(C1)));
+      }
+    }
+  // fall-through
+  case Instruction::SDiv:
     // Fold: icmp pred ([us]div X, C1), C2 -> range test
     // Fold this div into the comparison, producing a range check.
     // Determine, based on the divide type, what the range is being
@@ -2245,6 +2277,15 @@ Instruction *InstCombiner::visitICmpInstWithInstAndIntCst(ICmpInst &ICI,
           Constant *NotCI = ConstantExpr::getNot(RHS);
           if (!ConstantExpr::getAnd(BOC, NotCI)->isNullValue())
             return replaceInstUsesWith(ICI, Builder->getInt1(isICMP_NE));
+
+          // Comparing if all bits outside of a constant mask are set?
+          // Replace (X | C) == -1 with (X & ~C) == ~C.
+          // This removes the -1 constant.
+          if (BO->hasOneUse() && RHS->isAllOnesValue()) {
+            Constant *NotBOC = ConstantExpr::getNot(BOC);
+            Value *And = Builder->CreateAnd(BO->getOperand(0), NotBOC);
+            return new ICmpInst(ICI.getPredicate(), And, NotBOC);
+          }
         }
         break;
 
@@ -3058,6 +3099,63 @@ bool InstCombiner::replacedSelectWithOperand(SelectInst *SI,
   return false;
 }
 
+/// If we have an icmp le or icmp ge instruction with a constant operand, turn
+/// it into the appropriate icmp lt or icmp gt instruction. This transform
+/// allows them to be folded in visitICmpInst.
+static ICmpInst *canonicalizeCmpWithConstant(ICmpInst &I) {
+  ICmpInst::Predicate Pred = I.getPredicate();
+  if (Pred != ICmpInst::ICMP_SLE && Pred != ICmpInst::ICMP_SGE &&
+      Pred != ICmpInst::ICMP_ULE && Pred != ICmpInst::ICMP_UGE)
+    return nullptr;
+
+  Value *Op0 = I.getOperand(0);
+  Value *Op1 = I.getOperand(1);
+  auto *Op1C = dyn_cast<Constant>(Op1);
+  if (!Op1C)
+    return nullptr;
+
+  // Check if the constant operand can be safely incremented/decremented without
+  // overflowing/underflowing. For scalars, SimplifyICmpInst has already handled
+  // the edge cases for us, so we just assert on them. For vectors, we must
+  // handle the edge cases.
+  Type *Op1Type = Op1->getType();
+  bool IsSigned = I.isSigned();
+  bool IsLE = (Pred == ICmpInst::ICMP_SLE || Pred == ICmpInst::ICMP_ULE);
+  auto *CI = dyn_cast<ConstantInt>(Op1C);
+  if (CI) {
+    // A <= MAX -> TRUE ; A >= MIN -> TRUE
+    assert(IsLE ? !CI->isMaxValue(IsSigned) : !CI->isMinValue(IsSigned));
+  } else if (Op1Type->isVectorTy()) {
+    // TODO? If the edge cases for vectors were guaranteed to be handled as they
+    // are for scalar, we could remove the min/max checks. However, to do that,
+    // we would have to use insertelement/shufflevector to replace edge values.
+    unsigned NumElts = Op1Type->getVectorNumElements();
+    for (unsigned i = 0; i != NumElts; ++i) {
+      Constant *Elt = Op1C->getAggregateElement(i);
+      if (!Elt)
+        return nullptr;
+
+      if (isa<UndefValue>(Elt))
+        continue;
+      // Bail out if we can't determine if this constant is min/max or if we
+      // know that this constant is min/max.
+      auto *CI = dyn_cast<ConstantInt>(Elt);
+      if (!CI || (IsLE ? CI->isMaxValue(IsSigned) : CI->isMinValue(IsSigned)))
+        return nullptr;
+    }
+  } else {
+    // ConstantExpr?
+    return nullptr;
+  }
+
+  // Increment or decrement the constant and set the new comparison predicate:
+  // ULE -> ULT ; UGE -> UGT ; SLE -> SLT ; SGE -> SGT
+  Constant *OneOrNegOne = ConstantInt::get(Op1Type, IsLE ? 1 : -1, true);
+  CmpInst::Predicate NewPred = IsLE ? ICmpInst::ICMP_ULT: ICmpInst::ICMP_UGT;
+  NewPred = IsSigned ? ICmpInst::getSignedPredicate(NewPred) : NewPred;
+  return new ICmpInst(NewPred, Op0, ConstantExpr::getAdd(Op1C, OneOrNegOne));
+}
+
 Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
   bool Changed = false;
   Value *Op0 = I.getOperand(0), *Op1 = I.getOperand(1);
@@ -3141,6 +3239,9 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
     }
   }
 
+  if (ICmpInst *NewICmp = canonicalizeCmpWithConstant(I))
+    return NewICmp;
+
   unsigned BitWidth = 0;
   if (Ty->isIntOrIntVectorTy())
     BitWidth = Ty->getScalarSizeInBits();
@@ -3173,6 +3274,19 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
         return Res;
     }
 
+    // (icmp sgt smin(PosA, B) 0) -> (icmp sgt B 0)
+    if (CI->isZero() && I.getPredicate() == ICmpInst::ICMP_SGT)
+      if (auto *SI = dyn_cast<SelectInst>(Op0)) {
+        SelectPatternResult SPR = matchSelectPattern(SI, A, B);
+        if (SPR.Flavor == SPF_SMIN) {
+          if (isKnownPositive(A, DL))
+            return new ICmpInst(I.getPredicate(), B, CI);
+          if (isKnownPositive(B, DL))
+            return new ICmpInst(I.getPredicate(), A, CI);
+        }
+      }
+    
+
     // The following transforms are only 'worth it' if the only user of the
     // subtraction is the icmp.
     if (Op0->hasOneUse()) {
@@ -3202,30 +3316,6 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
         return new ICmpInst(ICmpInst::ICMP_SLE, A, B);
     }
 
-    // If we have an icmp le or icmp ge instruction, turn it into the
-    // appropriate icmp lt or icmp gt instruction.  This allows us to rely on
-    // them being folded in the code below.  The SimplifyICmpInst code has
-    // already handled the edge cases for us, so we just assert on them.
-    switch (I.getPredicate()) {
-    default: break;
-    case ICmpInst::ICMP_ULE:
-      assert(!CI->isMaxValue(false));                 // A <=u MAX -> TRUE
-      return new ICmpInst(ICmpInst::ICMP_ULT, Op0,
-                          Builder->getInt(CI->getValue()+1));
-    case ICmpInst::ICMP_SLE:
-      assert(!CI->isMaxValue(true));                  // A <=s MAX -> TRUE
-      return new ICmpInst(ICmpInst::ICMP_SLT, Op0,
-                          Builder->getInt(CI->getValue()+1));
-    case ICmpInst::ICMP_UGE:
-      assert(!CI->isMinValue(false));                 // A >=u MIN -> TRUE
-      return new ICmpInst(ICmpInst::ICMP_UGT, Op0,
-                          Builder->getInt(CI->getValue()-1));
-    case ICmpInst::ICMP_SGE:
-      assert(!CI->isMinValue(true));                  // A >=s MIN -> TRUE
-      return new ICmpInst(ICmpInst::ICMP_SGT, Op0,
-                          Builder->getInt(CI->getValue()-1));
-    }
-
     if (I.isEquality()) {
       ConstantInt *CI2;
       if (match(Op0, m_AShr(m_ConstantInt(CI2), m_Value(A))) ||
@@ -3245,6 +3335,42 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
     // bits, if it is a sign bit comparison, it only demands the sign bit.
     bool UnusedBit;
     isSignBit = isSignBitCheck(I.getPredicate(), CI, UnusedBit);
+
+    // Canonicalize icmp instructions based on dominating conditions.
+    BasicBlock *Parent = I.getParent();
+    BasicBlock *Dom = Parent->getSinglePredecessor();
+    auto *BI = Dom ? dyn_cast<BranchInst>(Dom->getTerminator()) : nullptr;
+    ICmpInst::Predicate Pred;
+    BasicBlock *TrueBB, *FalseBB;
+    ConstantInt *CI2;
+    if (BI && match(BI, m_Br(m_ICmp(Pred, m_Specific(Op0), m_ConstantInt(CI2)),
+                             TrueBB, FalseBB)) &&
+        TrueBB != FalseBB) {
+      ConstantRange CR = ConstantRange::makeAllowedICmpRegion(I.getPredicate(),
+                                                              CI->getValue());
+      ConstantRange DominatingCR =
+          (Parent == TrueBB)
+              ? ConstantRange::makeExactICmpRegion(Pred, CI2->getValue())
+              : ConstantRange::makeExactICmpRegion(
+                    CmpInst::getInversePredicate(Pred), CI2->getValue());
+      ConstantRange Intersection = DominatingCR.intersectWith(CR);
+      ConstantRange Difference = DominatingCR.difference(CR);
+      if (Intersection.isEmptySet())
+        return replaceInstUsesWith(I, Builder->getFalse());
+      if (Difference.isEmptySet())
+        return replaceInstUsesWith(I, Builder->getTrue());
+      // Canonicalizing a sign bit comparison that gets used in a branch,
+      // pessimizes codegen by generating branch on zero instruction instead
+      // of a test and branch. So we avoid canonicalizing in such situations
+      // because test and branch instruction has better branch displacement
+      // than compare and branch instruction.
+      if (!isBranchOnSignBitCheck(I, isSignBit) && !I.isEquality()) {
+        if (auto *AI = Intersection.getSingleElement())
+          return new ICmpInst(ICmpInst::ICMP_EQ, Op0, Builder->getInt(*AI));
+        if (auto *AD = Difference.getSingleElement())
+          return new ICmpInst(ICmpInst::ICMP_NE, Op0, Builder->getInt(*AD));
+      }
+    }
   }
 
   // See if we can fold the comparison based on range information we can get
@@ -3499,12 +3625,22 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
   // See if we are doing a comparison between a constant and an instruction that
   // can be folded into the comparison.
   if (ConstantInt *CI = dyn_cast<ConstantInt>(Op1)) {
+    Value *A = nullptr, *B = nullptr;
     // Since the RHS is a ConstantInt (CI), if the left hand side is an
     // instruction, see if that instruction also has constants so that the
     // instruction can be folded into the icmp
     if (Instruction *LHSI = dyn_cast<Instruction>(Op0))
       if (Instruction *Res = visitICmpInstWithInstAndIntCst(I, LHSI, CI))
         return Res;
+
+    // (icmp eq/ne (udiv A, B), 0) -> (icmp ugt/ule i32 B, A)
+    if (I.isEquality() && CI->isZero() &&
+        match(Op0, m_UDiv(m_Value(A), m_Value(B)))) {
+      ICmpInst::Predicate Pred = I.getPredicate() == ICmpInst::ICMP_EQ
+                                     ? ICmpInst::ICMP_UGT
+                                     : ICmpInst::ICMP_ULE;
+      return new ICmpInst(Pred, B, A);
+    }
   }
 
   // Handle icmp with constant (but not simple integer constant) RHS
@@ -4539,39 +4675,33 @@ Instruction *InstCombiner::visitFCmpInst(FCmpInst &I) {
           break;
 
         CallInst *CI = cast<CallInst>(LHSI);
-        const Function *F = CI->getCalledFunction();
-        if (!F)
+        Intrinsic::ID IID = getIntrinsicForCallSite(CI, TLI);
+        if (IID != Intrinsic::fabs)
           break;
 
         // Various optimization for fabs compared with zero.
-        LibFunc::Func Func;
-        if (F->getIntrinsicID() == Intrinsic::fabs ||
-            (TLI->getLibFunc(F->getName(), Func) && TLI->has(Func) &&
-             (Func == LibFunc::fabs || Func == LibFunc::fabsf ||
-              Func == LibFunc::fabsl))) {
-          switch (I.getPredicate()) {
-          default:
-            break;
-            // fabs(x) < 0 --> false
-          case FCmpInst::FCMP_OLT:
-            return replaceInstUsesWith(I, Builder->getFalse());
-            // fabs(x) > 0 --> x != 0
-          case FCmpInst::FCMP_OGT:
-            return new FCmpInst(FCmpInst::FCMP_ONE, CI->getArgOperand(0), RHSC);
-            // fabs(x) <= 0 --> x == 0
-          case FCmpInst::FCMP_OLE:
-            return new FCmpInst(FCmpInst::FCMP_OEQ, CI->getArgOperand(0), RHSC);
-            // fabs(x) >= 0 --> !isnan(x)
-          case FCmpInst::FCMP_OGE:
-            return new FCmpInst(FCmpInst::FCMP_ORD, CI->getArgOperand(0), RHSC);
-            // fabs(x) == 0 --> x == 0
-            // fabs(x) != 0 --> x != 0
-          case FCmpInst::FCMP_OEQ:
-          case FCmpInst::FCMP_UEQ:
-          case FCmpInst::FCMP_ONE:
-          case FCmpInst::FCMP_UNE:
-            return new FCmpInst(I.getPredicate(), CI->getArgOperand(0), RHSC);
-          }
+        switch (I.getPredicate()) {
+        default:
+          break;
+        // fabs(x) < 0 --> false
+        case FCmpInst::FCMP_OLT:
+          llvm_unreachable("handled by SimplifyFCmpInst");
+        // fabs(x) > 0 --> x != 0
+        case FCmpInst::FCMP_OGT:
+          return new FCmpInst(FCmpInst::FCMP_ONE, CI->getArgOperand(0), RHSC);
+        // fabs(x) <= 0 --> x == 0
+        case FCmpInst::FCMP_OLE:
+          return new FCmpInst(FCmpInst::FCMP_OEQ, CI->getArgOperand(0), RHSC);
+        // fabs(x) >= 0 --> !isnan(x)
+        case FCmpInst::FCMP_OGE:
+          return new FCmpInst(FCmpInst::FCMP_ORD, CI->getArgOperand(0), RHSC);
+        // fabs(x) == 0 --> x == 0
+        // fabs(x) != 0 --> x != 0
+        case FCmpInst::FCMP_OEQ:
+        case FCmpInst::FCMP_UEQ:
+        case FCmpInst::FCMP_ONE:
+        case FCmpInst::FCMP_UNE:
+          return new FCmpInst(I.getPredicate(), CI->getArgOperand(0), RHSC);
         }
       }
       }

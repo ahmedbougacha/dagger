@@ -14,12 +14,12 @@
 #ifndef LLVM_LIB_TARGET_AARCH64_AARCH64SUBTARGET_H
 #define LLVM_LIB_TARGET_AARCH64_AARCH64SUBTARGET_H
 
-#include "AArch64CallLowering.h"
 #include "AArch64FrameLowering.h"
 #include "AArch64ISelLowering.h"
 #include "AArch64InstrInfo.h"
 #include "AArch64RegisterInfo.h"
 #include "AArch64SelectionDAGInfo.h"
+#include "llvm/CodeGen/GlobalISel/GISelAccessor.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include <string>
@@ -33,8 +33,8 @@ class StringRef;
 class Triple;
 
 class AArch64Subtarget : public AArch64GenSubtargetInfo {
-protected:
-  enum ARMProcFamilyEnum {
+public:
+  enum ARMProcFamilyEnum : uint8_t {
     Others,
     CortexA35,
     CortexA53,
@@ -44,28 +44,47 @@ protected:
     Kryo
   };
 
+protected:
   /// ARMProcFamily - ARM processor family: Cortex-A53, Cortex-A57, and others.
-  ARMProcFamilyEnum ARMProcFamily;
+  ARMProcFamilyEnum ARMProcFamily = Others;
 
-  bool HasV8_1aOps;
-  bool HasV8_2aOps;
+  bool HasV8_1aOps = false;
+  bool HasV8_2aOps = false;
 
-  bool HasFPARMv8;
-  bool HasNEON;
-  bool HasCrypto;
-  bool HasCRC;
-  bool HasPerfMon;
-  bool HasFullFP16;
-  bool HasSPE;
+  bool HasFPARMv8 = false;
+  bool HasNEON = false;
+  bool HasCrypto = false;
+  bool HasCRC = false;
+  bool HasPerfMon = false;
+  bool HasFullFP16 = false;
+  bool HasSPE = false;
 
   // HasZeroCycleRegMove - Has zero-cycle register mov instructions.
-  bool HasZeroCycleRegMove;
+  bool HasZeroCycleRegMove = false;
 
   // HasZeroCycleZeroing - Has zero-cycle zeroing instructions.
-  bool HasZeroCycleZeroing;
+  bool HasZeroCycleZeroing = false;
 
   // StrictAlign - Disallow unaligned memory accesses.
-  bool StrictAlign;
+  bool StrictAlign = false;
+  bool MergeNarrowLoads = false;
+  bool UseAA = false;
+  bool PredictableSelectIsExpensive = false;
+  bool BalanceFPOps = false;
+  bool CustomAsCheapAsMove = false;
+  bool UsePostRAScheduler = false;
+  bool Misaligned128StoreIsSlow = false;
+  bool AvoidQuadLdStPairs = false;
+  bool UseAlternateSExtLoadCVTF32Pattern = false;
+  bool HasMacroOpFusion = false;
+  bool DisableLatencySchedHeuristic = false;
+  bool UseRSqrt = false;
+  uint8_t MaxInterleaveFactor = 2;
+  uint8_t VectorInsertExtractBaseCost = 3;
+  uint16_t CacheLineSize = 0;
+  uint16_t PrefetchDistance = 0;
+  uint16_t MinPrefetchStride = 1;
+  unsigned MaxPrefetchIterationsAhead = UINT_MAX;
 
   // ReserveX18 - X18 is not available as a general purpose register.
   bool ReserveX18;
@@ -82,7 +101,10 @@ protected:
   AArch64InstrInfo InstrInfo;
   AArch64SelectionDAGInfo TSInfo;
   AArch64TargetLowering TLInfo;
-  mutable std::unique_ptr<AArch64CallLowering> CallLoweringInfo;
+  /// Gather the accessor points to GlobalISel-related APIs.
+  /// This is used to avoid ifndefs spreading around while GISel is
+  /// an optional library.
+  std::unique_ptr<GISelAccessor> GISel;
 
 private:
   /// initializeSubtargetDependencies - Initializes using CPUString and the
@@ -90,12 +112,20 @@ private:
   /// subtarget initialization.
   AArch64Subtarget &initializeSubtargetDependencies(StringRef FS);
 
+  /// Initialize properties based on the selected processor family.
+  void initializeProperties();
+
 public:
   /// This constructor initializes the data members to match that
   /// of the specified triple.
   AArch64Subtarget(const Triple &TT, const std::string &CPU,
                    const std::string &FS, const TargetMachine &TM,
                    bool LittleEndian);
+
+  /// This object will take onwership of \p GISelAccessor.
+  void setGISelAccessor(GISelAccessor &GISel) {
+    this->GISel.reset(&GISel);
+  }
 
   const AArch64SelectionDAGInfo *getSelectionDAGInfo() const override {
     return &TSInfo;
@@ -111,10 +141,19 @@ public:
     return &getInstrInfo()->getRegisterInfo();
   }
   const CallLowering *getCallLowering() const override;
+  const RegisterBankInfo *getRegBankInfo() const override;
   const Triple &getTargetTriple() const { return TargetTriple; }
   bool enableMachineScheduler() const override { return true; }
   bool enablePostRAScheduler() const override {
-    return isGeneric() || isCortexA53() || isCortexA57() || isKryo();
+    return UsePostRAScheduler;
+  }
+
+  /// Returns ARM processor family.
+  /// Avoid this function! CPU specifics should be kept local to this class
+  /// and preferably modeled with SubtargetFeatures or properties in
+  /// initializeProperties().
+  ARMProcFamilyEnum getProcFamily() const {
+    return ARMProcFamily;
   }
 
   bool hasV8_1aOps() const { return HasV8_1aOps; }
@@ -131,6 +170,30 @@ public:
   bool hasNEON() const { return HasNEON; }
   bool hasCrypto() const { return HasCrypto; }
   bool hasCRC() const { return HasCRC; }
+  bool mergeNarrowLoads() const { return MergeNarrowLoads; }
+  bool balanceFPOps() const { return BalanceFPOps; }
+  bool predictableSelectIsExpensive() const {
+    return PredictableSelectIsExpensive;
+  }
+  bool hasCustomCheapAsMoveHandling() const { return CustomAsCheapAsMove; }
+  bool isMisaligned128StoreSlow() const { return Misaligned128StoreIsSlow; }
+  bool avoidQuadLdStPairs() const { return AvoidQuadLdStPairs; }
+  bool useAlternateSExtLoadCVTF32Pattern() const {
+    return UseAlternateSExtLoadCVTF32Pattern;
+  }
+  bool hasMacroOpFusion() const { return HasMacroOpFusion; }
+  bool useRSqrt() const { return UseRSqrt; }
+  unsigned getMaxInterleaveFactor() const { return MaxInterleaveFactor; }
+  unsigned getVectorInsertExtractBaseCost() const {
+    return VectorInsertExtractBaseCost;
+  }
+  unsigned getCacheLineSize() const { return CacheLineSize; }
+  unsigned getPrefetchDistance() const { return PrefetchDistance; }
+  unsigned getMinPrefetchStride() const { return MinPrefetchStride; }
+  unsigned getMaxPrefetchIterationsAhead() const {
+    return MaxPrefetchIterationsAhead;
+  }
+
   /// CPU has TBI (top byte of addresses is ignored during HW address
   /// translation) and OS enables it.
   bool supportsAddressTopByteIgnored() const;
@@ -151,14 +214,7 @@ public:
   bool isTargetELF() const { return TargetTriple.isOSBinFormatELF(); }
   bool isTargetMachO() const { return TargetTriple.isOSBinFormatMachO(); }
 
-  bool isGeneric() const { return CPUString == "generic"; }
-  bool isCyclone() const { return CPUString == "cyclone"; }
-  bool isCortexA57() const { return CPUString == "cortex-a57"; }
-  bool isCortexA53() const { return CPUString == "cortex-a53"; }
-  bool isExynosM1() const { return CPUString == "exynos-m1"; }
-  bool isKryo() const { return CPUString == "kryo"; }
-
-  bool useAA() const override { return isCortexA53(); }
+  bool useAA() const override { return UseAA; }
 
   /// getMaxInlineSizeThreshold - Returns the maximum memset / memcpy size
   /// that still makes it profitable to inline the call.

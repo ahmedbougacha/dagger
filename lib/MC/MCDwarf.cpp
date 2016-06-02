@@ -112,6 +112,8 @@ EmitDwarfLineTable(MCObjectStreamer *MCOS, MCSection *Section,
             ie = LineEntries.end();
        it != ie; ++it) {
 
+    int64_t LineDelta = static_cast<int64_t>(it->getLine()) - LastLine;
+
     if (FileNum != it->getFileNum()) {
       FileNum = it->getFileNum();
       MCOS->EmitIntValue(dwarf::DW_LNS_set_file, 1);
@@ -146,7 +148,6 @@ EmitDwarfLineTable(MCObjectStreamer *MCOS, MCSection *Section,
     if (it->getFlags() & DWARF2_FLAG_EPILOGUE_BEGIN)
       MCOS->EmitIntValue(dwarf::DW_LNS_set_epilogue_begin, 1);
 
-    int64_t LineDelta = static_cast<int64_t>(it->getLine()) - LastLine;
     MCSymbol *Label = it->getLabel();
 
     // At this point we want to emit/create the sequence to encode the delta in
@@ -156,6 +157,7 @@ EmitDwarfLineTable(MCObjectStreamer *MCOS, MCSection *Section,
     MCOS->EmitDwarfAdvanceLineAddr(LineDelta, LastLabel, Label,
                                    asmInfo->getPointerSize());
 
+    Discriminator = 0;
     LastLine = it->getLine();
     LastLabel = Label;
   }
@@ -344,9 +346,9 @@ unsigned MCDwarfLineTableHeader::getFile(StringRef &Directory,
   }
   assert(!FileName.empty());
   if (FileNumber == 0) {
-    FileNumber = SourceIdMap.size() + 1;
-    assert((MCDwarfFiles.empty() || FileNumber == MCDwarfFiles.size()) &&
-           "Don't mix autonumbered and explicit numbered line table usage");
+    // File numbers start with 1 and/or after any file numbers
+    // allocated by inline-assembler .file directives.
+    FileNumber = MCDwarfFiles.empty() ? 1 : MCDwarfFiles.size();
     SmallString<256> Buffer;
     auto IterBool = SourceIdMap.insert(
         std::make_pair((Directory + Twine('\0') + FileName).toStringRef(Buffer),
@@ -818,7 +820,7 @@ static void EmitGenDwarfRanges(MCStreamer *MCOS) {
     // Emit a base address selection entry for the start of this section
     const MCExpr *SectionStartAddr = MCSymbolRefExpr::create(
       StartSymbol, MCSymbolRefExpr::VK_None, context);
-    MCOS->EmitFill(AddrSize, 0xFF);
+    MCOS->emitFill(AddrSize, 0xFF);
     MCOS->EmitValue(SectionStartAddr, AddrSize);
 
     // Emit a range list entry spanning this section

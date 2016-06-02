@@ -46,7 +46,7 @@ void AsmLexer::setBuffer(StringRef Buf, const char *ptr) {
 AsmToken AsmLexer::ReturnError(const char *Loc, const std::string &Msg) {
   SetError(SMLoc::getFromPointer(Loc), Msg);
 
-  return AsmToken(AsmToken::Error, StringRef(Loc, 0));
+  return AsmToken(AsmToken::Error, StringRef(Loc, CurPtr - Loc));
 }
 
 int AsmLexer::getNextChar() {
@@ -284,7 +284,7 @@ AsmToken AsmLexer::LexDigit() {
     return intToken(Result, Value);
   }
 
-  if (*CurPtr == 'b') {
+  if ((*CurPtr == 'b') || (*CurPtr == 'B')) {
     ++CurPtr;
     // See if we actually have "0b" as part of something like "jmp 0b\n"
     if (!isdigit(CurPtr[0])) {
@@ -313,7 +313,7 @@ AsmToken AsmLexer::LexDigit() {
     return intToken(Result, Value);
   }
 
-  if (*CurPtr == 'x') {
+  if ((*CurPtr == 'x') || (*CurPtr == 'X')) {
     ++CurPtr;
     const char *NumStart = CurPtr;
     while (isxdigit(CurPtr[0]))

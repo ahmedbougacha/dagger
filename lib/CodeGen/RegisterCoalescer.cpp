@@ -203,6 +203,16 @@ namespace {
     /// make sure to set it to the correct physical subregister.
     void updateRegDefsUses(unsigned SrcReg, unsigned DstReg, unsigned SubIdx);
 
+    /// If the given machine operand reads only undefined lanes add an undef
+    /// flag.
+    /// This can happen when undef uses were previously concealed by a copy
+    /// which we coalesced. Example:
+    ///    %vreg0:sub0<def,read-undef> = ...
+    ///    %vreg1 = COPY %vreg0       <-- Coalescing COPY reveals undef
+    ///           = use %vreg1:sub1   <-- hidden undef use
+    void addUndefFlag(const LiveInterval &Int, SlotIndex UseIdx,
+                      MachineOperand &MO, unsigned SubRegIdx);
+
     /// Handle copies of undef values.
     /// Returns true if @p CopyMI was a copy of an undef value and eliminated.
     bool eliminateUndefCopy(MachineInstr *CopyMI);
@@ -969,6 +979,23 @@ bool RegisterCoalescer::reMaterializeTrivialDef(const CoalescerPair &CP,
     }
   }
 
+  // CopyMI may have implicit operands, save them so that we can transfer them
+  // over to the newly materialized instruction after CopyMI is removed.
+  SmallVector<MachineOperand, 4> ImplicitOps;
+  ImplicitOps.reserve(CopyMI->getNumOperands() -
+                      CopyMI->getDesc().getNumOperands());
+  for (unsigned I = CopyMI->getDesc().getNumOperands(),
+                E = CopyMI->getNumOperands();
+       I != E; ++I) {
+    MachineOperand &MO = CopyMI->getOperand(I);
+    if (MO.isReg()) {
+      assert(MO.isImplicit() && "No explicit operands after implict operands.");
+      // Discard VReg implicit defs.
+      if (TargetRegisterInfo::isPhysicalRegister(MO.getReg()))
+        ImplicitOps.push_back(MO);
+    }
+  }
+
   LIS->ReplaceMachineInstrInMaps(*CopyMI, *NewMI);
   CopyMI->eraseFromParent();
   ErasedInstrs.insert(CopyMI);
@@ -997,8 +1024,14 @@ bool RegisterCoalescer::reMaterializeTrivialDef(const CoalescerPair &CP,
         NewRC = TRI->getCommonSubClass(NewRC, DefRC);
       assert(NewRC && "subreg chosen for remat incompatible with instruction");
     }
+    // Remap subranges to new lanemask and change register class.
+    LiveInterval &DstInt = LIS->getInterval(DstReg);
+    for (LiveInterval::SubRange &SR : DstInt.subranges()) {
+      SR.LaneMask = TRI->composeSubRegIndexLaneMask(DstIdx, SR.LaneMask);
+    }
     MRI->setRegClass(DstReg, NewRC);
 
+    // Update machine operands and add flags.
     updateRegDefsUses(DstReg, DstReg, DstIdx);
     NewMI->getOperand(0).setSubReg(NewIdx);
     // Add dead subregister definitions if we are defining the whole register
@@ -1015,7 +1048,6 @@ bool RegisterCoalescer::reMaterializeTrivialDef(const CoalescerPair &CP,
     //
     // at this point for the part that wasn't defined before we could have
     // subranges missing the definition.
-    LiveInterval &DstInt = LIS->getInterval(DstReg);
     if (NewIdx == 0 && DstInt.hasSubRanges()) {
       SlotIndex CurrIdx = LIS->getInstructionIndex(*NewMI);
       SlotIndex DefIndex = CurrIdx.getRegSlot(NewMI->getOperand(0).isEarlyClobber());
@@ -1067,19 +1099,9 @@ bool RegisterCoalescer::reMaterializeTrivialDef(const CoalescerPair &CP,
   if (NewMI->getOperand(0).getSubReg())
     NewMI->getOperand(0).setIsUndef();
 
-  // CopyMI may have implicit operands, transfer them over to the newly
-  // rematerialized instruction. And update implicit def interval valnos.
-  for (unsigned i = CopyMI->getDesc().getNumOperands(),
-         e = CopyMI->getNumOperands(); i != e; ++i) {
-    MachineOperand &MO = CopyMI->getOperand(i);
-    if (MO.isReg()) {
-      assert(MO.isImplicit() && "No explicit operands after implict operands.");
-      // Discard VReg implicit defs.
-      if (TargetRegisterInfo::isPhysicalRegister(MO.getReg())) {
-        NewMI->addOperand(MO);
-      }
-    }
-  }
+  // Transfer over implicit operands to the rematerialized instruction.
+  for (MachineOperand &MO : ImplicitOps)
+    NewMI->addOperand(MO);
 
   SlotIndex NewMIIdx = LIS->getInstructionIndex(*NewMI);
   for (unsigned i = 0, e = NewMIImplDefs.size(); i != e; ++i) {
@@ -1191,11 +1213,50 @@ bool RegisterCoalescer::eliminateUndefCopy(MachineInstr *CopyMI) {
   return true;
 }
 
+void RegisterCoalescer::addUndefFlag(const LiveInterval &Int, SlotIndex UseIdx,
+                                     MachineOperand &MO, unsigned SubRegIdx) {
+  LaneBitmask Mask = TRI->getSubRegIndexLaneMask(SubRegIdx);
+  if (MO.isDef())
+    Mask = ~Mask;
+  bool IsUndef = true;
+  for (const LiveInterval::SubRange &S : Int.subranges()) {
+    if ((S.LaneMask & Mask) == 0)
+      continue;
+    if (S.liveAt(UseIdx)) {
+      IsUndef = false;
+      break;
+    }
+  }
+  if (IsUndef) {
+    MO.setIsUndef(true);
+    // We found out some subregister use is actually reading an undefined
+    // value. In some cases the whole vreg has become undefined at this
+    // point so we have to potentially shrink the main range if the
+    // use was ending a live segment there.
+    LiveQueryResult Q = Int.Query(UseIdx);
+    if (Q.valueOut() == nullptr)
+      ShrinkMainRange = true;
+  }
+}
+
 void RegisterCoalescer::updateRegDefsUses(unsigned SrcReg,
                                           unsigned DstReg,
                                           unsigned SubIdx) {
   bool DstIsPhys = TargetRegisterInfo::isPhysicalRegister(DstReg);
   LiveInterval *DstInt = DstIsPhys ? nullptr : &LIS->getInterval(DstReg);
+
+  if (DstInt && DstInt->hasSubRanges() && DstReg != SrcReg) {
+    for (MachineOperand &MO : MRI->reg_operands(DstReg)) {
+      unsigned SubReg = MO.getSubReg();
+      if (SubReg == 0 || MO.isUndef())
+        continue;
+      MachineInstr &MI = *MO.getParent();
+      if (MI.isDebugValue())
+        continue;
+      SlotIndex UseIdx = LIS->getInstructionIndex(MI).getRegSlot(true);
+      addUndefFlag(*DstInt, UseIdx, MO, SubReg);
+    }
+  }
 
   SmallPtrSet<MachineInstr*, 8> Visited;
   for (MachineRegisterInfo::reg_instr_iterator
@@ -1238,30 +1299,11 @@ void RegisterCoalescer::updateRegDefsUses(unsigned SrcReg,
           LaneBitmask Mask = MRI->getMaxLaneMaskForVReg(DstInt->reg);
           DstInt->createSubRangeFrom(Allocator, Mask, *DstInt);
         }
-        LaneBitmask Mask = TRI->getSubRegIndexLaneMask(SubIdx);
-        bool IsUndef = true;
         SlotIndex MIIdx = UseMI->isDebugValue()
                               ? LIS->getSlotIndexes()->getIndexBefore(*UseMI)
                               : LIS->getInstructionIndex(*UseMI);
         SlotIndex UseIdx = MIIdx.getRegSlot(true);
-        for (LiveInterval::SubRange &S : DstInt->subranges()) {
-          if ((S.LaneMask & Mask) == 0)
-            continue;
-          if (S.liveAt(UseIdx)) {
-            IsUndef = false;
-            break;
-          }
-        }
-        if (IsUndef) {
-          MO.setIsUndef(true);
-          // We found out some subregister use is actually reading an undefined
-          // value. In some cases the whole vreg has become undefined at this
-          // point so we have to potentially shrink the main range if the
-          // use was ending a live segment there.
-          LiveQueryResult Q = DstInt->Query(MIIdx);
-          if (Q.valueOut() == nullptr)
-            ShrinkMainRange = true;
-        }
+        addUndefFlag(*DstInt, UseIdx, MO, SubIdx);
       }
 
       if (DstIsPhys)

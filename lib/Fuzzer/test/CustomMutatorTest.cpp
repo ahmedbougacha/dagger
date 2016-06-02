@@ -1,3 +1,6 @@
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+
 // Simple test for a cutom mutator.
 #include <assert.h>
 #include <cstdint>
@@ -31,5 +34,5 @@ extern "C" size_t LLVMFuzzerCustomMutator(uint8_t *Data, size_t Size,
     std::cerr << "In LLVMFuzzerCustomMutator\n";
     Printed = true;
   }
-  return fuzzer::Mutate(Data, Size, MaxSize);
+  return LLVMFuzzerMutate(Data, Size, MaxSize);
 }

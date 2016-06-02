@@ -94,7 +94,7 @@ bool isPositiveHalfWord(SDNode *N);
 
     bool CanReturnSmallStruct(const Function* CalleeFn, unsigned& RetSize)
         const;
-    void promoteLdStType(EVT VT, EVT PromotedLdStVT);
+    void promoteLdStType(MVT VT, MVT PromotedLdStVT);
     const HexagonTargetMachine &HTM;
     const HexagonSubtarget &Subtarget;
 
@@ -203,6 +203,8 @@ bool isPositiveHalfWord(SDNode *N);
                                     ISD::MemIndexedMode &AM,
                                     SelectionDAG &DAG) const override;
 
+    ConstraintType getConstraintType(StringRef Constraint) const override;
+
     std::pair<unsigned, const TargetRegisterClass *>
     getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
                                  StringRef Constraint, MVT VT) const override;
@@ -211,8 +213,6 @@ bool isPositiveHalfWord(SDNode *N);
     getInlineAsmMemConstraint(StringRef ConstraintCode) const override {
       if (ConstraintCode == "o")
         return InlineAsm::Constraint_o;
-      else if (ConstraintCode == "v")
-        return InlineAsm::Constraint_v;
       return TargetLowering::getInlineAsmMemConstraint(ConstraintCode);
     }
 
@@ -237,6 +237,9 @@ bool isPositiveHalfWord(SDNode *N);
     /// compare a register against the immediate without having to materialize
     /// the immediate into a register.
     bool isLegalICmpImmediate(int64_t Imm) const override;
+
+    bool allowsMisalignedMemoryAccesses(EVT VT, unsigned AddrSpace,
+        unsigned Align, bool *Fast) const override;
 
     /// Returns relocation base for the given PIC jumptable.
     SDValue getPICJumpTableRelocBase(SDValue Table, SelectionDAG &DAG)

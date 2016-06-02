@@ -10,7 +10,6 @@
 #include "DAGISelMatcher.h"
 #include "CodeGenDAGPatterns.h"
 #include "CodeGenRegisters.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/TableGen/Error.h"
@@ -75,10 +74,6 @@ namespace {
     /// MatchedChainNodes - This maintains the position in the recorded nodes
     /// array of all of the recorded input nodes that have chains.
     SmallVector<unsigned, 2> MatchedChainNodes;
-
-    /// MatchedGlueResultNodes - This maintains the position in the recorded
-    /// nodes array of all of the recorded input nodes that have glue results.
-    SmallVector<unsigned, 2> MatchedGlueResultNodes;
 
     /// MatchedComplexPatterns - This maintains a list of all of the
     /// ComplexPatterns that we need to check. The second element of each pair
@@ -426,8 +421,6 @@ void MatcherGen::EmitOperatorMatchCode(const TreePatternNode *N,
     AddMatcher(new RecordMatcher("'" + N->getOperator()->getName() +
                                          "' glue output node",
                                  NextRecordedOperandNo));
-    // Remember all of the nodes with output glue our pattern will match.
-    MatchedGlueResultNodes.push_back(NextRecordedOperandNo++);
   }
 
   // If this node is known to have an input glue or if it *might* have an input
@@ -988,11 +981,6 @@ void MatcherGen::EmitResultCode() {
 
   assert(Ops.size() >= NumSrcResults && "Didn't provide enough results");
   Ops.resize(NumSrcResults);
-
-  // If the matched pattern covers nodes which define a glue result, emit a node
-  // that tells the matcher about them so that it can update their results.
-  if (!MatchedGlueResultNodes.empty())
-    AddMatcher(new MarkGlueResultsMatcher(MatchedGlueResultNodes));
 
   AddMatcher(new CompleteMatchMatcher(Ops, Pattern));
 }

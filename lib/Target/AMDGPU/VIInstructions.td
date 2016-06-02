@@ -54,9 +54,9 @@ defm V_SUBREV_F16 : VOP2Inst <vop2<0, 0x21>, "v_subrev_f16", VOP_F16_F16_F16,
 defm V_MUL_F16 : VOP2Inst <vop2<0, 0x22>, "v_mul_f16", VOP_F16_F16_F16>;
 defm V_MAC_F16 : VOP2Inst <vop2<0, 0x23>, "v_mac_f16", VOP_F16_F16_F16>;
 } // End isCommutable = 1
-defm V_MADMK_F16 : VOP2MADK <vop2<0,0x24>, "v_madmk_f16">;
+defm V_MADMK_F16 : VOP2MADK <vop2<0,0x24>, "v_madmk_f16", VOP_MADMK>;
 let isCommutable = 1 in {
-defm V_MADAK_F16 : VOP2MADK <vop2<0,0x25>, "v_madak_f16">;
+defm V_MADAK_F16 : VOP2MADK <vop2<0,0x25>, "v_madak_f16", VOP_MADAK>;
 defm V_ADD_U16 : VOP2Inst <vop2<0,0x26>, "v_add_u16", VOP_I16_I16_I16>;
 defm V_SUB_U16 : VOP2Inst <vop2<0,0x27>, "v_sub_u16" , VOP_I16_I16_I16>;
 defm V_SUBREV_U16 : VOP2Inst <vop2<0,0x28>, "v_subrev_u16", VOP_I16_I16_I16>;
@@ -121,10 +121,10 @@ def : Pat <
 //===----------------------------------------------------------------------===//
 
 def : Pat <
-  (int_amdgcn_mov_dpp i32:$src, imm:$dpp_ctrl, imm:$bound_ctrl,
-                      imm:$bank_mask, imm:$row_mask),
-  (V_MOV_B32_dpp $src, (as_i32imm $dpp_ctrl), (as_i1imm $bound_ctrl),
-                       (as_i32imm $bank_mask), (as_i32imm $row_mask))
+  (int_amdgcn_mov_dpp i32:$src, imm:$dpp_ctrl, imm:$row_mask, imm:$bank_mask, 
+                      imm:$bound_ctrl),
+  (V_MOV_B32_dpp $src, (as_i32imm $dpp_ctrl), (as_i32imm $row_mask),
+                       (as_i32imm $bank_mask), (as_i1imm $bound_ctrl))
 >;
 
 //===----------------------------------------------------------------------===//
@@ -135,5 +135,16 @@ def : Pat <
   (i64 (readcyclecounter)),
   (S_MEMREALTIME)
 >;
+
+//===----------------------------------------------------------------------===//
+// DS_PERMUTE/DS_BPERMUTE Instructions.
+//===----------------------------------------------------------------------===//
+
+let Uses = [EXEC] in {
+defm DS_PERMUTE_B32 : DS_1A1D_PERMUTE <0x3e, "ds_permute_b32", VGPR_32,
+                                       int_amdgcn_ds_permute>;
+defm DS_BPERMUTE_B32 : DS_1A1D_PERMUTE <0x3f, "ds_bpermute_b32", VGPR_32,
+                                       int_amdgcn_ds_bpermute>;
+}
 
 } // End Predicates = [isVI]

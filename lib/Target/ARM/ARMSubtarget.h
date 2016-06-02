@@ -43,8 +43,9 @@ class ARMSubtarget : public ARMGenSubtargetInfo {
 protected:
   enum ARMProcFamilyEnum {
     Others, CortexA5, CortexA7, CortexA8, CortexA9, CortexA12, CortexA15,
-    CortexA17, CortexR4, CortexR4F, CortexR5, CortexR7, CortexA35, CortexA53,
-    CortexA57, CortexA72, Krait, Swift, ExynosM1
+    CortexA17, CortexR4, CortexR4F, CortexR5, CortexR7, CortexM3,
+    CortexA32, CortexA35, CortexA53, CortexA57, CortexA72, CortexA73,
+    Krait, Swift, ExynosM1
   };
   enum ARMProcClassEnum {
     None, AClass, RClass, MClass
@@ -334,7 +335,7 @@ public:
   bool isCortexA9() const { return ARMProcFamily == CortexA9; }
   bool isCortexA15() const { return ARMProcFamily == CortexA15; }
   bool isSwift()    const { return ARMProcFamily == Swift; }
-  bool isCortexM3() const { return CPUString == "cortex-m3"; }
+  bool isCortexM3() const { return ARMProcFamily == CortexM3; }
   bool isLikeA9() const { return isCortexA9() || isCortexA15() || isKrait(); }
   bool isCortexR5() const { return ARMProcFamily == CortexR5; }
   bool isKrait() const { return ARMProcFamily == Krait; }
@@ -452,6 +453,13 @@ public:
 
   bool isR9Reserved() const {
     return isTargetMachO() ? (ReserveR9 || !HasV6Ops) : ReserveR9;
+  }
+
+  /// Returns true if the frame setup is split into two separate pushes (first
+  /// r0-r7,lr then r8-r11), principally so that the frame pointer is adjacent
+  /// to lr.
+  bool splitFramePushPop() const {
+    return isTargetMachO();
   }
 
   bool useStride4VFPs(const MachineFunction &MF) const;

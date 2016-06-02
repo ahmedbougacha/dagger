@@ -71,10 +71,8 @@ Function* PartialInliner::unswitchFunction(Function* F) {
   
   // Clone the function, so that we can hack away on it.
   ValueToValueMapTy VMap;
-  Function* duplicateFunction = CloneFunction(F, VMap,
-                                              /*ModuleLevelChanges=*/false);
+  Function* duplicateFunction = CloneFunction(F, VMap);
   duplicateFunction->setLinkage(GlobalValue::InternalLinkage);
-  F->getParent()->getFunctionList().push_back(duplicateFunction);
   BasicBlock* newEntryBlock = cast<BasicBlock>(VMap[entryBlock]);
   BasicBlock* newReturnBlock = cast<BasicBlock>(VMap[returnBlock]);
   BasicBlock* newNonReturnBlock = cast<BasicBlock>(VMap[nonReturnBlock]);
@@ -149,6 +147,9 @@ Function* PartialInliner::unswitchFunction(Function* F) {
 }
 
 bool PartialInliner::runOnModule(Module& M) {
+  if (skipModule(M))
+    return false;
+
   std::vector<Function*> worklist;
   worklist.reserve(M.size());
   for (Module::iterator FI = M.begin(), FE = M.end(); FI != FE; ++FI)

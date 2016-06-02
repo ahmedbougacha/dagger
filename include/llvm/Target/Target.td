@@ -427,6 +427,11 @@ class Instruction {
   // Is this instruction a pseudo instruction for use by the assembler parser.
   bit isAsmParserOnly = 0;
 
+  // This instruction is not expected to be queried for scheduling latencies
+  // and therefore needs no scheduling information even for a complete
+  // scheduling model.
+  bit hasNoSchedulingInfo = 0;
+
   InstrItinClass Itinerary = NoItinerary;// Execution steps used for scheduling.
 
   // Scheduling information from TargetSchedule.td.
@@ -614,6 +619,13 @@ class AsmOperandClass {
   ///
   /// Optional arguments must be at the end of the operand list.
   bit IsOptional = 0;
+
+  /// The name of the method on the target specific asm parser that returns the
+  /// default operand for this optional operand. This method is only used if
+  /// IsOptional == 1. If not set, this will default to "defaultFooOperands",
+  /// where Foo is the AsmOperandClass name. The method signature should be:
+  ///   std::unique_ptr<MCParsedAsmOperand> defaultFooOperands() const;
+  string DefaultMethod = ?;
 }
 
 def ImmAsmOperand : AsmOperandClass {
@@ -765,9 +777,10 @@ class InstrInfo {
 // Standard Pseudo Instructions.
 // This list must match TargetOpcodes.h and CodeGenTarget.cpp.
 // Only these instructions are allowed in the TargetOpcode namespace.
-let isCodeGenOnly = 1, isPseudo = 1, Namespace = "TargetOpcode" in {
+let isCodeGenOnly = 1, isPseudo = 1, hasNoSchedulingInfo = 1,
+    Namespace = "TargetOpcode" in {
 def PHI : Instruction {
-  let OutOperandList = (outs);
+  let OutOperandList = (outs unknown:$dst);
   let InOperandList = (ins variable_ops);
   let AsmString = "PHINODE";
 }
@@ -857,6 +870,7 @@ def COPY : Instruction {
   let AsmString = "";
   let hasSideEffects = 0;
   let isAsCheapAsAMove = 1;
+  let hasNoSchedulingInfo = 0;
 }
 def BUNDLE : Instruction {
   let OutOperandList = (outs);
@@ -921,6 +935,16 @@ def FAULTING_LOAD_OP : Instruction {
   let InOperandList = (ins variable_ops);
   let usesCustomInserter = 1;
   let mayLoad = 1;
+  let isTerminator = 1;
+  let isBranch = 1;
+}
+def PATCHABLE_OP : Instruction {
+  let OutOperandList = (outs unknown:$dst);
+  let InOperandList = (ins variable_ops);
+  let usesCustomInserter = 1;
+  let mayLoad = 1;
+  let mayStore = 1;
+  let hasSideEffects = 1;
 }
 
 // Generic opcodes used in GlobalISel.

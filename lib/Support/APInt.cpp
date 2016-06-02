@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallString.h"
@@ -479,12 +480,30 @@ APInt APInt::operator+(const APInt& RHS) const {
   return Result;
 }
 
+APInt APInt::operator+(uint64_t RHS) const {
+  if (isSingleWord())
+    return APInt(BitWidth, VAL + RHS);
+  APInt Result(*this);
+  add_1(Result.pVal, Result.pVal, getNumWords(), RHS);
+  Result.clearUnusedBits();
+  return Result;
+}
+
 APInt APInt::operator-(const APInt& RHS) const {
   assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
   if (isSingleWord())
     return APInt(BitWidth, VAL - RHS.VAL);
   APInt Result(BitWidth, 0);
   sub(Result.pVal, this->pVal, RHS.pVal, getNumWords());
+  Result.clearUnusedBits();
+  return Result;
+}
+
+APInt APInt::operator-(uint64_t RHS) const {
+  if (isSingleWord())
+    return APInt(BitWidth, VAL - RHS);
+  APInt Result(*this);
+  sub_1(Result.pVal, getNumWords(), RHS);
   Result.clearUnusedBits();
   return Result;
 }
@@ -541,32 +560,16 @@ bool APInt::slt(const APInt& RHS) const {
     return lhsSext < rhsSext;
   }
 
-  APInt lhs(*this);
-  APInt rhs(RHS);
   bool lhsNeg = isNegative();
-  bool rhsNeg = rhs.isNegative();
-  if (lhsNeg) {
-    // Sign bit is set so perform two's complement to make it positive
-    lhs.flipAllBits();
-    ++lhs;
-  }
-  if (rhsNeg) {
-    // Sign bit is set so perform two's complement to make it positive
-    rhs.flipAllBits();
-    ++rhs;
-  }
+  bool rhsNeg = RHS.isNegative();
 
-  // Now we have unsigned values to compare so do the comparison if necessary
-  // based on the negativeness of the values.
-  if (lhsNeg)
-    if (rhsNeg)
-      return lhs.ugt(rhs);
-    else
-      return true;
-  else if (rhsNeg)
-    return false;
-  else
-    return lhs.ult(rhs);
+  // If the sign bits don't match, then (LHS < RHS) if LHS is negative
+  if (lhsNeg != rhsNeg)
+    return lhsNeg;
+
+  // Otherwise we can just use an unsigned comparision, because even negative
+  // numbers compare correctly this way if both have the same signed-ness.
+  return ult(RHS);
 }
 
 void APInt::setBit(unsigned bitPosition) {
@@ -785,6 +788,36 @@ APInt APInt::byteSwap() const {
     Result.BitWidth = BitWidth;
   }
   return Result;
+}
+
+APInt APInt::reverseBits() const {
+  switch (BitWidth) {
+  case 64:
+    return APInt(BitWidth, llvm::reverseBits<uint64_t>(VAL));
+  case 32:
+    return APInt(BitWidth, llvm::reverseBits<uint32_t>(VAL));
+  case 16:
+    return APInt(BitWidth, llvm::reverseBits<uint16_t>(VAL));
+  case 8:
+    return APInt(BitWidth, llvm::reverseBits<uint8_t>(VAL));
+  default:
+    break;
+  }
+
+  APInt Val(*this);
+  APInt Reversed(*this);
+  int S = BitWidth - 1;
+
+  const APInt One(BitWidth, 1);
+
+  for ((Val = Val.lshr(1)); Val != 0; (Val = Val.lshr(1))) {
+    Reversed <<= 1;
+    Reversed |= (Val & One);
+    --S;
+  }
+
+  Reversed <<= S;
+  return Reversed;
 }
 
 APInt llvm::APIntOps::GreatestCommonDivisor(const APInt& API1,

@@ -47,7 +47,17 @@ namespace {
       initializeMachineCopyPropagationPass(*PassRegistry::getPassRegistry());
     }
 
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
+      AU.setPreservesCFG();
+      MachineFunctionPass::getAnalysisUsage(AU);
+    }
+
     bool runOnMachineFunction(MachineFunction &MF) override;
+
+    MachineFunctionProperties getRequiredProperties() const override {
+      return MachineFunctionProperties().set(
+          MachineFunctionProperties::Property::AllVRegsAllocated);
+    }
 
   private:
     void ClobberRegister(unsigned Reg);
@@ -285,18 +295,28 @@ void MachineCopyPropagation::CopyPropagateBlock(MachineBasicBlock &MBB) {
     // defined registers.
     if (RegMask) {
       // Erase any MaybeDeadCopies whose destination register is clobbered.
-      for (MachineInstr *MaybeDead : MaybeDeadCopies) {
+      for (SmallSetVector<MachineInstr *, 8>::iterator DI =
+               MaybeDeadCopies.begin();
+           DI != MaybeDeadCopies.end();) {
+        MachineInstr *MaybeDead = *DI;
         unsigned Reg = MaybeDead->getOperand(0).getReg();
         assert(!MRI->isReserved(Reg));
-        if (!RegMask->clobbersPhysReg(Reg))
+
+        if (!RegMask->clobbersPhysReg(Reg)) {
+          ++DI;
           continue;
+        }
+
         DEBUG(dbgs() << "MCP: Removing copy due to regmask clobbering: ";
               MaybeDead->dump());
+
+        // erase() will return the next valid iterator pointing to the next
+        // element after the erased one.
+        DI = MaybeDeadCopies.erase(DI);
         MaybeDead->eraseFromParent();
         Changed = true;
         ++NumDeletes;
       }
-      MaybeDeadCopies.clear();
 
       removeClobberedRegsFromMap(AvailCopyMap, *RegMask);
       removeClobberedRegsFromMap(CopyMap, *RegMask);
@@ -334,7 +354,7 @@ void MachineCopyPropagation::CopyPropagateBlock(MachineBasicBlock &MBB) {
 }
 
 bool MachineCopyPropagation::runOnMachineFunction(MachineFunction &MF) {
-  if (skipOptnoneFunction(*MF.getFunction()))
+  if (skipFunction(*MF.getFunction()))
     return false;
 
   Changed = false;
@@ -348,3 +368,4 @@ bool MachineCopyPropagation::runOnMachineFunction(MachineFunction &MF) {
 
   return Changed;
 }
+

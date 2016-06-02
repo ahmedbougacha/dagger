@@ -14,10 +14,10 @@
 #ifndef LLVM_ANALYSIS_CFLALIASANALYSIS_H
 #define LLVM_ANALYSIS_CFLALIASANALYSIS_H
 
-#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueHandle.h"
@@ -26,13 +26,15 @@
 
 namespace llvm {
 
+class TargetLibraryInfo;
+
 class CFLAAResult : public AAResultBase<CFLAAResult> {
   friend AAResultBase<CFLAAResult>;
 
   struct FunctionInfo;
 
 public:
-  explicit CFLAAResult(const TargetLibraryInfo &TLI);
+  explicit CFLAAResult(const TargetLibraryInfo &);
   CFLAAResult(CFLAAResult &&Arg);
   ~CFLAAResult();
 
@@ -94,6 +96,8 @@ private:
     }
   };
 
+  const TargetLibraryInfo &TLI;
+
   /// \brief Cached mapping of Functions to their StratifiedSets.
   /// If a function's sets are currently being built, it is marked
   /// in the cache as an Optional without a value. This way, if we
@@ -109,10 +113,14 @@ private:
 ///
 /// FIXME: We really should refactor CFL to use the analysis more heavily, and
 /// in particular to leverage invalidation to trigger re-computation of sets.
-struct CFLAA : AnalysisBase<CFLAA> {
+class CFLAA : public AnalysisInfoMixin<CFLAA> {
+  friend AnalysisInfoMixin<CFLAA>;
+  static char PassID;
+
+public:
   typedef CFLAAResult Result;
 
-  CFLAAResult run(Function &F, AnalysisManager<Function> *AM);
+  CFLAAResult run(Function &F, AnalysisManager<Function> &AM);
 };
 
 /// Legacy wrapper pass to provide the CFLAAResult object.
@@ -127,8 +135,7 @@ public:
   CFLAAResult &getResult() { return *Result; }
   const CFLAAResult &getResult() const { return *Result; }
 
-  bool doInitialization(Module &M) override;
-  bool doFinalization(Module &M) override;
+  void initializePass() override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 

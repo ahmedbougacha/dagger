@@ -1,5 +1,5 @@
 ; RUN: llc -verify-machineinstrs -mtriple=aarch64-none-linux-gnu -disable-post-ra < %s | FileCheck %s
-; RUN: llc -verify-machineinstrs -mtriple=arm64-apple-ios -disable-post-ra < %s | FileCheck %s --check-prefix=CHECK-MACHO
+; RUN: llc -verify-machineinstrs -mtriple=arm64-apple-ios -disable-fp-elim -disable-post-ra < %s | FileCheck %s --check-prefix=CHECK-MACHO
 
 ; This test aims to check basic correctness of frame layout &
 ; frame access code. There are 8 functions in this test file,
@@ -98,33 +98,30 @@ entry:
 ; CHECK-LABEL: novla_nodynamicrealign_call
 ; CHECK: .cfi_startproc
 ;   Check that used callee-saved registers are saved
-; CHECK: str	x19, [sp, #-32]!
-;   Check that the frame pointer is created:
-; CHECK: stp	x29, x30, [sp, #16]
-; CHECK: add	x29, sp, #16
+; CHECK: sub	sp, sp, #32
+; CHECK: stp	x19, x30, [sp, #16]
 ;   Check correctness of cfi pseudo-instructions
-; CHECK: .cfi_def_cfa w29, 16
+; CHECK: .cfi_def_cfa_offset 32
 ; CHECK: .cfi_offset w30, -8
-; CHECK: .cfi_offset w29, -16
-; CHECK: .cfi_offset w19, -32
-;   Check correct access to arguments passed on the stack, through frame pointer
-; CHECK: ldr	d[[DARG:[0-9]+]], [x29, #40]
-; CHECK: ldr	w[[IARG:[0-9]+]], [x29, #24]
+; CHECK: .cfi_offset w19, -16
+;   Check correct access to arguments passed on the stack, through stack pointer
+; CHECK: ldr	d[[DARG:[0-9]+]], [sp, #56]
+; CHECK: ldr	w[[IARG:[0-9]+]], [sp, #40]
 ;   Check correct access to local variable on the stack, through stack pointer
 ; CHECK: ldr	w[[ILOC:[0-9]+]], [sp, #12]
 ;   Check epilogue:
-; CHECK: ldp	x29, x30, [sp, #16]
-; CHECK: ldr	x19, [sp], #32
+; CHECK: ldp	x19, x30, [sp, #16]
 ; CHECK: ret
 ; CHECK: .cfi_endproc
 
 ; CHECK-MACHO-LABEL: _novla_nodynamicrealign_call:
 ; CHECK-MACHO: .cfi_startproc
 ;   Check that used callee-saved registers are saved
-; CHECK-MACHO: stp	x20, x19, [sp, #-32]!
+; CHECK-MACHO: sub	sp, sp, #48
+; CHECK-MACHO: stp	x20, x19, [sp, #16]
 ;   Check that the frame pointer is created:
-; CHECK-MACHO: stp	x29, x30, [sp, #16]
-; CHECK-MACHO: add	x29, sp, #16
+; CHECK-MACHO: stp	x29, x30, [sp, #32]
+; CHECK-MACHO: add	x29, sp, #32
 ;   Check correctness of cfi pseudo-instructions
 ; CHECK-MACHO: .cfi_def_cfa w29, 16
 ; CHECK-MACHO: .cfi_offset w30, -8
@@ -137,8 +134,8 @@ entry:
 ;   Check correct access to local variable on the stack, through stack pointer
 ; CHECK-MACHO: ldr	w[[ILOC:[0-9]+]], [sp, #12]
 ;   Check epilogue:
-; CHECK-MACHO: ldp	x29, x30, [sp, #16]
-; CHECK-MACHO: ldp	x20, x19, [sp], #32
+; CHECK-MACHO: ldp	x29, x30, [sp, #32]
+; CHECK-MACHO: ldp	x20, x19, [sp, #16]
 ; CHECK-MACHO: ret
 ; CHECK-MACHO: .cfi_endproc
 
@@ -677,7 +674,7 @@ bb1:
 
 define void @realign_conditional2(i1 %b) {
 entry:
-  %tmp = alloca i8, i32 4
+  %tmp = alloca i8, i32 16
   br i1 %b, label %bb0, label %bb1
 
 bb0:
@@ -700,8 +697,8 @@ bb1:
 ; CHECK:  .[[LABEL]]:
 ; CHECK:  ret
 
-attributes #0 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
-attributes #1 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #0 = { "less-precise-fpmad"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #1 = { nounwind "less-precise-fpmad"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
 
 !1 = !{!2, !2, i64 0}
 !2 = !{!"int", !3, i64 0}

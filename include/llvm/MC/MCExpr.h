@@ -73,7 +73,8 @@ public:
   /// \name Utility Methods
   /// @{
 
-  void print(raw_ostream &OS, const MCAsmInfo *MAI) const;
+  void print(raw_ostream &OS, const MCAsmInfo *MAI,
+             bool InParens = false) const;
   void dump() const;
 
   /// @}
@@ -177,6 +178,8 @@ public:
     VK_TLSLDM,
     VK_TPOFF,
     VK_DTPOFF,
+    VK_TLSCALL,   // symbol(tlscall)
+    VK_TLSDESC,   // symbol(tlsdesc)
     VK_TLVP,      // Mach-O thread local variable relocations
     VK_TLVPPAGE,
     VK_TLVPPAGEOFF,
@@ -195,8 +198,6 @@ public:
     VK_ARM_PREL31,
     VK_ARM_SBREL,          // symbol(sbrel)
     VK_ARM_TLSLDO,         // symbol(tlsldo)
-    VK_ARM_TLSCALL,        // symbol(tlscall)
-    VK_ARM_TLSDESC,        // symbol(tlsdesc)
     VK_ARM_TLSDESCSEQ,
 
     VK_PPC_LO,             // symbol@l
@@ -249,33 +250,6 @@ public:
     VK_PPC_GOT_TLSLD_HA,   // symbol@got@tlsld@ha
     VK_PPC_TLSLD,          // symbol@tlsld
     VK_PPC_LOCAL,          // symbol@local
-
-    VK_Mips_GPREL,
-    VK_Mips_GOT_CALL,
-    VK_Mips_GOT16,
-    VK_Mips_GOT,
-    VK_Mips_ABS_HI,
-    VK_Mips_ABS_LO,
-    VK_Mips_TLSGD,
-    VK_Mips_TLSLDM,
-    VK_Mips_DTPREL_HI,
-    VK_Mips_DTPREL_LO,
-    VK_Mips_GOTTPREL,
-    VK_Mips_TPREL_HI,
-    VK_Mips_TPREL_LO,
-    VK_Mips_GPOFF_HI,
-    VK_Mips_GPOFF_LO,
-    VK_Mips_GOT_DISP,
-    VK_Mips_GOT_PAGE,
-    VK_Mips_GOT_OFST,
-    VK_Mips_HIGHER,
-    VK_Mips_HIGHEST,
-    VK_Mips_GOT_HI16,
-    VK_Mips_GOT_LO16,
-    VK_Mips_CALL_HI16,
-    VK_Mips_CALL_LO16,
-    VK_Mips_PCREL_HI16,
-    VK_Mips_PCREL_LO16,
 
     VK_COFF_IMGREL32, // symbol@imgrel (image-relative)
 

@@ -31,7 +31,6 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include <cmath>
-#include <iterator>
 
 namespace llvm {
 
@@ -105,7 +104,7 @@ extern cl::opt<bool> UseSegmentSetForPhysRegs;
     // Calculate the spill weight to assign to a single instruction.
     static float getSpillWeight(bool isDef, bool isUse,
                                 const MachineBlockFrequencyInfo *MBFI,
-                                const MachineInstr *Instr);
+                                const MachineInstr &Instr);
 
     LiveInterval &getInterval(unsigned Reg) {
       if (hasInterval(Reg))
@@ -288,7 +287,7 @@ extern cl::opt<bool> UseSegmentSetForPhysRegs;
     /// are not supported.
     ///
     /// \param UpdateFlags Update live intervals for nonallocatable physregs.
-    void handleMove(MachineInstr* MI, bool UpdateFlags = false);
+    void handleMove(MachineInstr &MI, bool UpdateFlags = false);
 
     /// moveIntoBundle - Update intervals for operands of MI so that they
     /// begin/end on the SlotIndex for BundleStart.
@@ -298,7 +297,7 @@ extern cl::opt<bool> UseSegmentSetForPhysRegs;
     /// Requires MI and BundleStart to have SlotIndexes, and assumes
     /// existing liveness is accurate. BundleStart should be the first
     /// instruction in the Bundle.
-    void handleMoveIntoBundle(MachineInstr* MI, MachineInstr* BundleStart,
+    void handleMoveIntoBundle(MachineInstr &MI, MachineInstr &BundleStart,
                               bool UpdateFlags = false);
 
     /// repairIntervalsInRange - Update live intervals for instructions in a
@@ -406,10 +405,10 @@ extern cl::opt<bool> UseSegmentSetForPhysRegs;
     void splitSeparateComponents(LiveInterval &LI,
                                  SmallVectorImpl<LiveInterval*> &SplitLIs);
 
-    /// Assure dead subregister definitions have their own vreg assigned.
-    /// This calls ConnectedSubRegClasses::splitSeparateSubRegComponent()
-    /// on each virtual register.
-    void renameDisconnectedComponents();
+    /// For live interval \p LI with correct SubRanges construct matching
+    /// information for the main live range. Expects the main live range to not
+    /// have any segments or value numbers.
+    void constructMainRangeFromSubranges(LiveInterval &LI);
 
   private:
     /// Compute live intervals for all virtual registers.

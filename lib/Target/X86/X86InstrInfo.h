@@ -23,60 +23,61 @@
 #include "X86GenInstrInfo.inc"
 
 namespace llvm {
+  class MachineInstrBuilder;
   class X86RegisterInfo;
   class X86Subtarget;
 
 namespace X86 {
   // X86 specific condition code. These correspond to X86_*_COND in
   // X86InstrInfo.td. They must be kept in synch.
-  enum CondCode {
-    COND_A  = 0,
-    COND_AE = 1,
-    COND_B  = 2,
-    COND_BE = 3,
-    COND_E  = 4,
-    COND_G  = 5,
-    COND_GE = 6,
-    COND_L  = 7,
-    COND_LE = 8,
-    COND_NE = 9,
-    COND_NO = 10,
-    COND_NP = 11,
-    COND_NS = 12,
-    COND_O  = 13,
-    COND_P  = 14,
-    COND_S  = 15,
-    LAST_VALID_COND = COND_S,
+enum CondCode {
+  COND_A = 0,
+  COND_AE = 1,
+  COND_B = 2,
+  COND_BE = 3,
+  COND_E = 4,
+  COND_G = 5,
+  COND_GE = 6,
+  COND_L = 7,
+  COND_LE = 8,
+  COND_NE = 9,
+  COND_NO = 10,
+  COND_NP = 11,
+  COND_NS = 12,
+  COND_O = 13,
+  COND_P = 14,
+  COND_S = 15,
+  LAST_VALID_COND = COND_S,
 
-    // Artificial condition codes. These are used by AnalyzeBranch
-    // to indicate a block terminated with two conditional branches to
-    // the same location. This occurs in code using FCMP_OEQ or FCMP_UNE,
-    // which can't be represented on x86 with a single condition. These
-    // are never used in MachineInstrs.
-    COND_NE_OR_P,
-    COND_NP_OR_E,
+  // Artificial condition codes. These are used by AnalyzeBranch
+  // to indicate a block terminated with two conditional branches that together
+  // form a compound condition. They occur in code using FCMP_OEQ or FCMP_UNE,
+  // which can't be represented on x86 with a single condition. These
+  // are never used in MachineInstrs and are inverses of one another.
+  COND_NE_OR_P,
+  COND_E_AND_NP,
 
-    COND_INVALID
-  };
+  COND_INVALID
+};
 
-  // Turn condition code into conditional branch opcode.
-  unsigned GetCondBranchFromCond(CondCode CC);
+// Turn condition code into conditional branch opcode.
+unsigned GetCondBranchFromCond(CondCode CC);
 
-  /// \brief Return a set opcode for the given condition and whether it has
-  /// a memory operand.
-  unsigned getSETFromCond(CondCode CC, bool HasMemoryOperand = false);
+/// \brief Return a set opcode for the given condition and whether it has
+/// a memory operand.
+unsigned getSETFromCond(CondCode CC, bool HasMemoryOperand = false);
 
-  /// \brief Return a cmov opcode for the given condition, register size in
-  /// bytes, and operand type.
-  unsigned getCMovFromCond(CondCode CC, unsigned RegBytes,
-                           bool HasMemoryOperand = false);
+/// \brief Return a cmov opcode for the given condition, register size in
+/// bytes, and operand type.
+unsigned getCMovFromCond(CondCode CC, unsigned RegBytes,
+                         bool HasMemoryOperand = false);
 
-  // Turn CMov opcode into condition code.
-  CondCode getCondFromCMovOpc(unsigned Opc);
+// Turn CMov opcode into condition code.
+CondCode getCondFromCMovOpc(unsigned Opc);
 
-  /// GetOppositeBranchCondition - Return the inverse of the specified cond,
-  /// e.g. turning COND_E to COND_NE.
-  CondCode GetOppositeBranchCondition(CondCode CC);
+/// GetOppositeBranchCondition - Return the inverse of the specified cond,
+/// e.g. turning COND_E to COND_NE.
+CondCode GetOppositeBranchCondition(CondCode CC);
 }  // end namespace X86;
 
 
@@ -89,7 +90,6 @@ inline static bool isGlobalStubReference(unsigned char TargetFlag) {
   case X86II::MO_GOT:       // normal GOT reference.
   case X86II::MO_DARWIN_NONLAZY_PIC_BASE:        // Normal $non_lazy_ptr ref.
   case X86II::MO_DARWIN_NONLAZY:                 // Normal $non_lazy_ptr ref.
-  case X86II::MO_DARWIN_HIDDEN_NONLAZY_PIC_BASE: // Hidden $non_lazy_ptr ref.
     return true;
   default:
     return false;
@@ -105,7 +105,6 @@ inline static bool isGlobalRelativeToPICBase(unsigned char TargetFlag) {
   case X86II::MO_GOT:                            // isPICStyleGOT: other global.
   case X86II::MO_PIC_BASE_OFFSET:                // Darwin local global.
   case X86II::MO_DARWIN_NONLAZY_PIC_BASE:        // Darwin/32 external global.
-  case X86II::MO_DARWIN_HIDDEN_NONLAZY_PIC_BASE: // Darwin/32 hidden global.
   case X86II::MO_TLVP:                           // ??? Pretty sure..
     return true;
   default:
@@ -146,7 +145,7 @@ class X86InstrInfo final : public X86GenInstrInfo {
   /// RegOp2MemOpTable2, RegOp2MemOpTable3 - Load / store folding opcode maps.
   ///
   typedef DenseMap<unsigned,
-                   std::pair<unsigned, unsigned> > RegOp2MemOpTableType;
+                   std::pair<uint16_t, uint16_t> > RegOp2MemOpTableType;
   RegOp2MemOpTableType RegOp2MemOpTable2Addr;
   RegOp2MemOpTableType RegOp2MemOpTable0;
   RegOp2MemOpTableType RegOp2MemOpTable1;
@@ -157,12 +156,12 @@ class X86InstrInfo final : public X86GenInstrInfo {
   /// MemOp2RegOpTable - Load / store unfolding opcode map.
   ///
   typedef DenseMap<unsigned,
-                   std::pair<unsigned, unsigned> > MemOp2RegOpTableType;
+                   std::pair<uint16_t, uint16_t> > MemOp2RegOpTableType;
   MemOp2RegOpTableType MemOp2RegOpTable;
 
   static void AddTableEntry(RegOp2MemOpTableType &R2MTable,
                             MemOp2RegOpTableType &M2RTable,
-                            unsigned RegOp, unsigned MemOp, unsigned Flags);
+                            uint16_t RegOp, uint16_t MemOp, uint16_t Flags);
 
   virtual void anchor();
 
@@ -312,7 +311,7 @@ public:
                      bool AllowModify) const override;
 
   bool getMemOpBaseRegImmOfs(MachineInstr *LdSt, unsigned &BaseReg,
-                             unsigned &Offset,
+                             int64_t &Offset,
                              const TargetRegisterInfo *TRI) const override;
   bool AnalyzeBranchPredicate(MachineBasicBlock &MBB,
                               TargetInstrInfo::MachineBranchPredicate &MBP,
@@ -369,7 +368,8 @@ public:
   MachineInstr *foldMemoryOperandImpl(MachineFunction &MF, MachineInstr *MI,
                                       ArrayRef<unsigned> Ops,
                                       MachineBasicBlock::iterator InsertPt,
-                                      int FrameIndex) const override;
+                                      int FrameIndex,
+                                      LiveIntervals *LIS = nullptr) const override;
 
   /// foldMemoryOperand - Same as the previous version except it allows folding
   /// of any load and store from / to any address, not just from a specific
@@ -377,7 +377,8 @@ public:
   MachineInstr *foldMemoryOperandImpl(MachineFunction &MF, MachineInstr *MI,
                                       ArrayRef<unsigned> Ops,
                                       MachineBasicBlock::iterator InsertPt,
-                                      MachineInstr *LoadMI) const override;
+                                      MachineInstr *LoadMI,
+                                      LiveIntervals *LIS = nullptr) const override;
 
   /// unfoldMemoryOperand - Separate a single instruction which folded a load or
   /// a store or a load and a store into two or more instruction. If this is
@@ -564,6 +565,9 @@ private:
   /// operand and follow operands form a reference to the stack frame.
   bool isFrameOperand(const MachineInstr *MI, unsigned int Op,
                       int &FrameIndex) const;
+
+  /// Expand the MOVImmSExti8 pseudo-instructions.
+  bool ExpandMOVImmSExti8(MachineInstrBuilder &MIB) const;
 };
 
 } // End llvm namespace

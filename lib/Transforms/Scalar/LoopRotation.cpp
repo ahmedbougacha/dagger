@@ -11,7 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/LoopRotation.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -20,6 +20,7 @@
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/LoopPass.h"
+#include "llvm/Analysis/LoopPassManager.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -32,6 +33,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
@@ -70,7 +72,7 @@ static void RewriteUsesOfClonedInstructions(BasicBlock *OrigHeader,
     if (OrigHeaderVal->use_empty())
       continue;
 
-    Value *OrigPreHeaderVal = ValueMap[OrigHeaderVal];
+    Value *OrigPreHeaderVal = ValueMap.lookup(OrigHeaderVal);
 
     // The value now exits in two versions: the initial value in the preheader
     // and the loop "next" value in the original header.
@@ -108,6 +110,40 @@ static void RewriteUsesOfClonedInstructions(BasicBlock *OrigHeader,
 
       // Anything else can be handled by SSAUpdater.
       SSA.RewriteUse(U);
+    }
+
+    // Replace MetadataAsValue(ValueAsMetadata(OrigHeaderVal)) uses in debug
+    // intrinsics.
+    LLVMContext &C = OrigHeader->getContext();
+    if (auto *VAM = ValueAsMetadata::getIfExists(OrigHeaderVal)) {
+      if (auto *MAV = MetadataAsValue::getIfExists(C, VAM)) {
+        for (auto UI = MAV->use_begin(), E = MAV->use_end(); UI != E; ) {
+          // Grab the use before incrementing the iterator. Otherwise, altering
+          // the Use will invalidate the iterator.
+          Use &U = *UI++;
+          DbgInfoIntrinsic *UserInst = dyn_cast<DbgInfoIntrinsic>(U.getUser());
+          if (!UserInst) continue;
+
+          // The original users in the OrigHeader are already using the original
+          // definitions.
+          BasicBlock *UserBB = UserInst->getParent();
+          if (UserBB == OrigHeader)
+            continue;
+
+          // Users in the OrigPreHeader need to use the value to which the
+          // original definitions are mapped and anything else can be handled by
+          // the SSAUpdater. To avoid adding PHINodes, check if the value is
+          // available in UserBB, if not substitute undef.
+          Value *NewVal;
+          if (UserBB == OrigPreheader)
+            NewVal = OrigPreHeaderVal;
+          else if (SSA.HasValueForBlock(UserBB))
+            NewVal = SSA.GetValueInMiddleOfBlock(UserBB);
+          else
+            NewVal = UndefValue::get(OrigHeaderVal->getType());
+          U = MetadataAsValue::get(C, ValueAsMetadata::get(NewVal));
+        }
+      }
     }
   }
 }
@@ -244,7 +280,7 @@ static bool rotateLoop(Loop *L, unsigned MaxHeaderSize, LoopInfo *LI,
 
     // Eagerly remap the operands of the instruction.
     RemapInstruction(C, ValueMap,
-                     RF_NoModuleLevelChanges|RF_IgnoreMissingEntries);
+                     RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
 
     // With the operands remapped, see if the instruction constant folds or is
     // otherwise simplifyable.  This commonly occurs because the entry from PHI
@@ -562,15 +598,36 @@ static bool iterativelyRotateLoop(Loop *L, unsigned MaxHeaderSize, LoopInfo *LI,
   return MadeChange;
 }
 
+LoopRotatePass::LoopRotatePass() : MaxHeaderSize(DefaultRotationThreshold) {}
+
+PreservedAnalyses LoopRotatePass::run(Loop &L, AnalysisManager<Loop> &AM) {
+  auto &FAM = AM.getResult<FunctionAnalysisManagerLoopProxy>(L).getManager();
+  Function *F = L.getHeader()->getParent();
+
+  auto *LI = FAM.getCachedResult<LoopAnalysis>(*F);
+  const auto *TTI = FAM.getCachedResult<TargetIRAnalysis>(*F);
+  auto *AC = FAM.getCachedResult<AssumptionAnalysis>(*F);
+  assert((LI && TTI && AC) && "Analyses for loop rotation not available");
+
+  // Optional analyses.
+  auto *DT = FAM.getCachedResult<DominatorTreeAnalysis>(*F);
+  auto *SE = FAM.getCachedResult<ScalarEvolutionAnalysis>(*F);
+
+  bool Changed = iterativelyRotateLoop(&L, MaxHeaderSize, LI, TTI, AC, DT, SE);
+  if (!Changed)
+    return PreservedAnalyses::all();
+  return getLoopPassPreservedAnalyses();
+}
+
 namespace {
 
-class LoopRotate : public LoopPass {
+class LoopRotateLegacyPass : public LoopPass {
   unsigned MaxHeaderSize;
 
 public:
   static char ID; // Pass ID, replacement for typeid
-  LoopRotate(int SpecifiedMaxHeaderSize = -1) : LoopPass(ID) {
-    initializeLoopRotatePass(*PassRegistry::getPassRegistry());
+  LoopRotateLegacyPass(int SpecifiedMaxHeaderSize = -1) : LoopPass(ID) {
+    initializeLoopRotateLegacyPassPass(*PassRegistry::getPassRegistry());
     if (SpecifiedMaxHeaderSize == -1)
       MaxHeaderSize = DefaultRotationThreshold;
     else
@@ -585,7 +642,7 @@ public:
   }
 
   bool runOnLoop(Loop *L, LPPassManager &LPM) override {
-    if (skipOptnoneFunction(L))
+    if (skipLoop(L))
       return false;
     Function &F = *L->getHeader()->getParent();
 
@@ -602,13 +659,15 @@ public:
 };
 }
 
-char LoopRotate::ID = 0;
-INITIALIZE_PASS_BEGIN(LoopRotate, "loop-rotate", "Rotate Loops", false, false)
+char LoopRotateLegacyPass::ID = 0;
+INITIALIZE_PASS_BEGIN(LoopRotateLegacyPass, "loop-rotate", "Rotate Loops",
+                      false, false)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(LoopPass)
 INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
-INITIALIZE_PASS_END(LoopRotate, "loop-rotate", "Rotate Loops", false, false)
+INITIALIZE_PASS_END(LoopRotateLegacyPass, "loop-rotate", "Rotate Loops",
+                    false, false)
 
 Pass *llvm::createLoopRotatePass(int MaxHeaderSize) {
-  return new LoopRotate(MaxHeaderSize);
+  return new LoopRotateLegacyPass(MaxHeaderSize);
 }

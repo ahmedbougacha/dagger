@@ -467,10 +467,11 @@ Native Object File Wrapper Format
 =================================
 
 Bitcode files for LLVM IR may also be wrapped in a native object file
-(i.e. ELF, COFF, Mach-O).  The bitcode must be stored in a section of the
-object file named ``.llvmbc``.  This wrapper format is useful for accommodating
-LTO in compilation pipelines where intermediate objects must be native object
-files which contain metadata in other sections.
+(i.e. ELF, COFF, Mach-O).  The bitcode must be stored in a section of the object
+file named ``__LLVM,__bitcode`` for MachO and ``.llvmbc`` for the other object
+formats.  This wrapper format is useful for accommodating LTO in compilation
+pipelines where intermediate objects must be native object files which contain
+metadata in other sections.
 
 Not all tools support this format.
 
@@ -689,6 +690,7 @@ global variable. The operand fields are:
 .. _linkage type:
 
 * *linkage*: An encoding of the linkage type for this variable:
+
   * ``external``: code 0
   * ``weak``: code 1
   * ``appending``: code 2
@@ -713,12 +715,16 @@ global variable. The operand fields are:
 .. _visibility:
 
 * *visibility*: If present, an encoding of the visibility of this variable:
+
   * ``default``: code 0
   * ``hidden``: code 1
   * ``protected``: code 2
 
+.. _bcthreadlocal:
+
 * *threadlocal*: If present, an encoding of the thread local storage mode of the
   variable:
+
   * ``not thread local``: code 0
   * ``thread local; default TLS model``: code 1
   * ``localdynamic``: code 2
@@ -735,6 +741,8 @@ global variable. The operand fields are:
   * ``default``: code 0
   * ``dllimport``: code 1
   * ``dllexport``: code 2
+
+* *comdat*: An encoding of the COMDAT of this function
 
 .. _FUNCTION:
 
@@ -756,6 +764,7 @@ function. The operand fields are:
   * ``anyregcc``: code 13
   * ``preserve_mostcc``: code 14
   * ``preserve_allcc``: code 15
+  * ``swiftcc`` : code 16
   * ``cxx_fast_tlscc``: code 17
   * ``x86_stdcallcc``: code 64
   * ``x86_fastcallcc``: code 65
@@ -802,7 +811,7 @@ function. The operand fields are:
 MODULE_CODE_ALIAS Record
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-``[ALIAS, alias type, aliasee val#, linkage, visibility, dllstorageclass]``
+``[ALIAS, alias type, aliasee val#, linkage, visibility, dllstorageclass, threadlocal, unnamed_addr]``
 
 The ``ALIAS`` record (code 9) marks the definition of an alias. The operand
 fields are
@@ -817,6 +826,12 @@ fields are
 
 * *dllstorageclass*: If present, an encoding of the
   :ref:`dllstorageclass<bcdllstorageclass>` of the alias
+
+* *threadlocal*: If present, an encoding of the
+  :ref:`thread local property<bcthreadlocal>` of the alias
+
+* *unnamed_addr*: If present and non-zero, indicates that the alias has
+  ``unnamed_addr``
 
 MODULE_CODE_PURGEVALS Record
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -840,6 +855,16 @@ representing the bytes of a single garbage collector name string. There should
 be one ``GCNAME`` record for each garbage collector name referenced in function
 ``gc`` attributes within the module. These records can be referenced by 1-based
 index in the *gc* fields of ``FUNCTION`` records.
+
+MODULE_CODE_GLOBALVAR_ATTACHMENT Record
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``[GLOBALVAR_ATTACHMENT, valueid, n x [id, mdnode]]``
+
+The ``GLOBALVAR_ATTACHMENT`` record (code 19) describes the metadata
+attachments for a global variable. The ``valueid`` is the value index for
+the global variable, and the remaining fields are pairs of metadata name
+indices and metadata node indices.
 
 .. _PARAMATTR_BLOCK:
 

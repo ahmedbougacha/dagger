@@ -321,8 +321,12 @@ bool llvm::isInstructionTriviallyDead(Instruction *I,
         II->getIntrinsicID() == Intrinsic::lifetime_end)
       return isa<UndefValue>(II->getArgOperand(1));
 
-    // Assumptions are dead if their condition is trivially true.
-    if (II->getIntrinsicID() == Intrinsic::assume) {
+    // Assumptions are dead if their condition is trivially true.  Guards on
+    // true are operationally no-ops.  In the future we can consider more
+    // sophisticated tradeoffs for guards considering potential for check
+    // widening, but for now we keep things simple.
+    if (II->getIntrinsicID() == Intrinsic::assume ||
+        II->getIntrinsicID() == Intrinsic::experimental_guard) {
       if (ConstantInt *Cond = dyn_cast<ConstantInt>(II->getArgOperand(0)))
         return !Cond->isZero();
 
@@ -486,7 +490,8 @@ bool llvm::SimplifyInstructionsInBlock(BasicBlock *BB,
   // Iterate over the original function, only adding insts to the worklist
   // if they actually need to be revisited. This avoids having to pre-init
   // the worklist with the entire function's worth of instructions.
-  for (BasicBlock::iterator BI = BB->begin(), E = std::prev(BB->end()); BI != E;) {
+  for (BasicBlock::iterator BI = BB->begin(), E = std::prev(BB->end());
+       BI != E;) {
     assert(!BI->isTerminator());
     Instruction *I = &*BI;
     ++BI;
@@ -1310,7 +1315,7 @@ static bool markAliveBlocks(Function &F,
       // Assumptions that are known to be false are equivalent to unreachable.
       // Also, if the condition is undefined, then we make the choice most
       // beneficial to the optimizer, and choose that to also be unreachable.
-      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(BBI))
+      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(BBI)) {
         if (II->getIntrinsicID() == Intrinsic::assume) {
           bool MakeUnreachable = false;
           if (isa<UndefValue>(II->getArgOperand(0)))
@@ -1326,6 +1331,24 @@ static bool markAliveBlocks(Function &F,
             break;
           }
         }
+
+        if (II->getIntrinsicID() == Intrinsic::experimental_guard) {
+          // A call to the guard intrinsic bails out of the current compilation
+          // unit if the predicate passed to it is false.  If the predicate is a
+          // constant false, then we know the guard will bail out of the current
+          // compile unconditionally, so all code following it is dead.
+          //
+          // Note: unlike in llvm.assume, it is not "obviously profitable" for
+          // guards to treat `undef` as `false` since a guard on `undef` can
+          // still be useful for widening.
+          if (auto *CI = dyn_cast<ConstantInt>(II->getArgOperand(0)))
+            if (CI->isZero() && !isa<UnreachableInst>(II->getNextNode())) {
+              changeToUnreachable(II->getNextNode(), /*UseLLVMTrap=*/ false);
+              Changed = true;
+              break;
+            }
+        }
+      }
 
       if (CallInst *CI = dyn_cast<CallInst>(BBI)) {
         if (CI->doesNotReturn()) {
@@ -1521,6 +1544,7 @@ void llvm::combineMetadata(Instruction *K, const Instruction *J,
         K->setMetadata(Kind, MDNode::getMostGenericAliasScope(JMD, KMD));
         break;
       case LLVMContext::MD_noalias:
+      case LLVMContext::MD_mem_parallel_loop_access:
         K->setMetadata(Kind, MDNode::intersect(JMD, KMD));
         break;
       case LLVMContext::MD_range:
@@ -1603,18 +1627,18 @@ unsigned llvm::replaceDominatedUsesWith(Value *From, Value *To,
 }
 
 bool llvm::callsGCLeafFunction(ImmutableCallSite CS) {
-  if (isa<IntrinsicInst>(CS.getInstruction()))
-    // Most LLVM intrinsics are things which can never take a safepoint.
-    // As a result, we don't need to have the stack parsable at the
-    // callsite.  This is a highly useful optimization since intrinsic
-    // calls are fairly prevalent, particularly in debug builds.
-    return true;
-
   // Check if the function is specifically marked as a gc leaf function.
   if (CS.hasFnAttr("gc-leaf-function"))
     return true;
-  if (const Function *F = CS.getCalledFunction())
-    return F->hasFnAttribute("gc-leaf-function");
+  if (const Function *F = CS.getCalledFunction()) {
+    if (F->hasFnAttribute("gc-leaf-function"))
+      return true;
+
+    if (auto IID = F->getIntrinsicID())
+      // Most LLVM intrinsics do not take safepoints.
+      return IID != Intrinsic::experimental_gc_statepoint &&
+             IID != Intrinsic::experimental_deoptimize;
+  }
 
   return false;
 }
@@ -1749,7 +1773,23 @@ collectBitParts(Value *V, bool MatchBSwaps, bool MatchBitReversals,
         // If the AndMask is zero for this bit, clear the bit.
         if ((AndMask & Bit) == 0)
           Result->Provenance[i] = BitPart::Unset;
+      return Result;
+    }
 
+    // If this is a zext instruction zero extend the result.
+    if (I->getOpcode() == Instruction::ZExt) {
+      auto &Res = collectBitParts(I->getOperand(0), MatchBSwaps,
+                                  MatchBitReversals, BPS);
+      if (!Res)
+        return Result;
+
+      Result = BitPart(Res->Provider, BitWidth);
+      auto NarrowBitWidth =
+          cast<IntegerType>(cast<ZExtInst>(I)->getSrcTy())->getBitWidth();
+      for (unsigned i = 0; i < NarrowBitWidth; ++i)
+        Result->Provenance[i] = Res->Provenance[i];
+      for (unsigned i = NarrowBitWidth; i < BitWidth; ++i)
+        Result->Provenance[i] = BitPart::Unset;
       return Result;
     }
   }
@@ -1780,7 +1820,7 @@ static bool bitTransformIsCorrectForBitReverse(unsigned From, unsigned To,
 
 /// Given an OR instruction, check to see if this is a bitreverse
 /// idiom. If so, insert the new intrinsic and return true.
-bool llvm::recognizeBitReverseOrBSwapIdiom(
+bool llvm::recognizeBSwapOrBitReverseIdiom(
     Instruction *I, bool MatchBSwaps, bool MatchBitReversals,
     SmallVectorImpl<Instruction *> &InsertedInsts) {
   if (Operator::getOpcode(I) != Instruction::Or)
@@ -1792,6 +1832,15 @@ bool llvm::recognizeBitReverseOrBSwapIdiom(
     return false;   // Can't do vectors or integers > 128 bits.
   unsigned BW = ITy->getBitWidth();
 
+  unsigned DemandedBW = BW;
+  IntegerType *DemandedTy = ITy;
+  if (I->hasOneUse()) {
+    if (TruncInst *Trunc = dyn_cast<TruncInst>(I->user_back())) {
+      DemandedTy = cast<IntegerType>(Trunc->getType());
+      DemandedBW = DemandedTy->getBitWidth();
+    }
+  }
+
   // Try to find all the pieces corresponding to the bswap.
   std::map<Value *, Optional<BitPart>> BPS;
   auto Res = collectBitParts(I, MatchBSwaps, MatchBitReversals, BPS);
@@ -1801,11 +1850,12 @@ bool llvm::recognizeBitReverseOrBSwapIdiom(
 
   // Now, is the bit permutation correct for a bswap or a bitreverse? We can
   // only byteswap values with an even number of bytes.
-  bool OKForBSwap = BW % 16 == 0, OKForBitReverse = true;
-  for (unsigned i = 0; i < BW; ++i) {
-    OKForBSwap &= bitTransformIsCorrectForBSwap(BitProvenance[i], i, BW);
+  bool OKForBSwap = DemandedBW % 16 == 0, OKForBitReverse = true;
+  for (unsigned i = 0; i < DemandedBW; ++i) {
+    OKForBSwap &=
+        bitTransformIsCorrectForBSwap(BitProvenance[i], i, DemandedBW);
     OKForBitReverse &=
-        bitTransformIsCorrectForBitReverse(BitProvenance[i], i, BW);
+        bitTransformIsCorrectForBitReverse(BitProvenance[i], i, DemandedBW);
   }
 
   Intrinsic::ID Intrin;
@@ -1815,6 +1865,24 @@ bool llvm::recognizeBitReverseOrBSwapIdiom(
     Intrin = Intrinsic::bitreverse;
   else
     return false;
+
+  if (ITy != DemandedTy) {
+    Function *F = Intrinsic::getDeclaration(I->getModule(), Intrin, DemandedTy);
+    Value *Provider = Res->Provider;
+    IntegerType *ProviderTy = cast<IntegerType>(Provider->getType());
+    // We may need to truncate the provider.
+    if (DemandedTy != ProviderTy) {
+      auto *Trunc = CastInst::Create(Instruction::Trunc, Provider, DemandedTy,
+                                     "trunc", I);
+      InsertedInsts.push_back(Trunc);
+      Provider = Trunc;
+    }
+    auto *CI = CallInst::Create(F, Provider, "rev", I);
+    InsertedInsts.push_back(CI);
+    auto *ExtInst = CastInst::Create(Instruction::ZExt, CI, ITy, "zext", I);
+    InsertedInsts.push_back(ExtInst);
+    return true;
+  }
 
   Function *F = Intrinsic::getDeclaration(I->getModule(), Intrin, ITy);
   InsertedInsts.push_back(CallInst::Create(F, Res->Provider, "rev", I));

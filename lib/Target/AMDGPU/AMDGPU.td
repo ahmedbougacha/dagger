@@ -198,14 +198,6 @@ def FeatureMaxPrivateElementSize4 : FeatureMaxPrivateElementSize<4>;
 def FeatureMaxPrivateElementSize8 : FeatureMaxPrivateElementSize<8>;
 def FeatureMaxPrivateElementSize16 : FeatureMaxPrivateElementSize<16>;
 
-
-def FeatureEnableHugeScratchBuffer : SubtargetFeature<
-  "huge-scratch-buffer",
-  "EnableHugeScratchBuffer",
-  "true",
-  "Enable scratch buffer sizes greater than 128 GB"
->;
-
 def FeatureVGPRSpilling : SubtargetFeature<"vgpr-spilling",
   "EnableVGPRSpilling",
   "true",
@@ -323,6 +315,24 @@ def FeatureVolcanicIslands : SubtargetFeatureGeneration<"VOLCANIC_ISLANDS",
    FeatureGCN3Encoding, FeatureCIInsts, Feature16BitInsts,
    FeatureSMemRealTime
   ]
+>;
+
+//===----------------------------------------------------------------------===//
+// Debugger related subtarget features.
+//===----------------------------------------------------------------------===//
+
+def FeatureDebuggerInsertNops : SubtargetFeature<
+  "amdgpu-debugger-insert-nops",
+  "DebuggerInsertNops",
+  "true",
+  "Insert one nop instruction for each high level source statement"
+>;
+
+def FeatureDebuggerReserveRegs : SubtargetFeature<
+  "amdgpu-debugger-reserve-regs",
+  "DebuggerReserveRegs",
+  "true",
+  "Reserve registers for debugger usage"
 >;
 
 //===----------------------------------------------------------------------===//

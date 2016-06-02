@@ -14,18 +14,16 @@
 #include "HexagonSubtarget.h"
 
 #include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/Target/TargetInstrInfo.h"
-#include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetInstrInfo.h"
+#include "llvm/Target/TargetRegisterInfo.h"
 
 #include <map>
-#include <vector>
 
 using namespace llvm;
 
@@ -332,7 +330,7 @@ void HexagonBlockRanges::computeInitialLiveRanges(InstrIndexMap &IndexMap,
       if (TargetRegisterInfo::isPhysicalRegister(R.Reg) && Reserved[R.Reg])
         continue;
       for (auto S : expandToSubRegs(R, MRI, TRI)) {
-        if (LastDef[S] != IndexType::None)
+        if (LastDef[S] != IndexType::None || LastUse[S] != IndexType::None)
           closeRange(S);
         LastDef[S] = Index;
       }
@@ -439,8 +437,8 @@ HexagonBlockRanges::RegToRangeMap HexagonBlockRanges::computeDeadMap(
   return DeadMap;
 }
 
-
-raw_ostream &operator<< (raw_ostream &OS, HexagonBlockRanges::IndexType Idx) {
+raw_ostream &llvm::operator<<(raw_ostream &OS,
+                              HexagonBlockRanges::IndexType Idx) {
   if (Idx == HexagonBlockRanges::IndexType::None)
     return OS << '-';
   if (Idx == HexagonBlockRanges::IndexType::Entry)
@@ -451,23 +449,23 @@ raw_ostream &operator<< (raw_ostream &OS, HexagonBlockRanges::IndexType Idx) {
 }
 
 // A mapping to translate between instructions and their indices.
-raw_ostream &operator<< (raw_ostream &OS,
-      const HexagonBlockRanges::IndexRange &IR) {
+raw_ostream &llvm::operator<<(raw_ostream &OS,
+                              const HexagonBlockRanges::IndexRange &IR) {
   OS << '[' << IR.start() << ':' << IR.end() << (IR.TiedEnd ? '}' : ']');
   if (IR.Fixed)
     OS << '!';
   return OS;
 }
 
-raw_ostream &operator<< (raw_ostream &OS,
-      const HexagonBlockRanges::RangeList &RL) {
+raw_ostream &llvm::operator<<(raw_ostream &OS,
+                              const HexagonBlockRanges::RangeList &RL) {
   for (auto &R : RL)
     OS << R << " ";
   return OS;
 }
 
-raw_ostream &operator<< (raw_ostream &OS,
-      const HexagonBlockRanges::InstrIndexMap &M) {
+raw_ostream &llvm::operator<<(raw_ostream &OS,
+                              const HexagonBlockRanges::InstrIndexMap &M) {
   for (auto &In : M.Block) {
     HexagonBlockRanges::IndexType Idx = M.getIndex(&In);
     OS << Idx << (Idx == M.Last ? ". " : "  ") << In;
@@ -475,8 +473,8 @@ raw_ostream &operator<< (raw_ostream &OS,
   return OS;
 }
 
-raw_ostream &operator<< (raw_ostream &OS,
-      const HexagonBlockRanges::PrintRangeMap &P) {
+raw_ostream &llvm::operator<<(raw_ostream &OS,
+                              const HexagonBlockRanges::PrintRangeMap &P) {
   for (auto &I : P.Map) {
     const HexagonBlockRanges::RangeList &RL = I.second;
     OS << PrintReg(I.first.Reg, &P.TRI, I.first.Sub) << " -> " << RL << "\n";

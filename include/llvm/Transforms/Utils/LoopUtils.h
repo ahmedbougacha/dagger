@@ -30,20 +30,21 @@ class DominatorTree;
 class Loop;
 class LoopInfo;
 class Pass;
+class PredicatedScalarEvolution;
 class PredIteratorCache;
 class ScalarEvolution;
+class SCEV;
 class TargetLibraryInfo;
 
 /// \brief Captures loop safety information.
 /// It keep information for loop & its header may throw exception.
 struct LICMSafetyInfo {
-  bool MayThrow;           // The current loop contains an instruction which
-                           // may throw.
-  bool HeaderMayThrow;     // Same as previous, but specific to loop header
+  bool MayThrow;       // The current loop contains an instruction which
+                       // may throw.
+  bool HeaderMayThrow; // Same as previous, but specific to loop header
   // Used to update funclet bundle operands.
   DenseMap<BasicBlock *, ColorVector> BlockColors;
-  LICMSafetyInfo() : MayThrow(false), HeaderMayThrow(false)
-  {}
+  LICMSafetyInfo() : MayThrow(false), HeaderMayThrow(false) {}
 };
 
 /// The RecurrenceDescriptor is used to identify recurrences variables in a
@@ -268,7 +269,7 @@ public:
 public:
   /// Default constructor - creates an invalid induction.
   InductionDescriptor()
-    : StartValue(nullptr), IK(IK_NoInduction), StepValue(nullptr) {}
+      : StartValue(nullptr), IK(IK_NoInduction), Step(nullptr) {}
 
   /// Get the consecutive direction. Returns:
   ///   0 - unknown or non-consecutive.
@@ -282,25 +283,41 @@ public:
   /// For pointer induction, returns StartValue[Index * StepValue].
   /// FIXME: The newly created binary instructions should contain nsw/nuw
   /// flags, which can be found from the original scalar operations.
-  Value *transform(IRBuilder<> &B, Value *Index) const;
+  Value *transform(IRBuilder<> &B, Value *Index, ScalarEvolution *SE,
+                   const DataLayout& DL) const;
 
   Value *getStartValue() const { return StartValue; }
   InductionKind getKind() const { return IK; }
-  ConstantInt *getStepValue() const { return StepValue; }
+  const SCEV *getStep() const { return Step; }
+  ConstantInt *getConstIntStepValue() const;
 
+  /// Returns true if \p Phi is an induction. If \p Phi is an induction,
+  /// the induction descriptor \p D will contain the data describing this
+  /// induction. If by some other means the caller has a better SCEV
+  /// expression for \p Phi than the one returned by the ScalarEvolution
+  /// analysis, it can be passed through \p Expr.
   static bool isInductionPHI(PHINode *Phi, ScalarEvolution *SE,
-                             InductionDescriptor &D);
+                             InductionDescriptor &D,
+                             const SCEV *Expr = nullptr);
+
+  /// Returns true if \p Phi is an induction, in the context associated with
+  /// the run-time predicate of PSE. If \p Assume is true, this can add further
+  /// SCEV predicates to \p PSE in order to prove that \p Phi is an induction.
+  /// If \p Phi is an induction, \p D will contain the data describing this
+  /// induction.
+  static bool isInductionPHI(PHINode *Phi, PredicatedScalarEvolution &PSE,
+                             InductionDescriptor &D, bool Assume = false);
 
 private:
   /// Private constructor - used by \c isInductionPHI.
-  InductionDescriptor(Value *Start, InductionKind K, ConstantInt *Step);
+  InductionDescriptor(Value *Start, InductionKind K, const SCEV *Step);
 
   /// Start value.
   TrackingVH<Value> StartValue;
   /// Induction kind.
   InductionKind IK;
   /// Step value.
-  ConstantInt *StepValue;
+  const SCEV *Step;
 };
 
 BasicBlock *InsertPreheaderForLoop(Loop *L, DominatorTree *DT, LoopInfo *LI,
@@ -325,8 +342,7 @@ bool simplifyLoop(Loop *L, DominatorTree *DT, LoopInfo *LI, ScalarEvolution *SE,
 /// If ScalarEvolution is passed in, it will be preserved.
 ///
 /// Returns true if any modifications are made to the loop.
-bool formLCSSA(Loop &L, DominatorTree &DT, LoopInfo *LI,
-               ScalarEvolution *SE);
+bool formLCSSA(Loop &L, DominatorTree &DT, LoopInfo *LI, ScalarEvolution *SE);
 
 /// \brief Put a loop nest into LCSSA form.
 ///
@@ -370,11 +386,11 @@ bool hoistRegion(DomTreeNode *, AliasAnalysis *, LoopInfo *, DominatorTree *,
 /// insertion point vector, PredIteratorCache, LoopInfo, DominatorTree, Loop,
 /// AliasSet information for all instructions of the loop and loop safety
 /// information as arguments. It returns changed status.
-bool promoteLoopAccessesToScalars(AliasSet &, SmallVectorImpl<BasicBlock*> &,
-                                  SmallVectorImpl<Instruction*> &,
+bool promoteLoopAccessesToScalars(AliasSet &, SmallVectorImpl<BasicBlock *> &,
+                                  SmallVectorImpl<Instruction *> &,
                                   PredIteratorCache &, LoopInfo *,
-                                  DominatorTree *, Loop *, AliasSetTracker *,
-                                  LICMSafetyInfo *);
+                                  DominatorTree *, const TargetLibraryInfo *,
+                                  Loop *, AliasSetTracker *, LICMSafetyInfo *);
 
 /// \brief Computes safety information for a loop
 /// checks loop body & header for the possibility of may throw
@@ -385,12 +401,16 @@ void computeLICMSafetyInfo(LICMSafetyInfo *, Loop *);
 /// \brief Returns the instructions that use values defined in the loop.
 SmallVector<Instruction *, 8> findDefsUsedOutsideOfLoop(Loop *L);
 
-/// \brief Check string metadata into loop, if it exist return true,
-/// else return false.
-bool checkStringMetadataIntoLoop(Loop *TheLoop, StringRef Name);
+/// \brief Find string metadata for loop
+///
+/// If it has a value (e.g. {"llvm.distribute", 1} return the value as an
+/// operand or null otherwise.  If the string metadata is not found return
+/// Optional's not-a-value.
+Optional<const MDOperand *> findStringMetadataForLoop(Loop *TheLoop,
+                                                      StringRef Name);
 
 /// \brief Set input string into loop metadata by keeping other values intact.
-void addStringMetadataToLoop(Loop *TheLoop, const char *MDString, 
+void addStringMetadataToLoop(Loop *TheLoop, const char *MDString,
                              unsigned V = 0);
 
 /// Helper to consistently add the set of standard passes to a loop pass's \c
@@ -399,7 +419,6 @@ void addStringMetadataToLoop(Loop *TheLoop, const char *MDString,
 /// All loop passes should call this as part of implementing their \c
 /// getAnalysisUsage.
 void getLoopAnalysisUsage(AnalysisUsage &AU);
-
 }
 
 #endif

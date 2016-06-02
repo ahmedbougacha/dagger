@@ -10,13 +10,13 @@
 #ifndef LLVM_LIB_TARGET_MIPS_MCTARGETDESC_MIPSABIINFO_H
 #define LLVM_LIB_TARGET_MIPS_MCTARGETDESC_MIPSABIINFO_H
 
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/MC/MCRegisterInfo.h"
 
 namespace llvm {
 
+template <typename T> class ArrayRef;
 class MCTargetOptions;
 class StringRef;
 class TargetRegisterClass;
@@ -70,6 +70,7 @@ public:
   unsigned GetZeroReg() const;
   unsigned GetPtrAdduOp() const;
   unsigned GetPtrAddiuOp() const;
+  unsigned GetPtrAndOp() const;
   unsigned GetGPRMoveOp() const;
   inline bool ArePtrs64bit() const { return IsN64(); }
   inline bool AreGprs64bit() const { return IsN32() || IsN64(); }

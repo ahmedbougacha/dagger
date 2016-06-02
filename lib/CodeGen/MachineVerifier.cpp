@@ -221,6 +221,7 @@ namespace {
     void report_context_liverange(const LiveRange &LR) const;
     void report_context_regunit(unsigned RegUnit) const;
     void report_context_lanemask(LaneBitmask LaneMask) const;
+    void report_context_vreg(unsigned VReg) const;
     void report_context_vreg_regunit(unsigned VRegOrRegUnit) const;
 
     void verifyInlineAsm(const MachineInstr *MI);
@@ -251,6 +252,7 @@ namespace {
     void verifyStackFrame();
 
     void verifySlotIndexes() const;
+    void verifyProperties(const MachineFunction &MF);
   };
 
   struct MachineVerifierPass : public MachineFunctionPass {
@@ -307,6 +309,19 @@ void MachineVerifier::verifySlotIndexes() const {
   }
 }
 
+void MachineVerifier::verifyProperties(const MachineFunction &MF) {
+  // If a pass has introduced virtual registers without clearing the
+  // AllVRegsAllocated property (or set it without allocating the vregs)
+  // then report an error.
+  if (MF.getProperties().hasProperty(
+          MachineFunctionProperties::Property::AllVRegsAllocated) &&
+      MRI->getNumVirtRegs()) {
+    report(
+        "Function has AllVRegsAllocated property but there are VReg operands",
+        &MF);
+  }
+}
+
 unsigned MachineVerifier::verify(MachineFunction &MF) {
   foundErrors = 0;
 
@@ -330,6 +345,8 @@ unsigned MachineVerifier::verify(MachineFunction &MF) {
   }
 
   verifySlotIndexes();
+
+  verifyProperties(MF);
 
   visitMachineFunctionBefore();
   for (MachineFunction::const_iterator MFI = MF.begin(), MFE = MF.end();
@@ -482,9 +499,13 @@ void MachineVerifier::report_context_regunit(unsigned RegUnit) const {
   errs() << "- regunit:     " << PrintRegUnit(RegUnit, TRI) << '\n';
 }
 
+void MachineVerifier::report_context_vreg(unsigned VReg) const {
+  errs() << "- v. register: " << PrintReg(VReg, TRI) << '\n';
+}
+
 void MachineVerifier::report_context_vreg_regunit(unsigned VRegOrUnit) const {
   if (TargetRegisterInfo::isVirtualRegister(VRegOrUnit)) {
-    errs() << "- v. register: " << PrintReg(VRegOrUnit, TRI) << '\n';
+    report_context_vreg(VRegOrUnit);
   } else {
     errs() << "- regunit:     " << PrintRegUnit(VRegOrUnit, TRI) << '\n';
   }
@@ -968,7 +989,30 @@ MachineVerifier::visitMachineOperand(const MachineOperand *MO, unsigned MONum) {
         }
       } else {
         // Virtual register.
-        const TargetRegisterClass *RC = MRI->getRegClass(Reg);
+        const TargetRegisterClass *RC = MRI->getRegClassOrNull(Reg);
+        if (!RC) {
+          // This is a generic virtual register.
+          // It must have a size and it must not have a SubIdx.
+          unsigned Size = MRI->getSize(Reg);
+          if (!Size) {
+            report("Generic virtual register must have a size", MO, MONum);
+            return;
+          }
+          // Make sure the register fits into its register bank if any.
+          const RegisterBank *RegBank = MRI->getRegBankOrNull(Reg);
+          if (RegBank && RegBank->getSize() < Size) {
+            report("Register bank is too small for virtual register", MO,
+                   MONum);
+            errs() << "Register bank " << RegBank->getName() << " too small("
+                   << RegBank->getSize() << ") to fit " << Size << "-bits\n";
+            return;
+          }
+          if (SubIdx)  {
+            report("Generic virtual register does not subregister index", MO, MONum);
+            return;
+          }
+          break;
+        }
         if (SubIdx) {
           const TargetRegisterClass *SRC =
             TRI->getSubClassWithSubReg(RC, SubIdx);
@@ -1474,9 +1518,10 @@ void MachineVerifier::visitMachineFunctionAfter() {
     BBInfo &MInfo = MBBInfoMap[&MF->front()];
     for (RegSet::iterator
          I = MInfo.vregsRequired.begin(), E = MInfo.vregsRequired.end(); I != E;
-         ++I)
-      report("Virtual register def doesn't dominate all uses.",
-             MRI->getVRegDef(*I));
+         ++I) {
+      report("Virtual register defs don't dominate all uses.", MF);
+      report_context_vreg(*I);
+    }
   }
 
   if (LiveVars)
@@ -1727,18 +1772,33 @@ void MachineVerifier::verifyLiveRangeSegment(const LiveRange &LR,
     // use, or a dead flag on a def.
     bool hasRead = false;
     bool hasSubRegDef = false;
+    bool hasDeadDef = false;
     for (ConstMIBundleOperands MOI(*MI); MOI.isValid(); ++MOI) {
       if (!MOI->isReg() || MOI->getReg() != Reg)
         continue;
       if (LaneMask != 0 &&
           (LaneMask & TRI->getSubRegIndexLaneMask(MOI->getSubReg())) == 0)
         continue;
-      if (MOI->isDef() && MOI->getSubReg() != 0)
-        hasSubRegDef = true;
+      if (MOI->isDef()) {
+        if (MOI->getSubReg() != 0)
+          hasSubRegDef = true;
+        if (MOI->isDead())
+          hasDeadDef = true;
+      }
       if (MOI->readsReg())
         hasRead = true;
     }
-    if (!S.end.isDead()) {
+    if (S.end.isDead()) {
+      // Make sure that the corresponding machine operand for a "dead" live
+      // range has the dead flag. We cannot perform this check for subregister
+      // liveranges as partially dead values are allowed.
+      if (LaneMask == 0 && !hasDeadDef) {
+        report("Instruction ending live segment on dead slot has no dead flag",
+               MI);
+        report_context(LR, Reg, LaneMask);
+        report_context(S);
+      }
+    } else {
       if (!hasRead) {
         // When tracking subregister liveness, the main range must start new
         // values on partial register writes, even if there is no read.
@@ -1784,8 +1844,9 @@ void MachineVerifier::verifyLiveRangeSegment(const LiveRange &LR,
       SlotIndex PEnd = LiveInts->getMBBEndIdx(*PI);
       const VNInfo *PVNI = LR.getVNInfoBefore(PEnd);
 
-      // All predecessors must have a live-out value.
-      if (!PVNI) {
+      // All predecessors must have a live-out value if this is not a
+      // subregister liverange.
+      if (!PVNI && LaneMask == 0) {
         report("Register not marked live out of predecessor", *PI);
         report_context(LR, Reg, LaneMask);
         report_context(*VNI);

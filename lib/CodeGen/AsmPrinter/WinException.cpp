@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "WinException.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/CodeGen/AsmPrinter.h"
@@ -125,10 +124,9 @@ void WinException::endFunction(const MachineFunction *MF) {
   if (shouldEmitPersonality || shouldEmitLSDA) {
     Asm->OutStreamer->PushSection();
 
-    // Just switch sections to the right xdata section. This use of CurrentFnSym
-    // assumes that we only emit the LSDA when ending the parent function.
-    MCSection *XData = WinEH::UnwindEmitter::getXDataSection(Asm->CurrentFnSym,
-                                                             Asm->OutContext);
+    // Just switch sections to the right xdata section.
+    MCSection *XData = Asm->OutStreamer->getAssociatedXDataSection(
+        Asm->OutStreamer->getCurrentSectionOnly());
     Asm->OutStreamer->SwitchSection(XData);
 
     // Emit the tables appropriate to the personality function in use. If we
@@ -793,6 +791,7 @@ void WinException::emitCXXFrameHandler3Table(const MachineFunction *MF) {
         const MCExpr *FrameAllocOffsetRef = nullptr;
         if (HT.CatchObj.FrameIndex != INT_MAX) {
           int Offset = getFrameIndexOffset(HT.CatchObj.FrameIndex, FuncInfo);
+          assert(Offset != 0 && "Illegal offset for catch object!");
           FrameAllocOffsetRef = MCConstantExpr::create(Offset, Asm->OutContext);
         } else {
           FrameAllocOffsetRef = MCConstantExpr::create(0, Asm->OutContext);

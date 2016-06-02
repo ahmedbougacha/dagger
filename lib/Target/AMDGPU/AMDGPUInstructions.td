@@ -154,6 +154,17 @@ def COND_NULL : PatLeaf <
   [{(void)N; return false;}]
 >;
 
+
+//===----------------------------------------------------------------------===//
+// Misc. PatFrags
+//===----------------------------------------------------------------------===//
+
+class HasOneUseBinOp<SDPatternOperator op> : PatFrag<
+  (ops node:$src0, node:$src1),
+  (op $src0, $src1),
+  [{ return N->hasOneUse(); }]
+>;
+
 //===----------------------------------------------------------------------===//
 // Load/Store Pattern Fragments
 //===----------------------------------------------------------------------===//
@@ -179,6 +190,11 @@ def store_private : PrivateStore <store>;
 def global_store : PatFrag<(ops node:$val, node:$ptr),
     (store node:$val, node:$ptr), [{
         return isGlobalStore(dyn_cast<StoreSDNode>(N));
+}]>;
+
+def global_store_atomic : PatFrag<(ops node:$val, node:$ptr),
+    (atomic_store node:$val, node:$ptr), [{
+        return isGlobalStore(dyn_cast<MemSDNode>(N));
 }]>;
 
 // Global address space loads
@@ -389,6 +405,13 @@ def atomic_umax_global : global_binary_atomic_op<atomic_load_umax>;
 def atomic_umin_global : global_binary_atomic_op<atomic_load_umin>;
 def atomic_xor_global : global_binary_atomic_op<atomic_load_xor>;
 
+def atomic_cmp_swap_global : global_binary_atomic_op<AMDGPUatomic_cmp_swap>;
+def atomic_cmp_swap_global_nortn : PatFrag<
+  (ops node:$ptr, node:$value),
+  (atomic_cmp_swap_global node:$ptr, node:$value),
+  [{ return SDValue(N, 0).use_empty(); }]
+>;
+
 //===----------------------------------------------------------------------===//
 // Misc Pattern Fragments
 //===----------------------------------------------------------------------===//
@@ -400,6 +423,7 @@ int TWO_PI_INV = 0x3e22f983;
 int FP_UINT_MAX_PLUS_1 = 0x4f800000;    // 1 << 32 in floating point encoding
 int FP32_NEG_ONE = 0xbf800000;
 int FP32_ONE = 0x3f800000;
+int FP64_ONE = 0x3ff0000000000000;
 }
 def CONST : Constants;
 
@@ -577,6 +601,25 @@ class ROTRPattern <Instruction BIT_ALIGN> : Pat <
   (rotr i32:$src0, i32:$src1),
   (BIT_ALIGN $src0, $src0, $src1)
 >;
+
+// This matches 16 permutations of
+// max(min(x, y), min(max(x, y), z))
+class IntMed3Pat<Instruction med3Inst,
+                 SDPatternOperator max,
+                 SDPatternOperator max_oneuse,
+                 SDPatternOperator min_oneuse> : Pat<
+  (max (min_oneuse i32:$src0, i32:$src1),
+       (min_oneuse (max_oneuse i32:$src0, i32:$src1), i32:$src2)),
+  (med3Inst $src0, $src1, $src2)
+>;
+
+let Properties = [SDNPCommutative, SDNPAssociative] in {
+def smax_oneuse : HasOneUseBinOp<smax>;
+def smin_oneuse : HasOneUseBinOp<smin>;
+def umax_oneuse : HasOneUseBinOp<umax>;
+def umin_oneuse : HasOneUseBinOp<umin>;
+} // Properties = [SDNPCommutative, SDNPAssociative]
+
 
 // 24-bit arithmetic patterns
 def umul24 : PatFrag <(ops node:$x, node:$y), (mul node:$x, node:$y)>;

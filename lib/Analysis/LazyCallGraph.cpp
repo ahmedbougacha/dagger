@@ -1499,6 +1499,8 @@ LazyCallGraph::RefSCC *LazyCallGraph::getNextRefSCCInPostOrder() {
   }
 }
 
+char LazyCallGraphAnalysis::PassID;
+
 LazyCallGraphPrinterPass::LazyCallGraphPrinterPass(raw_ostream &OS) : OS(OS) {}
 
 static void printNode(raw_ostream &OS, LazyCallGraph::Node &N) {
@@ -1529,8 +1531,8 @@ static void printRefSCC(raw_ostream &OS, LazyCallGraph::RefSCC &C) {
 }
 
 PreservedAnalyses LazyCallGraphPrinterPass::run(Module &M,
-                                                ModuleAnalysisManager *AM) {
-  LazyCallGraph &G = AM->getResult<LazyCallGraphAnalysis>(M);
+                                                ModuleAnalysisManager &AM) {
+  LazyCallGraph &G = AM.getResult<LazyCallGraphAnalysis>(M);
 
   OS << "Printing the call graph for module: " << M.getModuleIdentifier()
      << "\n\n";

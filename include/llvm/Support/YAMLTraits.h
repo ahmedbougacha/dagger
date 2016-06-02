@@ -10,8 +10,6 @@
 #ifndef LLVM_SUPPORT_YAMLTRAITS_H
 #define LLVM_SUPPORT_YAMLTRAITS_H
 
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -512,11 +510,11 @@ public:
 
   template <typename FBT, typename T>
   void enumFallback(T &Val) {
-    if ( matchEnumFallback() ) {
+    if (matchEnumFallback()) {
       // FIXME: Force integral conversion to allow strong typedefs to convert.
-      FBT Res = (uint64_t)Val;
+      FBT Res = static_cast<typename FBT::BaseType>(Val);
       yamlize(*this, Res, true);
-      Val = (uint64_t)Res;
+      Val = static_cast<T>(static_cast<typename FBT::BaseType>(Res));
     }
   }
 
@@ -894,12 +892,16 @@ private:
 // to [de]normalize an object for use with YAML conversion.
 template <typename TNorm, typename TFinal>
 struct MappingNormalizationHeap {
-  MappingNormalizationHeap(IO &i_o, TFinal &Obj)
+  MappingNormalizationHeap(IO &i_o, TFinal &Obj,
+                           llvm::BumpPtrAllocator *allocator)
     : io(i_o), BufPtr(nullptr), Result(Obj) {
     if ( io.outputting() ) {
       BufPtr = new (&Buffer) TNorm(io, Obj);
     }
-    else {
+    else if (allocator) {
+      BufPtr = allocator->Allocate<TNorm>();
+      new (BufPtr) TNorm(io);
+    } else {
       BufPtr = new TNorm(io);
     }
   }
@@ -1166,6 +1168,7 @@ private:
         bool operator==(const _base &rhs) const { return value == rhs; }       \
         bool operator<(const _type &rhs) const { return value < rhs.value; }   \
         _base value;                                                           \
+        typedef _base BaseType;                                                \
     };
 
 ///

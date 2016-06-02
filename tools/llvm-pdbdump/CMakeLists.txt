@@ -1,6 +1,8 @@
 set(LLVM_LINK_COMPONENTS
-  Support
+  DebugInfoCodeView
   DebugInfoPDB
+  Object
+  Support
   )
 
 add_llvm_tool(llvm-pdbdump
@@ -16,3 +18,7 @@ add_llvm_tool(llvm-pdbdump
   TypedefDumper.cpp
   VariableDumper.cpp
   )
+
+if(LLVM_USE_SANITIZE_COVERAGE)
+  add_subdirectory(fuzzer)
+endif()

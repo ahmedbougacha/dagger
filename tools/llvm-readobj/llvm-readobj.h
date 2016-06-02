@@ -13,6 +13,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorOr.h"
+#include "llvm/Support/Error.h"
 #include <string>
 
 namespace llvm {
@@ -27,6 +28,15 @@ namespace llvm {
     if (EO)
       return *EO;
     reportError(EO.getError().message());
+  }
+  template <class T> T unwrapOrError(Expected<T> EO) {
+    if (EO)
+      return *EO;
+    std::string Buf;
+    raw_string_ostream OS(Buf);
+    logAllUnhandledErrors(EO.takeError(), OS, "");
+    OS.flush();
+    reportError(Buf);
   }
   bool relocAddressLess(object::RelocationRef A,
                         object::RelocationRef B);
@@ -48,8 +58,8 @@ namespace opts {
   extern llvm::cl::opt<bool> CodeViewSubsectionBytes;
   extern llvm::cl::opt<bool> ARMAttributes;
   extern llvm::cl::opt<bool> MipsPLTGOT;
-  enum OutpytStyleTy { LLVM, GNU };
-  extern llvm::cl::opt<OutpytStyleTy> Output;
+  enum OutputStyleTy { LLVM, GNU };
+  extern llvm::cl::opt<OutputStyleTy> Output;
 } // namespace opts
 
 #define LLVM_READOBJ_ENUM_ENT(ns, enum) \

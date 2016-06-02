@@ -38,7 +38,6 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
-#include <queue>
 
 using namespace llvm;
 
@@ -62,9 +61,18 @@ static cl::opt<unsigned> HugeRegion("dag-maps-huge-region", cl::Hidden,
                              "prior to scheduling, at which point a trade-off "
                              "is made to avoid excessive compile time."));
 
-static cl::opt<unsigned> ReductionSize("dag-maps-reduction-size", cl::Hidden,
+static cl::opt<unsigned> ReductionSize(
+    "dag-maps-reduction-size", cl::Hidden,
     cl::desc("A huge scheduling region will have maps reduced by this many "
-	     "nodes at a time. Defaults to HugeRegion / 2."));
+             "nodes at a time. Defaults to HugeRegion / 2."));
+
+static unsigned getReductionSize() {
+  // Always reduce a huge region with half of the elements, except
+  // when user sets this number explicitly.
+  if (ReductionSize.getNumOccurrences() == 0)
+    return HugeRegion / 2;
+  return ReductionSize;
+}
 
 static void dumpSUList(ScheduleDAGInstrs::SUList &L) {
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -159,46 +167,46 @@ static void getUnderlyingObjectsForInstr(const MachineInstr *MI,
                                          const MachineFrameInfo *MFI,
                                          UnderlyingObjectsVector &Objects,
                                          const DataLayout &DL) {
-  if (!MI->hasOneMemOperand() ||
-      (!(*MI->memoperands_begin())->getValue() &&
-       !(*MI->memoperands_begin())->getPseudoValue()) ||
-      (*MI->memoperands_begin())->isVolatile())
-    return;
+  auto allMMOsOkay = [&]() {
+    for (const MachineMemOperand *MMO : MI->memoperands()) {
+      if (MMO->isVolatile())
+        return false;
 
-  if (const PseudoSourceValue *PSV =
-      (*MI->memoperands_begin())->getPseudoValue()) {
-    // Function that contain tail calls don't have unique PseudoSourceValue
-    // objects. Two PseudoSourceValues might refer to the same or overlapping
-    // locations. The client code calling this function assumes this is not the
-    // case. So return a conservative answer of no known object.
-    if (MFI->hasTailCall())
-      return;
+      if (const PseudoSourceValue *PSV = MMO->getPseudoValue()) {
+        // Function that contain tail calls don't have unique PseudoSourceValue
+        // objects. Two PseudoSourceValues might refer to the same or
+        // overlapping locations. The client code calling this function assumes
+        // this is not the case. So return a conservative answer of no known
+        // object.
+        if (MFI->hasTailCall())
+          return false;
 
-    // For now, ignore PseudoSourceValues which may alias LLVM IR values
-    // because the code that uses this function has no way to cope with
-    // such aliases.
-    if (!PSV->isAliased(MFI)) {
-      bool MayAlias = PSV->mayAlias(MFI);
-      Objects.push_back(UnderlyingObjectsVector::value_type(PSV, MayAlias));
+        // For now, ignore PseudoSourceValues which may alias LLVM IR values
+        // because the code that uses this function has no way to cope with
+        // such aliases.
+        if (PSV->isAliased(MFI))
+          return false;
+
+        bool MayAlias = PSV->mayAlias(MFI);
+        Objects.push_back(UnderlyingObjectsVector::value_type(PSV, MayAlias));
+      } else if (const Value *V = MMO->getValue()) {
+        SmallVector<Value *, 4> Objs;
+        getUnderlyingObjects(V, Objs, DL);
+
+        for (Value *V : Objs) {
+          if (!isIdentifiedObject(V))
+            return false;
+
+          Objects.push_back(UnderlyingObjectsVector::value_type(V, true));
+        }
+      } else
+        return false;
     }
-    return;
-  }
+    return true;
+  };
 
-  const Value *V = (*MI->memoperands_begin())->getValue();
-  if (!V)
-    return;
-
-  SmallVector<Value *, 4> Objs;
-  getUnderlyingObjects(V, Objs, DL);
-
-  for (Value *V : Objs) {
-    if (!isIdentifiedObject(V)) {
-      Objects.clear();
-      return;
-    }
-
-    Objects.push_back(UnderlyingObjectsVector::value_type(V, true));
-  }
+  if (!allMMOsOkay())
+    Objects.clear();
 }
 
 void ScheduleDAGInstrs::startBlock(MachineBasicBlock *bb) {
@@ -503,10 +511,10 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
     // VReg2SUnit for the non-overlapping part.
     LaneBitmask OverlapMask = V2SU.LaneMask & LaneMask;
     LaneBitmask NonOverlapMask = V2SU.LaneMask & ~LaneMask;
-    if (NonOverlapMask != 0)
-      CurrentVRegDefs.insert(VReg2SUnit(Reg, NonOverlapMask, V2SU.SU));
     V2SU.SU = SU;
     V2SU.LaneMask = OverlapMask;
+    if (NonOverlapMask != 0)
+      CurrentVRegDefs.insert(VReg2SUnit(Reg, NonOverlapMask, DefSU));
   }
   // If there was no CurrentVRegDefs entry for some lanes yet, create one.
   if (LaneMask != 0)
@@ -817,7 +825,7 @@ void ScheduleDAGInstrs::insertBarrierChain(Value2SUsMap &map) {
     }
 
     // Remove also the BarrierChain from list if present.
-    if (*SUItr == BarrierChain)
+    if (SUItr != SUEE && *SUItr == BarrierChain)
       SUItr++;
 
     // Remove all SUs that are now successors of BarrierChain.
@@ -877,11 +885,6 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
   // therefore never unanalyzable, but this is conservatively not
   // done.
   Value2SUsMap NonAliasStores, NonAliasLoads(1 /*TrueMemOrderLatency*/);
-
-  // Always reduce a huge region with half of the elements, except
-  // when user sets this number explicitly.
-  if (ReductionSize.getNumOccurrences() == 0)
-    ReductionSize = (HugeRegion / 2);
 
   // Remove any stale debug info; sometimes BuildSchedGraph is called again
   // without emitting the info from the previous call.
@@ -945,24 +948,45 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
         "Cannot schedule terminators or labels!");
 
     // Add register-based dependencies (data, anti, and output).
+    // For some instructions (calls, returns, inline-asm, etc.) there can
+    // be explicit uses and implicit defs, in which case the use will appear
+    // on the operand list before the def. Do two passes over the operand
+    // list to make sure that defs are processed before any uses.
     bool HasVRegDef = false;
     for (unsigned j = 0, n = MI->getNumOperands(); j != n; ++j) {
       const MachineOperand &MO = MI->getOperand(j);
-      if (!MO.isReg()) continue;
+      if (!MO.isReg() || !MO.isDef())
+        continue;
       unsigned Reg = MO.getReg();
-      if (Reg == 0) continue;
+      if (Reg == 0)
+        continue;
 
       if (TRI->isPhysicalRegister(Reg))
         addPhysRegDeps(SU, j);
       else {
-        if (MO.isDef()) {
-          HasVRegDef = true;
-          addVRegDefDeps(SU, j);
-        }
-        else if (MO.readsReg()) // ignore undef operands
-          addVRegUseDeps(SU, j);
+        HasVRegDef = true;
+        addVRegDefDeps(SU, j);
       }
     }
+    // Now process all uses.
+    for (unsigned j = 0, n = MI->getNumOperands(); j != n; ++j) {
+      const MachineOperand &MO = MI->getOperand(j);
+      // Only look at use operands.
+      // We do not need to check for MO.readsReg() here because subsequent
+      // subregister defs will get output dependence edges and need no
+      // additional use dependencies.
+      if (!MO.isReg() || !MO.isUse())
+        continue;
+      unsigned Reg = MO.getReg();
+      if (Reg == 0)
+        continue;
+
+      if (TRI->isPhysicalRegister(Reg))
+        addPhysRegDeps(SU, j);
+      else if (MO.readsReg()) // ignore undef operands
+        addVRegUseDeps(SU, j);
+    }
+
     // If we haven't seen any uses in this scheduling region, create a
     // dependence edge to ExitSU to model the live-out latency. This is required
     // for vreg defs with no in-region use, and prefetches with no vreg def.
@@ -1025,62 +1049,63 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
 
         // Map this store to 'UnknownValue'.
         Stores.insert(SU, UnknownValue);
-        continue;
+      } else {
+        // Add precise dependencies against all previously seen memory
+        // accesses mapped to the same Value(s).
+        for (const UnderlyingObject &UnderlObj : Objs) {
+          ValueType V = UnderlObj.getValue();
+          bool ThisMayAlias = UnderlObj.mayAlias();
+
+          // Add dependencies to previous stores and loads mapped to V.
+          addChainDependencies(SU, (ThisMayAlias ? Stores : NonAliasStores), V);
+          addChainDependencies(SU, (ThisMayAlias ? Loads : NonAliasLoads), V);
+        }
+        // Update the store map after all chains have been added to avoid adding
+        // self-loop edge if multiple underlying objects are present.
+        for (const UnderlyingObject &UnderlObj : Objs) {
+          ValueType V = UnderlObj.getValue();
+          bool ThisMayAlias = UnderlObj.mayAlias();
+
+          // Map this store to V.
+          (ThisMayAlias ? Stores : NonAliasStores).insert(SU, V);
+        }
+        // The store may have dependencies to unanalyzable loads and
+        // stores.
+        addChainDependencies(SU, Loads, UnknownValue);
+        addChainDependencies(SU, Stores, UnknownValue);
       }
-
-      // Add precise dependencies against all previously seen memory
-      // accesses mapped to the same Value(s).
-      for (auto &underlObj : Objs) {
-        ValueType V = underlObj.getPointer();
-        bool ThisMayAlias = underlObj.getInt();
-
-        Value2SUsMap &stores_ = (ThisMayAlias ? Stores : NonAliasStores);
-
-        // Add dependencies to previous stores and loads mapped to V.
-        addChainDependencies(SU, stores_, V);
-        addChainDependencies(SU, (ThisMayAlias ? Loads : NonAliasLoads), V);
-
-        // Map this store to V.
-        stores_.insert(SU, V);
-      }
-      // The store may have dependencies to unanalyzable loads and
-      // stores.
-      addChainDependencies(SU, Loads, UnknownValue);
-      addChainDependencies(SU, Stores, UnknownValue);
-    }
-    else { // SU is a load.
+    } else { // SU is a load.
       if (Objs.empty()) {
         // An unknown load depends on all stores.
         addChainDependencies(SU, Stores);
         addChainDependencies(SU, NonAliasStores);
 
         Loads.insert(SU, UnknownValue);
-        continue;
+      } else {
+        for (const UnderlyingObject &UnderlObj : Objs) {
+          ValueType V = UnderlObj.getValue();
+          bool ThisMayAlias = UnderlObj.mayAlias();
+
+          // Add precise dependencies against all previously seen stores
+          // mapping to the same Value(s).
+          addChainDependencies(SU, (ThisMayAlias ? Stores : NonAliasStores), V);
+
+          // Map this load to V.
+          (ThisMayAlias ? Loads : NonAliasLoads).insert(SU, V);
+        }
+        // The load may have dependencies to unanalyzable stores.
+        addChainDependencies(SU, Stores, UnknownValue);
       }
-
-      for (auto &underlObj : Objs) {
-        ValueType V = underlObj.getPointer();
-        bool ThisMayAlias = underlObj.getInt();
-
-        // Add precise dependencies against all previously seen stores
-        // mapping to the same Value(s).
-        addChainDependencies(SU, (ThisMayAlias ? Stores : NonAliasStores), V);
-
-        // Map this load to V.
-        (ThisMayAlias ? Loads : NonAliasLoads).insert(SU, V);
-      }
-      // The load may have dependencies to unanalyzable stores.
-      addChainDependencies(SU, Stores, UnknownValue);
     }
 
     // Reduce maps if they grow huge.
     if (Stores.size() + Loads.size() >= HugeRegion) {
       DEBUG(dbgs() << "Reducing Stores and Loads maps.\n";);
-      reduceHugeMemNodeMaps(Stores, Loads, ReductionSize);
+      reduceHugeMemNodeMaps(Stores, Loads, getReductionSize());
     }
     if (NonAliasStores.size() + NonAliasLoads.size() >= HugeRegion) {
       DEBUG(dbgs() << "Reducing NonAliasStores and NonAliasLoads maps.\n";);
-      reduceHugeMemNodeMaps(NonAliasStores, NonAliasLoads, ReductionSize);
+      reduceHugeMemNodeMaps(NonAliasStores, NonAliasLoads, getReductionSize());
     }
   }
 
@@ -1192,7 +1217,8 @@ void ScheduleDAGInstrs::startBlockForKills(MachineBasicBlock *BB) {
 /// operands, then we also need to propagate that to any instructions inside
 /// the bundle which had the same kill state.
 static void toggleBundleKillFlag(MachineInstr *MI, unsigned Reg,
-                                 bool NewKillState) {
+                                 bool NewKillState,
+                                 const TargetRegisterInfo *TRI) {
   if (MI->getOpcode() != TargetOpcode::BUNDLE)
     return;
 
@@ -1203,28 +1229,11 @@ static void toggleBundleKillFlag(MachineInstr *MI, unsigned Reg,
   MachineBasicBlock::instr_iterator Begin = MI->getIterator();
   MachineBasicBlock::instr_iterator End = getBundleEnd(*MI);
   while (Begin != End) {
-    for (MachineOperand &MO : (--End)->operands()) {
-      if (!MO.isReg() || MO.isDef() || Reg != MO.getReg())
-        continue;
-
-      // DEBUG_VALUE nodes do not contribute to code generation and should
-      // always be ignored.  Failure to do so may result in trying to modify
-      // KILL flags on DEBUG_VALUE nodes, which is distressing.
-      if (MO.isDebug())
-        continue;
-
-      // If the register has the internal flag then it could be killing an
-      // internal def of the register.  In this case, just skip.  We only want
-      // to toggle the flag on operands visible outside the bundle.
-      if (MO.isInternalRead())
-        continue;
-
-      if (MO.isKill() == NewKillState)
-        continue;
-      MO.setIsKill(NewKillState);
-      if (NewKillState)
-        return;
-    }
+    if (NewKillState) {
+      if ((--End)->addRegisterKilled(Reg, TRI, /* addIfNotFound= */ false))
+         return;
+    } else
+        (--End)->clearRegisterKills(Reg, TRI);
   }
 }
 
@@ -1232,21 +1241,21 @@ bool ScheduleDAGInstrs::toggleKillFlag(MachineInstr *MI, MachineOperand &MO) {
   // Setting kill flag...
   if (!MO.isKill()) {
     MO.setIsKill(true);
-    toggleBundleKillFlag(MI, MO.getReg(), true);
+    toggleBundleKillFlag(MI, MO.getReg(), true, TRI);
     return false;
   }
 
   // If MO itself is live, clear the kill flag...
   if (LiveRegs.test(MO.getReg())) {
     MO.setIsKill(false);
-    toggleBundleKillFlag(MI, MO.getReg(), false);
+    toggleBundleKillFlag(MI, MO.getReg(), false, TRI);
     return false;
   }
 
   // If any subreg of MO is live, then create an imp-def for that
   // subreg and keep MO marked as killed.
   MO.setIsKill(false);
-  toggleBundleKillFlag(MI, MO.getReg(), false);
+  toggleBundleKillFlag(MI, MO.getReg(), false, TRI);
   bool AllDead = true;
   const unsigned SuperReg = MO.getReg();
   MachineInstrBuilder MIB(MF, MI);
@@ -1259,7 +1268,7 @@ bool ScheduleDAGInstrs::toggleKillFlag(MachineInstr *MI, MachineOperand &MO) {
 
   if(AllDead) {
     MO.setIsKill(true);
-    toggleBundleKillFlag(MI, MO.getReg(), true);
+    toggleBundleKillFlag(MI, MO.getReg(), true, TRI);
   }
   return false;
 }

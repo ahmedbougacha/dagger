@@ -207,3 +207,93 @@ for.end.loopexit:
 for.end:
   ret void
 }
+
+; CHECK-LABEL: @PR26734
+;
+; void PR26734(short *a, int *b, int *c, int d, short *e) {
+;   for (; d != 21; d++) {
+;     *b &= *c;
+;     *e = *a - 6;
+;     *c = *e;
+;   }
+; }
+;
+; CHECK-NOT: vector.ph:
+;
+define void @PR26734(i16* %a, i32* %b, i32* %c, i32 %d, i16* %e) {
+entry:
+  %cmp4 = icmp eq i32 %d, 21
+  br i1 %cmp4, label %entry.for.end_crit_edge, label %for.body.lr.ph
+
+entry.for.end_crit_edge:
+  %.pre = load i32, i32* %b, align 4
+  br label %for.end
+
+for.body.lr.ph:
+  %0 = load i16, i16* %a, align 2
+  %sub = add i16 %0, -6
+  %conv2 = sext i16 %sub to i32
+  %c.promoted = load i32, i32* %c, align 4
+  %b.promoted = load i32, i32* %b, align 4
+  br label %for.body
+
+for.body:
+  %inc7 = phi i32 [ %d, %for.body.lr.ph ], [ %inc, %for.body ]
+  %and6 = phi i32 [ %b.promoted, %for.body.lr.ph ], [ %and, %for.body ]
+  %conv25 = phi i32 [ %c.promoted, %for.body.lr.ph ], [ %conv2, %for.body ]
+  %and = and i32 %and6, %conv25
+  %inc = add nsw i32 %inc7, 1
+  %cmp = icmp eq i32 %inc, 21
+  br i1 %cmp, label %for.cond.for.end_crit_edge, label %for.body
+
+for.cond.for.end_crit_edge:
+  %and.lcssa = phi i32 [ %and, %for.body ]
+  store i32 %conv2, i32* %c, align 4
+  store i32 %and.lcssa, i32* %b, align 4
+  store i16 %sub, i16* %e, align 2
+  br label %for.end
+
+for.end:
+  ret void
+}
+
+; CHECK-LABEL: @PR27246
+;
+; int PR27246() {
+;   unsigned int e, n;
+;   for (int i = 1; i < 49; ++i) {
+;     for (int k = i; k > 1; --k)
+;       e = k;
+;     n = e;
+;   }
+;   return n;
+; }
+;
+; CHECK-NOT: vector.ph:
+;
+define i32 @PR27246() {
+entry:
+  br label %for.cond1.preheader
+
+for.cond1.preheader:
+  %i.016 = phi i32 [ 1, %entry ], [ %inc, %for.cond.cleanup3 ]
+  %e.015 = phi i32 [ undef, %entry ], [ %e.1.lcssa, %for.cond.cleanup3 ]
+  br label %for.cond1
+
+for.cond.cleanup:
+  %e.1.lcssa.lcssa = phi i32 [ %e.1.lcssa, %for.cond.cleanup3 ]
+  ret i32 %e.1.lcssa.lcssa
+
+for.cond1:
+  %e.1 = phi i32 [ %k.0, %for.cond1 ], [ %e.015, %for.cond1.preheader ]
+  %k.0 = phi i32 [ %dec, %for.cond1 ], [ %i.016, %for.cond1.preheader ]
+  %cmp2 = icmp sgt i32 %k.0, 1
+  %dec = add nsw i32 %k.0, -1
+  br i1 %cmp2, label %for.cond1, label %for.cond.cleanup3
+
+for.cond.cleanup3:
+  %e.1.lcssa = phi i32 [ %e.1, %for.cond1 ]
+  %inc = add nuw nsw i32 %i.016, 1
+  %exitcond = icmp eq i32 %inc, 49
+  br i1 %exitcond, label %for.cond.cleanup, label %for.cond1.preheader
+}

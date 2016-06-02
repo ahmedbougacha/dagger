@@ -172,7 +172,12 @@ void MCObjectFileInfo::initMachOMCObjectFileInfo(Triple T) {
                            MachO::S_NON_LAZY_SYMBOL_POINTERS,
                            SectionKind::getMetadata());
 
-  if (RelocM == Reloc::Static) {
+  ThreadLocalPointerSection
+    = Ctx->getMachOSection("__DATA", "__thread_ptr",
+                           MachO::S_THREAD_LOCAL_VARIABLE_POINTERS,
+                           SectionKind::getMetadata());
+
+  if (!PositionIndependent) {
     StaticCtorSection = Ctx->getMachOSection("__TEXT", "__constructor", 0,
                                              SectionKind::getData());
     StaticDtorSection = Ctx->getMachOSection("__TEXT", "__destructor", 0,
@@ -308,18 +313,21 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(Triple T) {
     // Fallthrough if not using EHABI
   case Triple::ppc:
   case Triple::x86:
-    PersonalityEncoding = (RelocM == Reloc::PIC_)
-     ? dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4
-     : dwarf::DW_EH_PE_absptr;
-    LSDAEncoding = (RelocM == Reloc::PIC_)
-      ? dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4
-      : dwarf::DW_EH_PE_absptr;
-    TTypeEncoding = (RelocM == Reloc::PIC_)
-     ? dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4
-     : dwarf::DW_EH_PE_absptr;
+    PersonalityEncoding = PositionIndependent
+                              ? dwarf::DW_EH_PE_indirect |
+                                    dwarf::DW_EH_PE_pcrel |
+                                    dwarf::DW_EH_PE_sdata4
+                              : dwarf::DW_EH_PE_absptr;
+    LSDAEncoding = PositionIndependent
+                       ? dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4
+                       : dwarf::DW_EH_PE_absptr;
+    TTypeEncoding = PositionIndependent
+                        ? dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel |
+                              dwarf::DW_EH_PE_sdata4
+                        : dwarf::DW_EH_PE_absptr;
     break;
   case Triple::x86_64:
-    if (RelocM == Reloc::PIC_) {
+    if (PositionIndependent) {
       PersonalityEncoding = dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel |
         ((CMModel == CodeModel::Small || CMModel == CodeModel::Medium)
          ? dwarf::DW_EH_PE_sdata4 : dwarf::DW_EH_PE_sdata8);
@@ -339,12 +347,24 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(Triple T) {
         ? dwarf::DW_EH_PE_udata4 : dwarf::DW_EH_PE_absptr;
     }
     break;
+  case Triple::hexagon:
+    PersonalityEncoding = dwarf::DW_EH_PE_absptr;
+    LSDAEncoding = dwarf::DW_EH_PE_absptr;
+    FDECFIEncoding = dwarf::DW_EH_PE_absptr;
+    TTypeEncoding = dwarf::DW_EH_PE_absptr;
+    if (PositionIndependent) {
+      PersonalityEncoding |= dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel;
+      LSDAEncoding |= dwarf::DW_EH_PE_pcrel;
+      FDECFIEncoding |= dwarf::DW_EH_PE_pcrel;
+      TTypeEncoding |= dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel;
+    }
+    break;
   case Triple::aarch64:
   case Triple::aarch64_be:
     // The small model guarantees static code/data size < 4GB, but not where it
     // will be in memory. Most of these could end up >2GB away so even a signed
     // pc-relative 32-bit address is insufficient, theoretically.
-    if (RelocM == Reloc::PIC_) {
+    if (PositionIndependent) {
       PersonalityEncoding = dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel |
         dwarf::DW_EH_PE_sdata8;
       LSDAEncoding = dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata8;
@@ -355,6 +375,11 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(Triple T) {
       LSDAEncoding = dwarf::DW_EH_PE_absptr;
       TTypeEncoding = dwarf::DW_EH_PE_absptr;
     }
+    break;
+  case Triple::lanai:
+    LSDAEncoding = dwarf::DW_EH_PE_absptr;
+    PersonalityEncoding = dwarf::DW_EH_PE_absptr;
+    TTypeEncoding = dwarf::DW_EH_PE_absptr;
     break;
   case Triple::mips:
   case Triple::mipsel:
@@ -381,7 +406,7 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(Triple T) {
     break;
   case Triple::sparcel:
   case Triple::sparc:
-    if (RelocM == Reloc::PIC_) {
+    if (PositionIndependent) {
       LSDAEncoding = dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4;
       PersonalityEncoding = dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel |
         dwarf::DW_EH_PE_sdata4;
@@ -395,7 +420,7 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(Triple T) {
     break;
   case Triple::sparcv9:
     LSDAEncoding = dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4;
-    if (RelocM == Reloc::PIC_) {
+    if (PositionIndependent) {
       PersonalityEncoding = dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel |
         dwarf::DW_EH_PE_sdata4;
       TTypeEncoding = dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel |
@@ -408,7 +433,7 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(Triple T) {
   case Triple::systemz:
     // All currently-defined code models guarantee that 4-byte PC-relative
     // values will be in range.
-    if (RelocM == Reloc::PIC_) {
+    if (PositionIndependent) {
       PersonalityEncoding = dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel |
         dwarf::DW_EH_PE_sdata4;
       LSDAEncoding = dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4;
@@ -802,11 +827,10 @@ void MCObjectFileInfo::initCOFFMCObjectFileInfo(Triple T) {
                                         SectionKind::getReadOnly());
 }
 
-void MCObjectFileInfo::InitMCObjectFileInfo(const Triple &TheTriple,
-                                            Reloc::Model relocm,
+void MCObjectFileInfo::InitMCObjectFileInfo(const Triple &TheTriple, bool PIC,
                                             CodeModel::Model cm,
                                             MCContext &ctx) {
-  RelocM = relocm;
+  PositionIndependent = PIC;
   CMModel = cm;
   Ctx = &ctx;
 
@@ -851,12 +875,6 @@ void MCObjectFileInfo::InitMCObjectFileInfo(const Triple &TheTriple,
     report_fatal_error("Cannot initialize MC for unknown object file format.");
     break;
   }
-}
-
-void MCObjectFileInfo::InitMCObjectFileInfo(StringRef TT, Reloc::Model RM,
-                                            CodeModel::Model CM,
-                                            MCContext &ctx) {
-  InitMCObjectFileInfo(Triple(TT), RM, CM, ctx);
 }
 
 MCSection *MCObjectFileInfo::getDwarfTypesSection(uint64_t Hash) const {

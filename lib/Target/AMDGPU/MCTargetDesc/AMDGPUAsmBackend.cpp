@@ -73,12 +73,16 @@ void AMDGPUMCObjectWriter::writeObject(MCAssembler &Asm,
 
 static unsigned getFixupKindNumBytes(unsigned Kind) {
   switch (Kind) {
+  case FK_SecRel_1:
   case FK_Data_1:
     return 1;
+  case FK_SecRel_2:
   case FK_Data_2:
     return 2;
+  case FK_SecRel_4:
   case FK_Data_4:
     return 4;
+  case FK_SecRel_8:
   case FK_Data_8:
     return 8;
   default:
@@ -92,8 +96,12 @@ void AMDGPUAsmBackend::applyFixup(const MCFixup &Fixup, char *Data,
 
   switch ((unsigned)Fixup.getKind()) {
     case AMDGPU::fixup_si_sopp_br: {
+      int64_t BrImm = ((int64_t)Value - 4) / 4;
+      if (!isInt<16>(BrImm))
+        report_fatal_error("branch size exceeds simm16");
+
       uint16_t *Dst = (uint16_t*)(Data + Fixup.getOffset());
-      *Dst = (Value - 4) / 4;
+      *Dst = BrImm;
       break;
     }
 
@@ -182,8 +190,6 @@ public:
 MCAsmBackend *llvm::createAMDGPUAsmBackend(const Target &T,
                                            const MCRegisterInfo &MRI,
                                            const Triple &TT, StringRef CPU) {
-  Triple TargetTriple(TT);
-
   // Use 64-bit ELF for amdgcn
-  return new ELFAMDGPUAsmBackend(T, TargetTriple.getArch() == Triple::amdgcn);
+  return new ELFAMDGPUAsmBackend(T, TT.getArch() == Triple::amdgcn);
 }

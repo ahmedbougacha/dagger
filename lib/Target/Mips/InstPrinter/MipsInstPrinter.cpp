@@ -138,38 +138,7 @@ static void printExpr(const MCExpr *Expr, const MCAsmInfo *MAI,
   } else
     SRE = cast<MCSymbolRefExpr>(Expr);
 
-  MCSymbolRefExpr::VariantKind Kind = SRE->getKind();
-
-  switch (Kind) {
-  default:                                 llvm_unreachable("Invalid kind!");
-  case MCSymbolRefExpr::VK_None:           break;
-  case MCSymbolRefExpr::VK_Mips_GPREL:     OS << "%gp_rel("; break;
-  case MCSymbolRefExpr::VK_Mips_GOT_CALL:  OS << "%call16("; break;
-  case MCSymbolRefExpr::VK_Mips_GOT16:     OS << "%got(";    break;
-  case MCSymbolRefExpr::VK_Mips_GOT:       OS << "%got(";    break;
-  case MCSymbolRefExpr::VK_Mips_ABS_HI:    OS << "%hi(";     break;
-  case MCSymbolRefExpr::VK_Mips_ABS_LO:    OS << "%lo(";     break;
-  case MCSymbolRefExpr::VK_Mips_TLSGD:     OS << "%tlsgd(";  break;
-  case MCSymbolRefExpr::VK_Mips_TLSLDM:    OS << "%tlsldm(";  break;
-  case MCSymbolRefExpr::VK_Mips_DTPREL_HI: OS << "%dtprel_hi(";  break;
-  case MCSymbolRefExpr::VK_Mips_DTPREL_LO: OS << "%dtprel_lo(";  break;
-  case MCSymbolRefExpr::VK_Mips_GOTTPREL:  OS << "%gottprel("; break;
-  case MCSymbolRefExpr::VK_Mips_TPREL_HI:  OS << "%tprel_hi("; break;
-  case MCSymbolRefExpr::VK_Mips_TPREL_LO:  OS << "%tprel_lo("; break;
-  case MCSymbolRefExpr::VK_Mips_GPOFF_HI:  OS << "%hi(%neg(%gp_rel("; break;
-  case MCSymbolRefExpr::VK_Mips_GPOFF_LO:  OS << "%lo(%neg(%gp_rel("; break;
-  case MCSymbolRefExpr::VK_Mips_GOT_DISP:  OS << "%got_disp("; break;
-  case MCSymbolRefExpr::VK_Mips_GOT_PAGE:  OS << "%got_page("; break;
-  case MCSymbolRefExpr::VK_Mips_GOT_OFST:  OS << "%got_ofst("; break;
-  case MCSymbolRefExpr::VK_Mips_HIGHER:    OS << "%higher("; break;
-  case MCSymbolRefExpr::VK_Mips_HIGHEST:   OS << "%highest("; break;
-  case MCSymbolRefExpr::VK_Mips_GOT_HI16:  OS << "%got_hi("; break;
-  case MCSymbolRefExpr::VK_Mips_GOT_LO16:  OS << "%got_lo("; break;
-  case MCSymbolRefExpr::VK_Mips_CALL_HI16: OS << "%call_hi("; break;
-  case MCSymbolRefExpr::VK_Mips_CALL_LO16: OS << "%call_lo("; break;
-  case MCSymbolRefExpr::VK_Mips_PCREL_HI16: OS << "%pcrel_hi("; break;
-  case MCSymbolRefExpr::VK_Mips_PCREL_LO16: OS << "%pcrel_lo("; break;
-  }
+  assert(SRE->getKind() == MCSymbolRefExpr::VK_None && "Invalid kind!");
 
   SRE->getSymbol().print(OS, MAI);
 
@@ -178,12 +147,6 @@ static void printExpr(const MCExpr *Expr, const MCAsmInfo *MAI,
       OS << '+';
     OS << Offset;
   }
-
-  if ((Kind == MCSymbolRefExpr::VK_Mips_GPOFF_HI) ||
-      (Kind == MCSymbolRefExpr::VK_Mips_GPOFF_LO))
-    OS << ")))";
-  else if (Kind != MCSymbolRefExpr::VK_None)
-    OS << ')';
 }
 
 void MipsInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
@@ -195,7 +158,7 @@ void MipsInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   }
 
   if (Op.isImm()) {
-    O << Op.getImm();
+    O << formatImm(Op.getImm());
     return;
   }
 
@@ -203,22 +166,19 @@ void MipsInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   printExpr(Op.getExpr(), &MAI, O);
 }
 
-void MipsInstPrinter::printUnsignedImm(const MCInst *MI, int opNum,
-                                       raw_ostream &O) {
+template <unsigned Bits, unsigned Offset>
+void MipsInstPrinter::printUImm(const MCInst *MI, int opNum, raw_ostream &O) {
   const MCOperand &MO = MI->getOperand(opNum);
-  if (MO.isImm())
-    O << (unsigned short int)MO.getImm();
-  else
-    printOperand(MI, opNum, O);
-}
+  if (MO.isImm()) {
+    uint64_t Imm = MO.getImm();
+    Imm -= Offset;
+    Imm &= (1 << Bits) - 1;
+    Imm += Offset;
+    O << formatImm(Imm);
+    return;
+  }
 
-void MipsInstPrinter::printUnsignedImm8(const MCInst *MI, int opNum,
-                                        raw_ostream &O) {
-  const MCOperand &MO = MI->getOperand(opNum);
-  if (MO.isImm())
-    O << (unsigned short int)(unsigned char)MO.getImm();
-  else
-    printOperand(MI, opNum, O);
+  printOperand(MI, opNum, O);
 }
 
 void MipsInstPrinter::
@@ -343,7 +303,7 @@ void MipsInstPrinter::printSaveRestore(const MCInst *MI, raw_ostream &O) {
     if (MI->getOperand(i).isReg())
       printRegName(O, MI->getOperand(i).getReg());
     else
-      printUnsignedImm(MI, i, O);
+      printUImm<16>(MI, i, O);
   }
 }
 

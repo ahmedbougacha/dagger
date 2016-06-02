@@ -113,6 +113,15 @@ BlockFrequencyInfo::BlockFrequencyInfo(const Function &F,
   calculate(F, BPI, LI);
 }
 
+BlockFrequencyInfo::BlockFrequencyInfo(BlockFrequencyInfo &&Arg)
+    : BFI(std::move(Arg.BFI)) {}
+
+BlockFrequencyInfo &BlockFrequencyInfo::operator=(BlockFrequencyInfo &&RHS) {
+  releaseMemory();
+  BFI = std::move(RHS.BFI);
+  return *this;
+}
+
 void BlockFrequencyInfo::calculate(const Function &F,
                                    const BranchProbabilityInfo &BPI,
                                    const LoopInfo &LI) {
@@ -127,6 +136,20 @@ void BlockFrequencyInfo::calculate(const Function &F,
 
 BlockFrequency BlockFrequencyInfo::getBlockFreq(const BasicBlock *BB) const {
   return BFI ? BFI->getBlockFreq(BB) : 0;
+}
+
+Optional<uint64_t>
+BlockFrequencyInfo::getBlockProfileCount(const BasicBlock *BB) const {
+  auto EntryCount = getFunction()->getEntryCount();
+  if (!EntryCount)
+    return None;
+  // Use 128 bit APInt to do the arithmetic to avoid overflow.
+  APInt BlockCount(128, EntryCount.getValue());
+  APInt BlockFreq(128, getBlockFreq(BB).getFrequency());
+  APInt EntryFreq(128, getEntryFreq());
+  BlockCount *= BlockFreq;
+  BlockCount = BlockCount.udiv(EntryFreq);
+  return BlockCount.getLimitedValue();
 }
 
 void BlockFrequencyInfo::setBlockFreq(const BasicBlock *BB,
@@ -210,4 +233,22 @@ bool BlockFrequencyInfoWrapperPass::runOnFunction(Function &F) {
   LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   BFI.calculate(F, BPI, LI);
   return false;
+}
+
+char BlockFrequencyAnalysis::PassID;
+BlockFrequencyInfo BlockFrequencyAnalysis::run(Function &F,
+                                               AnalysisManager<Function> &AM) {
+  BlockFrequencyInfo BFI;
+  BFI.calculate(F, AM.getResult<BranchProbabilityAnalysis>(F),
+                AM.getResult<LoopAnalysis>(F));
+  return BFI;
+}
+
+PreservedAnalyses
+BlockFrequencyPrinterPass::run(Function &F, AnalysisManager<Function> &AM) {
+  OS << "Printing analysis results of BFI for function "
+     << "'" << F.getName() << "':"
+     << "\n";
+  AM.getResult<BlockFrequencyAnalysis>(F).print(OS);
+  return PreservedAnalyses::all();
 }

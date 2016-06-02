@@ -92,6 +92,12 @@ public:
   /// if needed and when possible.
   bool runOnMachineFunction(MachineFunction &MF) override;
 
+  // This pass runs after regalloc and doesn't support VReg operands.
+  MachineFunctionProperties getRequiredProperties() const override {
+    return MachineFunctionProperties().set(
+        MachineFunctionProperties::Property::AllVRegsAllocated);
+  }
+
 private:
   MachineFunction *MF;
   const X86InstrInfo *TII; // Machine instruction info.
@@ -156,6 +162,9 @@ FixupLEAPass::postRAConvertToLEA(MachineFunction::iterator &MFI,
 FunctionPass *llvm::createX86FixupLEAs() { return new FixupLEAPass(); }
 
 bool FixupLEAPass::runOnMachineFunction(MachineFunction &Func) {
+  if (skipFunction(*Func.getFunction()))
+    return false;
+
   MF = &Func;
   const X86Subtarget &ST = Func.getSubtarget<X86Subtarget>();
   OptIncDec = !ST.slowIncDec() || Func.getFunction()->optForMinSize();
@@ -291,9 +300,8 @@ void FixupLEAPass::processInstruction(MachineBasicBlock::iterator &I,
                                       MachineFunction::iterator MFI) {
   // Process a load, store, or LEA instruction.
   MachineInstr *MI = I;
-  int opcode = MI->getOpcode();
   const MCInstrDesc &Desc = MI->getDesc();
-  int AddrOffset = X86II::getMemoryOperandNo(Desc.TSFlags, opcode);
+  int AddrOffset = X86II::getMemoryOperandNo(Desc.TSFlags);
   if (AddrOffset >= 0) {
     AddrOffset += X86II::getOperandBias(Desc);
     MachineOperand &p = MI->getOperand(AddrOffset + X86::AddrBaseReg);

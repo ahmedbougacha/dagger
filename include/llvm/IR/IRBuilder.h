@@ -16,36 +16,54 @@
 #define LLVM_IR_IRBUILDER_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/None.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constant.h"
 #include "llvm/IR/ConstantFolder.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
 #include "llvm/IR/ValueHandle.h"
+#include "llvm/Support/AtomicOrdering.h"
 #include "llvm/Support/CBindingWrapping.h"
+#include "llvm/Support/Casting.h"
+#include "llvm-c/Types.h"
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
 
 namespace llvm {
+
+class APInt;
 class MDNode;
+class Module;
+class Use;
 
 /// \brief This provides the default implementation of the IRBuilder
 /// 'InsertHelper' method that is called whenever an instruction is created by
 /// IRBuilder and needs to be inserted.
 ///
 /// By default, this inserts the instruction at the insertion point.
-template <bool preserveNames = true>
 class IRBuilderDefaultInserter {
 protected:
   void InsertHelper(Instruction *I, const Twine &Name,
                     BasicBlock *BB, BasicBlock::iterator InsertPt) const {
     if (BB) BB->getInstList().insert(InsertPt, I);
-    if (preserveNames)
-      I->setName(Name);
+    I->setName(Name);
   }
 };
 
@@ -437,12 +455,14 @@ public:
                               Value *Mask);
 
   /// \brief Create a call to Masked Gather intrinsic
-  CallInst *CreateMaskedGather(Value *Ptrs, unsigned Align, Value *Mask = 0,
-                               Value *PassThru = 0, const Twine& Name = "");
+  CallInst *CreateMaskedGather(Value *Ptrs, unsigned Align,
+                               Value *Mask = nullptr,
+                               Value *PassThru = nullptr,
+                               const Twine& Name = "");
 
   /// \brief Create a call to Masked Scatter intrinsic
   CallInst *CreateMaskedScatter(Value *Val, Value *Ptrs, unsigned Align,
-                                Value *Mask = 0);
+                                Value *Mask = nullptr);
 
   /// \brief Create an assume intrinsic call that allows the optimizer to
   /// assume that the provided condition will be true.
@@ -537,14 +557,12 @@ private:
 /// created. Convenience state exists to specify fast-math flags and fp-math
 /// tags.
 ///
-/// The first template argument handles whether or not to preserve names in the
-/// final instruction output. This defaults to on.  The second template argument
-/// specifies a class to use for creating constants.  This defaults to creating
-/// minimally folded constants.  The third template argument allows clients to
-/// specify custom insertion hooks that are called on every newly created
-/// insertion.
-template<bool preserveNames = true, typename T = ConstantFolder,
-         typename Inserter = IRBuilderDefaultInserter<preserveNames> >
+/// The first template argument specifies a class to use for creating constants.
+/// This defaults to creating minimally folded constants.  The second template
+/// argument allows clients to specify custom insertion hooks that are called on
+/// every newly created insertion.
+template <typename T = ConstantFolder,
+          typename Inserter = IRBuilderDefaultInserter>
 class IRBuilder : public IRBuilderBase, public Inserter {
   T Folder;
 
@@ -593,10 +611,6 @@ public:
 
   /// \brief Get the constant folder being used.
   const T &getFolder() { return Folder; }
-
-  /// \brief Return true if this builder is configured to actually add the
-  /// requested names to IR created through it.
-  bool isNamePreserving() const { return preserveNames; }
 
   /// \brief Insert and return the specified instruction.
   template<typename InstTy>
@@ -1577,12 +1591,19 @@ public:
   }
 
   Value *CreateSelect(Value *C, Value *True, Value *False,
-                      const Twine &Name = "") {
+                      const Twine &Name = "", Instruction *MDFrom = nullptr) {
     if (Constant *CC = dyn_cast<Constant>(C))
       if (Constant *TC = dyn_cast<Constant>(True))
         if (Constant *FC = dyn_cast<Constant>(False))
           return Insert(Folder.CreateSelect(CC, TC, FC), Name);
-    return Insert(SelectInst::Create(C, True, False), Name);
+
+    SelectInst *Sel = SelectInst::Create(C, True, False);
+    if (MDFrom) {
+      MDNode *Prof = MDFrom->getMetadata(LLVMContext::MD_prof);
+      MDNode *Unpred = MDFrom->getMetadata(LLVMContext::MD_unpredictable);
+      Sel = addBranchMetadata(Sel, Prof, Unpred);
+    }
+    return Insert(Sel, Name);
   }
 
   VAArgInst *CreateVAArg(Value *List, Type *Ty, const Twine &Name = "") {
@@ -1627,11 +1648,7 @@ public:
 
   Value *CreateShuffleVector(Value *V1, Value *V2, ArrayRef<int> IntMask,
                              const Twine &Name = "") {
-    size_t MaskSize = IntMask.size();
-    SmallVector<Constant*, 8> MaskVec(MaskSize);
-    for (size_t i = 0; i != MaskSize; ++i)
-      MaskVec[i] = getInt32(IntMask[i]);
-    Value *Mask = ConstantVector::get(MaskVec);
+    Value *Mask = ConstantDataVector::get(Context, IntMask);
     return CreateShuffleVector(V1, V2, Mask, Name);
   }
 

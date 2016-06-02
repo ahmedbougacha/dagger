@@ -127,9 +127,48 @@ ConstantRange ConstantRange::makeSatisfyingICmpRegion(CmpInst::Predicate Pred,
       .inverse();
 }
 
+ConstantRange ConstantRange::makeExactICmpRegion(CmpInst::Predicate Pred,
+                                                 const APInt &C) {
+  // Computes the exact range that is equal to both the constant ranges returned
+  // by makeAllowedICmpRegion and makeSatisfyingICmpRegion. This is always true
+  // when RHS is a singleton such as an APInt and so the assert is valid.
+  // However for non-singleton RHS, for example ult [2,5) makeAllowedICmpRegion
+  // returns [0,4) but makeSatisfyICmpRegion returns [0,2).
+  //
+  assert(makeAllowedICmpRegion(Pred, C) == makeSatisfyingICmpRegion(Pred, C));
+  return makeAllowedICmpRegion(Pred, C);
+}
+
+bool ConstantRange::getEquivalentICmp(CmpInst::Predicate &Pred,
+                                      APInt &RHS) const {
+  bool Success = false;
+
+  if (isFullSet() || isEmptySet()) {
+    Pred = isEmptySet() ? CmpInst::ICMP_ULT : CmpInst::ICMP_UGE;
+    RHS = APInt(getBitWidth(), 0);
+    Success = true;
+  } else if (getLower().isMinSignedValue() || getLower().isMinValue()) {
+    Pred =
+        getLower().isMinSignedValue() ? CmpInst::ICMP_SLT : CmpInst::ICMP_ULT;
+    RHS = getUpper();
+    Success = true;
+  } else if (getUpper().isMinSignedValue() || getUpper().isMinValue()) {
+    Pred =
+        getUpper().isMinSignedValue() ? CmpInst::ICMP_SGE : CmpInst::ICMP_UGE;
+    RHS = getLower();
+    Success = true;
+  }
+
+  assert((!Success || ConstantRange::makeExactICmpRegion(Pred, RHS) == *this) &&
+         "Bad result!");
+
+  return Success;
+}
+
 ConstantRange
 ConstantRange::makeGuaranteedNoWrapRegion(Instruction::BinaryOps BinOp,
-                                          const APInt &C, unsigned NoWrapKind) {
+                                          const ConstantRange &Other,
+                                          unsigned NoWrapKind) {
   typedef OverflowingBinaryOperator OBO;
 
   // Computes the intersection of CR0 and CR1.  It is different from
@@ -149,29 +188,36 @@ ConstantRange::makeGuaranteedNoWrapRegion(Instruction::BinaryOps BinOp,
           NoWrapKind == (OBO::NoUnsignedWrap | OBO::NoSignedWrap)) &&
          "NoWrapKind invalid!");
 
-  unsigned BitWidth = C.getBitWidth();
+  unsigned BitWidth = Other.getBitWidth();
   if (BinOp != Instruction::Add)
     // Conservative answer: empty set
     return ConstantRange(BitWidth, false);
 
-  if (C.isMinValue())
-    // Full set: nothing signed / unsigned wraps when added to 0.
-    return ConstantRange(BitWidth);
+  if (auto *C = Other.getSingleElement())
+    if (C->isMinValue())
+      // Full set: nothing signed / unsigned wraps when added to 0.
+      return ConstantRange(BitWidth);
 
   ConstantRange Result(BitWidth);
 
   if (NoWrapKind & OBO::NoUnsignedWrap)
-    Result = SubsetIntersect(Result,
-                             ConstantRange(APInt::getNullValue(BitWidth), -C));
+    Result =
+        SubsetIntersect(Result, ConstantRange(APInt::getNullValue(BitWidth),
+                                              -Other.getUnsignedMax()));
 
   if (NoWrapKind & OBO::NoSignedWrap) {
-    if (C.isStrictlyPositive())
+    APInt SignedMin = Other.getSignedMin();
+    APInt SignedMax = Other.getSignedMax();
+
+    if (SignedMax.isStrictlyPositive())
       Result = SubsetIntersect(
-          Result, ConstantRange(APInt::getSignedMinValue(BitWidth),
-                                APInt::getSignedMinValue(BitWidth) - C));
-    else
+          Result,
+          ConstantRange(APInt::getSignedMinValue(BitWidth),
+                        APInt::getSignedMinValue(BitWidth) - SignedMax));
+
+    if (SignedMin.isNegative())
       Result = SubsetIntersect(
-          Result, ConstantRange(APInt::getSignedMinValue(BitWidth) - C,
+          Result, ConstantRange(APInt::getSignedMinValue(BitWidth) - SignedMin,
                                 APInt::getSignedMinValue(BitWidth)));
   }
 
@@ -666,6 +712,13 @@ ConstantRange::multiply(const ConstantRange &Other) const {
   ConstantRange Result_zext = ConstantRange(this_min * Other_min,
                                             this_max * Other_max + 1);
   ConstantRange UR = Result_zext.truncate(getBitWidth());
+
+  // If the unsigned range doesn't wrap, and isn't negative then it's a range
+  // from one positive number to another which is as good as we can generate.
+  // In this case, skip the extra work of generating signed ranges which aren't
+  // going to be better than this range.
+  if (!UR.isWrappedSet() && UR.getLower().isNonNegative())
+    return UR;
 
   // Now the signed range. Because we could be dealing with negative numbers
   // here, the lower bound is the smallest of the cartesian product of the

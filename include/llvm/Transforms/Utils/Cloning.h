@@ -114,26 +114,20 @@ BasicBlock *CloneBasicBlock(const BasicBlock *BB, ValueToValueMapTy &VMap,
                             const Twine &NameSuffix = "", Function *F = nullptr,
                             ClonedCodeInfo *CodeInfo = nullptr);
 
-/// CloneFunction - Return a copy of the specified function, but without
-/// embedding the function into another module.  Also, any references specified
-/// in the VMap are changed to refer to their mapped value instead of the
-/// original one.  If any of the arguments to the function are in the VMap,
-/// the arguments are deleted from the resultant function.  The VMap is
-/// updated to include mappings from all of the instructions and basicblocks in
-/// the function from their old to new values.  The final argument captures
-/// information about the cloned code if non-null.
+/// CloneFunction - Return a copy of the specified function and add it to that
+/// function's module.  Also, any references specified in the VMap are changed
+/// to refer to their mapped value instead of the original one.  If any of the
+/// arguments to the function are in the VMap, the arguments are deleted from
+/// the resultant function.  The VMap is updated to include mappings from all of
+/// the instructions and basicblocks in the function from their old to new
+/// values.  The final argument captures information about the cloned code if
+/// non-null.
 ///
-/// If ModuleLevelChanges is false, VMap contains no non-identity GlobalValue
-/// mappings, and debug info metadata will not be cloned.
+/// VMap contains no non-identity GlobalValue mappings and debug info metadata
+/// will not be cloned.
 ///
-Function *CloneFunction(const Function *F, ValueToValueMapTy &VMap,
-                        bool ModuleLevelChanges,
+Function *CloneFunction(Function *F, ValueToValueMapTy &VMap,
                         ClonedCodeInfo *CodeInfo = nullptr);
-
-/// Clone the module-level debug info associated with OldFunc. The cloned data
-/// will point to NewFunc instead.
-void CloneDebugInfoMetadata(Function *NewFunc, const Function *OldFunc,
-                            ValueToValueMapTy &VMap);
 
 /// Clone OldFunc into NewFunc, transforming the old arguments into references
 /// to VMap values.  Note that if NewFunc already has basic blocks, the ones
@@ -226,6 +220,7 @@ bool InlineFunction(CallSite CS, InlineFunctionInfo &IFI,
 ///
 /// Updates LoopInfo and DominatorTree assuming the loop is dominated by block
 /// \p LoopDomBB.  Insert the new blocks before block specified in \p Before.
+/// Note: Only innermost loops are supported.
 Loop *cloneLoopWithPreheader(BasicBlock *Before, BasicBlock *LoopDomBB,
                              Loop *OrigLoop, ValueToValueMapTy &VMap,
                              const Twine &NameSuffix, LoopInfo *LI,

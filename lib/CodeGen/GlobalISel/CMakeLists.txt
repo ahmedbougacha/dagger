@@ -2,6 +2,9 @@
 set(GLOBAL_ISEL_FILES
       IRTranslator.cpp
       MachineIRBuilder.cpp
+      RegBankSelect.cpp
+      RegisterBank.cpp
+      RegisterBankInfo.cpp
       )
 
 # Add GlobalISel files to the dependencies if the user wants to build it.
@@ -18,7 +21,7 @@ endif()
 # not ask for it. 
 add_llvm_library(LLVMGlobalISel
         ${GLOBAL_ISEL_BUILD_FILES}
-        EmptyFile.cpp
+        GlobalISel.cpp
   )
 
 add_dependencies(LLVMGlobalISel intrinsics_gen)

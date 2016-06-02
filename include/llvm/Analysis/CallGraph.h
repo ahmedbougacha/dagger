@@ -295,7 +295,10 @@ private:
 /// This class implements the concept of an analysis pass used by the \c
 /// ModuleAnalysisManager to run an analysis over a module and cache the
 /// resulting data.
-struct CallGraphAnalysis : AnalysisBase<CallGraphAnalysis> {
+class CallGraphAnalysis : public AnalysisInfoMixin<CallGraphAnalysis> {
+  friend AnalysisInfoMixin<CallGraphAnalysis>;
+  static char PassID;
+
 public:
   /// \brief A formulaic typedef to inform clients of the result type.
   typedef CallGraph Result;
@@ -303,7 +306,16 @@ public:
   /// \brief Compute the \c CallGraph for the module \c M.
   ///
   /// The real work here is done in the \c CallGraph constructor.
-  CallGraph run(Module *M) { return CallGraph(*M); }
+  CallGraph run(Module &M) { return CallGraph(M); }
+};
+
+/// \brief Printer pass for the \c CallGraphAnalysis results.
+class CallGraphPrinterPass : public PassInfoMixin<CallGraphPrinterPass> {
+  raw_ostream &OS;
+
+public:
+  explicit CallGraphPrinterPass(raw_ostream &OS) : OS(OS) {}
+  PreservedAnalyses run(Module &M, AnalysisManager<Module> &AM);
 };
 
 /// \brief The \c ModulePass which wraps up a \c CallGraph and the logic to

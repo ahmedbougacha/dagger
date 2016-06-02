@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Object/Archive.h"
-#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Endian.h"
@@ -136,6 +135,21 @@ bool Archive::Child::isThinMember() const {
   return Parent->IsThin && Name != "/" && Name != "//";
 }
 
+ErrorOr<std::string> Archive::Child::getFullName() const {
+  assert(isThinMember());
+  ErrorOr<StringRef> NameOrErr = getName();
+  if (std::error_code EC = NameOrErr.getError())
+    return EC;
+  StringRef Name = *NameOrErr;
+  if (sys::path::is_absolute(Name))
+    return Name;
+
+  SmallString<128> FullName = sys::path::parent_path(
+      Parent->getMemoryBufferRef().getBufferIdentifier());
+  sys::path::append(FullName, Name);
+  return StringRef(FullName);
+}
+
 ErrorOr<StringRef> Archive::Child::getBuffer() const {
   if (!isThinMember()) {
     ErrorOr<uint32_t> Size = getSize();
@@ -143,12 +157,10 @@ ErrorOr<StringRef> Archive::Child::getBuffer() const {
       return EC;
     return StringRef(Data.data() + StartOfFile, Size.get());
   }
-  ErrorOr<StringRef> Name = getName();
-  if (std::error_code EC = Name.getError())
+  ErrorOr<std::string> FullNameOrEr = getFullName();
+  if (std::error_code EC = FullNameOrEr.getError())
     return EC;
-  SmallString<128> FullName = sys::path::parent_path(
-      Parent->getMemoryBufferRef().getBufferIdentifier());
-  sys::path::append(FullName, *Name);
+  const std::string &FullName = *FullNameOrEr;
   ErrorOr<std::unique_ptr<MemoryBuffer>> Buf = MemoryBuffer::getFile(FullName);
   if (std::error_code EC = Buf.getError())
     return EC;
@@ -216,6 +228,11 @@ ErrorOr<StringRef> Archive::Child::getName() const {
     if (name.substr(3).rtrim(' ').getAsInteger(10, name_size))
       llvm_unreachable("Long name length is not an ingeter");
     return Data.substr(sizeof(ArchiveMemberHeader), name_size).rtrim('\0');
+  } else {
+    // It is not a long name so trim the blanks at the end of the name.
+    if (name[name.size() - 1] != '/') {
+      return name.rtrim(' ');
+    }
   }
   // It's a simple name.
   if (name[name.size() - 1] == '/')
@@ -234,13 +251,16 @@ ErrorOr<MemoryBufferRef> Archive::Child::getMemoryBufferRef() const {
   return MemoryBufferRef(*Buf, Name);
 }
 
-ErrorOr<std::unique_ptr<Binary>>
+Expected<std::unique_ptr<Binary>>
 Archive::Child::getAsBinary(LLVMContext *Context) const {
   ErrorOr<MemoryBufferRef> BuffOrErr = getMemoryBufferRef();
   if (std::error_code EC = BuffOrErr.getError())
-    return EC;
+    return errorCodeToError(EC);
 
-  return createBinary(BuffOrErr.get(), Context);
+  auto BinaryOrErr = createBinary(BuffOrErr.get(), Context);
+  if (BinaryOrErr)
+    return std::move(*BinaryOrErr);
+  return BinaryOrErr.takeError();
 }
 
 ErrorOr<std::unique_ptr<Archive>> Archive::create(MemoryBufferRef Source) {

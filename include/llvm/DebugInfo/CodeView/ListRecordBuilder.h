@@ -28,6 +28,8 @@ protected:
 public:
   llvm::StringRef str() { return Builder.str(); }
 
+  void reset(TypeRecordKind K) { Builder.reset(K); }
+
 protected:
   void finishSubRecord();
 

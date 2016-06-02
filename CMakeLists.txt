@@ -1,6 +1,6 @@
 # See docs/CMake.html for instructions about how to build LLVM with CMake.
 
-cmake_minimum_required(VERSION 2.8.12.2)
+cmake_minimum_required(VERSION 3.4.3)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "No build type selected, default to Debug")
@@ -55,6 +55,21 @@ project(LLVM
   ${cmake_3_0_PROJ_VERSION}
   ${cmake_3_0_LANGUAGES}
   C CXX ASM)
+
+if(APPLE)
+  if(NOT CMAKE_LIBTOOL)
+    find_program(CMAKE_LIBTOOL NAMES libtool)
+  endif()
+  if(CMAKE_LIBTOOL)
+    set(CMAKE_LIBTOOL ${CMAKE_LIBTOOL} CACHE PATH "libtool executable")
+    message(STATUS "Found libtool - ${CMAKE_LIBTOOL}")
+    get_property(languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+    foreach(lang ${languages})
+      set(CMAKE_${lang}_CREATE_STATIC_LIBRARY
+        "${CMAKE_LIBTOOL} -static -o <TARGET> <LINK_FLAGS> <OBJECTS> ")
+    endforeach()
+  endif()
+endif()
 
 # The following only works with the Ninja generator in CMake >= 3.0.
 set(LLVM_PARALLEL_COMPILE_JOBS "" CACHE STRING
@@ -211,7 +226,6 @@ set(LLVM_ALL_TARGETS
   AMDGPU
   ARM
   BPF
-  CppBackend
   Hexagon
   Mips
   MSP430
@@ -234,11 +248,6 @@ set(LLVM_EXPERIMENTAL_TARGETS_TO_BUILD ""
 
 option(BUILD_SHARED_LIBS
   "Build all libraries as shared libraries instead of static" OFF)
-
-option(LLVM_ENABLE_TIMESTAMPS "Enable embedding timestamp information in build" ON)
-if(LLVM_ENABLE_TIMESTAMPS)
-  set(ENABLE_TIMESTAMPS 1)
-endif()
 
 option(LLVM_ENABLE_BACKTRACES "Enable embedding backtraces on crash." ON)
 if(LLVM_ENABLE_BACKTRACES)
@@ -289,6 +298,8 @@ else()
   option(LLVM_ENABLE_ASSERTIONS "Enable assertions" ON)
 endif()
 
+option(LLVM_ENABLE_EXPENSIVE_CHECKS "Enable expensive checks" OFF)
+
 set(LLVM_ABI_BREAKING_CHECKS "WITH_ASSERTS" CACHE STRING
   "Enable abi-breaking checks.  Can be WITH_ASSERTS, FORCE_ON or FORCE_OFF.")
 
@@ -326,8 +337,26 @@ set(LLVM_USE_SANITIZER "" CACHE STRING
 option(LLVM_USE_SPLIT_DWARF
   "Use -gsplit-dwarf when compiling llvm." OFF)
 
-option(WITH_POLLY "Build LLVM with Polly" ON)
-option(LINK_POLLY_INTO_TOOLS "Static link Polly into tools" OFF)
+option(LLVM_POLLY_LINK_INTO_TOOLS "Statically link Polly into tools (if available)" ON)
+option(LLVM_POLLY_BUILD "Build LLVM with Polly" ON)
+
+if (EXISTS ${LLVM_MAIN_SRC_DIR}/tools/polly/CMakeLists.txt)
+  set(POLLY_IN_TREE TRUE)
+else()
+  set(POLLY_IN_TREE FALSE)
+endif()
+
+if (LLVM_POLLY_BUILD AND POLLY_IN_TREE)
+  set(WITH_POLLY ON)
+else()
+  set(WITH_POLLY OFF)
+endif()
+
+if (LLVM_POLLY_LINK_INTO_TOOLS AND WITH_POLLY)
+  set(LINK_POLLY_INTO_TOOLS ON)
+else()
+  set(LINK_POLLY_INTO_TOOLS OFF)
+endif()
 
 # Define an option controlling whether we should build for 32-bit on 64-bit
 # platforms, where supported.
@@ -392,18 +421,16 @@ if(LLVM_LINK_LLVM_DYLIB OR LLVM_BUILD_LLVM_C_DYLIB)
   set(LLVM_BUILD_LLVM_DYLIB_default ON)
 endif()
 option(LLVM_BUILD_LLVM_DYLIB "Build libllvm dynamic library" ${LLVM_BUILD_LLVM_DYLIB_default})
-set(LLVM_DISABLE_LLVM_DYLIB_ATEXIT_DEFAULT ON)
-if (LLVM_LINK_LLVM_DYLIB)
-  set(LLVM_DISABLE_LLVM_DYLIB_ATEXIT_DEFAULT OFF)
-endif()
-option(LLVM_DISABLE_LLVM_DYLIB_ATEXIT "Disable llvm-shlib's atexit destructors." ${LLVM_DISABLE_LLVM_DYLIB_ATEXIT_DEFAULT})
-if(LLVM_DISABLE_LLVM_DYLIB_ATEXIT)
-  set(DISABLE_LLVM_DYLIB_ATEXIT 1)
-endif()
 
 option(LLVM_OPTIMIZED_TABLEGEN "Force TableGen to be built with optimization" OFF)
 if(CMAKE_CROSSCOMPILING OR (LLVM_OPTIMIZED_TABLEGEN AND LLVM_ENABLE_ASSERTIONS))
   set(LLVM_USE_HOST_TOOLS ON)
+endif()
+
+if (MSVC_IDE AND NOT (MSVC_VERSION LESS 1900))
+  option(LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION "Configure project to use Visual Studio native visualizers" TRUE)
+else()
+  set(LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION FALSE CACHE INTERNAL "For Visual Studio 2013, manually copy natvis files to Documents\\Visual Studio 2013\\Visualizers" FORCE)
 endif()
 
 # All options referred to from HandleLLVMOptions have to be specified
@@ -681,6 +708,11 @@ else()
   endif()
 endif()
 
+# Use LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION instead of LLVM_INCLUDE_UTILS because it is not really a util
+if (LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION)
+  add_subdirectory(utils/LLVMVisualizers)
+endif()
+
 if(LLVM_INCLUDE_TESTS)
   add_subdirectory(utils/unittest)
 endif()
@@ -692,12 +724,6 @@ foreach( binding ${LLVM_BINDINGS_LIST} )
 endforeach()
 
 add_subdirectory(projects)
-
-if(WITH_POLLY)
-  if(NOT EXISTS ${LLVM_MAIN_SRC_DIR}/tools/polly/CMakeLists.txt)
-    set(WITH_POLLY OFF)
-  endif()
-endif(WITH_POLLY)
 
 if( LLVM_INCLUDE_TOOLS )
   add_subdirectory(tools)
@@ -736,6 +762,8 @@ if( LLVM_INCLUDE_TESTS )
     DEPENDS ${LLVM_LIT_DEPENDS}
     ARGS ${LLVM_LIT_EXTRA_ARGS}
     )
+  add_custom_target(test-depends DEPENDS ${LLVM_LIT_DEPENDS})
+  set_target_properties(test-depends PROPERTIES FOLDER "Tests")
 endif()
 
 if (LLVM_INCLUDE_DOCS)
@@ -786,9 +814,16 @@ if(LLVM_DISTRIBUTION_COMPONENTS)
   if(CMAKE_CONFIGURATION_TYPES)
     message(FATAL_ERROR "LLVM_DISTRIBUTION_COMPONENTS cannot be specified with multi-configuration generators (i.e. Xcode or Visual Studio)")
   endif()
-  
+
+  add_custom_target(distribution)
   add_custom_target(install-distribution)
   foreach(target ${LLVM_DISTRIBUTION_COMPONENTS})
+    if(TARGET ${target})
+      add_dependencies(distribution ${target})
+    else()
+      message(FATAL_ERROR "Specified distribution component '${target}' doesn't have a target")
+    endif()
+
     if(TARGET install-${target})
       add_dependencies(install-distribution install-${target})
     else()

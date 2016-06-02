@@ -38,8 +38,8 @@ ehcleanup:                                        ; preds = %entry
 ; CHECK: pushl %ebp
 ; CHECK: movl %esp, %ebp
 ; CHECK: subl ${{[0-9]+}}, %esp
-; CHECK: movl $8, %eax
-; CHECK: calll __chkstk
+; CHECK: pushl %eax
+; CHECK: pushl %eax
 ; CHECK: calll "??0A@@QAE@XZ"
 ; CHECK: calll "??0A@@QAE@XZ"
 ; CHECK: calll _takes_two
@@ -51,7 +51,7 @@ ehcleanup:                                        ; preds = %entry
 ; CHECK: "?dtor$2@?0?passes_two@4HA":
 ; CHECK: pushl %ebp
 ; CHECK: subl $8, %esp
-; CHECK: addl $16, %ebp
+; CHECK: addl $12, %ebp
 ; CHECK: {{movl|leal}} -{{[0-9]+}}(%ebp), %ecx
 ; CHECK: calll "??1A@@QAE@XZ"
 ; CHECK: addl $8, %esp

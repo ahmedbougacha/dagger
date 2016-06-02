@@ -29,8 +29,6 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include <map>
-#include <vector>
 
 using namespace llvm;
 
@@ -81,6 +79,10 @@ namespace {
       return "Hexagon Packetizer";
     }
     bool runOnMachineFunction(MachineFunction &Fn) override;
+    MachineFunctionProperties getRequiredProperties() const override {
+      return MachineFunctionProperties().set(
+          MachineFunctionProperties::Property::AllVRegsAllocated);
+    }
 
   private:
     const HexagonInstrInfo *HII;
@@ -168,7 +170,7 @@ static MachineBasicBlock::iterator moveInstrOut(MachineInstr *MI,
 
 
 bool HexagonPacketizer::runOnMachineFunction(MachineFunction &MF) {
-  if (DisablePacketizer)
+  if (DisablePacketizer || skipFunction(*MF.getFunction()))
     return false;
 
   HII = MF.getSubtarget<HexagonSubtarget>().getInstrInfo();
@@ -254,9 +256,9 @@ bool HexagonPacketizerList::canReserveResourcesForConstExt() {
 // return true, otherwise, return false.
 bool HexagonPacketizerList::tryAllocateResourcesForConstExt(bool Reserve) {
   auto *ExtMI = MF.CreateMachineInstr(HII->get(Hexagon::A4_ext), DebugLoc());
-  bool Avail = ResourceTracker->canReserveResources(ExtMI);
+  bool Avail = ResourceTracker->canReserveResources(*ExtMI);
   if (Reserve && Avail)
-    ResourceTracker->reserveResources(ExtMI);
+    ResourceTracker->reserveResources(*ExtMI);
   MF.DeleteMachineInstr(ExtMI);
   return Avail;
 }
@@ -762,7 +764,7 @@ bool HexagonPacketizerList::canPromoteToDotNew(const MachineInstr *MI,
   int NewOpcode = HII->getDotNewOp(MI);
   const MCInstrDesc &D = HII->get(NewOpcode);
   MachineInstr *NewMI = MF.CreateMachineInstr(D, DebugLoc());
-  bool ResourcesAvailable = ResourceTracker->canReserveResources(NewMI);
+  bool ResourcesAvailable = ResourceTracker->canReserveResources(*NewMI);
   MF.DeleteMachineInstr(NewMI);
   if (!ResourcesAvailable)
     return false;
@@ -911,31 +913,31 @@ void HexagonPacketizerList::initPacketizerState() {
 }
 
 // Ignore bundling of pseudo instructions.
-bool HexagonPacketizerList::ignorePseudoInstruction(const MachineInstr *MI,
-      const MachineBasicBlock*) {
-  if (MI->isDebugValue())
+bool HexagonPacketizerList::ignorePseudoInstruction(const MachineInstr &MI,
+                                                    const MachineBasicBlock *) {
+  if (MI.isDebugValue())
     return true;
 
-  if (MI->isCFIInstruction())
+  if (MI.isCFIInstruction())
     return false;
 
   // We must print out inline assembly.
-  if (MI->isInlineAsm())
+  if (MI.isInlineAsm())
     return false;
 
-  if (MI->isImplicitDef())
+  if (MI.isImplicitDef())
     return false;
 
   // We check if MI has any functional units mapped to it. If it doesn't,
   // we ignore the instruction.
-  const MCInstrDesc& TID = MI->getDesc();
+  const MCInstrDesc& TID = MI.getDesc();
   auto *IS = ResourceTracker->getInstrItins()->beginStage(TID.getSchedClass());
   unsigned FuncUnits = IS->getUnits();
   return !FuncUnits;
 }
 
-bool HexagonPacketizerList::isSoloInstruction(const MachineInstr *MI) {
-  if (MI->isEHLabel() || MI->isCFIInstruction())
+bool HexagonPacketizerList::isSoloInstruction(const MachineInstr &MI) {
+  if (MI.isEHLabel() || MI.isCFIInstruction())
     return true;
 
   // Consider inline asm to not be a solo instruction by default.
@@ -943,19 +945,19 @@ bool HexagonPacketizerList::isSoloInstruction(const MachineInstr *MI) {
   // removed, and placed outside of the packet (before or after, depending
   // on dependencies).  This is to reduce the impact of inline asm as a
   // "packet splitting" instruction.
-  if (MI->isInlineAsm() && !ScheduleInlineAsm)
+  if (MI.isInlineAsm() && !ScheduleInlineAsm)
     return true;
 
   // From Hexagon V4 Programmer's Reference Manual 3.4.4 Grouping constraints:
   // trap, pause, barrier, icinva, isync, and syncht are solo instructions.
   // They must not be grouped with other instructions in a packet.
-  if (isSchedBarrier(MI))
+  if (isSchedBarrier(&MI))
     return true;
 
-  if (HII->isSolo(MI))
+  if (HII->isSolo(&MI))
     return true;
 
-  if (MI->getOpcode() == Hexagon::A2_nop)
+  if (MI.getOpcode() == Hexagon::A2_nop)
     return true;
 
   return false;
@@ -1139,7 +1141,7 @@ bool HexagonPacketizerList::isLegalToPacketizeTogether(SUnit *SUI, SUnit *SUJ) {
   const unsigned FrameSize = MF.getFrameInfo()->getStackSize();
 
   // Solo instructions cannot go in the packet.
-  assert(!isSoloInstruction(I) && "Unexpected solo instr!");
+  assert(!isSoloInstruction(*I) && "Unexpected solo instr!");
 
   if (cannotCoexist(I, J))
     return false;
@@ -1400,8 +1402,30 @@ bool HexagonPacketizerList::isLegalToPacketizeTogether(SUnit *SUI, SUnit *SUJ) {
       }
     }
 
-    // Skip over anti-dependences. Two instructions that are anti-dependent
-    // can share a packet.
+    // There are certain anti-dependencies that cannot be ignored.
+    // Specifically:
+    //   J2_call ... %R0<imp-def>   ; SUJ
+    //   R0 = ...                   ; SUI
+    // Those cannot be packetized together, since the call will observe
+    // the effect of the assignment to R0.
+    if (DepType == SDep::Anti && J->isCall()) {
+      // Check if I defines any volatile register. We should also check
+      // registers that the call may read, but these happen to be a
+      // subset of the volatile register set.
+      for (const MCPhysReg *P = J->getDesc().ImplicitDefs; P && *P; ++P) {
+        if (!I->modifiesRegister(*P, HRI))
+          continue;
+        FoundSequentialDependence = true;
+        break;
+      }
+    }
+
+    // Skip over remaining anti-dependences. Two instructions that are
+    // anti-dependent can share a packet, since in most such cases all
+    // operands are read before any modifications take place.
+    // The exceptions are branch and call instructions, since they are
+    // executed after all other instructions have completed (at least
+    // conceptually).
     if (DepType != SDep::Anti) {
       FoundSequentialDependence = true;
       break;
@@ -1444,26 +1468,25 @@ bool HexagonPacketizerList::isLegalToPruneDependencies(SUnit *SUI, SUnit *SUJ) {
   return false;
 }
 
-
 MachineBasicBlock::iterator
-HexagonPacketizerList::addToPacket(MachineInstr *MI) {
+HexagonPacketizerList::addToPacket(MachineInstr &MI) {
   MachineBasicBlock::iterator MII = MI;
-  MachineBasicBlock *MBB = MI->getParent();
-  if (MI->isImplicitDef()) {
-    unsigned R = MI->getOperand(0).getReg();
+  MachineBasicBlock *MBB = MI.getParent();
+  if (MI.isImplicitDef()) {
+    unsigned R = MI.getOperand(0).getReg();
     if (Hexagon::IntRegsRegClass.contains(R)) {
       MCSuperRegIterator S(R, HRI, false);
-      MI->addOperand(MachineOperand::CreateReg(*S, true, true));
+      MI.addOperand(MachineOperand::CreateReg(*S, true, true));
     }
     return MII;
   }
   assert(ResourceTracker->canReserveResources(MI));
 
-  bool ExtMI = HII->isExtended(MI) || HII->isConstExtended(MI);
+  bool ExtMI = HII->isExtended(&MI) || HII->isConstExtended(&MI);
   bool Good = true;
 
   if (GlueToNewValueJump) {
-    MachineInstr *NvjMI = ++MII;
+    MachineInstr &NvjMI = *++MII;
     // We need to put both instructions in the same packet: MI and NvjMI.
     // Either of them can require a constant extender. Try to add both to
     // the current packet, and if that fails, end the packet and start a
@@ -1472,7 +1495,7 @@ HexagonPacketizerList::addToPacket(MachineInstr *MI) {
     if (ExtMI)
       Good = tryAllocateResourcesForConstExt(true);
 
-    bool ExtNvjMI = HII->isExtended(NvjMI) || HII->isConstExtended(NvjMI);
+    bool ExtNvjMI = HII->isExtended(&NvjMI) || HII->isConstExtended(&NvjMI);
     if (Good) {
       if (ResourceTracker->canReserveResources(NvjMI))
         ResourceTracker->reserveResources(NvjMI);
@@ -1497,8 +1520,8 @@ HexagonPacketizerList::addToPacket(MachineInstr *MI) {
         reserveResourcesForConstExt();
       }
     }
-    CurrentPacketMIs.push_back(MI);
-    CurrentPacketMIs.push_back(NvjMI);
+    CurrentPacketMIs.push_back(&MI);
+    CurrentPacketMIs.push_back(&NvjMI);
     return MII;
   }
 
@@ -1506,23 +1529,23 @@ HexagonPacketizerList::addToPacket(MachineInstr *MI) {
   if (ExtMI && !tryAllocateResourcesForConstExt(true)) {
     endPacket(MBB, MI);
     if (PromotedToDotNew)
-      demoteToDotOld(MI);
+      demoteToDotOld(&MI);
     ResourceTracker->reserveResources(MI);
     reserveResourcesForConstExt();
   }
 
-  CurrentPacketMIs.push_back(MI);
+  CurrentPacketMIs.push_back(&MI);
   return MII;
 }
 
 void HexagonPacketizerList::endPacket(MachineBasicBlock *MBB,
-      MachineInstr *MI) {
+                                      MachineBasicBlock::iterator MI) {
   OldPacketMIs = CurrentPacketMIs;
   VLIWPacketizerList::endPacket(MBB, MI);
 }
 
-bool HexagonPacketizerList::shouldAddToPacket(const MachineInstr *MI) {
-  return !producesStall(MI);
+bool HexagonPacketizerList::shouldAddToPacket(const MachineInstr &MI) {
+  return !producesStall(&MI);
 }
 
 
@@ -1598,4 +1621,3 @@ bool HexagonPacketizerList::producesStall(const MachineInstr *I) {
 FunctionPass *llvm::createHexagonPacketizer() {
   return new HexagonPacketizer();
 }
-

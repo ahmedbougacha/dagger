@@ -21,6 +21,7 @@
 ; X86:      [[END_OF_F:Lfunc_end.*]]:
 ;
 ; X86-LABEL: .section        .debug$S,"dr"
+; X86-NEXT: .p2align 2
 ; X86-NEXT: .long   4
 ; Symbol subsection
 ; X86-NEXT: .long   241
@@ -35,7 +36,7 @@
 ; X86-NEXT: .long [[END_OF_F]]-_f
 ; X86-NEXT: .long   0
 ; X86-NEXT: .long   0
-; X86-NEXT: .long   0
+; X86-NEXT: .long   4098
 ; X86-NEXT: .secrel32 _f
 ; X86-NEXT: .secidx _f
 ; X86-NEXT: .byte   0
@@ -70,7 +71,8 @@
 ; OBJ32:          DisplayName: f
 ; OBJ32:          LinkageName: _f
 ; OBJ32:        }
-; OBJ32-NEXT:   ProcEnd
+; OBJ32-NEXT:   ProcEnd {
+; OBJ32-NEXT:   }
 ; OBJ32-NEXT: ]
 ; OBJ32:      FunctionLineTable [
 ; OBJ32-NEXT:   Name: _f
@@ -109,6 +111,7 @@
 ; X64:      [[END_OF_F:.?Lfunc_end.*]]:
 ;
 ; X64-LABEL: .section        .debug$S,"dr"
+; X64-NEXT: .p2align 2
 ; X64-NEXT: .long   4
 ; Symbol subsection
 ; X64-NEXT: .long   241
@@ -123,7 +126,7 @@
 ; X64-NEXT: .long [[END_OF_F]]-f
 ; X64-NEXT: .long   0
 ; X64-NEXT: .long   0
-; X64-NEXT: .long   0
+; X64-NEXT: .long   4098
 ; X64-NEXT: .secrel32 f
 ; X64-NEXT: .secidx f
 ; X64-NEXT: .byte   0
@@ -158,7 +161,8 @@
 ; OBJ64:          DisplayName: f
 ; OBJ64:          LinkageName: f
 ; OBJ64:        }
-; OBJ64-NEXT:   ProcEnd
+; OBJ64-NEXT:   ProcEnd {
+; OBJ64-NEXT:   }
 ; OBJ64-NEXT: ]
 ; OBJ64:      FunctionLineTable [
 ; OBJ64-NEXT:   Name: f
@@ -206,11 +210,10 @@ attributes #1 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "
 !llvm.module.flags = !{!9, !10}
 !llvm.ident = !{!11}
 
-!0 = distinct !DICompileUnit(language: DW_LANG_C99, producer: "clang version 3.5 ", isOptimized: false, emissionKind: 0, file: !1, enums: !2, retainedTypes: !2, subprograms: !3, globals: !2, imports: !2)
+!0 = distinct !DICompileUnit(language: DW_LANG_C99, producer: "clang version 3.5 ", isOptimized: false, emissionKind: FullDebug, file: !1, enums: !2, retainedTypes: !2, globals: !2, imports: !2)
 !1 = !DIFile(filename: "<unknown>", directory: "D:\5C")
 !2 = !{}
-!3 = !{!4}
-!4 = distinct !DISubprogram(name: "f", line: 3, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, scopeLine: 3, file: !5, scope: !6, type: !7, variables: !2)
+!4 = distinct !DISubprogram(name: "f", line: 3, isLocal: false, isDefinition: true, virtualIndex: 6, flags: DIFlagPrototyped, isOptimized: false, unit: !0, scopeLine: 3, file: !5, scope: !6, type: !7, variables: !2)
 !5 = !DIFile(filename: "test.c", directory: "D:\5C")
 !6 = !DIFile(filename: "test.c", directory: "D:C")
 !7 = !DISubroutineType(types: !8)

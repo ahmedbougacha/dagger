@@ -12,13 +12,12 @@
 #include "HexagonRegisterInfo.h"
 #include "HexagonTargetMachine.h"
 
-#include "llvm/Pass.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -107,18 +106,6 @@ namespace {
 
 INITIALIZE_PASS(HexagonSplitDoubleRegs, "hexagon-split-double",
   "Hexagon Split Double Registers", false, false)
-
-
-static inline uint32_t getRegState(const MachineOperand &R) {
-  assert(R.isReg());
-  return getDefRegState(R.isDef()) |
-         getImplRegState(R.isImplicit()) |
-         getKillRegState(R.isKill()) |
-         getDeadRegState(R.isDead()) |
-         getUndefRegState(R.isUndef()) |
-         getInternalReadRegState(R.isInternalRead()) |
-         (R.isDebug() ? RegState::Debug : 0);
-}
 
 
 void HexagonSplitDoubleRegs::dump_partition(raw_ostream &os,
@@ -1163,6 +1150,9 @@ bool HexagonSplitDoubleRegs::splitPartition(const USet &Part) {
 bool HexagonSplitDoubleRegs::runOnMachineFunction(MachineFunction &MF) {
   DEBUG(dbgs() << "Splitting double registers in function: "
         << MF.getName() << '\n');
+
+  if (skipFunction(*MF.getFunction()))
+    return false;
 
   auto &ST = MF.getSubtarget<HexagonSubtarget>();
   TRI = ST.getRegisterInfo();

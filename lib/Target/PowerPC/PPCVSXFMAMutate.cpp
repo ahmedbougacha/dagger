@@ -38,8 +38,14 @@
 
 using namespace llvm;
 
-static cl::opt<bool> DisableVSXFMAMutate("disable-ppc-vsx-fma-mutation",
-cl::desc("Disable VSX FMA instruction mutation"), cl::Hidden);
+// Temporarily disable FMA mutation by default, since it doesn't handle
+// cross-basic-block intervals well.
+// See: http://lists.llvm.org/pipermail/llvm-dev/2016-February/095669.html
+//      http://reviews.llvm.org/D17087
+static cl::opt<bool> DisableVSXFMAMutate(
+    "disable-ppc-vsx-fma-mutation",
+    cl::desc("Disable VSX FMA instruction mutation"), cl::init(true),
+    cl::Hidden);
 
 #define DEBUG_TYPE "ppc-vsx-fma-mutate"
 
@@ -336,6 +342,9 @@ protected:
 
 public:
     bool runOnMachineFunction(MachineFunction &MF) override {
+      if (skipFunction(*MF.getFunction()))
+        return false;
+
       // If we don't have VSX then go ahead and return without doing
       // anything.
       const PPCSubtarget &STI = MF.getSubtarget<PPCSubtarget>();

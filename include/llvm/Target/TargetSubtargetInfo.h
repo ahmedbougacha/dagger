@@ -16,8 +16,10 @@
 
 #include "llvm/CodeGen/PBQPRAConstraint.h"
 #include "llvm/CodeGen/SchedulerRegistry.h"
+#include "llvm/CodeGen/ScheduleDAGMutation.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/CodeGen.h"
+#include <vector>
 
 namespace llvm {
 
@@ -25,6 +27,7 @@ class CallLowering;
 class DataLayout;
 class MachineFunction;
 class MachineInstr;
+class RegisterBankInfo;
 class SDep;
 class SUnit;
 class TargetFrameLowering;
@@ -92,10 +95,13 @@ public:
   }
 
   /// getRegisterInfo - If register information is available, return it.  If
-  /// not, return null.  This is kept separate from RegInfo until RegInfo has
-  /// details of graph coloring register allocation removed from it.
+  /// not, return null.
   ///
   virtual const TargetRegisterInfo *getRegisterInfo() const { return nullptr; }
+
+  /// If the information for the register banks is available, return it.
+  /// Otherwise return nullptr.
+  virtual const RegisterBankInfo *getRegBankInfo() const { return nullptr; }
 
   /// getInstrItineraryData - Returns instruction itinerary data for the target
   /// or specific subtarget.
@@ -163,6 +169,12 @@ public:
   // are on the critical path.
   virtual void getCriticalPathRCs(RegClassVector &CriticalPathRCs) const {
     return CriticalPathRCs.clear();
+  }
+
+  // \brief Provide an ordered list of schedule DAG mutations for the post-RA
+  // scheduler.
+  virtual void getPostRAMutations(
+      std::vector<std::unique_ptr<ScheduleDAGMutation>> &Mutations) const {
   }
 
   // For use with PostRAScheduling: get the minimum optimization level needed

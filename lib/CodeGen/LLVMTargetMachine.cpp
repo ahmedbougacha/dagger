@@ -18,6 +18,7 @@
 #include "llvm/CodeGen/MachineFunctionAnalysis.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/IRPrintingPasses.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Verifier.h"
@@ -70,7 +71,12 @@ void LLVMTargetMachine::initAsmInfo() {
     TmpAsmInfo->setUseIntegratedAssembler(false);
 
   if (Options.CompressDebugSections)
-    TmpAsmInfo->setCompressDebugSections(true);
+    TmpAsmInfo->setCompressDebugSections(DebugCompressionType::DCT_ZlibGnu);
+
+  TmpAsmInfo->setRelaxELFRelocations(Options.RelaxELFRelocations);
+
+  if (Options.ExceptionModel != ExceptionHandling::None)
+    TmpAsmInfo->setExceptionsType(Options.ExceptionModel);
 
   AsmInfo = TmpAsmInfo;
 }
@@ -91,6 +97,20 @@ TargetIRAnalysis LLVMTargetMachine::getTargetIRAnalysis() {
   });
 }
 
+MachineModuleInfo &
+LLVMTargetMachine::addMachineModuleInfo(PassManagerBase &PM) const {
+  MachineModuleInfo *MMI = new MachineModuleInfo(*getMCAsmInfo(),
+                                                 *getMCRegisterInfo(),
+                                                 getObjFileLowering());
+  PM.add(MMI);
+  return *MMI;
+}
+
+void LLVMTargetMachine::addMachineFunctionAnalysis(PassManagerBase &PM,
+    MachineFunctionInitializer *MFInitializer) const {
+  PM.add(new MachineFunctionAnalysis(*this, MFInitializer));
+}
+
 /// addPassesToX helper drives creation and initialization of TargetPassConfig.
 static MCContext *
 addPassesToGenerateCode(LLVMTargetMachine *TM, PassManagerBase &PM,
@@ -101,6 +121,8 @@ addPassesToGenerateCode(LLVMTargetMachine *TM, PassManagerBase &PM,
   // When in emulated TLS mode, add the LowerEmuTLS pass.
   if (TM->Options.EmulatedTLS)
     PM.add(createLowerEmuTLSPass(TM));
+
+  PM.add(createPreISelIntrinsicLoweringPass());
 
   // Add internal analysis passes from the target machine.
   PM.add(createTargetTransformInfoWrapperPass(TM->getTargetIRAnalysis()));
@@ -123,14 +145,8 @@ addPassesToGenerateCode(LLVMTargetMachine *TM, PassManagerBase &PM,
 
   PassConfig->addISelPrepare();
 
-  // Install a MachineModuleInfo class, which is an immutable pass that holds
-  // all the per-module stuff we're generating, including MCContext.
-  MachineModuleInfo *MMI = new MachineModuleInfo(
-      *TM->getMCAsmInfo(), *TM->getMCRegisterInfo(), TM->getObjFileLowering());
-  PM.add(MMI);
-
-  // Set up a MachineFunction for the rest of CodeGen to work on.
-  PM.add(new MachineFunctionAnalysis(*TM, MFInitializer));
+  MachineModuleInfo &MMI = TM->addMachineModuleInfo(PM);
+  TM->addMachineFunctionAnalysis(PM, MFInitializer);
 
   // Enable FastISel with -fast, but allow that to be overridden.
   TM->setO0WantsFastISel(EnableFastISelOption != cl::BOU_FALSE);
@@ -143,6 +159,14 @@ addPassesToGenerateCode(LLVMTargetMachine *TM, PassManagerBase &PM,
   if (LLVM_UNLIKELY(EnableGlobalISel)) {
     if (PassConfig->addIRTranslator())
       return nullptr;
+
+    // Before running the register bank selector, ask the target if it
+    // wants to run some passes.
+    PassConfig->addPreRegBankSelect();
+
+    if (PassConfig->addRegBankSelect())
+      return nullptr;
+
   } else if (PassConfig->addInstSelector())
     return nullptr;
 
@@ -150,7 +174,7 @@ addPassesToGenerateCode(LLVMTargetMachine *TM, PassManagerBase &PM,
 
   PassConfig->setInitialized();
 
-  return &MMI->getContext();
+  return &MMI.getContext();
 }
 
 bool LLVMTargetMachine::addPassesToEmitFile(

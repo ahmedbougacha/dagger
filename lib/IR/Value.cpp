@@ -198,6 +198,10 @@ StringRef Value::getName() const {
 }
 
 void Value::setNameImpl(const Twine &NewName) {
+  // Fast-path: LLVMContext can be set to strip out non-GlobalValue names
+  if (getContext().shouldDiscardValueNames() && !isa<GlobalValue>(this))
+    return;
+
   // Fast path for common IRBuilder case of setName("") when there is no name.
   if (NewName.isTriviallyEmpty() && !hasName())
     return;
@@ -456,7 +460,7 @@ static Value *stripPointerCastsAndOffsets(Value *V) {
                Operator::getOpcode(V) == Instruction::AddrSpaceCast) {
       V = cast<Operator>(V)->getOperand(0);
     } else if (GlobalAlias *GA = dyn_cast<GlobalAlias>(V)) {
-      if (StripKind == PSK_ZeroIndices || GA->mayBeOverridden())
+      if (StripKind == PSK_ZeroIndices || GA->isInterposable())
         return V;
       V = GA->getAliasee();
     } else {
@@ -521,6 +525,57 @@ Value *Value::stripInBoundsOffsets() {
   return stripPointerCastsAndOffsets<PSK_InBounds>(this);
 }
 
+unsigned Value::getPointerDereferenceableBytes(const DataLayout &DL,
+                                               bool &CanBeNull) const {
+  assert(getType()->isPointerTy() && "must be pointer");
+
+  unsigned DerefBytes = 0;
+  CanBeNull = false;
+  if (const Argument *A = dyn_cast<Argument>(this)) {
+    DerefBytes = A->getDereferenceableBytes();
+    if (DerefBytes == 0 && A->hasByValAttr() && A->getType()->isSized()) {
+      DerefBytes = DL.getTypeStoreSize(A->getType());
+      CanBeNull = false;
+    }
+    if (DerefBytes == 0) {
+      DerefBytes = A->getDereferenceableOrNullBytes();
+      CanBeNull = true;
+    }
+  } else if (auto CS = ImmutableCallSite(this)) {
+    DerefBytes = CS.getDereferenceableBytes(0);
+    if (DerefBytes == 0) {
+      DerefBytes = CS.getDereferenceableOrNullBytes(0);
+      CanBeNull = true;
+    }
+  } else if (const LoadInst *LI = dyn_cast<LoadInst>(this)) {
+    if (MDNode *MD = LI->getMetadata(LLVMContext::MD_dereferenceable)) {
+      ConstantInt *CI = mdconst::extract<ConstantInt>(MD->getOperand(0));
+      DerefBytes = CI->getLimitedValue();
+    }
+    if (DerefBytes == 0) {
+      if (MDNode *MD =
+              LI->getMetadata(LLVMContext::MD_dereferenceable_or_null)) {
+        ConstantInt *CI = mdconst::extract<ConstantInt>(MD->getOperand(0));
+        DerefBytes = CI->getLimitedValue();
+      }
+      CanBeNull = true;
+    }
+  } else if (auto *AI = dyn_cast<AllocaInst>(this)) {
+    if (AI->getAllocatedType()->isSized()) {
+      DerefBytes = DL.getTypeStoreSize(AI->getAllocatedType());
+      CanBeNull = false;
+    }
+  } else if (auto *GV = dyn_cast<GlobalVariable>(this)) {
+    if (GV->getValueType()->isSized() && !GV->hasExternalWeakLinkage()) {
+      // TODO: Don't outright reject hasExternalWeakLinkage but set the
+      // CanBeNull flag.
+      DerefBytes = DL.getTypeStoreSize(GV->getValueType());
+      CanBeNull = false;
+    }
+  }
+  return DerefBytes;
+}
+
 unsigned Value::getPointerAlignment(const DataLayout &DL) const {
   assert(getType()->isPointerTy() && "must be pointer");
 
@@ -550,9 +605,14 @@ unsigned Value::getPointerAlignment(const DataLayout &DL) const {
       if (EltTy->isSized())
         Align = DL.getABITypeAlignment(EltTy);
     }
-  } else if (const AllocaInst *AI = dyn_cast<AllocaInst>(this))
+  } else if (const AllocaInst *AI = dyn_cast<AllocaInst>(this)) {
     Align = AI->getAlignment();
-  else if (auto CS = ImmutableCallSite(this))
+    if (Align == 0) {
+      Type *AllocatedType = AI->getAllocatedType();
+      if (AllocatedType->isSized())
+        Align = DL.getPrefTypeAlignment(AllocatedType);
+    }
+  } else if (auto CS = ImmutableCallSite(this))
     Align = CS.getAttributes().getParamAlignment(AttributeSet::ReturnIndex);
   else if (const LoadInst *LI = dyn_cast<LoadInst>(this))
     if (MDNode *MD = LI->getMetadata(LLVMContext::MD_align)) {

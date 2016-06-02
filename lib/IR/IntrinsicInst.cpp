@@ -32,25 +32,11 @@ using namespace llvm;
 /// DbgInfoIntrinsic - This is the common base class for debug info intrinsics
 ///
 
-static Value *CastOperand(Value *C) {
-  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(C))
-    if (CE->isCast())
-      return CE->getOperand(0);
-  return nullptr;
-}
+Value *DbgInfoIntrinsic::getVariableLocation(bool AllowNullOp) const {
+  Value *Op = getArgOperand(0);
+  if (AllowNullOp && !Op)
+    return nullptr;
 
-Value *DbgInfoIntrinsic::StripCast(Value *C) {
-  if (Value *CO = CastOperand(C)) {
-    C = StripCast(CO);
-  } else if (GlobalVariable *GV = dyn_cast<GlobalVariable>(C)) {
-    if (GV->hasInitializer())
-      if (Value *CO = CastOperand(GV->getInitializer()))
-        C = StripCast(CO);
-  }
-  return dyn_cast<GlobalVariable>(C);
-}
-
-static Value *getValueImpl(Value *Op) {
   auto *MD = cast<MetadataAsValue>(Op)->getMetadata();
   if (auto *V = dyn_cast<ValueAsMetadata>(MD))
     return V->getValue();
@@ -59,27 +45,6 @@ static Value *getValueImpl(Value *Op) {
   assert(!cast<MDNode>(MD)->getNumOperands() && "Expected an empty MDNode");
   return nullptr;
 }
-
-//===----------------------------------------------------------------------===//
-/// DbgDeclareInst - This represents the llvm.dbg.declare instruction.
-///
-
-Value *DbgDeclareInst::getAddress() const {
-  if (!getArgOperand(0))
-    return nullptr;
-
-  return getValueImpl(getArgOperand(0));
-}
-
-//===----------------------------------------------------------------------===//
-/// DbgValueInst - This represents the llvm.dbg.value instruction.
-///
-
-const Value *DbgValueInst::getValue() const {
-  return const_cast<DbgValueInst *>(this)->getValue();
-}
-
-Value *DbgValueInst::getValue() { return getValueImpl(getArgOperand(0)); }
 
 int llvm::Intrinsic::lookupLLVMIntrinsicByName(ArrayRef<const char *> NameTable,
                                                StringRef Name) {

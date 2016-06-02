@@ -151,6 +151,13 @@ public:
     return false;
   }
 
+  /// Returns true if the stack slot holes in the fixed and callee-save stack
+  /// area should be used when allocating other stack locations to reduce stack
+  /// size.
+  virtual bool enableStackSlotScavenging(const MachineFunction &MF) const {
+    return false;
+  }
+
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
   /// the function.
   virtual void emitPrologue(MachineFunction &MF,
@@ -273,14 +280,13 @@ public:
     report_fatal_error("WinEH not implemented for this target");
   }
 
-  /// eliminateCallFramePseudoInstr - This method is called during prolog/epilog
-  /// code insertion to eliminate call frame setup and destroy pseudo
-  /// instructions (but only if the Target is using them).  It is responsible
-  /// for eliminating these instructions, replacing them with concrete
-  /// instructions.  This method need only be implemented if using call frame
-  /// setup/destroy pseudo instructions.
-  ///
-  virtual void
+  /// This method is called during prolog/epilog code insertion to eliminate
+  /// call frame setup and destroy pseudo instructions (but only if the Target
+  /// is using them).  It is responsible for eliminating these instructions,
+  /// replacing them with concrete instructions.  This method need only be
+  /// implemented if using call frame setup/destroy pseudo instructions.
+  /// Returns an iterator pointing to the instruction after the replaced one.
+  virtual MachineBasicBlock::iterator
   eliminateCallFramePseudoInstr(MachineFunction &MF,
                                 MachineBasicBlock &MBB,
                                 MachineBasicBlock::iterator MI) const {

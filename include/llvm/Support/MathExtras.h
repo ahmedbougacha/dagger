@@ -19,6 +19,7 @@
 #include <cassert>
 #include <cstring>
 #include <type_traits>
+#include <limits>
 
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -310,16 +311,37 @@ inline bool isShiftedUInt(uint64_t x) {
   return isUInt<N+S>(x) && (x % (1<<S) == 0);
 }
 
+/// Gets the maximum value for a N-bit unsigned integer.
+inline uint64_t maxUIntN(uint64_t N) {
+  assert(N > 0 && N <= 64 && "integer width out of range");
+
+  return (UINT64_C(1) << N) - 1;
+}
+
+/// Gets the minimum value for a N-bit signed integer.
+inline int64_t minIntN(int64_t N) {
+  assert(N > 0 && N <= 64 && "integer width out of range");
+
+  return -(INT64_C(1)<<(N-1));
+}
+
+/// Gets the maximum value for a N-bit signed integer.
+inline int64_t maxIntN(int64_t N) {
+  assert(N > 0 && N <= 64 && "integer width out of range");
+
+  return (INT64_C(1)<<(N-1)) - 1;
+}
+
 /// isUIntN - Checks if an unsigned integer fits into the given (dynamic)
 /// bit width.
 inline bool isUIntN(unsigned N, uint64_t x) {
-  return N >= 64 || x < (UINT64_C(1)<<(N));
+  return N >= 64 || x <= maxUIntN(N);
 }
 
 /// isIntN - Checks if an signed integer fits into the given (dynamic)
 /// bit width.
 inline bool isIntN(unsigned N, int64_t x) {
-  return N >= 64 || (-(INT64_C(1)<<(N-1)) <= x && x < (INT64_C(1)<<(N-1)));
+  return N >= 64 || (minIntN(N) <= x && x <= maxIntN(N));
 }
 
 /// isMask_32 - This function returns true if the argument is a non-empty
@@ -619,6 +641,13 @@ inline uint64_t PowerOf2Floor(uint64_t A) {
 inline uint64_t alignTo(uint64_t Value, uint64_t Align, uint64_t Skew = 0) {
   Skew %= Align;
   return (Value + Align - 1 - Skew) / Align * Align + Skew;
+}
+
+/// Returns the largest uint64_t less than or equal to \p Value and is
+/// \p Skew mod \p Align. \p Align must be non-zero
+inline uint64_t alignDown(uint64_t Value, uint64_t Align, uint64_t Skew = 0) {
+  Skew %= Align;
+  return (Value - Skew) / Align * Align + Skew;
 }
 
 /// Returns the offset to the next integer (mod 2**64) that is greater than

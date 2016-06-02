@@ -23,6 +23,7 @@
 #include "llvm/CodeGen/DAGCombine.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
+#include "llvm/Support/ArrayRecycler.h"
 #include "llvm/Support/RecyclingAllocator.h"
 #include "llvm/Target/TargetMachine.h"
 #include <cassert>
@@ -208,6 +209,7 @@ class SelectionDAG {
 
   /// Pool allocation for machine-opcode SDNode operands.
   BumpPtrAllocator OperandAllocator;
+  ArrayRecycler<SDUse> OperandRecycler;
 
   /// Pool allocation for misc. objects that are created once per SelectionDAG.
   BumpPtrAllocator Allocator;
@@ -267,6 +269,36 @@ private:
   bool setSubgraphColorHelper(SDNode *N, const char *Color,
                               DenseSet<SDNode *> &visited,
                               int level, bool &printed);
+
+  template <typename SDNodeT, typename... ArgTypes>
+  SDNodeT *newSDNode(ArgTypes &&... Args) {
+    return new (NodeAllocator.template Allocate<SDNodeT>())
+        SDNodeT(std::forward<ArgTypes>(Args)...);
+  }
+
+  void createOperands(SDNode *Node, ArrayRef<SDValue> Vals) {
+    assert(!Node->OperandList && "Node already has operands");
+    SDUse *Ops = OperandRecycler.allocate(
+        ArrayRecycler<SDUse>::Capacity::get(Vals.size()), OperandAllocator);
+
+    for (unsigned I = 0; I != Vals.size(); ++I) {
+      Ops[I].setUser(Node);
+      Ops[I].setInitial(Vals[I]);
+    }
+    Node->NumOperands = Vals.size();
+    Node->OperandList = Ops;
+    checkForCycles(Node);
+  }
+
+  void removeOperands(SDNode *Node) {
+    if (!Node->OperandList)
+      return;
+    OperandRecycler.deallocate(
+        ArrayRecycler<SDUse>::Capacity::get(Node->NumOperands),
+        Node->OperandList);
+    Node->NumOperands = 0;
+    Node->OperandList = nullptr;
+  }
 
   void operator=(const SelectionDAG&) = delete;
   SelectionDAG(const SelectionDAG&) = delete;
@@ -597,6 +629,38 @@ public:
     assert(VT.getVectorNumElements() == MaskElts.size() &&
            "Must have the same number of vector elements as mask elements!");
     return getVectorShuffle(VT, dl, N1, N2, MaskElts.data());
+  }
+
+  /// Return an ISD::BUILD_VECTOR node. The number of elements in VT,
+  /// which must be a vector type, must match the number of operands in Ops.
+  /// The operands must have the same type as (or, for integers, a type wider
+  /// than) VT's element type.
+  SDValue getBuildVector(EVT VT, SDLoc DL, ArrayRef<SDValue> Ops) {
+    // VerifySDNode (via InsertNode) checks BUILD_VECTOR later.
+    return getNode(ISD::BUILD_VECTOR, DL, VT, Ops);
+  }
+
+  /// Return a splat ISD::BUILD_VECTOR node, consisting of Op splatted to all
+  /// elements. VT must be a vector type. Op's type must be the same as (or,
+  /// for integers, a type wider than) VT's element type.
+  SDValue getSplatBuildVector(EVT VT, SDLoc DL, SDValue Op) {
+    // VerifySDNode (via InsertNode) checks BUILD_VECTOR later.
+    if (Op.getOpcode() == ISD::UNDEF) {
+      assert((VT.getVectorElementType() == Op.getValueType() ||
+              (VT.isInteger() &&
+               VT.getVectorElementType().bitsLE(Op.getValueType()))) &&
+             "A splatted value must have a width equal or (for integers) "
+             "greater than the vector element type!");
+      return getNode(ISD::UNDEF, SDLoc(), VT);
+    }
+
+    SmallVector<SDValue, 16> Ops(VT.getVectorNumElements(), Op);
+    return getNode(ISD::BUILD_VECTOR, DL, VT, Ops);
+  }
+
+  /// Return a splat ISD::BUILD_VECTOR node, but with Op's SDLoc.
+  SDValue getSplatBuildVector(EVT VT, SDValue Op) {
+    return getSplatBuildVector(VT, SDLoc(Op), Op);
   }
 
   /// \brief Returns an ISD::VECTOR_SHUFFLE node semantically equivalent to
@@ -1212,6 +1276,11 @@ public:
   void computeKnownBits(SDValue Op, APInt &KnownZero, APInt &KnownOne,
                         unsigned Depth = 0) const;
 
+  /// Test if the given value is known to have exactly one bit set. This differs
+  /// from computeKnownBits in that it doesn't necessarily determine which bit
+  /// is set.
+  bool isKnownToBeAPowerOfTwo(SDValue Val) const;
+
   /// Return the number of times the sign bit of the
   /// register is replicated into the other bits.  We know that at least 1 bit
   /// is always equal to the sign bit (itself), but other cases can give us
@@ -1252,10 +1321,12 @@ public:
   /// vector op and fill the end of the resulting vector with UNDEFS.
   SDValue UnrollVectorOp(SDNode *N, unsigned ResNE = 0);
 
-  /// Return true if LD is loading 'Bytes' bytes from a location that is 'Dist'
-  /// units away from the location that the 'Base' load is loading from.
-  bool isConsecutiveLoad(LoadSDNode *LD, LoadSDNode *Base,
-                         unsigned Bytes, int Dist) const;
+  /// Return true if loads are next to each other and can be
+  /// merged. Check that both are nonvolatile and if LD is loading
+  /// 'Bytes' bytes from a location that is 'Dist' units away from the
+  /// location that the 'Base' load is loading from.
+  bool areNonVolatileConsecutiveLoads(LoadSDNode *LD, LoadSDNode *Base,
+                                      unsigned Bytes, int Dist) const;
 
   /// Infer alignment of a load / store address. Return 0 if
   /// it cannot be inferred.
@@ -1310,9 +1381,8 @@ private:
 
   void allnodes_clear();
 
-  BinarySDNode *GetBinarySDNode(unsigned Opcode, SDLoc DL, SDVTList VTs,
-                                SDValue N1, SDValue N2,
-                                const SDNodeFlags *Flags = nullptr);
+  SDNode *GetBinarySDNode(unsigned Opcode, SDLoc DL, SDVTList VTs, SDValue N1,
+                          SDValue N2, const SDNodeFlags *Flags = nullptr);
 
   /// Look up the node specified by ID in CSEMap.  If it exists, return it.  If
   /// not, return the insertion token that will make insertion faster.  This
@@ -1323,7 +1393,7 @@ private:
   /// Look up the node specified by ID in CSEMap.  If it exists, return it.  If
   /// not, return the insertion token that will make insertion faster.  Performs
   /// additional processing for constant nodes.
-  SDNode *FindNodeOrInsertPos(const FoldingSetNodeID &ID, DebugLoc DL,
+  SDNode *FindNodeOrInsertPos(const FoldingSetNodeID &ID, SDLoc DL,
                               void *&InsertPos);
 
   /// List of non-single value types.

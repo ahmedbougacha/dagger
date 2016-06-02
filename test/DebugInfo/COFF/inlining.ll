@@ -45,11 +45,11 @@
 ; ASM: [[inline_beg]]:
 ; ASM: .long   0
 ; ASM: # Inlined function bar starts at t.cpp:8
-; ASM: .long   4099
-; ASM: .long   0
-; ASM: .long   8
+; ASM: .long   4098                    # Type index of inlined function
+; ASM: .long   0                       # Offset into filechecksum table
+; ASM: .long   8                       # Starting line number
 ; ASM: # Inlined function foo starts at t.cpp:2
-; ASM: .long   4100
+; ASM: .long   4099
 ; ASM: .long   0
 ; ASM: .long   2
 ; ASM: [[inline_end]]:
@@ -69,16 +69,94 @@
 ; ASM: .short  4430
 ; ASM: .short  4430
 
+; ASM: .section .debug$T,"dr"
+; ASM: .long 4 # Debug section magic
+; ASM: # ArgList (0x1000) {
+; ASM: #   TypeLeafKind: LF_ARGLIST (0x1201)
+; ASM: #   NumArgs: 0
+; ASM: #   Arguments [
+; ASM: #   ]
+; ASM: # }
+; ASM: .byte   0x06, 0x00, 0x01, 0x12
+; ASM: .byte   0x00, 0x00, 0x00, 0x00
+; ASM: # Procedure (0x1001) {
+; ASM: #   TypeLeafKind: LF_PROCEDURE (0x1008)
+; ASM: #   ReturnType: void (0x3)
+; ASM: #   CallingConvention: NearC (0x0)
+; ASM: #   FunctionOptions [ (0x0)
+; ASM: #   ]
+; ASM: #   NumParameters: 0
+; ASM: #   ArgListType: () (0x1000)
+; ASM: # }
+; ASM: .byte   0x0e, 0x00, 0x08, 0x10
+; ASM: .byte   0x03, 0x00, 0x00, 0x00
+; ASM: .byte   0x00, 0x00, 0x00, 0x00
+; ASM: .byte   0x00, 0x10, 0x00, 0x00
+; ASM: # FuncId (0x1002) {
+; ASM: #   TypeLeafKind: LF_FUNC_ID (0x1601)
+; ASM: #   ParentScope: 0x0
+; ASM: #   FunctionType: void () (0x1001)
+; ASM: #   Name: bar
+; ASM: # }
+; ASM: .byte   0x0e, 0x00, 0x01, 0x16
+; ASM: .byte   0x00, 0x00, 0x00, 0x00
+; ASM: .byte   0x01, 0x10, 0x00, 0x00
+; ASM: .byte   0x62, 0x61, 0x72, 0x00
+; ASM: # FuncId (0x1003) {
+; ASM: #   TypeLeafKind: LF_FUNC_ID (0x1601)
+; ASM: #   ParentScope: 0x0
+; ASM: #   FunctionType: void () (0x1001)
+; ASM: #   Name: foo
+; ASM: # }
+; ASM: .byte   0x0e, 0x00, 0x01, 0x16
+; ASM: .byte   0x00, 0x00, 0x00, 0x00
+; ASM: .byte   0x01, 0x10, 0x00, 0x00
+; ASM: .byte   0x66, 0x6f, 0x6f, 0x00
+
+; We should only the LF_FUNC_ID records that we needed to reference.
+; OBJ: CodeViewTypes [
+; OBJ:   Section: .debug$T
+; OBJ:   ArgList (0x1000) {
+; OBJ:     TypeLeafKind: LF_ARGLIST (0x1201)
+; OBJ:     NumArgs: 0
+; OBJ:   }
+; OBJ:   Procedure (0x1001) {
+; OBJ:     TypeLeafKind: LF_PROCEDURE (0x1008)
+; OBJ:     ReturnType: void (0x3)
+; OBJ:     NumParameters: 0
+; OBJ:     ArgListType: () (0x1000)
+; OBJ:   }
+; OBJ:   FuncId (0x1002) {
+; OBJ:     TypeLeafKind: LF_FUNC_ID (0x1601)
+; OBJ:     ParentScope: 0x0
+; OBJ:     FunctionType: void () (0x1001)
+; OBJ:     Name: bar
+; OBJ:   }
+; OBJ:   FuncId (0x1003) {
+; OBJ:     TypeLeafKind: LF_FUNC_ID (0x1601)
+; OBJ:     ParentScope: 0x0
+; OBJ:     FunctionType: void () (0x1001)
+; OBJ:     Name: foo
+; OBJ:   }
+; OBJ:   FuncId (0x1004) {
+; OBJ:     TypeLeafKind: LF_FUNC_ID (0x1601)
+; OBJ:     ParentScope: 0x0
+; OBJ:     FunctionType: void () (0x1001)
+; OBJ:     Name: baz
+; OBJ:   }
+; OBJ-NOT: TypeLeafKind: LF_FUNC_ID
+; OBJ: ]
+
 ; OBJ: Subsection [
 ; OBJ:   SubSectionType: InlineeLines (0xF6)
 ; OBJ:   SubSectionSize: 0x1C
 ; OBJ:   InlineeSourceLine {
-; OBJ:     Inlinee: bar (0x1003)
+; OBJ:     Inlinee: bar (0x1002)
 ; OBJ:     FileID: D:\src\llvm\build\t.cpp (0x0)
 ; OBJ:     SourceLineNum: 8
 ; OBJ:   }
 ; OBJ:   InlineeSourceLine {
-; OBJ:     Inlinee: foo (0x1004)
+; OBJ:     Inlinee: foo (0x1003)
 ; OBJ:     FileID: D:\src\llvm\build\t.cpp (0x0)
 ; OBJ:     SourceLineNum: 2
 ; OBJ:   }
@@ -92,7 +170,7 @@
 ; OBJ:     CodeSize: 0x3D
 ; OBJ:     DbgStart: 0x0
 ; OBJ:     DbgEnd: 0x0
-; OBJ:     FunctionType: 0x0
+; OBJ:     FunctionType: baz (0x1004)
 ; OBJ:     CodeOffset: ?baz@@YAXXZ+0x0
 ; OBJ:     Segment: 0x0
 ; OBJ:     Flags [ (0x0)
@@ -103,7 +181,7 @@
 ; OBJ:   InlineSite {
 ; OBJ:     PtrParent: 0x0
 ; OBJ:     PtrEnd: 0x0
-; OBJ:     Inlinee: bar (0x1003)
+; OBJ:     Inlinee: bar (0x1002)
 ; OBJ:     BinaryAnnotations [
 ; OBJ-NEXT:  ChangeCodeOffsetAndLineOffset: {CodeOffset: 0x8, LineOffset: 1}
 ; OBJ-NEXT:  ChangeLineOffset: -6
@@ -119,7 +197,7 @@
 ; OBJ:   InlineSite {
 ; OBJ:     PtrParent: 0x0
 ; OBJ:     PtrEnd: 0x0
-; OBJ:     Inlinee: foo (0x1004)
+; OBJ:     Inlinee: foo (0x1003)
 ; OBJ:     BinaryAnnotations [
 ; OBJ-NEXT:  ChangeCodeOffsetAndLineOffset: {CodeOffset: 0xF, LineOffset: 1}
 ; OBJ-NEXT:  ChangeCodeOffsetAndLineOffset: {CodeOffset: 0xA, LineOffset: 1}
@@ -189,14 +267,13 @@ attributes #2 = { nounwind }
 !llvm.module.flags = !{!8, !9, !10}
 !llvm.ident = !{!11}
 
-!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, file: !1, producer: "clang version 3.9.0 ", isOptimized: true, runtimeVersion: 0, emissionKind: 2, enums: !2, subprograms: !3)
+!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, file: !1, producer: "clang version 3.9.0 ", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly, enums: !2)
 !1 = !DIFile(filename: "t.cpp", directory: "D:\5Csrc\5Cllvm\5Cbuild")
 !2 = !{}
-!3 = !{!4, !6, !7}
-!4 = distinct !DISubprogram(name: "baz", scope: !1, file: !1, line: 13, type: !5, isLocal: false, isDefinition: true, scopeLine: 13, flags: DIFlagPrototyped, isOptimized: true, variables: !2)
+!4 = distinct !DISubprogram(name: "baz", scope: !1, file: !1, line: 13, type: !5, isLocal: false, isDefinition: true, scopeLine: 13, flags: DIFlagPrototyped, isOptimized: true, unit: !0, variables: !2)
 !5 = !DISubroutineType(types: !2)
-!6 = distinct !DISubprogram(name: "bar", scope: !1, file: !1, line: 8, type: !5, isLocal: true, isDefinition: true, scopeLine: 8, flags: DIFlagPrototyped, isOptimized: true, variables: !2)
-!7 = distinct !DISubprogram(name: "foo", scope: !1, file: !1, line: 2, type: !5, isLocal: true, isDefinition: true, scopeLine: 2, flags: DIFlagPrototyped, isOptimized: true, variables: !2)
+!6 = distinct !DISubprogram(name: "bar", scope: !1, file: !1, line: 8, type: !5, isLocal: true, isDefinition: true, scopeLine: 8, flags: DIFlagPrototyped, isOptimized: true, unit: !0, variables: !2)
+!7 = distinct !DISubprogram(name: "foo", scope: !1, file: !1, line: 2, type: !5, isLocal: true, isDefinition: true, scopeLine: 2, flags: DIFlagPrototyped, isOptimized: true, unit: !0, variables: !2)
 !8 = !{i32 2, !"CodeView", i32 1}
 !9 = !{i32 2, !"Debug Info Version", i32 3}
 !10 = !{i32 1, !"PIC Level", i32 2}

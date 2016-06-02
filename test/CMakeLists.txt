@@ -43,7 +43,6 @@ set(LLVM_TEST_DEPENDS
           llvm-extract
           llvm-lib
           llvm-link
-          llvm-lto
           llvm-mc
           llvm-mcmarkup
           llvm-nm
@@ -67,6 +66,10 @@ set(LLVM_TEST_DEPENDS
           yaml2obj
         )
 
+if(TARGET llvm-lto)
+  set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS} llvm-lto)
+endif()
+
 
 set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS}
           llvm-dc
@@ -77,6 +80,7 @@ set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS}
 if(APPLE)
   set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS} DYN)
 endif()
+
 
 # If Intel JIT events are supported, depend on a tool that tests the listener.
 if( LLVM_USE_INTEL_JITEVENTS )
@@ -91,7 +95,7 @@ if(TARGET llvm-go)
   set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS} llvm-go)
 endif()
 
-if(APPLE)
+if(TARGET LTO)
   set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS} LTO)
 endif()
 
@@ -123,6 +127,9 @@ if(LLVM_BUILD_EXAMPLES)
     Kaleidoscope-Ch7
     )
 endif()
+
+add_custom_target(llvm-test-depends DEPENDS ${LLVM_TEST_DEPENDS})
+set_target_properties(llvm-test-depends PROPERTIES FOLDER "Tests")
 
 add_lit_testsuite(check-llvm "Running the LLVM regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}

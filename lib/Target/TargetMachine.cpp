@@ -18,6 +18,7 @@
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCCodeGenInfo.h"
@@ -26,8 +27,6 @@
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCTargetOptions.h"
 #include "llvm/MC/SectionKind.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
@@ -72,11 +71,11 @@ void TargetMachine::resetTargetOptions(const Function &F) const {
   RESET_OPTION(NoNaNsFPMath, "no-nans-fp-math");
 }
 
-/// getRelocationModel - Returns the code generation relocation model. The
-/// choices are static, PIC, and dynamic-no-pic, and target default.
+/// Returns the code generation relocation model. The choices are static, PIC,
+/// and dynamic-no-pic.
 Reloc::Model TargetMachine::getRelocationModel() const {
   if (!CodeGenInfo)
-    return Reloc::Default;
+    return Reloc::Static; // FIXME
   return CodeGenInfo->getRelocationModel();
 }
 
@@ -110,7 +109,7 @@ TLSModel::Model TargetMachine::getTLSModel(const GlobalValue *GV) const {
   bool isLocal = GV->hasLocalLinkage();
   bool isDeclaration = GV->isDeclaration();
   bool isPIC = getRelocationModel() == Reloc::PIC_;
-  bool isPIE = Options.PositionIndependentExecutable;
+  bool isPIE = GV->getParent()->getPIELevel() != PIELevel::Default;
   // FIXME: what should we do for protected and internal visibility?
   // For variables, is internal different from hidden?
   bool isHidden = GV->hasHiddenVisibility();

@@ -119,6 +119,28 @@ static SPCC::CondCodes GetOppositeBranchCondition(SPCC::CondCodes CC)
   case SPCC::FCC_UE:   return SPCC::FCC_LG;
   case SPCC::FCC_NE:   return SPCC::FCC_E;
   case SPCC::FCC_E:    return SPCC::FCC_NE;
+  
+  case SPCC::CPCC_A:   return SPCC::CPCC_N;
+  case SPCC::CPCC_N:   return SPCC::CPCC_A;
+  case SPCC::CPCC_3:   // Fall through
+  case SPCC::CPCC_2:   // Fall through
+  case SPCC::CPCC_23:  // Fall through
+  case SPCC::CPCC_1:   // Fall through
+  case SPCC::CPCC_13:  // Fall through
+  case SPCC::CPCC_12:  // Fall through
+  case SPCC::CPCC_123: // Fall through
+  case SPCC::CPCC_0:   // Fall through
+  case SPCC::CPCC_03:  // Fall through
+  case SPCC::CPCC_02:  // Fall through
+  case SPCC::CPCC_023: // Fall through
+  case SPCC::CPCC_01:  // Fall through
+  case SPCC::CPCC_013: // Fall through
+  case SPCC::CPCC_012:
+      // "Opposite" code is not meaningful, as we don't know
+      // what the CoProc condition means here. The cond-code will
+      // only be used in inline assembler, so this code should
+      // not be reached in a normal compilation pass.
+      llvm_unreachable("Meaningless inversion of co-processor cond code");
   }
   llvm_unreachable("Invalid cond code");
 }
@@ -468,4 +490,20 @@ unsigned SparcInstrInfo::getGlobalBaseReg(MachineFunction *MF) const
   BuildMI(FirstMBB, MBBI, dl, get(SP::GETPCX), GlobalBaseReg);
   SparcFI->setGlobalBaseReg(GlobalBaseReg);
   return GlobalBaseReg;
+}
+
+bool SparcInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
+  switch (MI->getOpcode()) {
+  case TargetOpcode::LOAD_STACK_GUARD: {
+    assert(Subtarget.isTargetLinux() &&
+           "Only Linux target is expected to contain LOAD_STACK_GUARD");
+    // offsetof(tcbhead_t, stack_guard) from sysdeps/sparc/nptl/tls.h in glibc.
+    const int64_t Offset = Subtarget.is64Bit() ? 0x28 : 0x14;
+    MI->setDesc(get(Subtarget.is64Bit() ? SP::LDXri : SP::LDri));
+    MachineInstrBuilder(*MI->getParent()->getParent(), MI)
+        .addReg(SP::G7).addImm(Offset);
+    return true;
+  }
+  }
+  return false;
 }

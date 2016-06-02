@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86ShuffleDecode.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/CodeGen/MachineValueType.h"
 
 //===----------------------------------------------------------------------===//
@@ -314,9 +315,9 @@ void DecodePSHUFBMask(ArrayRef<uint64_t> RawMask,
       ShuffleMask.push_back(M);
       continue;
     }
-    // For AVX vectors with 32 bytes the base of the shuffle is the half of
-    // the vector we're inside.
-    int Base = i < 16 ? 0 : 16;
+    // For 256/512-bit vectors the base of the shuffle is the 128-bit
+    // subvector we're inside.
+    int Base = (i / 16) * 16;
     // If the high bit (7) of the byte is set, the element is zeroed.
     if (M & (1 << 7))
       ShuffleMask.push_back(SM_SentinelZero);
@@ -342,7 +343,46 @@ void DecodeBLENDMask(MVT VT, unsigned Imm, SmallVectorImpl<int> &ShuffleMask) {
   }
 }
 
-/// DecodeVPERMMask - this decodes the shuffle masks for VPERMQ/VPERMPD.
+void DecodeVPPERMMask(ArrayRef<uint64_t> RawMask,
+                      SmallVectorImpl<int> &ShuffleMask) {
+  assert(RawMask.size() == 16 && "Illegal VPPERM shuffle mask size");
+
+  // VPPERM Operation
+  // Bits[4:0] - Byte Index (0 - 31)
+  // Bits[7:5] - Permute Operation
+  //
+  // Permute Operation:
+  // 0 - Source byte (no logical operation).
+  // 1 - Invert source byte.
+  // 2 - Bit reverse of source byte.
+  // 3 - Bit reverse of inverted source byte.
+  // 4 - 00h (zero - fill).
+  // 5 - FFh (ones - fill).
+  // 6 - Most significant bit of source byte replicated in all bit positions.
+  // 7 - Invert most significant bit of source byte and replicate in all bit positions.
+  for (int i = 0, e = RawMask.size(); i < e; ++i) {
+    uint64_t M = RawMask[i];
+    if (M == (uint64_t)SM_SentinelUndef) {
+      ShuffleMask.push_back(M);
+      continue;
+    }
+
+    uint64_t PermuteOp = (M >> 5) & 0x7;
+    if (PermuteOp == 4) {
+      ShuffleMask.push_back(SM_SentinelZero);
+      continue;
+    }
+    if (PermuteOp != 0) {
+      ShuffleMask.clear();
+      return;
+    }
+
+    uint64_t Index = M & 0x1F;
+    ShuffleMask.push_back((int)Index);
+  }
+}
+
+  /// DecodeVPERMMask - this decodes the shuffle masks for VPERMQ/VPERMPD.
 /// No VT provided since it only works on 256-bit, 4 element vectors.
 void DecodeVPERMMask(unsigned Imm, SmallVectorImpl<int> &ShuffleMask) {
   for (unsigned i = 0; i != 4; ++i) {
@@ -454,6 +494,24 @@ void DecodeINSERTQIMask(int Len, int Idx,
     ShuffleMask.push_back(SM_SentinelUndef);
 }
 
+void DecodeVPERMILPMask(MVT VT, ArrayRef<uint64_t> RawMask,
+                        SmallVectorImpl<int> &ShuffleMask) {
+  unsigned VecSize = VT.getSizeInBits();
+  unsigned EltSize = VT.getScalarSizeInBits();
+  unsigned NumLanes = VecSize / 128;
+  unsigned NumEltsPerLane = VT.getVectorNumElements() / NumLanes;
+  assert((VecSize == 128 || VecSize == 256 || VecSize == 512) &&
+         "Unexpected vector size");
+  assert((EltSize == 32 || EltSize == 64) && "Unexpected element size");
+
+  for (unsigned i = 0, e = RawMask.size(); i < e; ++i) {
+    uint64_t M = RawMask[i];
+    M = (EltSize == 64 ? ((M >> 1) & 0x1) : (M & 0x3));
+    unsigned LaneOffset = i & ~(NumEltsPerLane - 1);
+    ShuffleMask.push_back((int)(LaneOffset + M));
+  }
+}
+
 void DecodeVPERMVMask(ArrayRef<uint64_t> RawMask,
                       SmallVectorImpl<int> &ShuffleMask) {
   for (int i = 0, e = RawMask.size(); i < e; ++i) {
@@ -464,8 +522,9 @@ void DecodeVPERMVMask(ArrayRef<uint64_t> RawMask,
 
 void DecodeVPERMV3Mask(ArrayRef<uint64_t> RawMask,
                       SmallVectorImpl<int> &ShuffleMask) {
-  for (int i = 0, e = RawMask.size(); i < e; ++i) {
-    uint64_t M = RawMask[i];
+  uint64_t EltMaskSize = (RawMask.size() * 2) - 1;
+  for (auto M : RawMask) {
+    M &= EltMaskSize;
     ShuffleMask.push_back((int)M);
   }
 }

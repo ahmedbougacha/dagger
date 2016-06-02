@@ -60,13 +60,15 @@ void llvm::initializeInstrumentation(PassRegistry &Registry) {
   initializeAddressSanitizerModulePass(Registry);
   initializeBoundsCheckingPass(Registry);
   initializeGCOVProfilerPass(Registry);
-  initializePGOInstrumentationGenPass(Registry);
-  initializePGOInstrumentationUsePass(Registry);
-  initializeInstrProfilingPass(Registry);
+  initializePGOInstrumentationGenLegacyPassPass(Registry);
+  initializePGOInstrumentationUseLegacyPassPass(Registry);
+  initializePGOIndirectCallPromotionLegacyPassPass(Registry);
+  initializeInstrProfilingLegacyPassPass(Registry);
   initializeMemorySanitizerPass(Registry);
   initializeThreadSanitizerPass(Registry);
   initializeSanitizerCoverageModulePass(Registry);
   initializeDataFlowSanitizerPass(Registry);
+  initializeEfficiencySanitizerPass(Registry);
 }
 
 /// LLVMInitializeInstrumentation - C binding for

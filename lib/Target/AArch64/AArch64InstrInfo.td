@@ -34,7 +34,8 @@ def HasSPE           : Predicate<"Subtarget->hasSPE()">,
 
 def IsLE             : Predicate<"Subtarget->isLittleEndian()">;
 def IsBE             : Predicate<"!Subtarget->isLittleEndian()">;
-def IsCyclone        : Predicate<"Subtarget->isCyclone()">;
+def UseAlternateSExtLoadCVTF32
+    : Predicate<"Subtarget->useAlternateSExtLoadCVTF32Pattern()">;
 
 //===----------------------------------------------------------------------===//
 // AArch64-specific DAG Nodes.
@@ -283,6 +284,9 @@ def SDT_AArch64mull : SDTypeProfile<1, 2, [SDTCisInt<0>, SDTCisInt<1>,
 def AArch64smull    : SDNode<"AArch64ISD::SMULL", SDT_AArch64mull>;
 def AArch64umull    : SDNode<"AArch64ISD::UMULL", SDT_AArch64mull>;
 
+def AArch64frecpe   : SDNode<"AArch64ISD::FRECPE", SDTFPUnaryOp>;
+def AArch64frsqrte  : SDNode<"AArch64ISD::FRSQRTE", SDTFPUnaryOp>;
+
 def AArch64saddv    : SDNode<"AArch64ISD::SADDV", SDT_AArch64UnaryVec>;
 def AArch64uaddv    : SDNode<"AArch64ISD::UADDV", SDT_AArch64UnaryVec>;
 def AArch64sminv    : SDNode<"AArch64ISD::SMINV", SDT_AArch64UnaryVec>;
@@ -312,10 +316,13 @@ include "AArch64InstrFormats.td"
 //===----------------------------------------------------------------------===//
 
 let Defs = [SP], Uses = [SP], hasSideEffects = 1, isCodeGenOnly = 1 in {
+// We set Sched to empty list because we expect these instructions to simply get
+// removed in most cases.
 def ADJCALLSTACKDOWN : Pseudo<(outs), (ins i32imm:$amt),
-                              [(AArch64callseq_start timm:$amt)]>;
+                              [(AArch64callseq_start timm:$amt)]>, Sched<[]>;
 def ADJCALLSTACKUP : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2),
-                            [(AArch64callseq_end timm:$amt1, timm:$amt2)]>;
+                            [(AArch64callseq_end timm:$amt1, timm:$amt2)]>,
+                            Sched<[]>;
 } // Defs = [SP], Uses = [SP], hasSideEffects = 1, isCodeGenOnly = 1
 
 let isReMaterializable = 1, isCodeGenOnly = 1 in {
@@ -685,10 +692,11 @@ def : InstAlias<"negs $dst, $src$shift",
 // Unsigned/Signed divide
 defm UDIV : Div<0, "udiv", udiv>;
 defm SDIV : Div<1, "sdiv", sdiv>;
-let isCodeGenOnly = 1 in {
-defm UDIV_Int : Div<0, "udiv", int_aarch64_udiv>;
-defm SDIV_Int : Div<1, "sdiv", int_aarch64_sdiv>;
-}
+
+def : Pat<(int_aarch64_udiv GPR32:$Rn, GPR32:$Rm), (UDIVWr $Rn, $Rm)>;
+def : Pat<(int_aarch64_udiv GPR64:$Rn, GPR64:$Rm), (UDIVXr $Rn, $Rm)>;
+def : Pat<(int_aarch64_sdiv GPR32:$Rn, GPR32:$Rm), (SDIVWr $Rn, $Rm)>;
+def : Pat<(int_aarch64_sdiv GPR64:$Rn, GPR64:$Rm), (SDIVXr $Rn, $Rm)>;
 
 // Variable shift
 defm ASRV : Shift<0b10, "asr", sra>;
@@ -1206,7 +1214,8 @@ def BR  : BranchReg<0b0000, "br", [(brind GPR64:$Rn)]>;
 // Create a separate pseudo-instruction for codegen to use so that we don't
 // flag lr as used in every function. It'll be restored before the RET by the
 // epilogue if it's legitimately used.
-def RET_ReallyLR : Pseudo<(outs), (ins), [(AArch64retflag)]> {
+def RET_ReallyLR : Pseudo<(outs), (ins), [(AArch64retflag)]>,
+                   Sched<[WriteBrReg]> {
   let isTerminator = 1;
   let isBarrier = 1;
   let isReturn = 1;
@@ -1216,7 +1225,7 @@ def RET_ReallyLR : Pseudo<(outs), (ins), [(AArch64retflag)]> {
 // R_AARCH64_TLSDESC_CALL relocation at the offset of the following instruction
 // (which in the usual case is a BLR).
 let hasSideEffects = 1 in
-def TLSDESCCALL : Pseudo<(outs), (ins i64imm:$sym), []> {
+def TLSDESCCALL : Pseudo<(outs), (ins i64imm:$sym), []>, Sched<[]> {
   let AsmString = ".tlsdesccall $sym";
 }
 
@@ -1226,7 +1235,8 @@ let isCall = 1, Defs = [LR, X0, X1], hasSideEffects = 1,
     isCodeGenOnly = 1 in
 def TLSDESC_CALLSEQ
     : Pseudo<(outs), (ins i64imm:$sym),
-             [(AArch64tlsdesc_callseq tglobaltlsaddr:$sym)]>;
+             [(AArch64tlsdesc_callseq tglobaltlsaddr:$sym)]>,
+      Sched<[WriteI, WriteLD, WriteI, WriteBrReg]>;
 def : Pat<(AArch64tlsdesc_callseq texternalsym:$sym),
           (TLSDESC_CALLSEQ texternalsym:$sym)>;
 
@@ -2492,12 +2502,31 @@ defm FCVTZS : FPToIntegerUnscaled<0b11, 0b000, "fcvtzs", fp_to_sint>;
 defm FCVTZU : FPToIntegerUnscaled<0b11, 0b001, "fcvtzu", fp_to_uint>;
 defm FCVTZS : FPToIntegerScaled<0b11, 0b000, "fcvtzs", fp_to_sint>;
 defm FCVTZU : FPToIntegerScaled<0b11, 0b001, "fcvtzu", fp_to_uint>;
-let isCodeGenOnly = 1 in {
-defm FCVTZS_Int : FPToIntegerUnscaled<0b11, 0b000, "fcvtzs", int_aarch64_neon_fcvtzs>;
-defm FCVTZU_Int : FPToIntegerUnscaled<0b11, 0b001, "fcvtzu", int_aarch64_neon_fcvtzu>;
-defm FCVTZS_Int : FPToIntegerScaled<0b11, 0b000, "fcvtzs", int_aarch64_neon_fcvtzs>;
-defm FCVTZU_Int : FPToIntegerScaled<0b11, 0b001, "fcvtzu", int_aarch64_neon_fcvtzu>;
+
+multiclass FPToIntegerIntPats<Intrinsic round, string INST> {
+  def : Pat<(i32 (round f16:$Rn)), (!cast<Instruction>(INST # UWHr) $Rn)>;
+  def : Pat<(i64 (round f16:$Rn)), (!cast<Instruction>(INST # UXHr) $Rn)>;
+  def : Pat<(i32 (round f32:$Rn)), (!cast<Instruction>(INST # UWSr) $Rn)>;
+  def : Pat<(i64 (round f32:$Rn)), (!cast<Instruction>(INST # UXSr) $Rn)>;
+  def : Pat<(i32 (round f64:$Rn)), (!cast<Instruction>(INST # UWDr) $Rn)>;
+  def : Pat<(i64 (round f64:$Rn)), (!cast<Instruction>(INST # UXDr) $Rn)>;
+
+  def : Pat<(i32 (round (fmul f16:$Rn, fixedpoint_f16_i32:$scale))),
+            (!cast<Instruction>(INST # SWHri) $Rn, $scale)>;
+  def : Pat<(i64 (round (fmul f16:$Rn, fixedpoint_f16_i64:$scale))),
+            (!cast<Instruction>(INST # SXHri) $Rn, $scale)>;
+  def : Pat<(i32 (round (fmul f32:$Rn, fixedpoint_f32_i32:$scale))),
+            (!cast<Instruction>(INST # SWSri) $Rn, $scale)>;
+  def : Pat<(i64 (round (fmul f32:$Rn, fixedpoint_f32_i64:$scale))),
+            (!cast<Instruction>(INST # SXSri) $Rn, $scale)>;
+  def : Pat<(i32 (round (fmul f64:$Rn, fixedpoint_f64_i32:$scale))),
+            (!cast<Instruction>(INST # SWDri) $Rn, $scale)>;
+  def : Pat<(i64 (round (fmul f64:$Rn, fixedpoint_f64_i64:$scale))),
+            (!cast<Instruction>(INST # SXDri) $Rn, $scale)>;
 }
+
+defm : FPToIntegerIntPats<int_aarch64_neon_fcvtzs, "FCVTZS">;
+defm : FPToIntegerIntPats<int_aarch64_neon_fcvtzu, "FCVTZU">;
 
 multiclass FPToIntegerPats<SDNode to_int, SDNode round, string INST> {
   def : Pat<(i32 (to_int (round f32:$Rn))),
@@ -2536,9 +2565,11 @@ defm FMOV : UnscaledConversion<"fmov">;
 let isReMaterializable = 1, isCodeGenOnly = 1 in {
 def FMOVS0 : Pseudo<(outs FPR32:$Rd), (ins), [(set f32:$Rd, (fpimm0))]>,
     PseudoInstExpansion<(FMOVWSr FPR32:$Rd, WZR)>,
+    Sched<[WriteF]>,
     Requires<[NoZCZ]>;
 def FMOVD0 : Pseudo<(outs FPR64:$Rd), (ins), [(set f64:$Rd, (fpimm0))]>,
     PseudoInstExpansion<(FMOVXDr FPR64:$Rd, XZR)>,
+    Sched<[WriteF]>,
     Requires<[NoZCZ]>;
 }
 
@@ -2665,6 +2696,7 @@ def F128CSEL : Pseudo<(outs FPR128:$Rd),
                                        (i32 imm:$cond), NZCV))]> {
   let Uses = [NZCV];
   let usesCustomInserter = 1;
+  let hasNoSchedulingInfo = 1;
 }
 
 
@@ -2790,12 +2822,19 @@ defm FCVTXN : SIMDFPInexactCvtTwoVector<1, 0, 0b10110, "fcvtxn",
                                         int_aarch64_neon_fcvtxn>;
 defm FCVTZS : SIMDTwoVectorFPToInt<0, 1, 0b11011, "fcvtzs", fp_to_sint>;
 defm FCVTZU : SIMDTwoVectorFPToInt<1, 1, 0b11011, "fcvtzu", fp_to_uint>;
-let isCodeGenOnly = 1 in {
-defm FCVTZS_Int : SIMDTwoVectorFPToInt<0, 1, 0b11011, "fcvtzs",
-                                       int_aarch64_neon_fcvtzs>;
-defm FCVTZU_Int : SIMDTwoVectorFPToInt<1, 1, 0b11011, "fcvtzu",
-                                       int_aarch64_neon_fcvtzu>;
-}
+
+def : Pat<(v4i16 (int_aarch64_neon_fcvtzs v4f16:$Rn)), (FCVTZSv4f16 $Rn)>;
+def : Pat<(v8i16 (int_aarch64_neon_fcvtzs v8f16:$Rn)), (FCVTZSv8f16 $Rn)>;
+def : Pat<(v2i32 (int_aarch64_neon_fcvtzs v2f32:$Rn)), (FCVTZSv2f32 $Rn)>;
+def : Pat<(v4i32 (int_aarch64_neon_fcvtzs v4f32:$Rn)), (FCVTZSv4f32 $Rn)>;
+def : Pat<(v2i64 (int_aarch64_neon_fcvtzs v2f64:$Rn)), (FCVTZSv2f64 $Rn)>;
+
+def : Pat<(v4i16 (int_aarch64_neon_fcvtzu v4f16:$Rn)), (FCVTZUv4f16 $Rn)>;
+def : Pat<(v8i16 (int_aarch64_neon_fcvtzu v8f16:$Rn)), (FCVTZUv8f16 $Rn)>;
+def : Pat<(v2i32 (int_aarch64_neon_fcvtzu v2f32:$Rn)), (FCVTZUv2f32 $Rn)>;
+def : Pat<(v4i32 (int_aarch64_neon_fcvtzu v4f32:$Rn)), (FCVTZUv4f32 $Rn)>;
+def : Pat<(v2i64 (int_aarch64_neon_fcvtzu v2f64:$Rn)), (FCVTZUv2f64 $Rn)>;
+
 defm FNEG   : SIMDTwoVectorFP<1, 1, 0b01111, "fneg", fneg>;
 defm FRECPE : SIMDTwoVectorFP<0, 1, 0b11101, "frecpe", int_aarch64_neon_frecpe>;
 defm FRINTA : SIMDTwoVectorFP<1, 0, 0b11000, "frinta", frnd>;
@@ -3366,6 +3405,19 @@ def : Pat<(f64 (int_aarch64_neon_frecpe (f64 FPR64:$Rn))),
 def : Pat<(v1f64 (int_aarch64_neon_frecpe (v1f64 FPR64:$Rn))),
           (FRECPEv1i64 FPR64:$Rn)>;
 
+def : Pat<(f32 (AArch64frecpe (f32 FPR32:$Rn))),
+          (FRECPEv1i32 FPR32:$Rn)>;
+def : Pat<(v2f32 (AArch64frecpe (v2f32 V64:$Rn))),
+          (FRECPEv2f32 V64:$Rn)>;
+def : Pat<(v4f32 (AArch64frecpe (v4f32 FPR128:$Rn))),
+          (FRECPEv4f32 FPR128:$Rn)>;
+def : Pat<(f64 (AArch64frecpe (f64 FPR64:$Rn))),
+          (FRECPEv1i64 FPR64:$Rn)>;
+def : Pat<(v1f64 (AArch64frecpe (v1f64 FPR64:$Rn))),
+          (FRECPEv1i64 FPR64:$Rn)>;
+def : Pat<(v2f64 (AArch64frecpe (v2f64 FPR128:$Rn))),
+          (FRECPEv2f64 FPR128:$Rn)>;
+
 def : Pat<(f32 (int_aarch64_neon_frecpx (f32 FPR32:$Rn))),
           (FRECPXv1i32 FPR32:$Rn)>;
 def : Pat<(f64 (int_aarch64_neon_frecpx (f64 FPR64:$Rn))),
@@ -3377,6 +3429,19 @@ def : Pat<(f64 (int_aarch64_neon_frsqrte (f64 FPR64:$Rn))),
           (FRSQRTEv1i64 FPR64:$Rn)>;
 def : Pat<(v1f64 (int_aarch64_neon_frsqrte (v1f64 FPR64:$Rn))),
           (FRSQRTEv1i64 FPR64:$Rn)>;
+
+def : Pat<(f32 (AArch64frsqrte (f32 FPR32:$Rn))),
+          (FRSQRTEv1i32 FPR32:$Rn)>;
+def : Pat<(v2f32 (AArch64frsqrte (v2f32 V64:$Rn))),
+          (FRSQRTEv2f32 V64:$Rn)>;
+def : Pat<(v4f32 (AArch64frsqrte (v4f32 FPR128:$Rn))),
+          (FRSQRTEv4f32 FPR128:$Rn)>;
+def : Pat<(f64 (AArch64frsqrte (f64 FPR64:$Rn))),
+          (FRSQRTEv1i64 FPR64:$Rn)>;
+def : Pat<(v1f64 (AArch64frsqrte (v1f64 FPR64:$Rn))),
+          (FRSQRTEv1i64 FPR64:$Rn)>;
+def : Pat<(v2f64 (AArch64frsqrte (v2f64 FPR128:$Rn))),
+          (FRSQRTEv2f64 FPR128:$Rn)>;
 
 // If an integer is about to be converted to a floating point value,
 // just load it on the floating point unit.
@@ -4893,7 +4958,8 @@ class SExtLoadi8CVTf32Pat<dag addrmode, dag INST>
                                     0),
                                   dsub)),
                                0),
-                             ssub)))>, Requires<[NotForCodeSize, IsCyclone]>;
+                             ssub)))>,
+    Requires<[NotForCodeSize, UseAlternateSExtLoadCVTF32]>;
 
 def : SExtLoadi8CVTf32Pat<(ro8.Wpat GPR64sp:$Rn, GPR32:$Rm, ro8.Wext:$ext),
                           (LDRBroW  GPR64sp:$Rn, GPR32:$Rm, ro8.Wext:$ext)>;
@@ -4946,7 +5012,8 @@ class SExtLoadi16CVTf64Pat<dag addrmode, dag INST>
                                      0),
                                    dsub)),
                                0),
-                             dsub)))>, Requires<[NotForCodeSize, IsCyclone]>;
+                             dsub)))>,
+    Requires<[NotForCodeSize, UseAlternateSExtLoadCVTF32]>;
  
 def : SExtLoadi16CVTf64Pat<(ro16.Wpat GPR64sp:$Rn, GPR32:$Rm, ro16.Wext:$ext),
                            (LDRHroW GPR64sp:$Rn, GPR32:$Rm, ro16.Wext:$ext)>;
@@ -6038,8 +6105,10 @@ def : Pat<(nontemporalstore GPR64:$Rt,
 // Tail call return handling. These are all compiler pseudo-instructions,
 // so no encoding information or anything like that.
 let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1, Uses = [SP] in {
-  def TCRETURNdi : Pseudo<(outs), (ins i64imm:$dst, i32imm:$FPDiff),[]>;
-  def TCRETURNri : Pseudo<(outs), (ins tcGPR64:$dst, i32imm:$FPDiff), []>;
+  def TCRETURNdi : Pseudo<(outs), (ins i64imm:$dst, i32imm:$FPDiff), []>,
+                   Sched<[WriteBrReg]>;
+  def TCRETURNri : Pseudo<(outs), (ins tcGPR64:$dst, i32imm:$FPDiff), []>,
+                   Sched<[WriteBrReg]>;
 }
 
 def : Pat<(AArch64tcret tcGPR64:$dst, (i32 timm:$FPDiff)),

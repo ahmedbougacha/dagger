@@ -1436,7 +1436,7 @@ class CondStr<string CReg, bit True, bit New> {
   string S = "if (" # !if(True,"","!") # CReg # !if(New,".new","") # ") ";
 }
 class JumpOpcStr<string Mnemonic, bit New, bit Taken> {
-  string S = Mnemonic # !if(Taken, ":t", !if(New, ":nt", ""));
+  string S = Mnemonic # !if(Taken, ":t", ":nt");
 }
 
 let isBranch = 1, isBarrier = 1, Defs = [PC], hasSideEffects = 0,
@@ -1582,18 +1582,30 @@ let Defs = VolatileV3.Regs in {
 let isTerminator = 1, hasSideEffects = 0 in {
   defm J2_jump : JMP_base<"JMP", "">, PredNewRel;
 
-  // Deal with explicit assembly
-  //  - never extened a jump #,  always extend a jump ##
-  let isAsmParserOnly = 1 in {
-    defm J2_jump_ext   : JMP_base<"JMP", "##">;
-    defm J2_jump_noext : JMP_base<"JMP", "#">;
-  }
-
   defm J2_jumpr : JMPR_base<"JMPr">, PredNewRel;
 
   let isReturn = 1, isCodeGenOnly = 1 in
   defm JMPret : JMPR_base<"JMPret">, PredNewRel;
 }
+
+let validSubTargets  = HasV60SubT in
+multiclass JMPpt_base<string BaseOp> {
+  let BaseOpcode = BaseOp in {
+    def tpt : T_JMP_c <0, 0, 1, "">; // Predicate true - taken
+    def fpt : T_JMP_c <1, 0, 1, "">; // Predicate false - taken
+  }
+}
+
+let validSubTargets  = HasV60SubT in
+multiclass JMPRpt_base<string BaseOp> {
+  let BaseOpcode = BaseOp in {
+    def tpt : T_JMPr_c<0, 0, 1>; // predicate true - taken
+    def fpt : T_JMPr_c<1, 0, 1>; // predicate false - taken
+  }
+}
+
+defm J2_jumpr : JMPRpt_base<"JMPr">;
+defm J2_jump  : JMPpt_base<"JMP">;
 
 def: Pat<(br bb:$dst),
          (J2_jump brtarget:$dst)>;
@@ -4137,22 +4149,16 @@ def S2_clbnorm : T_COUNT_LEADING_32<"normamt", 0b000, 0b111>;
 // Count leading zeros.
 def: Pat<(i32 (ctlz I32:$Rs)), (S2_cl0 I32:$Rs)>;
 def: Pat<(i32 (trunc (ctlz I64:$Rss))), (S2_cl0p I64:$Rss)>;
-def: Pat<(i32 (ctlz_zero_undef I32:$Rs)), (S2_cl0 I32:$Rs)>;
-def: Pat<(i32 (trunc (ctlz_zero_undef I64:$Rss))), (S2_cl0p I64:$Rss)>;
 
 // Count trailing zeros: 32-bit.
 def: Pat<(i32 (cttz I32:$Rs)), (S2_ct0 I32:$Rs)>;
-def: Pat<(i32 (cttz_zero_undef I32:$Rs)), (S2_ct0 I32:$Rs)>;
 
 // Count leading ones.
 def: Pat<(i32 (ctlz (not I32:$Rs))), (S2_cl1 I32:$Rs)>;
 def: Pat<(i32 (trunc (ctlz (not I64:$Rss)))), (S2_cl1p I64:$Rss)>;
-def: Pat<(i32 (ctlz_zero_undef (not I32:$Rs))), (S2_cl1 I32:$Rs)>;
-def: Pat<(i32 (trunc (ctlz_zero_undef (not I64:$Rss)))), (S2_cl1p I64:$Rss)>;
 
 // Count trailing ones: 32-bit.
 def: Pat<(i32 (cttz (not I32:$Rs))), (S2_ct1 I32:$Rs)>;
-def: Pat<(i32 (cttz_zero_undef (not I32:$Rs))), (S2_ct1 I32:$Rs)>;
 
 // The 64-bit counts leading/trailing are defined in HexagonInstrInfoV4.td.
 

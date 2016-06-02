@@ -17,7 +17,6 @@
 #include "MCTargetDesc/X86BaseInfo.h"
 #include "X86InstrInfo.h"
 #include "X86MachineFunctionInfo.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
 #include "llvm/CodeGen/MachineValueType.h"
@@ -28,6 +27,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCSectionCOFF.h"
@@ -50,6 +50,9 @@ bool X86AsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   Subtarget = &MF.getSubtarget<X86Subtarget>();
 
   SMShadowTracker.startFunction(MF);
+  CodeEmitter.reset(TM.getTarget().createMCCodeEmitter(
+      *MF.getSubtarget().getInstrInfo(), *MF.getSubtarget().getRegisterInfo(),
+      MF.getContext()));
 
   SetupMachineFunction(MF);
 
@@ -88,8 +91,7 @@ static void printSymbolOperand(X86AsmPrinter &P, const MachineOperand &MO,
     if (MO.getTargetFlags() == X86II::MO_DARWIN_STUB)
       GVSym = P.getSymbolWithGlobalValueBase(GV, "$stub");
     else if (MO.getTargetFlags() == X86II::MO_DARWIN_NONLAZY ||
-             MO.getTargetFlags() == X86II::MO_DARWIN_NONLAZY_PIC_BASE ||
-             MO.getTargetFlags() == X86II::MO_DARWIN_HIDDEN_NONLAZY_PIC_BASE)
+             MO.getTargetFlags() == X86II::MO_DARWIN_NONLAZY_PIC_BASE)
       GVSym = P.getSymbolWithGlobalValueBase(GV, "$non_lazy_ptr");
     else
       GVSym = P.getSymbol(GV);
@@ -104,14 +106,6 @@ static void printSymbolOperand(X86AsmPrinter &P, const MachineOperand &MO,
       MCSymbol *Sym = P.getSymbolWithGlobalValueBase(GV, "$non_lazy_ptr");
       MachineModuleInfoImpl::StubValueTy &StubSym =
           P.MMI->getObjFileInfo<MachineModuleInfoMachO>().getGVStubEntry(Sym);
-      if (!StubSym.getPointer())
-        StubSym = MachineModuleInfoImpl::
-          StubValueTy(P.getSymbol(GV), !GV->hasInternalLinkage());
-    } else if (MO.getTargetFlags() == X86II::MO_DARWIN_HIDDEN_NONLAZY_PIC_BASE){
-      MCSymbol *Sym = P.getSymbolWithGlobalValueBase(GV, "$non_lazy_ptr");
-      MachineModuleInfoImpl::StubValueTy &StubSym =
-          P.MMI->getObjFileInfo<MachineModuleInfoMachO>().getHiddenGVStubEntry(
-              Sym);
       if (!StubSym.getPointer())
         StubSym = MachineModuleInfoImpl::
           StubValueTy(P.getSymbol(GV), !GV->hasInternalLinkage());
@@ -155,7 +149,6 @@ static void printSymbolOperand(X86AsmPrinter &P, const MachineOperand &MO,
     break;
   case X86II::MO_PIC_BASE_OFFSET:
   case X86II::MO_DARWIN_NONLAZY_PIC_BASE:
-  case X86II::MO_DARWIN_HIDDEN_NONLAZY_PIC_BASE:
     O << '-';
     P.MF->getPICBaseSymbol()->print(O, P.MAI);
     break;
@@ -535,6 +528,12 @@ void X86AsmPrinter::EmitStartOfAsmFile(Module &M) {
     }
   }
   OutStreamer->EmitSyntaxDirective();
+
+  // If this is not inline asm and we're in 16-bit
+  // mode prefix assembly with .code16.
+  bool is16 = TT.getEnvironment() == Triple::CODE16;
+  if (M.getModuleInlineAsm().empty() && is16)
+    OutStreamer->EmitAssemblerFlag(MCAF_Code16);
 }
 
 static void
@@ -620,20 +619,6 @@ void X86AsmPrinter::EmitEndOfAsmFile(Module &M) {
 
     // Output stubs for external and common global variables.
     Stubs = MMIMacho.GetGVStubList();
-    if (!Stubs.empty()) {
-      MCSection *TheSection = OutContext.getMachOSection(
-          "__IMPORT", "__pointers", MachO::S_NON_LAZY_SYMBOL_POINTERS,
-          SectionKind::getMetadata());
-      OutStreamer->SwitchSection(TheSection);
-
-      for (auto &Stub : Stubs)
-        emitNonLazySymbolPointer(*OutStreamer, Stub.first, Stub.second);
-
-      Stubs.clear();
-      OutStreamer->AddBlankLine();
-    }
-
-    Stubs = MMIMacho.GetHiddenGVStubList();
     if (!Stubs.empty()) {
       MCSection *TheSection = OutContext.getMachOSection(
           "__IMPORT", "__pointers", MachO::S_NON_LAZY_SYMBOL_POINTERS,

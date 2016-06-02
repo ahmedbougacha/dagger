@@ -83,7 +83,9 @@ const MCFixupKindInfo &ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_arm_condbl", 0, 24, MCFixupKindInfo::FKF_IsPCRel},
       {"fixup_arm_blx", 0, 24, MCFixupKindInfo::FKF_IsPCRel},
       {"fixup_arm_thumb_bl", 0, 32, MCFixupKindInfo::FKF_IsPCRel},
-      {"fixup_arm_thumb_blx", 0, 32, MCFixupKindInfo::FKF_IsPCRel},
+      {"fixup_arm_thumb_blx", 0, 32,
+       MCFixupKindInfo::FKF_IsPCRel |
+           MCFixupKindInfo::FKF_IsAlignedDownTo32Bits},
       {"fixup_arm_thumb_cb", 0, 16, MCFixupKindInfo::FKF_IsPCRel},
       {"fixup_arm_thumb_cp", 0, 8,
        MCFixupKindInfo::FKF_IsPCRel |
@@ -95,6 +97,7 @@ const MCFixupKindInfo &ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_arm_movw_lo16", 0, 20, 0},
       {"fixup_t2_movt_hi16", 0, 20, 0},
       {"fixup_t2_movw_lo16", 0, 20, 0},
+      {"fixup_arm_mod_imm", 0, 12, 0},
   };
   const static MCFixupKindInfo InfosBE[ARM::NumTargetFixupKinds] = {
       // This table *must* be in the order that the fixup_* kinds are defined in
@@ -130,7 +133,9 @@ const MCFixupKindInfo &ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_arm_condbl", 8, 24, MCFixupKindInfo::FKF_IsPCRel},
       {"fixup_arm_blx", 8, 24, MCFixupKindInfo::FKF_IsPCRel},
       {"fixup_arm_thumb_bl", 0, 32, MCFixupKindInfo::FKF_IsPCRel},
-      {"fixup_arm_thumb_blx", 0, 32, MCFixupKindInfo::FKF_IsPCRel},
+      {"fixup_arm_thumb_blx", 0, 32,
+       MCFixupKindInfo::FKF_IsPCRel |
+           MCFixupKindInfo::FKF_IsAlignedDownTo32Bits},
       {"fixup_arm_thumb_cb", 0, 16, MCFixupKindInfo::FKF_IsPCRel},
       {"fixup_arm_thumb_cp", 8, 8,
        MCFixupKindInfo::FKF_IsPCRel |
@@ -142,6 +147,7 @@ const MCFixupKindInfo &ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_arm_movw_lo16", 12, 20, 0},
       {"fixup_t2_movt_hi16", 12, 20, 0},
       {"fixup_t2_movw_lo16", 12, 20, 0},
+      {"fixup_arm_mod_imm", 20, 12, 0},
   };
 
   if (Kind < FirstTargetFixupKind)
@@ -458,7 +464,7 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
     // Offset by 8 just as above.
     if (const MCSymbolRefExpr *SRE =
             dyn_cast<MCSymbolRefExpr>(Fixup.getValue()))
-      if (SRE->getKind() == MCSymbolRefExpr::VK_ARM_TLSCALL)
+      if (SRE->getKind() == MCSymbolRefExpr::VK_TLSCALL)
         return 0;
     return 0xffffff & ((Value - 8) >> 2);
   case ARM::fixup_t2_uncondbranch: {
@@ -533,10 +539,15 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
     //
     // Note that the halfwords are stored high first, low second; so we need
     // to transpose the fixup value here to map properly.
-    uint32_t offset = (Value - 2) >> 2;
+    if (Ctx && Value  % 4 != 0) {
+      Ctx->reportError(Fixup.getLoc(), "misaligned ARM call destination");
+      return 0;
+    }
+
+    uint32_t offset = (Value - 4) >> 2;
     if (const MCSymbolRefExpr *SRE =
             dyn_cast<MCSymbolRefExpr>(Fixup.getValue()))
-      if (SRE->getKind() == MCSymbolRefExpr::VK_ARM_TLSCALL)
+      if (SRE->getKind() == MCSymbolRefExpr::VK_TLSCALL)
         offset = 0;
     uint32_t signBit = (offset & 0x400000) >> 22;
     uint32_t I1Bit = (offset & 0x200000) >> 21;
@@ -665,6 +676,13 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
 
     return Value;
   }
+  case ARM::fixup_arm_mod_imm:
+    Value = ARM_AM::getSOImmVal(Value);
+    if (Ctx && Value >> 12) {
+      Ctx->reportError(Fixup.getLoc(), "out of range immediate fixup value");
+      return 0;
+    }
+    return Value;
   }
 }
 
@@ -731,6 +749,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   case FK_Data_2:
   case ARM::fixup_arm_thumb_br:
   case ARM::fixup_arm_thumb_cb:
+  case ARM::fixup_arm_mod_imm:
     return 2;
 
   case ARM::fixup_arm_pcrel_10_unscaled:
@@ -809,6 +828,7 @@ static unsigned getFixupKindContainerSizeBytes(unsigned Kind) {
   case ARM::fixup_arm_movw_lo16:
   case ARM::fixup_t2_movt_hi16:
   case ARM::fixup_t2_movw_lo16:
+  case ARM::fixup_arm_mod_imm:
     // Instruction size is 4 bytes.
     return 4;
   }

@@ -185,6 +185,7 @@ protected:
   MCSection *SixteenByteConstantSection;
   MCSection *LazySymbolPointerSection;
   MCSection *NonLazySymbolPointerSection;
+  MCSection *ThreadLocalPointerSection;
 
   /// COFF specific sections.
   MCSection *DrectveSection;
@@ -193,12 +194,8 @@ protected:
   MCSection *SXDataSection;
 
 public:
-  void InitMCObjectFileInfo(const Triple &TT, Reloc::Model RM,
-                            CodeModel::Model CM, MCContext &ctx);
-  LLVM_ATTRIBUTE_DEPRECATED(
-      void InitMCObjectFileInfo(StringRef TT, Reloc::Model RM,
-                                CodeModel::Model CM, MCContext &ctx),
-      "StringRef GNU Triple argument replaced by a llvm::Triple object");
+  void InitMCObjectFileInfo(const Triple &TT, bool PIC, CodeModel::Model CM,
+                            MCContext &ctx);
 
   bool getSupportsWeakOmittedEHFrame() const {
     return SupportsWeakOmittedEHFrame;
@@ -333,6 +330,9 @@ public:
   MCSection *getNonLazySymbolPointerSection() const {
     return NonLazySymbolPointerSection;
   }
+  MCSection *getThreadLocalPointerSection() const {
+    return ThreadLocalPointerSection;
+  }
 
   // COFF specific sections.
   MCSection *getDrectveSection() const { return DrectveSection; }
@@ -347,11 +347,11 @@ public:
   enum Environment { IsMachO, IsELF, IsCOFF };
   Environment getObjectFileType() const { return Env; }
 
-  Reloc::Model getRelocM() const { return RelocM; }
+  bool isPositionIndependent() const { return PositionIndependent; }
 
 private:
   Environment Env;
-  Reloc::Model RelocM;
+  bool PositionIndependent;
   CodeModel::Model CMModel;
   MCContext *Ctx;
   Triple TT;

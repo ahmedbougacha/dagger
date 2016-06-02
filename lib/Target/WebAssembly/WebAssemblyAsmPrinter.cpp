@@ -93,10 +93,7 @@ private:
 //===----------------------------------------------------------------------===//
 
 MVT WebAssemblyAsmPrinter::getRegType(unsigned RegNo) const {
-  const TargetRegisterClass *TRC =
-      TargetRegisterInfo::isVirtualRegister(RegNo)
-          ? MRI->getRegClass(RegNo)
-          : MRI->getTargetRegisterInfo()->getMinimalPhysRegClass(RegNo);
+  const TargetRegisterClass *TRC = MRI->getRegClass(RegNo);
   for (MVT T : {MVT::i32, MVT::i64, MVT::f32, MVT::f64})
     if (TRC->hasType(T))
       return T;
@@ -183,13 +180,6 @@ void WebAssemblyAsmPrinter::EmitFunctionBodyStart() {
     LocalTypes.push_back(getRegType(VReg));
     AnyWARegs = true;
   }
-  auto &PhysRegs = MFI->getPhysRegs();
-  for (unsigned PReg = 0; PReg < PhysRegs.size(); ++PReg) {
-    if (PhysRegs[PReg] == -1U)
-      continue;
-    LocalTypes.push_back(getRegType(PReg));
-    AnyWARegs = true;
-  }
   if (AnyWARegs)
     getTargetStreamer()->emitLocal(LocalTypes);
 
@@ -210,6 +200,30 @@ void WebAssemblyAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   case WebAssembly::ARGUMENT_F64:
     // These represent values which are live into the function entry, so there's
     // no instruction to emit.
+    break;
+  case WebAssembly::FALLTHROUGH_RETURN_I32:
+  case WebAssembly::FALLTHROUGH_RETURN_I64:
+  case WebAssembly::FALLTHROUGH_RETURN_F32:
+  case WebAssembly::FALLTHROUGH_RETURN_F64: {
+    // These instructions represent the implicit return at the end of a
+    // function body. The operand is always a pop.
+    assert(MFI->isVRegStackified(MI->getOperand(0).getReg()));
+
+    if (isVerbose()) {
+      OutStreamer->AddComment("fallthrough-return: $pop" +
+                              utostr(MFI->getWARegStackId(
+                                  MFI->getWAReg(MI->getOperand(0).getReg()))));
+      OutStreamer->AddBlankLine();
+    }
+    break;
+  }
+  case WebAssembly::FALLTHROUGH_RETURN_VOID:
+    // This instruction represents the implicit return at the end of a
+    // function body with no return value.
+    if (isVerbose()) {
+      OutStreamer->AddComment("fallthrough-return");
+      OutStreamer->AddBlankLine();
+    }
     break;
   default: {
     WebAssemblyMCInstLower MCInstLowering(OutContext, *this);
