@@ -86,9 +86,10 @@ static const Target *getTarget(const ObjectFile &Obj) {
 }
 
 static OwningBinary<MachOObjectFile> openObjectFileAtPath(StringRef Path) {
-  ErrorOr<OwningBinary<Binary>> BinaryOrErr = createBinary(Path);
-  if (std::error_code EC = BinaryOrErr.getError()) {
-    errs() << ToolName << ": '" << Path << "': " << EC.message() << ".\n";
+  Expected<OwningBinary<Binary>> BinaryOrErr = createBinary(Path);
+  if (auto E = BinaryOrErr.takeError()) {
+    logAllUnhandledErrors(std::move(E), errs(),
+                          (ToolName + ": '" + Path + "': ").str());
     exit(1);
   }
 
@@ -106,8 +107,9 @@ static OwningBinary<MachOObjectFile> openObjectFileAtPath(StringRef Path) {
       if (Obj.getArchTypeName() != "x86_64")
         continue;
       auto SliceOrErr = Obj.getAsObjectFile();
-      if (std::error_code EC = SliceOrErr.getError()) {
-        errs() << ToolName << ": '" << Path << "': " << EC.message() << ".\n";
+      if (auto E = SliceOrErr.takeError()) {
+        logAllUnhandledErrors(std::move(E), errs(),
+                              (ToolName + ": '" + Path + "': ").str());
         exit(1);
       }
       MOOF = std::move(SliceOrErr.get());

@@ -108,9 +108,9 @@ int main(int argc, char **argv) {
   ToolName = argv[0];
 
   auto Binary = createBinary(InputFilename);
-  if (std::error_code ec = Binary.getError()) {
-    errs() << ToolName << ": '" << InputFilename << "': "
-           << ec.message() << ".\n";
+  if (auto E = Binary.takeError()) {
+    logAllUnhandledErrors(std::move(E), errs(),
+                          (ToolName + ": '" + InputFilename + "': ").str());
     return 1;
   }
 
