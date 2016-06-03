@@ -165,7 +165,7 @@ Value *X86RegisterSema::getCC(X86::CondCode CC) {
   case X86::COND_G: Inv = true;
   case X86::COND_LE: SF = X86::SF; XOF = true; OZF = true; break;
   case X86::COND_NE_OR_P:
-  case X86::COND_NP_OR_E:
+  case X86::COND_E_AND_NP:
   case X86::COND_INVALID:
     llvm_unreachable("X86 condcode doesn't have a StatusFlag equivalent");
   };
