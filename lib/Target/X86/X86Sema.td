@@ -55,6 +55,9 @@ def : SameSemantics<JMP_4, JMP_1>;
 
 def : Semantics<CALL64pcrel32, [(X86call imm:$dst)]>;
 
+def : Semantics<RETL, [(X86retflag 0)]>;
+def : Semantics<RETQ, [(X86retflag 0)]>;
+
 // Reverse encodings for arithmetic operations.
 // We decode operands in reverse, so we can simply reuse semantics.
 multiclass Sema_BinOpRR_Rev<string inst> {
