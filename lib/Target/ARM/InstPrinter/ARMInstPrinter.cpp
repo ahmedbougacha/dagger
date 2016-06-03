@@ -25,6 +25,7 @@ using namespace llvm;
 
 #define DEBUG_TYPE "asm-printer"
 
+#define PRINT_ALIAS_INSTR
 #define PRINT_MACHINE_OPERAND
 #include "ARMGenAsmWriter.inc"
 
@@ -73,43 +74,6 @@ void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O,
   unsigned Opcode = MI->getOpcode();
 
   switch (Opcode) {
-
-  // Check for HINT instructions w/ canonical names.
-  case ARM::HINT:
-  case ARM::tHINT:
-  case ARM::t2HINT:
-    switch (MI->getOperand(0).getImm()) {
-    case 0:
-      O << "\tnop";
-      break;
-    case 1:
-      O << "\tyield";
-      break;
-    case 2:
-      O << "\twfe";
-      break;
-    case 3:
-      O << "\twfi";
-      break;
-    case 4:
-      O << "\tsev";
-      break;
-    case 5:
-      if (STI.getFeatureBits()[ARM::HasV8Ops]) {
-        O << "\tsevl";
-        break;
-      } // Fallthrough for non-v8
-    default:
-      // Anything else should just print normally.
-      printInstruction(MI, STI, O);
-      printAnnotation(O, Annot);
-      return;
-    }
-    printPredicateOperand(MI, 1, STI, O);
-    if (Opcode == ARM::t2HINT)
-      O << ".w";
-    printAnnotation(O, Annot);
-    return;
 
   // Check for MOVs and print canonical forms, instead.
   case ARM::MOVsr: {
@@ -298,23 +262,11 @@ void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O,
     }
     break;
   }
-  // B9.3.3 ERET (Thumb)
-  // For a target that has Virtualization Extensions, ERET is the preferred
-  // disassembly of SUBS PC, LR, #0
-  case ARM::t2SUBS_PC_LR: {
-    if (MI->getNumOperands() == 3 && MI->getOperand(0).isImm() &&
-        MI->getOperand(0).getImm() == 0 &&
-        STI.getFeatureBits()[ARM::FeatureVirtualization]) {
-      O << "\teret";
-      printPredicateOperand(MI, 1, STI, O);
-      printAnnotation(O, Annot);
-      return;
-    }
-    break;
-  }
   }
 
-  printInstruction(MI, STI, O);
+  if (!printAliasInstr(MI, STI, O))
+    printInstruction(MI, STI, O);
+
   printAnnotation(O, Annot);
 }
 
