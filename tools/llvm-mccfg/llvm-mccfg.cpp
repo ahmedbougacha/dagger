@@ -351,9 +351,10 @@ static void DumpInput(StringRef file) {
   }
 
   // Attempt to open the binary.
-  ErrorOr<OwningBinary<Binary>> BinaryOrErr = createBinary(file);
-  if (std::error_code EC = BinaryOrErr.getError()) {
-    errs() << ToolName << ": '" << file << "': " << EC.message() << ".\n";
+  Expected<OwningBinary<Binary>> BinaryOrErr = createBinary(file);
+  if (auto E = BinaryOrErr.takeError()) {
+    logAllUnhandledErrors(std::move(E), errs(),
+                          (ToolName + ": '" + file + "': ").str());
     return;
   }
   Binary &Binary = *BinaryOrErr.get().getBinary();

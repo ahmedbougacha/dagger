@@ -136,7 +136,11 @@ bool MCExternalSymbolizer::tryAddingSymbolicOperand(MCInst &MI,
       Expr = MCConstantExpr::create(0, Ctx);
   }
 
-  Expr = RelInfo->createExprForCAPIVariantKind(Expr, SymbolicOp.VariantKind);
+  auto ExprOrErr =
+      RelInfo->createExprForCAPIVariantKind(Expr, SymbolicOp.VariantKind);
+  consumeError(ExprOrErr.takeError()); // FIXME
+  Expr = *ExprOrErr;
+
   if (!Expr)
     return false;
 

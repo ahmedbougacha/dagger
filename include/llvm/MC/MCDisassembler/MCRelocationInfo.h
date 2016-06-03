@@ -17,6 +17,7 @@
 #define LLVM_MC_MCDISASSEMBLER_MCRELOCATIONINFO_H
 
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/Error.h"
 
 namespace llvm {
 
@@ -40,14 +41,15 @@ public:
 
   /// \brief Create an MCExpr for the relocation \p Rel.
   /// \returns If possible, an MCExpr corresponding to Rel, else 0.
-  virtual const MCExpr *createExprForRelocation(object::RelocationRef Rel);
+  virtual Expected<const MCExpr *>
+  createExprForRelocation(object::RelocationRef Rel);
 
   /// \brief Create an MCExpr for the target-specific \p VariantKind.
   /// The VariantKinds are defined in llvm-c/Disassembler.h.
   /// Used by MCExternalSymbolizer.
   /// \returns If possible, an MCExpr corresponding to VariantKind, else 0.
-  virtual const MCExpr *createExprForCAPIVariantKind(const MCExpr *SubExpr,
-                                                     unsigned VariantKind);
+  virtual Expected<const MCExpr *>
+  createExprForCAPIVariantKind(const MCExpr *SubExpr, unsigned VariantKind);
 };
 
 }

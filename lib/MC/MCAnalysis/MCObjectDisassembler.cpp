@@ -90,6 +90,23 @@ MCModule *MCObjectDisassembler::buildModule() {
   return Module;
 }
 
+// FIXME: This is icky; consider surfacing errors everywhere.
+template<typename T>
+static T unwrapOrReportError(Expected<T> TOrErr) {
+  if (auto E = TOrErr.takeError())
+    handleAllErrors(std::move(E), [](ErrorInfoBase &EI) {
+      report_fatal_error(EI.message());
+    });
+  return *TOrErr;
+}
+
+template<typename T>
+static T unwrapOrReportError(ErrorOr<T> TOrErr) {
+  if (auto E = TOrErr.getError())
+    report_fatal_error(E.message());
+  return *TOrErr;
+}
+
 namespace {
   struct BBInfo;
   typedef SmallPtrSet<BBInfo*, 2> BBInfoSetTy;
@@ -114,7 +131,7 @@ void MCObjectDisassembler::buildCFG(MCModule &Module) {
   AddressSetTy CallTargets;
 
   for (const SymbolRef &Symbol : Obj.symbols()) {
-    SymbolRef::Type SymType = Symbol.getType();
+    SymbolRef::Type SymType = unwrapOrReportError(Symbol.getType());
     if (SymType == SymbolRef::ST_Function) {
       ErrorOr<uint64_t> SymAddrOrErr = Symbol.getAddress();
       if (SymAddrOrErr.getError())

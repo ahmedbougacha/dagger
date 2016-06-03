@@ -24,15 +24,15 @@ class X86_64MachORelocationInfo : public MCRelocationInfo {
 public:
   X86_64MachORelocationInfo(MCContext &Ctx) : MCRelocationInfo(Ctx) {}
 
-  const MCExpr *createExprForRelocation(RelocationRef Rel) override {
+  Expected<const MCExpr *> createExprForRelocation(RelocationRef Rel) override {
     const MachOObjectFile *Obj = cast<MachOObjectFile>(Rel.getObject());
 
     uint64_t RelType = Rel.getType();
     symbol_iterator SymI = Rel.getSymbol();
 
-    ErrorOr<StringRef> SymNameOrErr = SymI->getName();
-    if (std::error_code EC = SymNameOrErr.getError())
-      report_fatal_error(EC.message());
+    Expected<StringRef> SymNameOrErr = SymI->getName();
+    if (auto E = SymNameOrErr.takeError())
+      return std::move(E);
     StringRef SymName = *SymNameOrErr;
     uint64_t SymAddr = SymI->getValue();
 
@@ -91,9 +91,9 @@ public:
 
         symbol_iterator RSymI = Rel.getSymbol();
         uint64_t RSymAddr = RSymI->getValue();
-        ErrorOr<StringRef> RSymName = RSymI->getName();
-        if (std::error_code EC = RSymName.getError())
-          report_fatal_error(EC.message());
+        Expected<StringRef> RSymName = RSymI->getName();
+        if (auto E = RSymName.takeError())
+          return std::move(E);
 
         MCSymbol *RSym = Ctx.getOrCreateSymbol(*RSymName);
         if (!RSym->isVariable())

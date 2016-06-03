@@ -22,8 +22,9 @@ class ARMMachORelocationInfo : public MCRelocationInfo {
 public:
   ARMMachORelocationInfo(MCContext &Ctx) : MCRelocationInfo(Ctx) {}
 
-  const MCExpr *createExprForCAPIVariantKind(const MCExpr *SubExpr,
-                                             unsigned VariantKind) override {
+  Expected<const MCExpr *>
+  createExprForCAPIVariantKind(const MCExpr *SubExpr,
+                               unsigned VariantKind) override {
     switch(VariantKind) {
     case LLVMDisassembler_VariantKind_ARM_HI16:
       return ARMMCExpr::createUpper16(SubExpr, Ctx);
