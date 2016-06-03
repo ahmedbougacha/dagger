@@ -108,7 +108,7 @@ protected:
   BasicBlock *TheBB;
   const MCBasicBlock *TheMCBB;
   // FIXME: This doesn't need to be a pointer.
-  typedef IRBuilder<true, NoFolder> DCIRBuilder;
+  typedef IRBuilder<NoFolder> DCIRBuilder;
   std::unique_ptr<DCIRBuilder> Builder;
 
   // translation vars.

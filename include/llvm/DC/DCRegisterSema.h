@@ -100,7 +100,7 @@ protected:
 
   // Valid only inside a Module.
   Module *TheModule;
-  typedef IRBuilder<true, NoFolder> DCIRBuilder;
+  typedef IRBuilder<NoFolder> DCIRBuilder;
   // FIXME: This doesn't need to be a pointer.
   std::unique_ptr<DCIRBuilder> Builder;
 
