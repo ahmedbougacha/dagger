@@ -122,10 +122,10 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<const MCObjectFileInfo> MOFI(new MCObjectFileInfo);
-  MCContext Ctx(MAI.get(), MRI.get(), MOFI.get());
+  MCContext MCCtx(MAI.get(), MRI.get(), MOFI.get());
 
   std::unique_ptr<MCDisassembler> DisAsm(
-      TheTarget->createMCDisassembler(*STI, Ctx));
+      TheTarget->createMCDisassembler(*STI, MCCtx));
   if (!DisAsm) {
     errs() << "error: no disassembler for target " << TripleName << "\n";
     return 1;
@@ -174,8 +174,9 @@ int main(int argc, char **argv) {
   // FIXME: should we have a non-default datalayout?
   DataLayout DL("");
 
-  std::unique_ptr<DCRegisterSema> DRS(TheTarget->createDCRegisterSema(
-      TripleName, getGlobalContext(), *MRI, *MII, DL));
+  LLVMContext Ctx;
+  std::unique_ptr<DCRegisterSema> DRS(
+      TheTarget->createDCRegisterSema(TripleName, Ctx, *MRI, *MII, DL));
   if (!DRS) {
     errs() << "error: no dc register sema for target " << TripleName << "\n";
     return 1;
@@ -187,9 +188,9 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  std::unique_ptr<DCTranslator> DT(new DCTranslator(
-      getGlobalContext(), DL, TOLvl, *DIS, *DRS, *MIP, *STI,
-      *MCM, /*MCOD=*/ nullptr, /*MOS=*/nullptr, AnnotateIROutput));
+  std::unique_ptr<DCTranslator> DT(
+      new DCTranslator(Ctx, DL, TOLvl, *DIS, *DRS, *MIP, *STI, *MCM,
+                       /*MCOD=*/nullptr, /*MOS=*/nullptr, AnnotateIROutput));
 
   for (auto &F : MCM->funcs())
     DT->translateRecursivelyAt(F->getStartAddr());

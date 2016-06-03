@@ -317,16 +317,17 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   std::unique_ptr<const MCInstrAnalysis> MIA(
       TheTarget->createMCInstrAnalysis(MII.get()));
   std::unique_ptr<const MCObjectFileInfo> MOFI(new MCObjectFileInfo);
-  MCContext Ctx(MAI.get(), MRI.get(), MOFI.get());
+  MCContext MCCtx(MAI.get(), MRI.get(), MOFI.get());
 
-  std::unique_ptr<MCDisassembler> DisAsm(TheTarget->createMCDisassembler(*STI, Ctx));
+  std::unique_ptr<MCDisassembler> DisAsm(
+      TheTarget->createMCDisassembler(*STI, MCCtx));
   if (!DisAsm) {
     errs() << "error: no disassembler for target " << TripleName << "\n";
     exit(1);
   }
 
   std::unique_ptr<MCRelocationInfo> RelInfo(
-      TheTarget->createMCRelocationInfo(TripleName, Ctx));
+      TheTarget->createMCRelocationInfo(TripleName, MCCtx));
   if (!RelInfo) {
     errs() << "error: no reloc info for target " << TripleName << "\n";
     exit(1);
@@ -340,8 +341,8 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
   uint64_t VMAddrSlide = _dyld_get_image_vmaddr_slide(0);
 
   // Explicitly use a Mach-O-specific symbolizer to give it dyld info.
-  std::unique_ptr<MCMachObjectSymbolizer> MOS(new MCMachObjectSymbolizer(
-      Ctx, std::move(RelInfo), MOOF, VMAddrSlide));
+  std::unique_ptr<MCMachObjectSymbolizer> MOS(
+      new MCMachObjectSymbolizer(MCCtx, std::move(RelInfo), MOOF, VMAddrSlide));
 
   std::unique_ptr<MCObjectDisassembler> OD(
       new MCObjectDisassembler(MOOF, *DisAsm, *MIA, MOS.get()));
@@ -370,9 +371,10 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
     llvm_unreachable("Unable to select target machine for JIT!");
 
   const DataLayout DL = TM->createDataLayout();
+  LLVMContext Ctx;
 
-  std::unique_ptr<DCRegisterSema> DRS(TheTarget->createDCRegisterSema(
-      TripleName, getGlobalContext(), *MRI, *MII, DL));
+  std::unique_ptr<DCRegisterSema> DRS(
+      TheTarget->createDCRegisterSema(TripleName, Ctx, *MRI, *MII, DL));
   if (!DRS) {
     errs() << "error: no dc register sema for target " << TripleName << "\n";
     exit(1);
@@ -395,10 +397,9 @@ void dyn_entry(int ac, char **av, const char **envp, const char **apple,
 
   DYNJIT J(*TM);
 
-  std::unique_ptr<DCTranslator> DT(
-    new DCTranslator(getGlobalContext(), DL,
-                     TransOpt::Default, *DIS, *DRS,
-                     *MIP, *STI, *MCM, OD.get(), MOS.get()));
+  std::unique_ptr<DCTranslator> DT(new DCTranslator(Ctx, DL, TransOpt::Default,
+                                                    *DIS, *DRS, *MIP, *STI,
+                                                    *MCM, OD.get(), MOS.get()));
 
   __dc_DT = DT.get();
   __dc_JIT = &J;

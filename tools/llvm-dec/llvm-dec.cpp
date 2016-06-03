@@ -150,10 +150,10 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<const MCObjectFileInfo> MOFI(new MCObjectFileInfo);
-  MCContext Ctx(MAI.get(), MRI.get(), MOFI.get());
+  MCContext MCCtx(MAI.get(), MRI.get(), MOFI.get());
 
   std::unique_ptr<MCDisassembler> DisAsm(
-      TheTarget->createMCDisassembler(*STI, Ctx));
+      TheTarget->createMCDisassembler(*STI, MCCtx));
   if (!DisAsm) {
     errs() << "error: no disassembler for target " << TripleName << "\n";
     return 1;
@@ -173,13 +173,13 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<MCRelocationInfo> RelInfo(
-      TheTarget->createMCRelocationInfo(TripleName, Ctx));
+      TheTarget->createMCRelocationInfo(TripleName, MCCtx));
   if (!RelInfo) {
     errs() << "error: no relocation info for target " << TripleName << "\n";
     return 1;
   }
   std::unique_ptr<MCObjectSymbolizer> MOS(
-      TheTarget->createMCObjectSymbolizer(Ctx, *Obj, std::move(RelInfo)));
+      TheTarget->createMCObjectSymbolizer(MCCtx, *Obj, std::move(RelInfo)));
   if (!MOS) {
     errs() << "error: no object symbolizer for target " << TripleName << "\n";
     return 1;
@@ -210,8 +210,10 @@ int main(int argc, char **argv) {
   // FIXME: should we have a non-default datalayout?
   DataLayout DL("");
 
-  std::unique_ptr<DCRegisterSema> DRS(TheTarget->createDCRegisterSema(
-      TripleName, getGlobalContext(), *MRI, *MII, DL));
+  LLVMContext Ctx;
+
+  std::unique_ptr<DCRegisterSema> DRS(
+      TheTarget->createDCRegisterSema(TripleName, Ctx, *MRI, *MII, DL));
   if (!DRS) {
     errs() << "error: no dc register sema for target " << TripleName << "\n";
     return 1;
@@ -224,9 +226,8 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<DCTranslator> DT(
-    new DCTranslator(getGlobalContext(), DL,
-                     TOLvl, *DIS, *DRS, *MIP, *STI, *MCM,
-                     OD.get(), MOS.get(), AnnotateIROutput));
+      new DCTranslator(Ctx, DL, TOLvl, *DIS, *DRS, *MIP, *STI, *MCM, OD.get(),
+                       MOS.get(), AnnotateIROutput));
 
   if (!TranslationEntrypoint)
     TranslationEntrypoint = MOS->getEntrypoint();
