@@ -239,14 +239,12 @@ struct ProgramVars {
 };
 #include <iostream>
 
-void dyn_entry(int ac, char **av, const char **envp, const char **apple,
+void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
                struct ProgramVars *pvars) __attribute__((constructor));
-void dyn_entry(int ac, char **av, const char **envp, const char **apple,
+void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
                struct ProgramVars *pvars) {
-  int argc = ac;
-  char **argv = av;
 
-  sys::PrintStackTraceOnErrorSignal();
+  sys::PrintStackTraceOnErrorSignal(/*Filename=*/StringRef());
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;
 

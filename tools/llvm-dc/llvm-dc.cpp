@@ -77,7 +77,7 @@ static const Target *getTarget() {
 }
 
 int main(int argc, char **argv) {
-  sys::PrintStackTraceOnErrorSignal();
+  sys::PrintStackTraceOnErrorSignal(/*Filename=*/StringRef());
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;
 
