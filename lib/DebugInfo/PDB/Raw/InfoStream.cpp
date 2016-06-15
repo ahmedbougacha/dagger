@@ -11,6 +11,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/DebugInfo/CodeView/StreamReader.h"
+#include "llvm/DebugInfo/PDB/Raw/IndexedStreamData.h"
 #include "llvm/DebugInfo/PDB/Raw/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Raw/RawConstants.h"
 #include "llvm/DebugInfo/PDB/Raw/RawError.h"
@@ -18,10 +19,11 @@
 using namespace llvm;
 using namespace llvm::pdb;
 
-InfoStream::InfoStream(PDBFile &File) : Pdb(File), Stream(StreamPDB, File) {}
+InfoStream::InfoStream(std::unique_ptr<MappedBlockStream> Stream)
+    : Stream(std::move(Stream)) {}
 
 Error InfoStream::reload() {
-  codeview::StreamReader Reader(Stream);
+  codeview::StreamReader Reader(*Stream);
 
   struct Header {
     support::ulittle32_t Version;

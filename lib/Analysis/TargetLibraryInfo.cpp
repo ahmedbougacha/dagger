@@ -65,6 +65,12 @@ static void initialize(TargetLibraryInfoImpl &TLI, const Triple &T,
     TLI.setUnavailable(LibFunc::ldexp);
     TLI.setUnavailable(LibFunc::ldexpf);
     TLI.setUnavailable(LibFunc::ldexpl);
+    TLI.setUnavailable(LibFunc::exp10);
+    TLI.setUnavailable(LibFunc::exp10f);
+    TLI.setUnavailable(LibFunc::exp10l);
+    TLI.setUnavailable(LibFunc::log10);
+    TLI.setUnavailable(LibFunc::log10f);
+    TLI.setUnavailable(LibFunc::log10l);
   }
 
   // There are no library implementations of mempcy and memset for AMD gpus and
@@ -1133,7 +1139,7 @@ TargetLibraryInfo TargetLibraryAnalysis::run(Function &F) {
       lookupInfoImpl(Triple(F.getParent()->getTargetTriple())));
 }
 
-TargetLibraryInfoImpl &TargetLibraryAnalysis::lookupInfoImpl(Triple T) {
+TargetLibraryInfoImpl &TargetLibraryAnalysis::lookupInfoImpl(const Triple &T) {
   std::unique_ptr<TargetLibraryInfoImpl> &Impl =
       Impls[T.normalize()];
   if (!Impl)

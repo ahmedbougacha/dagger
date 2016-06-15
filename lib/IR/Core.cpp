@@ -14,7 +14,6 @@
 
 #include "llvm-c/Core.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "AttributeImpl.h"
 #include "llvm/Bitcode/ReaderWriter.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/CallSite.h"
@@ -124,8 +123,58 @@ unsigned LLVMGetMDKindID(const char *Name, unsigned SLen) {
 #define GET_ATTR_KIND_FROM_NAME
 #include "AttributesCompatFunc.inc"
 
-unsigned LLVMGetAttributeKindForName(const char *Name, size_t SLen) {
+unsigned LLVMGetEnumAttributeKindForName(const char *Name, size_t SLen) {
   return getAttrKindFromName(StringRef(Name, SLen));
+}
+
+unsigned LLVMGetLastEnumAttributeKind(void) {
+  return Attribute::AttrKind::EndAttrKinds;
+}
+
+LLVMAttributeRef LLVMCreateEnumAttribute(LLVMContextRef C, unsigned KindID,
+                                         uint64_t Val) {
+  return wrap(Attribute::get(*unwrap(C), (Attribute::AttrKind)KindID, Val));
+}
+
+unsigned LLVMGetEnumAttributeKind(LLVMAttributeRef A) {
+  return unwrap(A).getKindAsEnum();
+}
+
+uint64_t LLVMGetEnumAttributeValue(LLVMAttributeRef A) {
+  auto Attr = unwrap(A);
+  if (Attr.isEnumAttribute())
+    return 0;
+  return Attr.getValueAsInt();
+}
+
+LLVMAttributeRef LLVMCreateStringAttribute(LLVMContextRef C,
+                                           const char *K, unsigned KLength,
+                                           const char *V, unsigned VLength) {
+  return wrap(Attribute::get(*unwrap(C), StringRef(K, KLength),
+                             StringRef(V, VLength)));
+}
+
+const char *LLVMGetStringAttributeKind(LLVMAttributeRef A,
+                                       unsigned *Length) {
+  auto S = unwrap(A).getKindAsString();
+  *Length = S.size();
+  return S.data();
+}
+
+const char *LLVMGetStringAttributeValue(LLVMAttributeRef A,
+                                        unsigned *Length) {
+  auto S = unwrap(A).getValueAsString();
+  *Length = S.size();
+  return S.data();
+}
+
+LLVMBool LLVMIsEnumAttribute(LLVMAttributeRef A) {
+  auto Attr = unwrap(A);
+  return Attr.isEnumAttribute() || Attr.isIntAttribute();
+}
+
+LLVMBool LLVMIsStringAttribute(LLVMAttributeRef A) {
+  return unwrap(A).isStringAttribute();
 }
 
 char *LLVMGetDiagInfoDescription(LLVMDiagnosticInfoRef DI) {
@@ -1510,11 +1559,13 @@ void LLVMSetDLLStorageClass(LLVMValueRef Global, LLVMDLLStorageClass Class) {
 }
 
 LLVMBool LLVMHasUnnamedAddr(LLVMValueRef Global) {
-  return unwrap<GlobalValue>(Global)->hasUnnamedAddr();
+  return unwrap<GlobalValue>(Global)->hasGlobalUnnamedAddr();
 }
 
 void LLVMSetUnnamedAddr(LLVMValueRef Global, LLVMBool HasUnnamedAddr) {
-  unwrap<GlobalValue>(Global)->setUnnamedAddr(HasUnnamedAddr);
+  unwrap<GlobalValue>(Global)->setUnnamedAddr(
+      HasUnnamedAddr ? GlobalValue::UnnamedAddr::Global
+                     : GlobalValue::UnnamedAddr::None);
 }
 
 /*--.. Operations on global variables, load and store instructions .........--*/
@@ -1789,6 +1840,23 @@ void LLVMAddFunctionAttr(LLVMValueRef Fn, LLVMAttribute PA) {
   Func->setAttributes(PALnew);
 }
 
+void LLVMAddAttributeAtIndex(LLVMValueRef F, LLVMAttributeIndex Idx,
+                             LLVMAttributeRef A) {
+  unwrap<Function>(F)->addAttribute(Idx, unwrap(A));
+}
+
+LLVMAttributeRef LLVMGetEnumAttributeAtIndex(LLVMValueRef F,
+                                             LLVMAttributeIndex Idx,
+                                             unsigned KindID) {
+  return wrap(unwrap<Function>(F)->getAttribute(Idx,
+                                                (Attribute::AttrKind)KindID));
+}
+
+void LLVMRemoveEnumAttributeAtIndex(LLVMValueRef F, LLVMAttributeIndex Idx,
+                                    unsigned KindID) {
+  unwrap<Function>(F)->removeAttribute(Idx, (Attribute::AttrKind)KindID);
+}
+
 void LLVMAddTargetDependentFunctionAttr(LLVMValueRef Fn, const char *A,
                                         const char *V) {
   Function *Func = unwrap<Function>(Fn);
@@ -1893,7 +1961,6 @@ LLVMAttribute LLVMGetAttribute(LLVMValueRef Arg) {
   return (LLVMAttribute)A->getParent()->getAttributes().
     Raw(A->getArgNo()+1);
 }
-
 
 void LLVMSetParamAlignment(LLVMValueRef Arg, unsigned align) {
   Argument *A = unwrap<Argument>(Arg);

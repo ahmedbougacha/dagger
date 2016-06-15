@@ -12,6 +12,7 @@
 #include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/DebugInfo/CodeView/StreamReader.h"
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
+#include "llvm/DebugInfo/PDB/Raw/IndexedStreamData.h"
 #include "llvm/DebugInfo/PDB/Raw/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Raw/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Raw/RawConstants.h"
@@ -23,15 +24,15 @@ using namespace llvm;
 using namespace llvm::support;
 using namespace llvm::pdb;
 
-SymbolStream::SymbolStream(PDBFile &File, uint32_t StreamNum)
-    : MappedStream(StreamNum, File) {}
+SymbolStream::SymbolStream(std::unique_ptr<MappedBlockStream> Stream)
+    : Stream(std::move(Stream)) {}
 
 SymbolStream::~SymbolStream() {}
 
 Error SymbolStream::reload() {
-  codeview::StreamReader Reader(MappedStream);
+  codeview::StreamReader Reader(*Stream);
 
-  if (auto EC = Reader.readArray(SymbolRecords, MappedStream.getLength()))
+  if (auto EC = Reader.readArray(SymbolRecords, Stream->getLength()))
     return EC;
 
   return Error::success();

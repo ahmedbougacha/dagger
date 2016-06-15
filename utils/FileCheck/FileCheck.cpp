@@ -45,6 +45,11 @@ InputFilename("input-file", cl::desc("File to check (defaults to stdin)"),
 static cl::list<std::string>
 CheckPrefixes("check-prefix",
               cl::desc("Prefix to use from check file (defaults to 'CHECK')"));
+static cl::alias CheckPrefixesAlias(
+    "check-prefixes", cl::aliasopt(CheckPrefixes), cl::CommaSeparated,
+    cl::NotHidden,
+    cl::desc(
+        "Alias for -check-prefix permitting multiple comma separated values"));
 
 static cl::opt<bool>
 NoCanonicalizeWhiteSpace("strict-whitespace",
@@ -1306,7 +1311,7 @@ static void DumpCommandLine(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
-  sys::PrintStackTraceOnErrorSignal();
+  sys::PrintStackTraceOnErrorSignal(argv[0]);
   PrettyStackTraceProgram X(argc, argv);
   cl::ParseCommandLineOptions(argc, argv);
 

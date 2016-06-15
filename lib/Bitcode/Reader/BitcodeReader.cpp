@@ -773,6 +773,15 @@ static GlobalVariable::ThreadLocalMode getDecodedThreadLocalMode(unsigned Val) {
   }
 }
 
+static GlobalVariable::UnnamedAddr getDecodedUnnamedAddrType(unsigned Val) {
+  switch (Val) {
+    default: // Map unknown to UnnamedAddr::None.
+    case 0: return GlobalVariable::UnnamedAddr::None;
+    case 1: return GlobalVariable::UnnamedAddr::Global;
+    case 2: return GlobalVariable::UnnamedAddr::Local;
+  }
+}
+
 static int getDecodedCastOpcode(unsigned Val) {
   switch (Val) {
   default: return -1;
@@ -1238,9 +1247,9 @@ Metadata *BitcodeReaderMetadataList::upgradeTypeRefArray(Metadata *MaybeTuple) {
 
   // Create and return a placeholder to use for now.  Eventually
   // resolveTypeRefArrays() will be resolve this forward reference.
-  OldTypeRefs.Arrays.emplace_back();
-  OldTypeRefs.Arrays.back().first.reset(Tuple);
-  OldTypeRefs.Arrays.back().second = MDTuple::getTemporary(Context, None);
+  OldTypeRefs.Arrays.emplace_back(
+      std::piecewise_construct, std::forward_as_tuple(Tuple),
+      std::forward_as_tuple(MDTuple::getTemporary(Context, None)));
   return OldTypeRefs.Arrays.back().second.get();
 }
 
@@ -2409,17 +2418,18 @@ std::error_code BitcodeReader::parseMetadata(bool ModuleLevel) {
       break;
     }
     case bitc::METADATA_SUBROUTINE_TYPE: {
-      if (Record.size() != 3)
+      if (Record.size() < 3 || Record.size() > 4)
         return error("Invalid record");
+      bool IsOldTypeRefArray = Record[0] < 2;
+      unsigned CC = (Record.size() > 3) ? Record[3] : 0;
 
       IsDistinct = Record[0] & 0x1;
-      bool IsOldTypeRefArray = Record[0] < 2;
       Metadata *Types = getMDOrNull(Record[2]);
       if (LLVM_UNLIKELY(IsOldTypeRefArray))
         Types = MetadataList.upgradeTypeRefArray(Types);
 
       MetadataList.assignValue(
-          GET_OR_DISTINCT(DISubroutineType, (Context, Record[1], Types)),
+          GET_OR_DISTINCT(DISubroutineType, (Context, Record[1], CC, Types)),
           NextMetadataNo++);
       break;
     }
@@ -2868,6 +2878,7 @@ std::error_code BitcodeReader::parseConstants() {
 
     // Read a record.
     Record.clear();
+    Type *VoidType = Type::getVoidTy(Context);
     Value *V = nullptr;
     unsigned BitCode = Stream.readRecord(Entry.ID, Record);
     switch (BitCode) {
@@ -2880,6 +2891,8 @@ std::error_code BitcodeReader::parseConstants() {
         return error("Invalid record");
       if (Record[0] >= TypeList.size() || !TypeList[Record[0]])
         return error("Invalid record");
+      if (TypeList[Record[0]] == VoidType)
+        return error("Invalid constant type");
       CurTy = TypeList[Record[0]];
       continue;  // Skip the ValueList manipulation.
     case bitc::CST_CODE_NULL:      // NULL
@@ -3086,6 +3099,9 @@ std::error_code BitcodeReader::parseConstants() {
                   ->getElementType())
         return error("Explicit gep operator type does not match pointee type "
                      "of pointer operand");
+
+      if (Elts.size() < 1)
+        return error("Invalid gep with no operands");
 
       ArrayRef<Constant *> Indices(Elts.begin() + 1, Elts.end());
       V = ConstantExpr::getGetElementPtr(PointeeType, Elts[0], Indices,
@@ -3784,9 +3800,9 @@ std::error_code BitcodeReader::parseModule(uint64_t ResumeBit,
       if (Record.size() > 7)
         TLM = getDecodedThreadLocalMode(Record[7]);
 
-      bool UnnamedAddr = false;
+      GlobalValue::UnnamedAddr UnnamedAddr = GlobalValue::UnnamedAddr::None;
       if (Record.size() > 8)
-        UnnamedAddr = Record[8];
+        UnnamedAddr = getDecodedUnnamedAddrType(Record[8]);
 
       bool ExternallyInitialized = false;
       if (Record.size() > 9)
@@ -3821,6 +3837,7 @@ std::error_code BitcodeReader::parseModule(uint64_t ResumeBit,
       } else if (hasImplicitComdat(RawLinkage)) {
         NewGV->setComdat(reinterpret_cast<Comdat *>(1));
       }
+
       break;
     }
     case bitc::MODULE_CODE_GLOBALVAR_ATTACHMENT: {
@@ -3878,9 +3895,9 @@ std::error_code BitcodeReader::parseModule(uint64_t ResumeBit,
           return error("Invalid ID");
         Func->setGC(GCTable[Record[8] - 1]);
       }
-      bool UnnamedAddr = false;
+      GlobalValue::UnnamedAddr UnnamedAddr = GlobalValue::UnnamedAddr::None;
       if (Record.size() > 9)
-        UnnamedAddr = Record[9];
+        UnnamedAddr = getDecodedUnnamedAddrType(Record[9]);
       Func->setUnnamedAddr(UnnamedAddr);
       if (Record.size() > 10 && Record[10] != 0)
         FunctionPrologues.push_back(std::make_pair(Func, Record[10]-1));
@@ -3967,7 +3984,7 @@ std::error_code BitcodeReader::parseModule(uint64_t ResumeBit,
       if (OpNum != Record.size())
         NewGA->setThreadLocalMode(getDecodedThreadLocalMode(Record[OpNum++]));
       if (OpNum != Record.size())
-        NewGA->setUnnamedAddr(Record[OpNum++]);
+        NewGA->setUnnamedAddr(getDecodedUnnamedAddrType(Record[OpNum++]));
       ValueList.push_back(NewGA);
       IndirectSymbolInits.push_back(std::make_pair(NewGA, Val));
       break;
@@ -5253,6 +5270,7 @@ std::error_code BitcodeReader::parseFunctionBody(Function *F) {
       unsigned OpNum = 0;
       Value *Val, *Ptr;
       if (getValueTypePair(Record, OpNum, NextValueNo, Ptr) ||
+          !isa<PointerType>(Ptr->getType()) ||
           (BitCode == bitc::FUNC_CODE_INST_STOREATOMIC
                ? getValueTypePair(Record, OpNum, NextValueNo, Val)
                : popValue(Record, OpNum, NextValueNo,
@@ -5333,6 +5351,7 @@ std::error_code BitcodeReader::parseFunctionBody(Function *F) {
       unsigned OpNum = 0;
       Value *Ptr, *Val;
       if (getValueTypePair(Record, OpNum, NextValueNo, Ptr) ||
+          !isa<PointerType>(Ptr->getType()) ||
           popValue(Record, OpNum, NextValueNo,
                     cast<PointerType>(Ptr->getType())->getElementType(), Val) ||
           OpNum+4 != Record.size())

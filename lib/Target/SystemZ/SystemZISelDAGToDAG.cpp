@@ -279,10 +279,10 @@ class SystemZDAGToDAGISel : public SelectionDAGISel {
   bool expandRxSBG(RxSBGOperands &RxSBG) const;
 
   // Return an undefined value of type VT.
-  SDValue getUNDEF(SDLoc DL, EVT VT) const;
+  SDValue getUNDEF(const SDLoc &DL, EVT VT) const;
 
   // Convert N to VT, if it isn't already.
-  SDValue convertTo(SDLoc DL, EVT VT, SDValue N) const;
+  SDValue convertTo(const SDLoc &DL, EVT VT, SDValue N) const;
 
   // Try to implement AND or shift node N using RISBG with the zero flag set.
   // Return the selected node on success, otherwise return null.
@@ -892,12 +892,13 @@ bool SystemZDAGToDAGISel::expandRxSBG(RxSBGOperands &RxSBG) const {
   }
 }
 
-SDValue SystemZDAGToDAGISel::getUNDEF(SDLoc DL, EVT VT) const {
+SDValue SystemZDAGToDAGISel::getUNDEF(const SDLoc &DL, EVT VT) const {
   SDNode *N = CurDAG->getMachineNode(TargetOpcode::IMPLICIT_DEF, DL, VT);
   return SDValue(N, 0);
 }
 
-SDValue SystemZDAGToDAGISel::convertTo(SDLoc DL, EVT VT, SDValue N) const {
+SDValue SystemZDAGToDAGISel::convertTo(const SDLoc &DL, EVT VT,
+                                       SDValue N) const {
   if (N.getValueType() == MVT::i32 && VT == MVT::i64)
     return CurDAG->getTargetInsertSubreg(SystemZ::subreg_l32,
                                          DL, VT, getUNDEF(DL, MVT::i64), N);
@@ -1322,27 +1323,44 @@ bool SystemZDAGToDAGISel::
 SelectInlineAsmMemoryOperand(const SDValue &Op,
                              unsigned ConstraintID,
                              std::vector<SDValue> &OutOps) {
+  SystemZAddressingMode::AddrForm Form;
+  SystemZAddressingMode::DispRange DispRange;
+  SDValue Base, Disp, Index;
+
   switch(ConstraintID) {
   default:
     llvm_unreachable("Unexpected asm memory constraint");
   case InlineAsm::Constraint_i:
-  case InlineAsm::Constraint_m:
   case InlineAsm::Constraint_Q:
+    // Accept an address with a short displacement, but no index.
+    Form = SystemZAddressingMode::FormBD;
+    DispRange = SystemZAddressingMode::Disp12Only;
+    break;
   case InlineAsm::Constraint_R:
+    // Accept an address with a short displacement and an index.
+    Form = SystemZAddressingMode::FormBDXNormal;
+    DispRange = SystemZAddressingMode::Disp12Only;
+    break;
   case InlineAsm::Constraint_S:
+    // Accept an address with a long displacement, but no index.
+    Form = SystemZAddressingMode::FormBD;
+    DispRange = SystemZAddressingMode::Disp20Only;
+    break;
   case InlineAsm::Constraint_T:
-    // Accept addresses with short displacements, which are compatible
-    // with Q, R, S and T.  But keep the index operand for future expansion.
-    SDValue Base, Disp, Index;
-    if (selectBDXAddr(SystemZAddressingMode::FormBD,
-                      SystemZAddressingMode::Disp12Only,
-                      Op, Base, Disp, Index)) {
-      OutOps.push_back(Base);
-      OutOps.push_back(Disp);
-      OutOps.push_back(Index);
-      return false;
-    }
+  case InlineAsm::Constraint_m:
+    // Accept an address with a long displacement and an index.
+    // m works the same as T, as this is the most general case.
+    Form = SystemZAddressingMode::FormBDXNormal;
+    DispRange = SystemZAddressingMode::Disp20Only;
     break;
   }
+
+  if (selectBDXAddr(Form, DispRange, Op, Base, Disp, Index)) {
+    OutOps.push_back(Base);
+    OutOps.push_back(Disp);
+    OutOps.push_back(Index);
+    return false;
+  }
+
   return true;
 }

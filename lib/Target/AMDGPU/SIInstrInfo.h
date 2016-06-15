@@ -112,9 +112,8 @@ public:
                            MachineInstr *SecondLdSt,
                            unsigned NumLoads) const final;
 
-  void copyPhysReg(MachineBasicBlock &MBB,
-                   MachineBasicBlock::iterator MI, DebugLoc DL,
-                   unsigned DestReg, unsigned SrcReg,
+  void copyPhysReg(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+                   const DebugLoc &DL, unsigned DestReg, unsigned SrcReg,
                    bool KillSrc) const override;
 
   unsigned calculateLDSSpillAddress(MachineBasicBlock &MBB,
@@ -159,7 +158,7 @@ public:
 
   unsigned InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
                         MachineBasicBlock *FBB, ArrayRef<MachineOperand> Cond,
-                        DebugLoc DL) const override;
+                        const DebugLoc &DL) const override;
 
   bool ReverseBranchCondition(
     SmallVectorImpl<MachineOperand> &Cond) const override;
@@ -512,6 +511,8 @@ public:
     return get(pseudoToMCOpcode(Opcode));
   }
 
+  unsigned getInstSizeInBytes(const MachineInstr &MI) const;
+
   ArrayRef<std::pair<int, const char *>>
   getSerializableTargetIndices() const override;
 
@@ -546,8 +547,9 @@ namespace AMDGPU {
   int getAtomicNoRetOp(uint16_t Opcode);
 
   const uint64_t RSRC_DATA_FORMAT = 0xf00000000000LL;
-  const uint64_t RSRC_TID_ENABLE = 1LL << 55;
-  const uint64_t RSRC_ELEMENT_SIZE_SHIFT = 51;
+  const uint64_t RSRC_ELEMENT_SIZE_SHIFT = (32 + 19);
+  const uint64_t RSRC_INDEX_STRIDE_SHIFT = (32 + 21);
+  const uint64_t RSRC_TID_ENABLE = UINT64_C(1) << (32 + 23);
 } // End namespace AMDGPU
 
 namespace SI {

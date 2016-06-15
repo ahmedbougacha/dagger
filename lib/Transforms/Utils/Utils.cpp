@@ -24,12 +24,12 @@ void llvm::initializeTransformUtils(PassRegistry &Registry) {
   initializeAddDiscriminatorsPass(Registry);
   initializeBreakCriticalEdgesPass(Registry);
   initializeInstNamerPass(Registry);
-  initializeLCSSAPass(Registry);
+  initializeLCSSAWrapperPassPass(Registry);
   initializeLoopSimplifyPass(Registry);
   initializeLowerInvokePass(Registry);
   initializeLowerSwitchPass(Registry);
   initializeNameAnonFunctionPass(Registry);
-  initializePromotePassPass(Registry);
+  initializePromoteLegacyPassPass(Registry);
   initializeUnifyFunctionExitNodesPass(Registry);
   initializeInstSimplifierPass(Registry);
   initializeMetaRenamerPass(Registry);

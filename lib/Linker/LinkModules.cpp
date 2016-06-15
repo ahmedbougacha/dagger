@@ -44,7 +44,7 @@ class ModuleLinker {
   /// The mover has just hit GV and we have to decide if it, and other members
   /// of the same comdat, should be linked. Every member to be linked is passed
   /// to Add.
-  void addLazyFor(GlobalValue &GV, IRMover::ValueAdder Add);
+  void addLazyFor(GlobalValue &GV, const IRMover::ValueAdder &Add);
 
   bool shouldLinkReferencedLinkOnce() {
     return !(Flags & Linker::DontForceLinkLinkonceODR);
@@ -377,9 +377,10 @@ bool ModuleLinker::linkIfNeeded(GlobalValue &GV) {
     DGV->setVisibility(Visibility);
     GV.setVisibility(Visibility);
 
-    bool HasUnnamedAddr = GV.hasUnnamedAddr() && DGV->hasUnnamedAddr();
-    DGV->setUnnamedAddr(HasUnnamedAddr);
-    GV.setUnnamedAddr(HasUnnamedAddr);
+    GlobalValue::UnnamedAddr UnnamedAddr = GlobalValue::getMinUnnamedAddr(
+        DGV->getUnnamedAddr(), GV.getUnnamedAddr());
+    DGV->setUnnamedAddr(UnnamedAddr);
+    GV.setUnnamedAddr(UnnamedAddr);
   }
 
   // Don't want to append to global_ctors list, for example, when we
@@ -416,7 +417,7 @@ bool ModuleLinker::linkIfNeeded(GlobalValue &GV) {
   return false;
 }
 
-void ModuleLinker::addLazyFor(GlobalValue &GV, IRMover::ValueAdder Add) {
+void ModuleLinker::addLazyFor(GlobalValue &GV, const IRMover::ValueAdder &Add) {
   if (!shouldLinkReferencedLinkOnce())
     // For ThinLTO we don't import more than what was required.
     // The client has to guarantee that the linkonce will be availabe at link

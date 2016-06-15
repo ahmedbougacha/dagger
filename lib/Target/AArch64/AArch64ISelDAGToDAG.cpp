@@ -164,6 +164,7 @@ public:
   void SelectPostStoreLane(SDNode *N, unsigned NumVecs, unsigned Opc);
 
   bool tryBitfieldExtractOp(SDNode *N);
+  bool tryBitfieldExtractOpFromSExt(SDNode *N);
   bool tryBitfieldInsertOp(SDNode *N);
   bool tryBitfieldInsertInZeroOp(SDNode *N);
 
@@ -1650,6 +1651,30 @@ static bool isBitfieldExtractOpFromShr(SDNode *N, unsigned &Opc, SDValue &Opd0,
   return true;
 }
 
+bool AArch64DAGToDAGISel::tryBitfieldExtractOpFromSExt(SDNode *N) {
+  assert(N->getOpcode() == ISD::SIGN_EXTEND);
+
+  EVT VT = N->getValueType(0);
+  EVT NarrowVT = N->getOperand(0)->getValueType(0);
+  if (VT != MVT::i64 || NarrowVT != MVT::i32)
+    return false;
+
+  uint64_t ShiftImm;
+  SDValue Op = N->getOperand(0);
+  if (!isOpcWithIntImmediate(Op.getNode(), ISD::SRA, ShiftImm))
+    return false;
+
+  SDLoc dl(N);
+  // Extend the incoming operand of the shift to 64-bits.
+  SDValue Opd0 = Widen(CurDAG, Op.getOperand(0));
+  unsigned Immr = ShiftImm;
+  unsigned Imms = NarrowVT.getSizeInBits() - 1;
+  SDValue Ops[] = {Opd0, CurDAG->getTargetConstant(Immr, dl, VT),
+                   CurDAG->getTargetConstant(Imms, dl, VT)};
+  CurDAG->SelectNodeTo(N, AArch64::SBFMXri, VT, Ops);
+  return true;
+}
+
 static bool isBitfieldExtractOp(SelectionDAG *CurDAG, SDNode *N, unsigned &Opc,
                                 SDValue &Opd0, unsigned &Immr, unsigned &Imms,
                                 unsigned NumberOfIgnoredLowBits = 0,
@@ -1723,7 +1748,7 @@ bool AArch64DAGToDAGISel::tryBitfieldExtractOp(SDNode *N) {
 /// BitsToBeInserted, suitable for use in a BFI instruction. Roughly speaking,
 /// this asks whether DstMask zeroes precisely those bits that will be set by
 /// the other half.
-static bool isBitfieldDstMask(uint64_t DstMask, APInt BitsToBeInserted,
+static bool isBitfieldDstMask(uint64_t DstMask, const APInt &BitsToBeInserted,
                               unsigned NumberOfIgnoredHighBits, EVT VT) {
   assert((VT == MVT::i32 || VT == MVT::i64) &&
          "i32 or i64 mask type expected!");
@@ -2585,6 +2610,11 @@ void AArch64DAGToDAGISel::Select(SDNode *Node) {
     if (tryBitfieldExtractOp(Node))
       return;
     if (tryBitfieldInsertInZeroOp(Node))
+      return;
+    break;
+
+  case ISD::SIGN_EXTEND:
+    if (tryBitfieldExtractOpFromSExt(Node))
       return;
     break;
 

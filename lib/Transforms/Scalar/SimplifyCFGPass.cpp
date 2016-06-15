@@ -191,10 +191,11 @@ PreservedAnalyses SimplifyCFGPass::run(Function &F,
   auto &TTI = AM.getResult<TargetIRAnalysis>(F);
   auto &AC = AM.getResult<AssumptionAnalysis>(F);
 
-  if (simplifyFunctionCFG(F, TTI, &AC, BonusInstThreshold))
-    return PreservedAnalyses::none();
-
-  return PreservedAnalyses::all();
+  if (!simplifyFunctionCFG(F, TTI, &AC, BonusInstThreshold))
+    return PreservedAnalyses::all();
+  PreservedAnalyses PA;
+  PA.preserve<GlobalsAA>();
+  return PA;
 }
 
 namespace {
@@ -240,5 +241,5 @@ INITIALIZE_PASS_END(CFGSimplifyPass, "simplifycfg", "Simplify the CFG", false,
 FunctionPass *
 llvm::createCFGSimplificationPass(int Threshold,
                                   std::function<bool(const Function &)> Ftor) {
-  return new CFGSimplifyPass(Threshold, Ftor);
+  return new CFGSimplifyPass(Threshold, std::move(Ftor));
 }

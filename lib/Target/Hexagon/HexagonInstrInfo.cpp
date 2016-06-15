@@ -561,10 +561,11 @@ unsigned HexagonInstrInfo::RemoveBranch(MachineBasicBlock &MBB) const {
   return Count;
 }
 
-
 unsigned HexagonInstrInfo::InsertBranch(MachineBasicBlock &MBB,
-      MachineBasicBlock *TBB, MachineBasicBlock *FBB,
-      ArrayRef<MachineOperand> Cond, DebugLoc DL) const {
+                                        MachineBasicBlock *TBB,
+                                        MachineBasicBlock *FBB,
+                                        ArrayRef<MachineOperand> Cond,
+                                        const DebugLoc &DL) const {
   unsigned BOpc   = Hexagon::J2_jump;
   unsigned BccOpc = Hexagon::J2_jumpt;
   assert(validateBranchCond(Cond) && "Invalid branching condition");
@@ -677,10 +678,10 @@ bool HexagonInstrInfo::isProfitableToDupForIfCvt(MachineBasicBlock &MBB,
   return NumInstrs <= 4;
 }
 
-
 void HexagonInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
-      MachineBasicBlock::iterator I, DebugLoc DL, unsigned DestReg,
-      unsigned SrcReg, bool KillSrc) const {
+                                   MachineBasicBlock::iterator I,
+                                   const DebugLoc &DL, unsigned DestReg,
+                                   unsigned SrcReg, bool KillSrc) const {
   auto &HRI = getRegisterInfo();
   unsigned KillFlag = getKillRegState(KillSrc);
 
@@ -1015,10 +1016,9 @@ bool HexagonInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI)
       unsigned NewOpc = Is128B ? Hexagon::V6_vL32b_ai_128B
                                : Hexagon::V6_vL32b_ai;
       int32_t Off = MI->getOperand(2).getImm();
-      int32_t Idx = Off;
       BuildMI(MBB, MI, DL, get(NewOpc), DstReg)
         .addOperand(MI->getOperand(1))
-        .addImm(Idx)
+        .addImm(Off)
         .setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
       MBB.erase(MI);
       return true;
@@ -1029,10 +1029,9 @@ bool HexagonInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI)
       unsigned NewOpc = Is128B ? Hexagon::V6_vS32b_ai_128B
                                : Hexagon::V6_vS32b_ai;
       int32_t Off = MI->getOperand(1).getImm();
-      int32_t Idx = Is128B ? (Off >> 7) : (Off >> 6);
       BuildMI(MBB, MI, DL, get(NewOpc))
         .addOperand(MI->getOperand(0))
-        .addImm(Idx)
+        .addImm(Off)
         .addOperand(MI->getOperand(2))
         .setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
       MBB.erase(MI);

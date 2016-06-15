@@ -27,8 +27,9 @@ extern llvm::cl::opt<OutputStyleTy> RawOutputStyle;
 extern llvm::cl::opt<bool> DumpHeaders;
 extern llvm::cl::opt<bool> DumpStreamBlocks;
 extern llvm::cl::opt<bool> DumpStreamSummary;
-extern llvm::cl::opt<bool> DumpTpiRecords;
+extern llvm::cl::opt<bool> DumpTpiHash;
 extern llvm::cl::opt<bool> DumpTpiRecordBytes;
+extern llvm::cl::opt<bool> DumpTpiRecords;
 extern llvm::cl::opt<bool> DumpIpiRecords;
 extern llvm::cl::opt<bool> DumpIpiRecordBytes;
 extern llvm::cl::opt<std::string> DumpStreamDataIdx;
@@ -42,6 +43,7 @@ extern llvm::cl::opt<bool> DumpLineInfo;
 extern llvm::cl::opt<bool> DumpSectionMap;
 extern llvm::cl::opt<bool> DumpSymRecordBytes;
 extern llvm::cl::opt<bool> DumpSectionHeaders;
+extern llvm::cl::opt<bool> DumpFpo;
 
 extern llvm::cl::opt<bool> ExcludeCompilerGenerated;
 

@@ -169,7 +169,7 @@ static void addLocIfNotPresent(SmallVectorImpl<const DILocation *> &Locs,
     Locs.push_back(Loc);
 }
 
-void CodeViewDebug::maybeRecordLocation(DebugLoc DL,
+void CodeViewDebug::maybeRecordLocation(const DebugLoc &DL,
                                         const MachineFunction *MF) {
   // Skip this instruction if it has the same location as the previous one.
   if (DL == CurFn->LastLoc)
@@ -232,7 +232,7 @@ void CodeViewDebug::emitCodeViewMagicVersion() {
 }
 
 void CodeViewDebug::endModule() {
-  if (FnDebugInfo.empty())
+  if (!Asm || !MMI->hasDebugInfo())
     return;
 
   assert(Asm != nullptr);
@@ -242,12 +242,18 @@ void CodeViewDebug::endModule() {
   // of the payload followed by the payload itself.  The subsections are 4-byte
   // aligned.
 
-  // Make a subsection for all the inlined subprograms.
+  // Use the generic .debug$S section, and make a subsection for all the inlined
+  // subprograms.
+  switchToDebugSectionForSymbol(nullptr);
   emitInlineeLinesSubsection();
 
   // Emit per-function debug information.
   for (auto &P : FnDebugInfo)
-    emitDebugInfoForFunction(P.first, P.second);
+    if (!P.first->isDeclarationForLinker())
+      emitDebugInfoForFunction(P.first, P.second);
+
+  // Emit global variable debug information.
+  emitDebugInfoForGlobals();
 
   // Switch back to the generic .debug$S section after potentially processing
   // comdat symbol sections.
@@ -326,17 +332,9 @@ void CodeViewDebug::emitInlineeLinesSubsection() {
   if (InlinedSubprograms.empty())
     return;
 
-  // Use the generic .debug$S section.
-  switchToDebugSectionForSymbol(nullptr);
-
-  MCSymbol *InlineBegin = MMI->getContext().createTempSymbol(),
-           *InlineEnd = MMI->getContext().createTempSymbol();
 
   OS.AddComment("Inlinee lines subsection");
-  OS.EmitIntValue(unsigned(ModuleSubstreamKind::InlineeLines), 4);
-  OS.AddComment("Subsection size");
-  OS.emitAbsoluteSymbolDiff(InlineEnd, InlineBegin, 4);
-  OS.EmitLabel(InlineBegin);
+  MCSymbol *InlineEnd = beginCVSubsection(ModuleSubstreamKind::InlineeLines);
 
   // We don't provide any extra file info.
   // FIXME: Find out if debuggers use this info.
@@ -363,7 +361,7 @@ void CodeViewDebug::emitInlineeLinesSubsection() {
     OS.EmitIntValue(SP->getLine(), 4);
   }
 
-  OS.EmitLabel(InlineEnd);
+  endCVSubsection(InlineEnd);
 }
 
 void CodeViewDebug::collectInlineSiteChildren(
@@ -467,13 +465,8 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     FuncName = GlobalValue::getRealLinkageName(GV->getName());
 
   // Emit a symbol subsection, required by VS2012+ to find function boundaries.
-  MCSymbol *SymbolsBegin = MMI->getContext().createTempSymbol(),
-           *SymbolsEnd = MMI->getContext().createTempSymbol();
   OS.AddComment("Symbol subsection for " + Twine(FuncName));
-  OS.EmitIntValue(unsigned(ModuleSubstreamKind::Symbols), 4);
-  OS.AddComment("Subsection size");
-  OS.emitAbsoluteSymbolDiff(SymbolsEnd, SymbolsBegin, 4);
-  OS.EmitLabel(SymbolsBegin);
+  MCSymbol *SymbolsEnd = beginCVSubsection(ModuleSubstreamKind::Symbols);
   {
     MCSymbol *ProcRecordBegin = MMI->getContext().createTempSymbol(),
              *ProcRecordEnd = MMI->getContext().createTempSymbol();
@@ -532,9 +525,7 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     OS.AddComment("Record kind: S_PROC_ID_END");
     OS.EmitIntValue(unsigned(SymbolKind::S_PROC_ID_END), 2);
   }
-  OS.EmitLabel(SymbolsEnd);
-  // Every subsection must be aligned to a 4-byte boundary.
-  OS.EmitValueToAlignment(4);
+  endCVSubsection(SymbolsEnd);
 
   // We have an assembler directive that takes care of the whole line table.
   OS.EmitCVLinetableDirective(FI.FuncId, Fn, FI.End);
@@ -736,6 +727,8 @@ void CodeViewDebug::beginFunction(const MachineFunction *MF) {
 TypeIndex CodeViewDebug::lowerType(const DIType *Ty) {
   // Generic dispatch for lowering an unknown type.
   switch (Ty->getTag()) {
+  case dwarf::DW_TAG_array_type:
+    return lowerTypeArray(cast<DICompositeType>(Ty));
   case dwarf::DW_TAG_typedef:
     return lowerTypeAlias(cast<DIDerivedType>(Ty));
   case dwarf::DW_TAG_base_type:
@@ -769,7 +762,22 @@ TypeIndex CodeViewDebug::lowerTypeAlias(const DIDerivedType *Ty) {
   if (UnderlyingTypeIndex == TypeIndex(SimpleTypeKind::Int32Long) &&
       Ty->getName() == "HRESULT")
     return TypeIndex(SimpleTypeKind::HResult);
+  if (UnderlyingTypeIndex == TypeIndex(SimpleTypeKind::UInt16Short) &&
+      Ty->getName() == "wchar_t")
+    return TypeIndex(SimpleTypeKind::WideCharacter);
   return UnderlyingTypeIndex;
+}
+
+TypeIndex CodeViewDebug::lowerTypeArray(const DICompositeType *Ty) {
+  DITypeRef ElementTypeRef = Ty->getBaseType();
+  TypeIndex ElementTypeIndex = getTypeIndex(ElementTypeRef);
+  // IndexType is size_t, which depends on the bitness of the target.
+  TypeIndex IndexType = Asm->MAI->getPointerSize() == 8
+                            ? TypeIndex(SimpleTypeKind::UInt64Quad)
+                            : TypeIndex(SimpleTypeKind::UInt32Long);
+  uint64_t Size = Ty->getSizeInBits() / 8;
+  ArrayRecord Record(ElementTypeIndex, IndexType, Size, Ty->getName());
+  return TypeTable.writeArray(Record);
 }
 
 TypeIndex CodeViewDebug::lowerTypeBasic(const DIBasicType *Ty) {
@@ -854,9 +862,8 @@ TypeIndex CodeViewDebug::lowerTypeBasic(const DIBasicType *Ty) {
     STK = SimpleTypeKind::Int32Long;
   if (STK == SimpleTypeKind::UInt32 && Ty->getName() == "long unsigned int")
     STK = SimpleTypeKind::UInt32Long;
-  if ((STK == SimpleTypeKind::Int16Short ||
-       STK == SimpleTypeKind::UInt16Short) &&
-      Ty->getName() == "wchar_t")
+  if (STK == SimpleTypeKind::UInt16Short &&
+      (Ty->getName() == "wchar_t" || Ty->getName() == "__wchar_t"))
     STK = SimpleTypeKind::WideCharacter;
   if ((STK == SimpleTypeKind::SignedCharacter ||
        STK == SimpleTypeKind::UnsignedCharacter) &&
@@ -920,6 +927,20 @@ TypeIndex CodeViewDebug::lowerTypeMemberPointer(const DIDerivedType *Ty) {
   return TypeTable.writePointer(PR);
 }
 
+/// Given a DWARF calling convention, get the CodeView equivalent. If we don't
+/// have a translation, use the NearC convention.
+static CallingConvention dwarfCCToCodeView(unsigned DwarfCC) {
+  switch (DwarfCC) {
+  case dwarf::DW_CC_normal:             return CallingConvention::NearC;
+  case dwarf::DW_CC_BORLAND_msfastcall: return CallingConvention::NearFast;
+  case dwarf::DW_CC_BORLAND_thiscall:   return CallingConvention::ThisCall;
+  case dwarf::DW_CC_BORLAND_stdcall:    return CallingConvention::NearStdCall;
+  case dwarf::DW_CC_BORLAND_pascal:     return CallingConvention::NearPascal;
+  case dwarf::DW_CC_LLVM_vectorcall:    return CallingConvention::NearVector;
+  }
+  return CallingConvention::NearC;
+}
+
 TypeIndex CodeViewDebug::lowerTypeModifier(const DIDerivedType *Ty) {
   ModifierOptions Mods = ModifierOptions::None;
   bool IsModifier = true;
@@ -961,13 +982,12 @@ TypeIndex CodeViewDebug::lowerTypeFunction(const DISubroutineType *Ty) {
   ArgListRecord ArgListRec(TypeRecordKind::ArgList, ArgTypeIndices);
   TypeIndex ArgListIndex = TypeTable.writeArgList(ArgListRec);
 
-  // TODO: We should use DW_AT_calling_convention to determine what CC this
-  // procedure record should have.
+  CallingConvention CC = dwarfCCToCodeView(Ty->getCC());
+
   // TODO: Some functions are member functions, we should use a more appropriate
   // record for those.
-  ProcedureRecord Procedure(ReturnTypeIndex, CallingConvention::NearC,
-                            FunctionOptions::None, ArgTypeIndices.size(),
-                            ArgListIndex);
+  ProcedureRecord Procedure(ReturnTypeIndex, CC, FunctionOptions::None,
+                            ArgTypeIndices.size(), ArgListIndex);
   return TypeTable.writeProcedure(Procedure);
 }
 
@@ -1269,4 +1289,84 @@ void CodeViewDebug::beginInstruction(const MachineInstr *MI) {
   if (DL == PrevInstLoc || !DL)
     return;
   maybeRecordLocation(DL, Asm->MF);
+}
+
+MCSymbol *CodeViewDebug::beginCVSubsection(ModuleSubstreamKind Kind) {
+  MCSymbol *BeginLabel = MMI->getContext().createTempSymbol(),
+           *EndLabel = MMI->getContext().createTempSymbol();
+  OS.EmitIntValue(unsigned(Kind), 4);
+  OS.AddComment("Subsection size");
+  OS.emitAbsoluteSymbolDiff(EndLabel, BeginLabel, 4);
+  OS.EmitLabel(BeginLabel);
+  return EndLabel;
+}
+
+void CodeViewDebug::endCVSubsection(MCSymbol *EndLabel) {
+  OS.EmitLabel(EndLabel);
+  // Every subsection must be aligned to a 4-byte boundary.
+  OS.EmitValueToAlignment(4);
+}
+
+void CodeViewDebug::emitDebugInfoForGlobals() {
+  NamedMDNode *CUs = MMI->getModule()->getNamedMetadata("llvm.dbg.cu");
+  for (const MDNode *Node : CUs->operands()) {
+    const auto *CU = cast<DICompileUnit>(Node);
+
+    // First, emit all globals that are not in a comdat in a single symbol
+    // substream. MSVC doesn't like it if the substream is empty, so only open
+    // it if we have at least one global to emit.
+    switchToDebugSectionForSymbol(nullptr);
+    MCSymbol *EndLabel = nullptr;
+    for (const DIGlobalVariable *G : CU->getGlobalVariables()) {
+      if (const auto *GV = dyn_cast_or_null<GlobalVariable>(G->getVariable())) {
+        if (!GV->hasComdat() && !GV->isDeclarationForLinker()) {
+          if (!EndLabel) {
+            OS.AddComment("Symbol subsection for globals");
+            EndLabel = beginCVSubsection(ModuleSubstreamKind::Symbols);
+          }
+          emitDebugInfoForGlobal(G, Asm->getSymbol(GV));
+        }
+      }
+    }
+    if (EndLabel)
+      endCVSubsection(EndLabel);
+
+    // Second, emit each global that is in a comdat into its own .debug$S
+    // section along with its own symbol substream.
+    for (const DIGlobalVariable *G : CU->getGlobalVariables()) {
+      if (const auto *GV = dyn_cast_or_null<GlobalVariable>(G->getVariable())) {
+        if (GV->hasComdat()) {
+          MCSymbol *GVSym = Asm->getSymbol(GV);
+          OS.AddComment("Symbol subsection for " +
+                        Twine(GlobalValue::getRealLinkageName(GV->getName())));
+          switchToDebugSectionForSymbol(GVSym);
+          EndLabel = beginCVSubsection(ModuleSubstreamKind::Symbols);
+          emitDebugInfoForGlobal(G, GVSym);
+          endCVSubsection(EndLabel);
+        }
+      }
+    }
+  }
+}
+
+void CodeViewDebug::emitDebugInfoForGlobal(const DIGlobalVariable *DIGV,
+                                           MCSymbol *GVSym) {
+  // DataSym record, see SymbolRecord.h for more info.
+  // FIXME: Thread local data, etc
+  MCSymbol *DataBegin = MMI->getContext().createTempSymbol(),
+           *DataEnd = MMI->getContext().createTempSymbol();
+  OS.AddComment("Record length");
+  OS.emitAbsoluteSymbolDiff(DataEnd, DataBegin, 2);
+  OS.EmitLabel(DataBegin);
+  OS.AddComment("Record kind: S_GDATA32");
+  OS.EmitIntValue(unsigned(SymbolKind::S_GDATA32), 2);
+  OS.AddComment("Type");
+  OS.EmitIntValue(getCompleteTypeIndex(DIGV->getType()).getIndex(), 4);
+  OS.AddComment("DataOffset");
+  OS.EmitCOFFSecRel32(GVSym);
+  OS.AddComment("Segment");
+  OS.EmitCOFFSectionIndex(GVSym);
+  OS.AddComment("Name");
+  emitNullTerminatedSymbolName(OS, DIGV->getName());
+  OS.EmitLabel(DataEnd);
 }

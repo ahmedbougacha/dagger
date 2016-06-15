@@ -1473,15 +1473,9 @@ defm V_INTERP_MOV_F32 : VINTRP_m <
 // VOP2 Instructions
 //===----------------------------------------------------------------------===//
 
-multiclass V_CNDMASK <vop2 op, string name> {
-  defm _e32 : VOP2_m <op, name, VOP_CNDMASK, [], name>;
-
-  defm _e64  : VOP3_m <
-      op, VOP_CNDMASK.Outs, VOP_CNDMASK.Ins64,
-      name#!cast<string>(VOP_CNDMASK.Asm64), [], name, 3, 0>;
-}
-
-defm V_CNDMASK_B32 : V_CNDMASK<vop2<0x0>, "v_cndmask_b32">;
+defm V_CNDMASK_B32 : VOP2eInst <vop2<0x0, 0x0>, "v_cndmask_b32",
+  VOP2e_I32_I32_I32_I1
+>;
 
 let isCommutable = 1 in {
 defm V_ADD_F32 : VOP2Inst <vop2<0x3, 0x1>, "v_add_f32",
@@ -2113,10 +2107,10 @@ defm SI_SPILL_V512 : SI_SPILL_VGPR <VReg_512>;
 
 let Defs = [SCC] in {
 
-def SI_CONSTDATA_PTR : InstSI <
+def SI_PC_ADD_REL_OFFSET : InstSI <
   (outs SReg_64:$dst),
-  (ins const_ga:$ptr),
-  "", [(set SReg_64:$dst, (i64 (AMDGPUconstdata_ptr (tglobaladdr:$ptr))))]
+  (ins si_ga:$ptr),
+  "", [(set SReg_64:$dst, (i64 (SIpc_add_rel_offset (tglobaladdr:$ptr))))]
 > {
   let SALU = 1;
 }
@@ -3290,37 +3284,6 @@ def : MUBUFScratchStorePat <BUFFER_STORE_SHORT_OFFEN, i32, truncstorei16_private
 def : MUBUFScratchStorePat <BUFFER_STORE_DWORD_OFFEN, i32, store_private>;
 def : MUBUFScratchStorePat <BUFFER_STORE_DWORDX2_OFFEN, v2i32, store_private>;
 def : MUBUFScratchStorePat <BUFFER_STORE_DWORDX4_OFFEN, v4i32, store_private>;
-
-
-multiclass MUBUFCmpSwapPat <Instruction inst_addr64, Instruction inst_offset,
-                            SDPatternOperator node, ValueType data_vt,
-                            ValueType node_vt> {
-
-let Predicates = [isSI] in {
-  def : Pat <
-    (node_vt (node (MUBUFAddr64Atomic v4i32:$srsrc, i64:$vaddr, i32:$soffset,
-	                           i16:$offset, i1:$slc), data_vt:$vdata_in)),
-    (EXTRACT_SUBREG
-      (inst_addr64  $vdata_in, $vaddr, $srsrc, $soffset, $offset, $slc), sub0)
-  >;
-
-}
-
-  def : Pat <
-    (node_vt (node (MUBUFOffsetAtomic v4i32:$srsrc, i32:$soffset, i16:$offset,
-                                   i1:$slc), data_vt:$vdata_in)),
-    (EXTRACT_SUBREG
-      (inst_offset $vdata_in, $srsrc, $soffset, $offset, $slc), sub0)
-  >;
-}
-
-defm : MUBUFCmpSwapPat <BUFFER_ATOMIC_CMPSWAP_RTN_ADDR64,
-                        BUFFER_ATOMIC_CMPSWAP_RTN_OFFSET,
-                        atomic_cmp_swap_global, v2i32, i32>;
-
-defm : MUBUFCmpSwapPat <BUFFER_ATOMIC_CMPSWAP_X2_RTN_ADDR64,
-                        BUFFER_ATOMIC_CMPSWAP_X2_RTN_OFFSET,
-                        atomic_cmp_swap_global, v2i64, i64>;
 
 //===----------------------------------------------------------------------===//
 // MTBUF Patterns

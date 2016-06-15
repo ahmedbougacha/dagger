@@ -24,6 +24,7 @@
 
 namespace llvm {
 namespace object {
+struct FpoData;
 struct coff_section;
 }
 
@@ -35,7 +36,7 @@ class DbiStream {
   struct HeaderInfo;
 
 public:
-  DbiStream(PDBFile &File);
+  DbiStream(PDBFile &File, std::unique_ptr<MappedBlockStream> Stream);
   ~DbiStream();
   Error reload();
 
@@ -65,6 +66,8 @@ public:
 
   codeview::FixedStreamArray<object::coff_section> getSectionHeaders();
 
+  codeview::FixedStreamArray<object::FpoData> getFpoRecords();
+
   codeview::FixedStreamArray<SecMapEntry> getSectionMap() const;
   void visitSectionContributions(ISectionContribVisitor &Visitor) const;
 
@@ -73,9 +76,10 @@ private:
   Error initializeSectionHeadersData();
   Error initializeSectionMapData();
   Error initializeFileInfo();
+  Error initializeFpoRecords();
 
   PDBFile &Pdb;
-  MappedBlockStream Stream;
+  std::unique_ptr<MappedBlockStream> Stream;
 
   std::vector<ModuleInfoEx> ModuleInfos;
   NameHashTable ECNames;
@@ -99,6 +103,9 @@ private:
 
   std::unique_ptr<MappedBlockStream> SectionHeaderStream;
   codeview::FixedStreamArray<object::coff_section> SectionHeaders;
+
+  std::unique_ptr<MappedBlockStream> FpoStream;
+  codeview::FixedStreamArray<object::FpoData> FpoRecords;
 
   const HeaderInfo *Header;
 };

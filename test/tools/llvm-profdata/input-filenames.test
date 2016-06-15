@@ -1,16 +1,17 @@
 # Create an input file.
-RUN: printf '# comment 1\n' > %t.input
-RUN: printf ' # comment 2\n' >> %t.input
-RUN: printf 'foo\n' >> %t.input
-RUN: printf ' bar\n' >> %t.input
-RUN: printf "2,%t.weighted\n" >> %t.input
+RUN: echo '# comment 1' > %t.input
+RUN: echo ' # comment 2' >> %t.input
+RUN: echo 'bar' >> %t.input
+RUN: echo ' baz' >> %t.input
+RUN: echo "2,%t.weighted" >> %t.input
 
 # Create the weighted file, since these actually need to exist.
-RUN: printf ' ' > %t.weighted
+RUN: echo ' ' > %t.weighted
 
-# RUN: llvm-profdata merge -f %t.input -dump-input-file-list -o /dev/null | FileCheck %s
-# RUN: llvm-profdata merge -input-files %t.input -dump-input-file-list -o /dev/null | FileCheck %s
+RUN: llvm-profdata merge -f %t.input -dump-input-file-list -o /dev/null foo | FileCheck %s
+RUN: llvm-profdata merge -input-files %t.input -dump-input-file-list -o /dev/null foo | FileCheck %s
 
-# CHECK: 1,foo
-# CHECK-NEXT: 1,bar
-# CHECK-NEXT: 2,{{.*}}.weighted
+CHECK: 1,foo
+CHECK-NEXT: 1,bar
+CHECK-NEXT: 1,baz
+CHECK-NEXT: 2,{{.*}}.weighted

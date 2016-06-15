@@ -36,7 +36,8 @@
 #include "llvm/Support/raw_os_ostream.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/Scalar.h"
-#include <llvm/CodeGen/Passes.h>
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/CodeGen/Passes.h"
 
 using namespace llvm;
 
@@ -49,6 +50,7 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeSILowerI1CopiesPass(*PR);
   initializeSIFixSGPRCopiesPass(*PR);
   initializeSIFoldOperandsPass(*PR);
+  initializeSIShrinkInstructionsPass(*PR);
   initializeSIFixControlFlowLiveIntervalsPass(*PR);
   initializeSILoadStoreOptimizerPass(*PR);
   initializeAMDGPUAnnotateKernelFeaturesPass(*PR);
@@ -179,8 +181,9 @@ public:
     return nullptr;
   }
 
+  void addEarlyCSEOrGVNPass();
+  void addStraightLineScalarOptimizationPasses();
   void addIRPasses() override;
-  void addCodeGenPrepare() override;
   bool addPreISel() override;
   bool addInstSelector() override;
   bool addGCPasses() override;
@@ -224,6 +227,29 @@ TargetIRAnalysis AMDGPUTargetMachine::getTargetIRAnalysis() {
   });
 }
 
+void AMDGPUPassConfig::addEarlyCSEOrGVNPass() {
+  if (getOptLevel() == CodeGenOpt::Aggressive)
+    addPass(createGVNPass());
+  else
+    addPass(createEarlyCSEPass());
+}
+
+void AMDGPUPassConfig::addStraightLineScalarOptimizationPasses() {
+  addPass(createSeparateConstOffsetFromGEPPass());
+  addPass(createSpeculativeExecutionPass());
+  // ReassociateGEPs exposes more opportunites for SLSR. See
+  // the example in reassociate-geps-and-slsr.ll.
+  addPass(createStraightLineStrengthReducePass());
+  // SeparateConstOffsetFromGEP and SLSR creates common expressions which GVN or
+  // EarlyCSE can reuse.
+  addEarlyCSEOrGVNPass();
+  // Run NaryReassociate after EarlyCSE/GVN to be more effective.
+  addPass(createNaryReassociatePass());
+  // NaryReassociate on GEPs creates redundant common expressions, so run
+  // EarlyCSE after it.
+  addPass(createEarlyCSEPass());
+}
+
 void AMDGPUPassConfig::addIRPasses() {
   // There is no reason to run these.
   disablePass(&StackMapLivenessID);
@@ -243,17 +269,31 @@ void AMDGPUPassConfig::addIRPasses() {
   // Handle uses of OpenCL image2d_t, image3d_t and sampler_t arguments.
   addPass(createAMDGPUOpenCLImageTypeLoweringPass());
 
-  TargetPassConfig::addIRPasses();
-}
-
-void AMDGPUPassConfig::addCodeGenPrepare() {
   const AMDGPUTargetMachine &TM = getAMDGPUTargetMachine();
   const AMDGPUSubtarget &ST = *TM.getSubtargetImpl();
   if (TM.getOptLevel() > CodeGenOpt::None && ST.isPromoteAllocaEnabled()) {
     addPass(createAMDGPUPromoteAlloca(&TM));
     addPass(createSROAPass());
   }
-  TargetPassConfig::addCodeGenPrepare();
+
+  addStraightLineScalarOptimizationPasses();
+
+  TargetPassConfig::addIRPasses();
+
+  // EarlyCSE is not always strong enough to clean up what LSR produces. For
+  // example, GVN can combine
+  //
+  //   %0 = add %a, %b
+  //   %1 = add %b, %a
+  //
+  // and
+  //
+  //   %0 = shl nsw %a, 2
+  //   %1 = shl %a, 2
+  //
+  // but EarlyCSE can do neither of them.
+  if (getOptLevel() != CodeGenOpt::None)
+    addEarlyCSEOrGVNPass();
 }
 
 bool
@@ -406,7 +446,7 @@ void GCNPassConfig::addPreEmitPass() {
   // hazard recognizer pass.
   addPass(&PostRAHazardRecognizerID);
 
-  addPass(createSIInsertWaitsPass(), false);
+  addPass(createSIInsertWaitsPass());
   addPass(createSIShrinkInstructionsPass());
   addPass(createSILowerControlFlowPass(), false);
   addPass(createSIDebuggerInsertNopsPass(), false);

@@ -56,6 +56,17 @@ static cl::opt<bool> ClInstrumentLoadsAndStores(
 static cl::opt<bool> ClInstrumentMemIntrinsics(
     "esan-instrument-memintrinsics", cl::init(true),
     cl::desc("Instrument memintrinsics (memset/memcpy/memmove)"), cl::Hidden);
+static cl::opt<bool> ClInstrumentFastpath(
+    "esan-instrument-fastpath", cl::init(true),
+    cl::desc("Instrument fastpath"), cl::Hidden);
+
+// Experiments show that the performance difference can be 2x or more,
+// and accuracy loss is typically negligible, so we turn this on by default.
+static cl::opt<bool> ClAssumeIntraCacheLine(
+    "esan-assume-intra-cache-line", cl::init(true),
+    cl::desc("Assume each memory access touches just one cache line, for "
+             "better performance but with a potential loss of accuracy."),
+    cl::Hidden);
 
 STATISTIC(NumInstrumentedLoads, "Number of instrumented loads");
 STATISTIC(NumInstrumentedStores, "Number of instrumented stores");
@@ -65,6 +76,8 @@ STATISTIC(NumAccessesWithIrregularSize,
 STATISTIC(NumIgnoredStructs, "Number of ignored structs");
 STATISTIC(NumIgnoredGEPs, "Number of ignored GEP instructions");
 STATISTIC(NumInstrumentedGEPs, "Number of instrumented GEP instructions");
+STATISTIC(NumAssumedIntraCacheLine,
+          "Number of accesses assumed to be intra-cache-line");
 
 static const uint64_t EsanCtorAndDtorPriority = 0;
 static const char *const EsanModuleCtorName = "esan.module_ctor";
@@ -124,7 +137,7 @@ static GlobalVariable *createPrivateGlobalForString(Module &M, StringRef Str,
     new GlobalVariable(M, StrConst->getType(), true,
                        GlobalValue::PrivateLinkage, StrConst, "");
   if (AllowMerging)
-    GV->setUnnamedAddr(true);
+    GV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
   GV->setAlignment(1);  // Strings may not be merged w/o setting align 1.
   return GV;
 }
@@ -145,8 +158,9 @@ private:
   bool shouldIgnoreStructType(StructType *StructTy);
   void createStructCounterName(
       StructType *StructTy, SmallString<MaxStructCounterNameSize> &NameStr);
-  GlobalVariable *createCacheFragInfoGV(Module &M, Constant *UnitName);
-  Constant *createEsanInitToolInfoArg(Module &M);
+  GlobalVariable *createCacheFragInfoGV(Module &M, const DataLayout &DL,
+                                        Constant *UnitName);
+  Constant *createEsanInitToolInfoArg(Module &M, const DataLayout &DL);
   void createDestructor(Module &M, Constant *ToolInfoArg);
   bool runOnFunction(Function &F, Module &M);
   bool instrumentLoadOrStore(Instruction *I, const DataLayout &DL);
@@ -274,24 +288,28 @@ void EfficiencySanitizer::createStructCounterName(
 
 // Create the global variable for the cache-fragmentation tool.
 GlobalVariable *EfficiencySanitizer::createCacheFragInfoGV(
-    Module &M, Constant *UnitName) {
+    Module &M, const DataLayout &DL, Constant *UnitName) {
   assert(Options.ToolType == EfficiencySanitizerOptions::ESAN_CacheFrag);
 
   auto *Int8PtrTy = Type::getInt8PtrTy(*Ctx);
   auto *Int8PtrPtrTy = Int8PtrTy->getPointerTo();
   auto *Int32Ty = Type::getInt32Ty(*Ctx);
+  auto *Int32PtrTy = Type::getInt32PtrTy(*Ctx);
   auto *Int64Ty = Type::getInt64Ty(*Ctx);
   auto *Int64PtrTy = Type::getInt64PtrTy(*Ctx);
   // This structure should be kept consistent with the StructInfo struct
   // in the runtime library.
   // struct StructInfo {
   //   const char *StructName;
+  //   u32 Size;
   //   u32 NumFields;
+  //   u32 *FieldOffsets;
   //   u64 *FieldCounters;
   //   const char **FieldTypeNames;
   // };
   auto *StructInfoTy =
-    StructType::get(Int8PtrTy, Int32Ty, Int64PtrTy, Int8PtrPtrTy, nullptr);
+    StructType::get(Int8PtrTy, Int32Ty, Int32Ty, Int32PtrTy, Int64PtrTy,
+                    Int8PtrPtrTy, nullptr);
   auto *StructInfoPtrTy = StructInfoTy->getPointerTo();
   // This structure should be kept consistent with the CacheFragInfo struct
   // in the runtime library.
@@ -334,13 +352,21 @@ GlobalVariable *EfficiencySanitizer::createCacheFragInfoGV(
     // Remember the counter variable for each struct type.
     StructTyMap.insert(std::pair<Type *, GlobalVariable *>(StructTy, Counters));
 
+    // We pass the field type name array and offset array to the runtime for
+    // better reporting.
     // FieldTypeNames.
-    // We pass the field type name array to the runtime for better reporting.
     auto *TypeNameArrayTy = ArrayType::get(Int8PtrTy, StructTy->getNumElements());
-    GlobalVariable *TypeName =
+    GlobalVariable *TypeNames =
       new GlobalVariable(M, TypeNameArrayTy, true,
                          GlobalVariable::InternalLinkage, nullptr);
     SmallVector<Constant *, 16> TypeNameVec;
+    // FieldOffsets.
+    const StructLayout *SL = DL.getStructLayout(StructTy);
+    auto *OffsetArrayTy = ArrayType::get(Int32Ty, StructTy->getNumElements());
+    GlobalVariable *Offsets =
+      new GlobalVariable(M, OffsetArrayTy, true,
+                         GlobalVariable::InternalLinkage, nullptr);
+    SmallVector<Constant *, 16> OffsetVec;
     for (unsigned i = 0; i < StructTy->getNumElements(); ++i) {
       Type *Ty = StructTy->getElementType(i);
       std::string Str;
@@ -350,16 +376,20 @@ GlobalVariable *EfficiencySanitizer::createCacheFragInfoGV(
           ConstantExpr::getPointerCast(
               createPrivateGlobalForString(M, StrOS.str(), true),
               Int8PtrTy));
+      OffsetVec.push_back(ConstantInt::get(Int32Ty, SL->getElementOffset(i)));
     }
-    TypeName->setInitializer(ConstantArray::get(TypeNameArrayTy, TypeNameVec));
+    TypeNames->setInitializer(ConstantArray::get(TypeNameArrayTy, TypeNameVec));
+    Offsets->setInitializer(ConstantArray::get(OffsetArrayTy, OffsetVec));
 
     Initializers.push_back(
         ConstantStruct::get(
             StructInfoTy,
             ConstantExpr::getPointerCast(StructCounterName, Int8PtrTy),
+            ConstantInt::get(Int32Ty, SL->getSizeInBytes()),
             ConstantInt::get(Int32Ty, StructTy->getNumElements()),
+            ConstantExpr::getPointerCast(Offsets, Int32PtrTy),
             ConstantExpr::getPointerCast(Counters, Int64PtrTy),
-            ConstantExpr::getPointerCast(TypeName, Int8PtrPtrTy),
+            ConstantExpr::getPointerCast(TypeNames, Int8PtrPtrTy),
             nullptr));
   }
   // Structs.
@@ -386,7 +416,8 @@ GlobalVariable *EfficiencySanitizer::createCacheFragInfoGV(
 }
 
 // Create the tool-specific argument passed to EsanInit and EsanExit.
-Constant *EfficiencySanitizer::createEsanInitToolInfoArg(Module &M) {
+Constant *EfficiencySanitizer::createEsanInitToolInfoArg(Module &M,
+                                                         const DataLayout &DL) {
   // This structure contains tool-specific information about each compilation
   // unit (module) and is passed to the runtime library.
   GlobalVariable *ToolInfoGV = nullptr;
@@ -399,7 +430,7 @@ Constant *EfficiencySanitizer::createEsanInitToolInfoArg(Module &M) {
 
   // Create the tool-specific variable.
   if (Options.ToolType == EfficiencySanitizerOptions::ESAN_CacheFrag)
-    ToolInfoGV = createCacheFragInfoGV(M, UnitName);
+    ToolInfoGV = createCacheFragInfoGV(M, DL, UnitName);
 
   if (ToolInfoGV != nullptr)
     return ConstantExpr::getPointerCast(ToolInfoGV, Int8PtrTy);
@@ -432,7 +463,7 @@ bool EfficiencySanitizer::initOnModule(Module &M) {
   PointerType *Int8PtrTy = Type::getInt8PtrTy(*Ctx);
   IntptrTy = DL.getIntPtrType(M.getContext());
   // Create the variable passed to EsanInit and EsanExit.
-  Constant *ToolInfoArg = createEsanInitToolInfoArg(M);
+  Constant *ToolInfoArg = createEsanInitToolInfoArg(M, DL);
   // Constructor
   // We specify the tool type both in the EsanWhichToolName global
   // and as an arg to the init routine as a sanity check.
@@ -581,7 +612,8 @@ bool EfficiencySanitizer::instrumentLoadOrStore(Instruction *I,
                    {IRB.CreatePointerCast(Addr, IRB.getInt8PtrTy()),
                     ConstantInt::get(IntptrTy, TypeSizeBytes)});
   } else {
-    if (instrumentFastpath(I, DL, IsStore, Addr, Alignment)) {
+    if (ClInstrumentFastpath &&
+        instrumentFastpath(I, DL, IsStore, Addr, Alignment)) {
       NumFastpaths++;
       return true;
     }
@@ -624,45 +656,52 @@ bool EfficiencySanitizer::instrumentMemIntrinsic(MemIntrinsic *MI) {
 
 bool EfficiencySanitizer::instrumentGetElementPtr(Instruction *I, Module &M) {
   GetElementPtrInst *GepInst = dyn_cast<GetElementPtrInst>(I);
-  if (GepInst == nullptr || !isa<StructType>(GepInst->getSourceElementType()) ||
-      StructTyMap.count(GepInst->getSourceElementType()) == 0 ||
-      !GepInst->hasAllConstantIndices() ||
-      // Only handle simple struct field GEP.
-      GepInst->getNumIndices() != 2) {
+  bool Res = false;
+  if (GepInst == nullptr || GepInst->getNumIndices() == 1) {
     ++NumIgnoredGEPs;
     return false;
   }
-  StructType *StructTy = dyn_cast<StructType>(GepInst->getSourceElementType());
-  if (shouldIgnoreStructType(StructTy)) {
-    ++NumIgnoredGEPs;
-    return false;
+  Type *SourceTy = GepInst->getSourceElementType();
+  // Iterate all (except the first and the last) idx within each GEP instruction
+  // for possible nested struct field address calculation.
+  for (unsigned i = 1; i < GepInst->getNumIndices(); ++i) {
+    SmallVector<Value *, 8> IdxVec(GepInst->idx_begin(),
+                                   GepInst->idx_begin() + i);
+    StructType *StructTy = dyn_cast<StructType>(
+        GetElementPtrInst::getIndexedType(SourceTy, IdxVec));
+    if (StructTy == nullptr || shouldIgnoreStructType(StructTy) ||
+        StructTyMap.count(StructTy) == 0)
+      continue;
+    // Get the StructTy's subfield index.
+    ConstantInt *Idx = dyn_cast<ConstantInt>(GepInst->getOperand(i+1));
+    if (Idx == nullptr || Idx->getZExtValue() > StructTy->getNumElements())
+      continue;
+    GlobalVariable *CounterArray = StructTyMap[StructTy];
+    if (CounterArray == nullptr)
+      return false;
+    IRBuilder<> IRB(I);
+    Constant *Indices[2];
+    // Xref http://llvm.org/docs/LangRef.html#i-getelementptr and
+    // http://llvm.org/docs/GetElementPtr.html.
+    // The first index of the GEP instruction steps through the first operand,
+    // i.e., the array itself.
+    Indices[0] = ConstantInt::get(IRB.getInt32Ty(), 0);
+    // The second index is the index within the array.
+    Indices[1] = ConstantInt::get(IRB.getInt32Ty(), Idx->getZExtValue());
+    Constant *Counter =
+        ConstantExpr::getGetElementPtr(
+            ArrayType::get(IRB.getInt64Ty(), StructTy->getNumElements()),
+            CounterArray, Indices);
+    Value *Load = IRB.CreateLoad(Counter);
+    IRB.CreateStore(IRB.CreateAdd(Load, ConstantInt::get(IRB.getInt64Ty(), 1)),
+                    Counter);
+    Res = true;
   }
-  ++NumInstrumentedGEPs;
-  // Use the last index as the index within the struct.
-  ConstantInt *Idx = dyn_cast<ConstantInt>(GepInst->getOperand(2));
-  if (Idx == nullptr || Idx->getZExtValue() > StructTy->getNumElements())
-    return false;
-
-  GlobalVariable *CounterArray = StructTyMap[StructTy];
-  if (CounterArray == nullptr)
-    return false;
-  IRBuilder<> IRB(I);
-  Constant *Indices[2];
-  // Xref http://llvm.org/docs/LangRef.html#i-getelementptr and
-  // http://llvm.org/docs/GetElementPtr.html.
-  // The first index of the GEP instruction steps through the first operand,
-  // i.e., the array itself.
-  Indices[0] = ConstantInt::get(IRB.getInt32Ty(), 0);
-  // The second index is the index within the array.
-  Indices[1] = ConstantInt::get(IRB.getInt32Ty(), Idx->getZExtValue());
-  Constant *Counter =
-      ConstantExpr::getGetElementPtr(ArrayType::get(IRB.getInt64Ty(),
-                                                    StructTy->getNumElements()),
-                                     CounterArray, Indices);
-  Value *Load = IRB.CreateLoad(Counter);
-  IRB.CreateStore(IRB.CreateAdd(Load, ConstantInt::get(IRB.getInt64Ty(), 1)),
-                  Counter);
-  return true;
+  if (Res)
+    ++NumInstrumentedGEPs;
+  else
+    ++NumIgnoredGEPs;
+  return Res;
 }
 
 int EfficiencySanitizer::getMemoryAccessFuncIndex(Value *Addr,
@@ -698,8 +737,8 @@ bool EfficiencySanitizer::instrumentFastpathCacheFrag(Instruction *I,
                                                       const DataLayout &DL,
                                                       Value *Addr,
                                                       unsigned Alignment) {
-  // TODO(bruening): implement a fastpath for aligned accesses
-  return false;
+  // Do nothing.
+  return true; // Return true to avoid slowpath instrumentation.
 }
 
 bool EfficiencySanitizer::instrumentFastpathWorkingSet(
@@ -715,8 +754,12 @@ bool EfficiencySanitizer::instrumentFastpathWorkingSet(
   // (and our shadow memory setup assumes 64-byte cache lines).
   assert(TypeSize <= 64);
   if (!(TypeSize == 8 ||
-        (Alignment % (TypeSize / 8)) == 0))
-    return false;
+        (Alignment % (TypeSize / 8)) == 0)) {
+    if (ClAssumeIntraCacheLine)
+      ++NumAssumedIntraCacheLine;
+    else
+      return false;
+  }
 
   // We inline instrumentation to set the corresponding shadow bits for
   // each cache line touched by the application.  Here we handle a single

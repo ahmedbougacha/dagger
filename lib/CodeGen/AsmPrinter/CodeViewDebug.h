@@ -150,7 +150,7 @@ class LLVM_LIBRARY_VISIBILITY CodeViewDebug : public DebugHandlerBase {
 
   unsigned maybeRecordFile(const DIFile *F);
 
-  void maybeRecordLocation(DebugLoc DL, const MachineFunction *MF);
+  void maybeRecordLocation(const DebugLoc &DL, const MachineFunction *MF);
 
   void clear() {
     assert(CurFn == nullptr);
@@ -168,6 +168,17 @@ class LLVM_LIBRARY_VISIBILITY CodeViewDebug : public DebugHandlerBase {
   void emitInlineeLinesSubsection();
 
   void emitDebugInfoForFunction(const Function *GV, FunctionInfo &FI);
+
+  void emitDebugInfoForGlobals();
+
+  void emitDebugInfoForGlobal(const DIGlobalVariable *DIGV, MCSymbol *GVSym);
+
+  /// Opens a subsection of the given kind in a .debug$S codeview section.
+  /// Returns an end label for use with endCVSubsection when the subsection is
+  /// finished.
+  MCSymbol *beginCVSubsection(codeview::ModuleSubstreamKind Kind);
+
+  void endCVSubsection(MCSymbol *EndLabel);
 
   void emitInlinedCallSite(const FunctionInfo &FI, const DILocation *InlinedAt,
                            const InlineSite &Site);
@@ -190,6 +201,7 @@ class LLVM_LIBRARY_VISIBILITY CodeViewDebug : public DebugHandlerBase {
 
   codeview::TypeIndex lowerType(const DIType *Ty);
   codeview::TypeIndex lowerTypeAlias(const DIDerivedType *Ty);
+  codeview::TypeIndex lowerTypeArray(const DICompositeType *Ty);
   codeview::TypeIndex lowerTypeBasic(const DIBasicType *Ty);
   codeview::TypeIndex lowerTypePointer(const DIDerivedType *Ty);
   codeview::TypeIndex lowerTypeMemberPointer(const DIDerivedType *Ty);

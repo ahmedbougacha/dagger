@@ -16,6 +16,8 @@
 #include "llvm/DebugInfo/PDB/PDBTypes.h"
 #include "llvm/DebugInfo/PDB/Raw/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Raw/RawConstants.h"
+#include "llvm/DebugInfo/PDB/Raw/RawTypes.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Support/Error.h"
 
@@ -29,7 +31,7 @@ class TpiStream {
   struct HeaderInfo;
 
 public:
-  TpiStream(PDBFile &File, uint32_t StreamIdx);
+  TpiStream(const PDBFile &File, std::unique_ptr<MappedBlockStream> Stream);
   ~TpiStream();
   Error reload();
 
@@ -41,17 +43,25 @@ public:
   uint16_t getTypeHashStreamIndex() const;
   uint16_t getTypeHashStreamAuxIndex() const;
 
+  uint32_t getHashKeySize() const;
+  uint32_t NumHashBuckets() const;
+  codeview::FixedStreamArray<support::ulittle32_t> getHashValues() const;
+  codeview::FixedStreamArray<TypeIndexOffset> getTypeIndexOffsets() const;
+  codeview::FixedStreamArray<TypeIndexOffset> getHashAdjustments() const;
+
   iterator_range<codeview::CVTypeArray::Iterator> types(bool *HadError) const;
 
 private:
-  PDBFile &Pdb;
-  MappedBlockStream Stream;
+  const PDBFile &Pdb;
+  std::unique_ptr<MappedBlockStream> Stream;
   HashFunctionType HashFunction;
 
   codeview::CVTypeArray TypeRecords;
-  codeview::StreamRef TypeIndexOffsetBuffer;
-  codeview::StreamRef HashValuesBuffer;
-  codeview::StreamRef HashAdjBuffer;
+
+  std::unique_ptr<MappedBlockStream> HashStream;
+  codeview::FixedStreamArray<support::ulittle32_t> HashValues;
+  codeview::FixedStreamArray<TypeIndexOffset> TypeIndexOffsets;
+  codeview::FixedStreamArray<TypeIndexOffset> HashAdjustments;
 
   const HeaderInfo *Header;
 };

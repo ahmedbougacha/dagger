@@ -7,13 +7,6 @@ for later architectures at some point.
 
 --
 
-SystemZDAGToDAGISel::SelectInlineAsmMemoryOperand() is passed "m" for all
-inline asm memory constraints; it doesn't get to see the original constraint.
-This means that it must conservatively treat all inline asm constraints
-as the most restricted type, "R".
-
---
-
 If an inline asm ties an i32 "r" result to an i64 input, the input
 will be treated as an i32, leaving the upper bits uninitialised.
 For example:
@@ -156,12 +149,6 @@ If needed, we can support 16-byte atomics using LPQ, STPQ and CSDG.
 
 We might want to model all access registers and use them to spill
 32-bit values.
-
---
-
-We might want to use 'j .+2' as a trap instruction, like gcc does.  It can
-also be made conditional like the return instruction, allowing us to utilize
-compare-and-trap and load-and-trap instructions.
 
 --
 

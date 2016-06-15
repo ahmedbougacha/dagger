@@ -66,6 +66,7 @@ set(Tests
   BufferOverflowOnInput
   CallerCalleeTest
   CounterTest
+  CustomCrossOverTest
   CustomMutatorTest
   EmptyTest
   FourIndependentBranchesTest
@@ -77,6 +78,7 @@ set(Tests
   NullDerefTest
   NullDerefOnEmptyTest
   NthRunCrashTest
+  OneHugeAllocTest
   OutOfMemoryTest
   RepeatedMemcmp
   SimpleCmpTest
@@ -92,6 +94,16 @@ set(Tests
   ThreadedTest
   TimeoutTest
   )
+
+if(APPLE)
+  # LeakSanitizer is not supported on OSX right now
+  set(HAS_LSAN 0)
+  message(WARNING "LeakSanitizer is not supported on Apple platforms."
+    " Building and running LibFuzzer LeakSanitizer tests is disabled."
+    )
+else()
+  set(HAS_LSAN 1)
+endif()
 
 foreach(Test ${Tests})
   add_libfuzzer_test(${Test} SOURCES ${Test}.cpp)
@@ -128,8 +140,8 @@ set_target_properties(LLVMFuzzer-Unittest
 include_directories(..)
 
 if(APPLE)
-  message(WARNING "Dataflow sanitizer is not supported on Apple platforms."
-    " Building and running LibFuzzer dataflow sanitizer tests is disabled."
+  message(WARNING "DataflowSanitizer is not supported on Apple platforms."
+    " Building and running LibFuzzer DataflowSanitizer tests is disabled."
     )
   set(HAS_DFSAN 0)
 else()
@@ -138,6 +150,7 @@ else()
 endif()
 
 add_subdirectory(uninstrumented)
+add_subdirectory(no-coverage)
 add_subdirectory(ubsan)
 add_subdirectory(trace-bb)
 add_subdirectory(trace-pc)

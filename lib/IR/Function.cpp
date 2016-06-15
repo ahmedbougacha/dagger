@@ -366,27 +366,33 @@ void Function::dropAllReferences() {
   clearMetadata();
 }
 
-void Function::addAttribute(unsigned i, Attribute::AttrKind attr) {
+void Function::addAttribute(unsigned i, Attribute::AttrKind Kind) {
   AttributeSet PAL = getAttributes();
-  PAL = PAL.addAttribute(getContext(), i, attr);
+  PAL = PAL.addAttribute(getContext(), i, Kind);
   setAttributes(PAL);
 }
 
-void Function::addAttributes(unsigned i, AttributeSet attrs) {
+void Function::addAttribute(unsigned i, Attribute Attr) {
   AttributeSet PAL = getAttributes();
-  PAL = PAL.addAttributes(getContext(), i, attrs);
+  PAL = PAL.addAttribute(getContext(), i, Attr);
   setAttributes(PAL);
 }
 
-void Function::removeAttribute(unsigned i, Attribute::AttrKind attr) {
+void Function::addAttributes(unsigned i, AttributeSet Attrs) {
   AttributeSet PAL = getAttributes();
-  PAL = PAL.removeAttribute(getContext(), i, attr);
+  PAL = PAL.addAttributes(getContext(), i, Attrs);
   setAttributes(PAL);
 }
 
-void Function::removeAttributes(unsigned i, AttributeSet attrs) {
+void Function::removeAttribute(unsigned i, Attribute::AttrKind Kind) {
   AttributeSet PAL = getAttributes();
-  PAL = PAL.removeAttributes(getContext(), i, attrs);
+  PAL = PAL.removeAttribute(getContext(), i, Kind);
+  setAttributes(PAL);
+}
+
+void Function::removeAttributes(unsigned i, AttributeSet Attrs) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.removeAttributes(getContext(), i, Attrs);
   setAttributes(PAL);
 }
 

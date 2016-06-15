@@ -28,6 +28,7 @@ class StreamReader {
 public:
   StreamReader(StreamRef Stream);
 
+  Error readLongestContiguousChunk(ArrayRef<uint8_t> &Buffer);
   Error readBytes(ArrayRef<uint8_t> &Buffer, uint32_t Size);
   Error readInteger(uint16_t &Dest);
   Error readInteger(uint32_t &Dest);
@@ -49,6 +50,23 @@ public:
     if (auto EC = readBytes(Buffer, sizeof(T)))
       return EC;
     Dest = reinterpret_cast<const T *>(Buffer.data());
+    return Error::success();
+  }
+
+  template <typename T>
+  Error readArray(ArrayRef<T> &Array, uint32_t NumElements) {
+    ArrayRef<uint8_t> Bytes;
+    if (NumElements == 0) {
+      Array = ArrayRef<T>();
+      return Error::success();
+    }
+
+    if (NumElements > UINT32_MAX/sizeof(T))
+      return make_error<CodeViewError>(cv_error_code::insufficient_buffer);
+
+    if (auto EC = readBytes(Bytes, NumElements * sizeof(T)))
+      return EC;
+    Array = ArrayRef<T>(reinterpret_cast<const T *>(Bytes.data()), NumElements);
     return Error::success();
   }
 

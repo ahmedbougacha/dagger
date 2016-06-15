@@ -13,10 +13,7 @@ declare <16 x i8> @llvm.x86.xop.vpperm(<16 x i8>, <16 x i8>, <16 x i8>) nounwind
 define <2 x double> @combine_vpermil2pd_identity(<2 x double> %a0, <2 x double> %a1) {
 ; CHECK-LABEL: combine_vpermil2pd_identity:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    movl $2, %eax
-; CHECK-NEXT:    vmovq %rax, %xmm2
-; CHECK-NEXT:    vpermil2pd $0, %xmm2, %xmm0, %xmm1, %xmm0
-; CHECK-NEXT:    vpermil2pd $0, %xmm2, %xmm0, %xmm0, %xmm0
+; CHECK-NEXT:    vmovaps %xmm1, %xmm0
 ; CHECK-NEXT:    retq
   %res0 = call <2 x double> @llvm.x86.xop.vpermil2pd(<2 x double> %a1, <2 x double> %a0, <2 x i64> <i64 2, i64 0>, i8 0)
   %res1 = call <2 x double> @llvm.x86.xop.vpermil2pd(<2 x double> %res0, <2 x double> undef, <2 x i64> <i64 2, i64 0>, i8 0)
@@ -26,9 +23,7 @@ define <2 x double> @combine_vpermil2pd_identity(<2 x double> %a0, <2 x double> 
 define <4 x double> @combine_vpermil2pd256_identity(<4 x double> %a0, <4 x double> %a1) {
 ; CHECK-LABEL: combine_vpermil2pd256_identity:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    vmovapd {{.*#+}} ymm2 = [2,0,2,0]
-; CHECK-NEXT:    vpermil2pd $0, %ymm2, %ymm0, %ymm1, %ymm0
-; CHECK-NEXT:    vpermil2pd $0, %ymm2, %ymm0, %ymm0, %ymm0
+; CHECK-NEXT:    vmovaps %ymm1, %ymm0
 ; CHECK-NEXT:    retq
   %res0 = call <4 x double> @llvm.x86.xop.vpermil2pd.256(<4 x double> %a1, <4 x double> %a0, <4 x i64> <i64 2, i64 0, i64 2, i64 0>, i8 0)
   %res1 = call <4 x double> @llvm.x86.xop.vpermil2pd.256(<4 x double> %res0, <4 x double> undef, <4 x i64> <i64 2, i64 0, i64 2, i64 0>, i8 0)
@@ -38,9 +33,7 @@ define <4 x double> @combine_vpermil2pd256_identity(<4 x double> %a0, <4 x doubl
 define <4 x float> @combine_vpermil2ps_identity(<4 x float> %a0, <4 x float> %a1) {
 ; CHECK-LABEL: combine_vpermil2ps_identity:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    vmovaps {{.*#+}} xmm2 = [3,2,1,0]
-; CHECK-NEXT:    vpermil2ps $0, %xmm2, %xmm0, %xmm1, %xmm0
-; CHECK-NEXT:    vpermil2ps $0, %xmm2, %xmm0, %xmm0, %xmm0
+; CHECK-NEXT:    vmovaps %xmm1, %xmm0
 ; CHECK-NEXT:    retq
   %res0 = call <4 x float> @llvm.x86.xop.vpermil2ps(<4 x float> %a1, <4 x float> %a0, <4 x i32> <i32 3, i32 2, i32 1, i32 0>, i8 0)
   %res1 = call <4 x float> @llvm.x86.xop.vpermil2ps(<4 x float> %res0, <4 x float> undef, <4 x i32> <i32 3, i32 2, i32 1, i32 0>, i8 0)
@@ -50,19 +43,27 @@ define <4 x float> @combine_vpermil2ps_identity(<4 x float> %a0, <4 x float> %a1
 define <8 x float> @combine_vpermil2ps256_identity(<8 x float> %a0, <8 x float> %a1) {
 ; CHECK-LABEL: combine_vpermil2ps256_identity:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    vmovaps {{.*#+}} ymm2 = [3,2,1,0,1,0,3,2]
-; CHECK-NEXT:    vpermil2ps $0, %ymm2, %ymm0, %ymm1, %ymm0
-; CHECK-NEXT:    vpermil2ps $0, %ymm2, %ymm0, %ymm0, %ymm0
+; CHECK-NEXT:    vmovaps %ymm1, %ymm0
 ; CHECK-NEXT:    retq
   %res0 = call <8 x float> @llvm.x86.xop.vpermil2ps.256(<8 x float> %a1, <8 x float> %a0, <8 x i32> <i32 3, i32 2, i32 1, i32 0, i32 1, i32 0, i32 3, i32 2>, i8 0)
   %res1 = call <8 x float> @llvm.x86.xop.vpermil2ps.256(<8 x float> %res0, <8 x float> undef, <8 x i32> <i32 3, i32 2, i32 1, i32 0, i32 1, i32 0, i32 3, i32 2>, i8 0)
   ret <8 x float> %res1
 }
 
+define <8 x float> @combine_vpermil2ps256_zero(<8 x float> %a0, <8 x float> %a1) {
+; CHECK-LABEL: combine_vpermil2ps256_zero:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    vxorps %ymm0, %ymm0, %ymm0
+; CHECK-NEXT:    retq
+  %res0 = call <8 x float> @llvm.x86.xop.vpermil2ps.256(<8 x float> %a1, <8 x float> %a0, <8 x i32> <i32 8, i32 9, i32 10, i32 11, i32 8, i32 9, i32 10, i32 11>, i8 2)
+  ret <8 x float> %res0
+}
+
 define <4 x float> @combine_vpermil2ps_blend_with_zero(<4 x float> %a0, <4 x float> %a1) {
 ; CHECK-LABEL: combine_vpermil2ps_blend_with_zero:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    vpermil2ps $2, {{.*}}(%rip), %xmm1, %xmm0, %xmm0
+; CHECK-NEXT:    vxorps %xmm1, %xmm1, %xmm1
+; CHECK-NEXT:    vblendps {{.*#+}} xmm0 = xmm1[0],xmm0[1,2,3]
 ; CHECK-NEXT:    retq
   %res0 = call <4 x float> @llvm.x86.xop.vpermil2ps(<4 x float> %a0, <4 x float> %a1, <4 x i32> <i32 8, i32 1, i32 2, i32 3>, i8 2)
   ret <4 x float> %res0
@@ -106,7 +107,8 @@ define <16 x i8> @combine_vpperm_identity_bitcast(<16 x i8> %a0, <16 x i8> %a1) 
 define <16 x i8> @combine_vpperm_as_blend_with_zero(<16 x i8> %a0, <16 x i8> %a1) {
 ; CHECK-LABEL: combine_vpperm_as_blend_with_zero:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    vpperm {{.*#+}} xmm0 = xmm0[0,1],zero,zero,xmm0[4,5,6,7],zero,zero,zero,zero,zero,zero,zero,zero
+; CHECK-NEXT:    vpxor %xmm1, %xmm1, %xmm1
+; CHECK-NEXT:    vpblendw {{.*#+}} xmm0 = xmm0[0],xmm1[1],xmm0[2,3],xmm1[4,5,6,7]
 ; CHECK-NEXT:    retq
   %res0 = call <16 x i8> @llvm.x86.xop.vpperm(<16 x i8> %a0, <16 x i8> %a1, <16 x i8> <i8 0, i8 1, i8 128, i8 129, i8 4, i8 5, i8 6, i8 7, i8 130, i8 131, i8 132, i8 133, i8 134, i8 135, i8 136, i8 137>)
   ret <16 x i8> %res0

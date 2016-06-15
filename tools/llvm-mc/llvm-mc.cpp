@@ -250,7 +250,7 @@ static int AsLexInput(SourceMgr &SrcMgr, MCAsmInfo &MAI,
 
   bool Error = false;
   while (Lexer.Lex().isNot(AsmToken::Eof)) {
-    AsmToken Tok = Lexer.getTok();
+    const AsmToken &Tok = Lexer.getTok();
 
     switch (Tok.getKind()) {
     default:
@@ -369,7 +369,7 @@ static int AssembleInput(const char *ProgName, const Target *TheTarget,
 
 int main(int argc, char **argv) {
   // Print a stack trace if we signal out.
-  sys::PrintStackTraceOnErrorSignal();
+  sys::PrintStackTraceOnErrorSignal(argv[0]);
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
 

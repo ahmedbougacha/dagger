@@ -36,6 +36,12 @@
 
 using namespace llvm;
 
+// -amdgpu-fast-fdiv - Command line option to enable faster 2.5 ulp fdiv.
+static cl::opt<bool> EnableAMDGPUFastFDIV(
+  "amdgpu-fast-fdiv",
+  cl::desc("Enable faster 2.5 ulp fdiv"),
+  cl::init(false));
+
 static unsigned findFirstFreeSGPR(CCState &CCInfo) {
   unsigned NumSGPRs = AMDGPU::SGPR_32RegClass.getNumRegs();
   for (unsigned Reg = 0; Reg < NumSGPRs; ++Reg) {
@@ -486,7 +492,7 @@ static bool isFlatGlobalAddrSpace(unsigned AS) {
 
 bool SITargetLowering::isNoopAddrSpaceCast(unsigned SrcAS,
                                            unsigned DestAS) const {
-  return isFlatGlobalAddrSpace(SrcAS) &&  isFlatGlobalAddrSpace(DestAS);
+  return isFlatGlobalAddrSpace(SrcAS) && isFlatGlobalAddrSpace(DestAS);
 }
 
 
@@ -530,7 +536,7 @@ bool SITargetLowering::isTypeDesirableForOp(unsigned Op, EVT VT) const {
 }
 
 SDValue SITargetLowering::LowerParameter(SelectionDAG &DAG, EVT VT, EVT MemVT,
-                                         SDLoc SL, SDValue Chain,
+                                         const SDLoc &SL, SDValue Chain,
                                          unsigned Offset, bool Signed) const {
   const DataLayout &DL = DAG.getDataLayout();
   MachineFunction &MF = DAG.getMachineFunction();
@@ -566,8 +572,8 @@ SDValue SITargetLowering::LowerParameter(SelectionDAG &DAG, EVT VT, EVT MemVT,
 
 SDValue SITargetLowering::LowerFormalArguments(
     SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
-    const SmallVectorImpl<ISD::InputArg> &Ins, SDLoc DL, SelectionDAG &DAG,
-    SmallVectorImpl<SDValue> &InVals) const {
+    const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &DL,
+    SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals) const {
   const SIRegisterInfo *TRI =
       static_cast<const SIRegisterInfo *>(Subtarget->getRegisterInfo());
 
@@ -910,12 +916,12 @@ SDValue SITargetLowering::LowerFormalArguments(
   return DAG.getNode(ISD::TokenFactor, DL, MVT::Other, Chains);
 }
 
-SDValue SITargetLowering::LowerReturn(SDValue Chain,
-                                      CallingConv::ID CallConv,
-                                      bool isVarArg,
-                                      const SmallVectorImpl<ISD::OutputArg> &Outs,
-                                      const SmallVectorImpl<SDValue> &OutVals,
-                                      SDLoc DL, SelectionDAG &DAG) const {
+SDValue
+SITargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
+                              bool isVarArg,
+                              const SmallVectorImpl<ISD::OutputArg> &Outs,
+                              const SmallVectorImpl<SDValue> &OutVals,
+                              const SDLoc &DL, SelectionDAG &DAG) const {
   MachineFunction &MF = DAG.getMachineFunction();
   SIMachineFunctionInfo *Info = MF.getInfo<SIMachineFunctionInfo>();
 
@@ -1334,8 +1340,11 @@ SDValue SITargetLowering::getSegmentAperture(unsigned AS,
   SDLoc SL;
   MachineFunction &MF = DAG.getMachineFunction();
   SIMachineFunctionInfo *Info = MF.getInfo<SIMachineFunctionInfo>();
+  unsigned UserSGPR = Info->getQueuePtrUserSGPR();
+  assert(UserSGPR != AMDGPU::NoRegister);
+
   SDValue QueuePtr = CreateLiveInRegister(
-    DAG, &AMDGPU::SReg_64RegClass, Info->getQueuePtrUserSGPR(), MVT::i64);
+    DAG, &AMDGPU::SReg_64RegClass, UserSGPR, MVT::i64);
 
   // Offset into amd_queue_t for group_segment_aperture_base_hi /
   // private_segment_aperture_base_hi.
@@ -1407,8 +1416,42 @@ SDValue SITargetLowering::lowerADDRSPACECAST(SDValue Op,
   return DAG.getUNDEF(ASC->getValueType(0));
 }
 
-SDValue SITargetLowering::copyToM0(SelectionDAG &DAG, SDValue Chain, SDLoc DL,
-                                   SDValue V) const {
+SDValue SITargetLowering::LowerGlobalAddress(AMDGPUMachineFunction *MFI,
+                                             SDValue Op,
+                                             SelectionDAG &DAG) const {
+  GlobalAddressSDNode *GSD = cast<GlobalAddressSDNode>(Op);
+
+  if (GSD->getAddressSpace() != AMDGPUAS::CONSTANT_ADDRESS)
+    return AMDGPUTargetLowering::LowerGlobalAddress(MFI, Op, DAG);
+
+  SDLoc DL(GSD);
+  const GlobalValue *GV = GSD->getGlobal();
+  MVT PtrVT = getPointerTy(DAG.getDataLayout(), GSD->getAddressSpace());
+
+  // In order to support pc-relative addressing, the PC_ADD_REL_OFFSET SDNode is
+  // lowered to the following code sequence:
+  // s_getpc_b64 s[0:1]
+  // s_add_u32 s0, s0, $symbol
+  // s_addc_u32 s1, s1, 0
+  //
+  // s_getpc_b64 returns the address of the s_add_u32 instruction and then
+  // a fixup or relocation is emitted to replace $symbol with a literal
+  // constant, which is a pc-relative offset from the encoding of the $symbol
+  // operand to the global variable.
+  //
+  // What we want here is an offset from the value returned by s_getpc
+  // (which is the address of the s_add_u32 instruction) to the global
+  // variable, but since the encoding of $symbol starts 4 bytes after the start
+  // of the s_add_u32 instruction, we end up with an offset that is 4 bytes too
+  // small. This requires us to add 4 to the global variable offset in order to
+  // compute the correct address.
+  SDValue GA = DAG.getTargetGlobalAddress(GV, DL, MVT::i32,
+                                          GSD->getOffset() + 4);
+  return DAG.getNode(AMDGPUISD::PC_ADD_REL_OFFSET, DL, PtrVT, GA);
+}
+
+SDValue SITargetLowering::copyToM0(SelectionDAG &DAG, SDValue Chain,
+                                   const SDLoc &DL, SDValue V) const {
   // We can't use S_MOV_B32 directly, because there is no way to specify m0 as
   // the destination register.
   //
@@ -1925,7 +1968,9 @@ SDValue SITargetLowering::LowerFastFDIV(SDValue Op, SelectionDAG &DAG) const {
     }
   }
 
-  if (Unsafe) {
+  const SDNodeFlags *Flags = Op->getFlags();
+
+  if (Unsafe || Flags->hasAllowReciprocal()) {
     // Turn into multiply by the reciprocal.
     // x / y -> x * (1.0 / y)
     SDNodeFlags Flags;
@@ -1950,32 +1995,61 @@ SDValue SITargetLowering::LowerFDIV32(SDValue Op, SelectionDAG &DAG) const {
   SDValue LHS = Op.getOperand(0);
   SDValue RHS = Op.getOperand(1);
 
-  SDValue r1 = DAG.getNode(ISD::FABS, SL, MVT::f32, RHS);
+  // faster 2.5 ulp fdiv when using -amdgpu-fast-fdiv flag
+  if (EnableAMDGPUFastFDIV) {
+    SDValue r1 = DAG.getNode(ISD::FABS, SL, MVT::f32, RHS);
 
-  const APFloat K0Val(BitsToFloat(0x6f800000));
-  const SDValue K0 = DAG.getConstantFP(K0Val, SL, MVT::f32);
+    const APFloat K0Val(BitsToFloat(0x6f800000));
+    const SDValue K0 = DAG.getConstantFP(K0Val, SL, MVT::f32);
 
-  const APFloat K1Val(BitsToFloat(0x2f800000));
-  const SDValue K1 = DAG.getConstantFP(K1Val, SL, MVT::f32);
+    const APFloat K1Val(BitsToFloat(0x2f800000));
+    const SDValue K1 = DAG.getConstantFP(K1Val, SL, MVT::f32);
 
+    const SDValue One = DAG.getConstantFP(1.0, SL, MVT::f32);
+
+    EVT SetCCVT =
+        getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), MVT::f32);
+
+    SDValue r2 = DAG.getSetCC(SL, SetCCVT, r1, K0, ISD::SETOGT);
+
+    SDValue r3 = DAG.getNode(ISD::SELECT, SL, MVT::f32, r2, K1, One);
+
+    // TODO: Should this propagate fast-math-flags?
+
+    r1 = DAG.getNode(ISD::FMUL, SL, MVT::f32, RHS, r3);
+
+    SDValue r0 = DAG.getNode(AMDGPUISD::RCP, SL, MVT::f32, r1);
+
+    SDValue Mul = DAG.getNode(ISD::FMUL, SL, MVT::f32, LHS, r0);
+
+    return DAG.getNode(ISD::FMUL, SL, MVT::f32, r3, Mul);
+  }
+
+  // Generates more precise fpdiv32.
   const SDValue One = DAG.getConstantFP(1.0, SL, MVT::f32);
 
-  EVT SetCCVT =
-      getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), MVT::f32);
+  SDVTList ScaleVT = DAG.getVTList(MVT::f32, MVT::i1);
 
-  SDValue r2 = DAG.getSetCC(SL, SetCCVT, r1, K0, ISD::SETOGT);
+  SDValue DenominatorScaled = DAG.getNode(AMDGPUISD::DIV_SCALE, SL, ScaleVT, RHS, RHS, LHS);
+  SDValue NumeratorScaled = DAG.getNode(AMDGPUISD::DIV_SCALE, SL, ScaleVT, LHS, RHS, LHS);
 
-  SDValue r3 = DAG.getNode(ISD::SELECT, SL, MVT::f32, r2, K1, One);
+  SDValue ApproxRcp = DAG.getNode(AMDGPUISD::RCP, SL, MVT::f32, DenominatorScaled);
 
-  // TODO: Should this propagate fast-math-flags?
+  SDValue NegDivScale0 = DAG.getNode(ISD::FNEG, SL, MVT::f32, DenominatorScaled);
 
-  r1 = DAG.getNode(ISD::FMUL, SL, MVT::f32, RHS, r3);
+  SDValue Fma0 = DAG.getNode(ISD::FMA, SL, MVT::f32, NegDivScale0, ApproxRcp, One);
+  SDValue Fma1 = DAG.getNode(ISD::FMA, SL, MVT::f32, Fma0, ApproxRcp, ApproxRcp);
 
-  SDValue r0 = DAG.getNode(AMDGPUISD::RCP, SL, MVT::f32, r1);
+  SDValue Mul = DAG.getNode(ISD::FMUL, SL, MVT::f32, NumeratorScaled, Fma1);
 
-  SDValue Mul = DAG.getNode(ISD::FMUL, SL, MVT::f32, LHS, r0);
+  SDValue Fma2 = DAG.getNode(ISD::FMA, SL, MVT::f32, NegDivScale0, Mul, NumeratorScaled);
+  SDValue Fma3 = DAG.getNode(ISD::FMA, SL, MVT::f32, Fma2, Fma1, Mul);
+  SDValue Fma4 = DAG.getNode(ISD::FMA, SL, MVT::f32, NegDivScale0, Fma3, NumeratorScaled);
 
-  return DAG.getNode(ISD::FMUL, SL, MVT::f32, r3, Mul);
+  SDValue Scale = NumeratorScaled.getValue(1);
+  SDValue Fmas = DAG.getNode(AMDGPUISD::DIV_FMAS, SL, MVT::f32, Fma4, Fma1, Fma3, Scale);
+
+  return DAG.getNode(AMDGPUISD::DIV_FIXUP, SL, MVT::f32, Fmas, RHS, LHS);
 }
 
 SDValue SITargetLowering::LowerFDIV64(SDValue Op, SelectionDAG &DAG) const {
@@ -2157,9 +2231,9 @@ SDValue SITargetLowering::LowerATOMIC_CMP_SWAP(SDValue Op, SelectionDAG &DAG) co
 
   SDValue NewOld = DAG.getBuildVector(VecType, DL, {New, Old});
   SDValue Ops[] = { ChainIn, Addr, NewOld };
-  SDVTList VTList = DAG.getVTList(VT, MVT::Other);
-  return DAG.getMemIntrinsicNode(AMDGPUISD::ATOMIC_CMP_SWAP, DL,
-                                 VTList, Ops, VT, AtomicNode->getMemOperand());
+
+  return DAG.getMemIntrinsicNode(AMDGPUISD::ATOMIC_CMP_SWAP, DL, Op->getVTList(),
+                                 Ops, VT, AtomicNode->getMemOperand());
 }
 
 //===----------------------------------------------------------------------===//
@@ -2535,11 +2609,8 @@ static unsigned minMaxOpcToMin3Max3Opc(unsigned Opc) {
   }
 }
 
-static SDValue performIntMed3ImmCombine(SelectionDAG &DAG,
-                                        SDLoc SL,
-                                        SDValue Op0,
-                                        SDValue Op1,
-                                        bool Signed) {
+static SDValue performIntMed3ImmCombine(SelectionDAG &DAG, const SDLoc &SL,
+                                        SDValue Op0, SDValue Op1, bool Signed) {
   ConstantSDNode *K1 = dyn_cast<ConstantSDNode>(Op1);
   if (!K1)
     return SDValue();
@@ -2569,10 +2640,8 @@ static bool isKnownNeverSNan(SelectionDAG &DAG, SDValue Op) {
   return DAG.isKnownNeverNaN(Op);
 }
 
-static SDValue performFPMed3ImmCombine(SelectionDAG &DAG,
-                                       SDLoc SL,
-                                       SDValue Op0,
-                                       SDValue Op1) {
+static SDValue performFPMed3ImmCombine(SelectionDAG &DAG, const SDLoc &SL,
+                                       SDValue Op0, SDValue Op1) {
   ConstantFPSDNode *K1 = dyn_cast<ConstantFPSDNode>(Op1);
   if (!K1)
     return SDValue();
@@ -3126,13 +3195,14 @@ void SITargetLowering::AdjustInstrPostInstrSelection(MachineInstr *MI,
   }
 }
 
-static SDValue buildSMovImm32(SelectionDAG &DAG, SDLoc DL, uint64_t Val) {
+static SDValue buildSMovImm32(SelectionDAG &DAG, const SDLoc &DL,
+                              uint64_t Val) {
   SDValue K = DAG.getTargetConstant(Val, DL, MVT::i32);
   return SDValue(DAG.getMachineNode(AMDGPU::S_MOV_B32, DL, MVT::i32, K), 0);
 }
 
 MachineSDNode *SITargetLowering::wrapAddr64Rsrc(SelectionDAG &DAG,
-                                                SDLoc DL,
+                                                const SDLoc &DL,
                                                 SDValue Ptr) const {
   const SIInstrInfo *TII =
     static_cast<const SIInstrInfo *>(Subtarget->getInstrInfo());
@@ -3167,10 +3237,8 @@ MachineSDNode *SITargetLowering::wrapAddr64Rsrc(SelectionDAG &DAG,
 ///        The TID (Thread ID) is multiplied by the stride value (bits [61:48]
 ///        of the resource descriptor) to create an offset, which is added to
 ///        the resource pointer.
-MachineSDNode *SITargetLowering::buildRSRC(SelectionDAG &DAG,
-                                           SDLoc DL,
-                                           SDValue Ptr,
-                                           uint32_t RsrcDword1,
+MachineSDNode *SITargetLowering::buildRSRC(SelectionDAG &DAG, const SDLoc &DL,
+                                           SDValue Ptr, uint32_t RsrcDword1,
                                            uint64_t RsrcDword2And3) const {
   SDValue PtrLo = DAG.getTargetExtractSubreg(AMDGPU::sub0, DL, MVT::i32, Ptr);
   SDValue PtrHi = DAG.getTargetExtractSubreg(AMDGPU::sub1, DL, MVT::i32, Ptr);

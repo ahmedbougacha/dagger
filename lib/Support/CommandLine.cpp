@@ -194,11 +194,10 @@ public:
   void printOptionValues();
 
   void registerCategory(OptionCategory *cat) {
-    assert(std::count_if(RegisteredOptionCategories.begin(),
-                         RegisteredOptionCategories.end(),
-                         [cat](const OptionCategory *Category) {
-                           return cat->getName() == Category->getName();
-                         }) == 0 &&
+    assert(count_if(RegisteredOptionCategories,
+                    [cat](const OptionCategory *Category) {
+             return cat->getName() == Category->getName();
+           }) == 0 &&
            "Duplicate option categories");
 
     RegisteredOptionCategories.insert(cat);
@@ -1432,7 +1431,7 @@ PRINT_OPT_DIFF(float)
 PRINT_OPT_DIFF(char)
 
 void parser<std::string>::printOptionDiff(const Option &O, StringRef V,
-                                          OptionValue<std::string> D,
+                                          const OptionValue<std::string> &D,
                                           size_t GlobalWidth) const {
   printOptionName(O, GlobalWidth);
   outs() << "= " << V;

@@ -1,4 +1,6 @@
 ; RUN: opt -basicaa -memdep -mldst-motion -S < %s | FileCheck %s
+; RUN: opt -aa-pipeline=basic-aa -passes='require<memdep>',mldst-motion \
+; RUN:   -S < %s | FileCheck %s
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
 
@@ -11,12 +13,12 @@ entry:
   br i1 %cmp, label %if.then, label %if.else
 
 if.then:                                          ; preds = %entry
-  call void @may_throw()
+  call void @may_exit() nounwind
   %arrayidx = getelementptr inbounds i32, i32* %p, i64 1
   %0 = load i32, i32* %arrayidx, align 4
   store i32 %0, i32* @r, align 4
   br label %if.end
-; CHECK:       call void @may_throw()
+; CHECK:       call void @may_exit()
 ; CHECK-NEXT:  %[[gep:.*]] = getelementptr inbounds i32, i32* %p, i64 1
 ; CHECK-NEXT:  %[[load:.*]] = load i32, i32* %[[gep]], align 4
 ; CHECK-NEXT:  store i32 %[[load]], i32* @r, align 4
@@ -55,3 +57,4 @@ if.end:                                           ; preds = %if.else, %if.then
 }
 
 declare void @may_throw()
+declare void @may_exit() nounwind

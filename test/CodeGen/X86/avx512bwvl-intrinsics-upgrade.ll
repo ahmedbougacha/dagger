@@ -128,3 +128,141 @@ define <32 x i8>@test_int_x86_avx512_mask_loadu_b_256(i8* %ptr, i8* %ptr2, <32 x
     %res2 = add <32 x i8> %res, %res1
     ret <32 x i8> %res2
 }
+
+declare <16 x i8> @llvm.x86.avx512.mask.palignr.128(<16 x i8>, <16 x i8>, i32, <16 x i8>, i16)
+
+define <16 x i8>@test_int_x86_avx512_mask_palignr_128(<16 x i8> %x0, <16 x i8> %x1, <16 x i8> %x3, i16 %x4) {
+; CHECK-LABEL: test_int_x86_avx512_mask_palignr_128:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    vpalignr $2, %xmm1, %xmm0, %xmm3 ## encoding: [0x62,0xf3,0x7d,0x08,0x0f,0xd9,0x02]
+; CHECK-NEXT:    ## xmm3 = xmm1[2,3,4,5,6,7,8,9,10,11,12,13,14,15],xmm0[0,1]
+; CHECK-NEXT:    kmovw %edi, %k1 ## encoding: [0xc5,0xf8,0x92,0xcf]
+; CHECK-NEXT:    vpalignr $2, %xmm1, %xmm0, %xmm2 {%k1} ## encoding: [0x62,0xf3,0x7d,0x09,0x0f,0xd1,0x02]
+; CHECK-NEXT:    ## xmm2 = xmm1[2,3,4,5,6,7,8,9,10,11,12,13,14,15],xmm0[0,1]
+; CHECK-NEXT:    vpalignr $2, %xmm1, %xmm0, %xmm0 {%k1} {z} ## encoding: [0x62,0xf3,0x7d,0x89,0x0f,0xc1,0x02]
+; CHECK-NEXT:    ## xmm0 = xmm1[2,3,4,5,6,7,8,9,10,11,12,13,14,15],xmm0[0,1]
+; CHECK-NEXT:    vpaddb %xmm0, %xmm2, %xmm0 ## encoding: [0x62,0xf1,0x6d,0x08,0xfc,0xc0]
+; CHECK-NEXT:    vpaddb %xmm3, %xmm0, %xmm0 ## encoding: [0x62,0xf1,0x7d,0x08,0xfc,0xc3]
+; CHECK-NEXT:    retq ## encoding: [0xc3]
+  %res = call <16 x i8> @llvm.x86.avx512.mask.palignr.128(<16 x i8> %x0, <16 x i8> %x1, i32 2, <16 x i8> %x3, i16 %x4)
+  %res1 = call <16 x i8> @llvm.x86.avx512.mask.palignr.128(<16 x i8> %x0, <16 x i8> %x1, i32 2, <16 x i8> zeroinitializer, i16 %x4)
+  %res2 = call <16 x i8> @llvm.x86.avx512.mask.palignr.128(<16 x i8> %x0, <16 x i8> %x1, i32 2, <16 x i8> %x3, i16 -1)
+  %res3 = add <16 x i8> %res, %res1
+  %res4 = add <16 x i8> %res3, %res2
+  ret <16 x i8> %res4
+}
+
+declare <32 x i8> @llvm.x86.avx512.mask.palignr.256(<32 x i8>, <32 x i8>, i32, <32 x i8>, i32)
+
+define <32 x i8>@test_int_x86_avx512_mask_palignr_256(<32 x i8> %x0, <32 x i8> %x1, <32 x i8> %x3, i32 %x4) {
+; CHECK-LABEL: test_int_x86_avx512_mask_palignr_256:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    vpalignr $2, %ymm1, %ymm0, %ymm3 ## encoding: [0x62,0xf3,0x7d,0x28,0x0f,0xd9,0x02]
+; CHECK-NEXT:    ## ymm3 = ymm1[2,3,4,5,6,7,8,9,10,11,12,13,14,15],ymm0[0,1],ymm1[18,19,20,21,22,23,24,25,26,27,28,29,30,31],ymm0[16,17]
+; CHECK-NEXT:    kmovd %edi, %k1 ## encoding: [0xc5,0xfb,0x92,0xcf]
+; CHECK-NEXT:    vpalignr $2, %ymm1, %ymm0, %ymm2 {%k1} ## encoding: [0x62,0xf3,0x7d,0x29,0x0f,0xd1,0x02]
+; CHECK-NEXT:    ## ymm2 = ymm1[2,3,4,5,6,7,8,9,10,11,12,13,14,15],ymm0[0,1],ymm1[18,19,20,21,22,23,24,25,26,27,28,29,30,31],ymm0[16,17]
+; CHECK-NEXT:    vpalignr $2, %ymm1, %ymm0, %ymm0 {%k1} {z} ## encoding: [0x62,0xf3,0x7d,0xa9,0x0f,0xc1,0x02]
+; CHECK-NEXT:    ## ymm0 = ymm1[2,3,4,5,6,7,8,9,10,11,12,13,14,15],ymm0[0,1],ymm1[18,19,20,21,22,23,24,25,26,27,28,29,30,31],ymm0[16,17]
+; CHECK-NEXT:    vpaddb %ymm0, %ymm2, %ymm0 ## encoding: [0x62,0xf1,0x6d,0x28,0xfc,0xc0]
+; CHECK-NEXT:    vpaddb %ymm3, %ymm0, %ymm0 ## encoding: [0x62,0xf1,0x7d,0x28,0xfc,0xc3]
+; CHECK-NEXT:    retq ## encoding: [0xc3]
+  %res = call <32 x i8> @llvm.x86.avx512.mask.palignr.256(<32 x i8> %x0, <32 x i8> %x1, i32 2, <32 x i8> %x3, i32 %x4)
+  %res1 = call <32 x i8> @llvm.x86.avx512.mask.palignr.256(<32 x i8> %x0, <32 x i8> %x1, i32 2, <32 x i8> zeroinitializer, i32 %x4)
+  %res2 = call <32 x i8> @llvm.x86.avx512.mask.palignr.256(<32 x i8> %x0, <32 x i8> %x1, i32 2, <32 x i8> %x3, i32 -1)
+  %res3 = add <32 x i8> %res, %res1
+  %res4 = add <32 x i8> %res3, %res2
+  ret <32 x i8> %res4
+}
+
+declare <8 x i16> @llvm.x86.avx512.mask.pshufh.w.128(<8 x i16>, i32, <8 x i16>, i8)
+
+define <8 x i16>@test_int_x86_avx512_mask_pshufh_w_128(<8 x i16> %x0, i32 %x1, <8 x i16> %x2, i8 %x3) {
+; CHECK-LABEL: test_int_x86_avx512_mask_pshufh_w_128:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    vpshufhw $3, %xmm0, %xmm2 ## encoding: [0x62,0xf1,0x7e,0x08,0x70,0xd0,0x03]
+; CHECK-NEXT:    ## xmm2 = xmm0[0,1,2,3,7,4,4,4]
+; CHECK-NEXT:    kmovw %esi, %k1 ## encoding: [0xc5,0xf8,0x92,0xce]
+; CHECK-NEXT:    vpshufhw $3, %xmm0, %xmm1 {%k1} ## encoding: [0x62,0xf1,0x7e,0x09,0x70,0xc8,0x03]
+; CHECK-NEXT:    ## xmm1 = xmm0[0,1,2,3,7,4,4,4]
+; CHECK-NEXT:    vpshufhw $3, %xmm0, %xmm0 {%k1} {z} ## encoding: [0x62,0xf1,0x7e,0x89,0x70,0xc0,0x03]
+; CHECK-NEXT:    ## xmm0 = xmm0[0,1,2,3,7,4,4,4]
+; CHECK-NEXT:    vpaddw %xmm0, %xmm1, %xmm0 ## encoding: [0x62,0xf1,0x75,0x08,0xfd,0xc0]
+; CHECK-NEXT:    vpaddw %xmm2, %xmm0, %xmm0 ## encoding: [0x62,0xf1,0x7d,0x08,0xfd,0xc2]
+; CHECK-NEXT:    retq ## encoding: [0xc3]
+  %res = call <8 x i16> @llvm.x86.avx512.mask.pshufh.w.128(<8 x i16> %x0, i32 3, <8 x i16> %x2, i8 %x3)
+  %res1 = call <8 x i16> @llvm.x86.avx512.mask.pshufh.w.128(<8 x i16> %x0, i32 3, <8 x i16> zeroinitializer, i8 %x3)
+  %res2 = call <8 x i16> @llvm.x86.avx512.mask.pshufh.w.128(<8 x i16> %x0, i32 3, <8 x i16> %x2, i8 -1)
+  %res3 = add <8 x i16> %res, %res1
+  %res4 = add <8 x i16> %res3, %res2
+  ret <8 x i16> %res4
+}
+
+declare <16 x i16> @llvm.x86.avx512.mask.pshufh.w.256(<16 x i16>, i32, <16 x i16>, i16)
+
+define <16 x i16>@test_int_x86_avx512_mask_pshufh_w_256(<16 x i16> %x0, i32 %x1, <16 x i16> %x2, i16 %x3) {
+; CHECK-LABEL: test_int_x86_avx512_mask_pshufh_w_256:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    vpshufhw $3, %ymm0, %ymm2 ## encoding: [0x62,0xf1,0x7e,0x28,0x70,0xd0,0x03]
+; CHECK-NEXT:    ## ymm2 = ymm0[0,1,2,3,7,4,4,4,8,9,10,11,15,12,12,12]
+; CHECK-NEXT:    kmovw %esi, %k1 ## encoding: [0xc5,0xf8,0x92,0xce]
+; CHECK-NEXT:    vpshufhw $3, %ymm0, %ymm1 {%k1} ## encoding: [0x62,0xf1,0x7e,0x29,0x70,0xc8,0x03]
+; CHECK-NEXT:    ## ymm1 = ymm0[0,1,2,3,7,4,4,4,8,9,10,11,15,12,12,12]
+; CHECK-NEXT:    vpshufhw $3, %ymm0, %ymm0 {%k1} {z} ## encoding: [0x62,0xf1,0x7e,0xa9,0x70,0xc0,0x03]
+; CHECK-NEXT:    ## ymm0 = ymm0[0,1,2,3,7,4,4,4,8,9,10,11,15,12,12,12]
+; CHECK-NEXT:    vpaddw %ymm0, %ymm1, %ymm0 ## encoding: [0x62,0xf1,0x75,0x28,0xfd,0xc0]
+; CHECK-NEXT:    vpaddw %ymm2, %ymm0, %ymm0 ## encoding: [0x62,0xf1,0x7d,0x28,0xfd,0xc2]
+; CHECK-NEXT:    retq ## encoding: [0xc3]
+  %res = call <16 x i16> @llvm.x86.avx512.mask.pshufh.w.256(<16 x i16> %x0, i32 3, <16 x i16> %x2, i16 %x3)
+  %res1 = call <16 x i16> @llvm.x86.avx512.mask.pshufh.w.256(<16 x i16> %x0, i32 3, <16 x i16> zeroinitializer, i16 %x3)
+  %res2 = call <16 x i16> @llvm.x86.avx512.mask.pshufh.w.256(<16 x i16> %x0, i32 3, <16 x i16> %x2, i16 -1)
+  %res3 = add <16 x i16> %res, %res1
+  %res4 = add <16 x i16> %res3, %res2
+  ret <16 x i16> %res4
+}
+
+declare <8 x i16> @llvm.x86.avx512.mask.pshufl.w.128(<8 x i16>, i32, <8 x i16>, i8)
+
+define <8 x i16>@test_int_x86_avx512_mask_pshufl_w_128(<8 x i16> %x0, i32 %x1, <8 x i16> %x2, i8 %x3) {
+; CHECK-LABEL: test_int_x86_avx512_mask_pshufl_w_128:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    vpshuflw $3, %xmm0, %xmm2 ## encoding: [0x62,0xf1,0x7f,0x08,0x70,0xd0,0x03]
+; CHECK-NEXT:    ## xmm2 = xmm0[3,0,0,0,4,5,6,7]
+; CHECK-NEXT:    kmovw %esi, %k1 ## encoding: [0xc5,0xf8,0x92,0xce]
+; CHECK-NEXT:    vpshuflw $3, %xmm0, %xmm1 {%k1} ## encoding: [0x62,0xf1,0x7f,0x09,0x70,0xc8,0x03]
+; CHECK-NEXT:    ## xmm1 = xmm0[3,0,0,0,4,5,6,7]
+; CHECK-NEXT:    vpshuflw $3, %xmm0, %xmm0 {%k1} {z} ## encoding: [0x62,0xf1,0x7f,0x89,0x70,0xc0,0x03]
+; CHECK-NEXT:    ## xmm0 = xmm0[3,0,0,0,4,5,6,7]
+; CHECK-NEXT:    vpaddw %xmm0, %xmm1, %xmm0 ## encoding: [0x62,0xf1,0x75,0x08,0xfd,0xc0]
+; CHECK-NEXT:    vpaddw %xmm2, %xmm0, %xmm0 ## encoding: [0x62,0xf1,0x7d,0x08,0xfd,0xc2]
+; CHECK-NEXT:    retq ## encoding: [0xc3]
+  %res = call <8 x i16> @llvm.x86.avx512.mask.pshufl.w.128(<8 x i16> %x0, i32 3, <8 x i16> %x2, i8 %x3)
+  %res1 = call <8 x i16> @llvm.x86.avx512.mask.pshufl.w.128(<8 x i16> %x0, i32 3, <8 x i16> zeroinitializer, i8 %x3)
+  %res2 = call <8 x i16> @llvm.x86.avx512.mask.pshufl.w.128(<8 x i16> %x0, i32 3, <8 x i16> %x2, i8 -1)
+  %res3 = add <8 x i16> %res, %res1
+  %res4 = add <8 x i16> %res3, %res2
+  ret <8 x i16> %res4
+}
+
+declare <16 x i16> @llvm.x86.avx512.mask.pshufl.w.256(<16 x i16>, i32, <16 x i16>, i16)
+
+define <16 x i16>@test_int_x86_avx512_mask_pshufl_w_256(<16 x i16> %x0, i32 %x1, <16 x i16> %x2, i16 %x3) {
+; CHECK-LABEL: test_int_x86_avx512_mask_pshufl_w_256:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    vpshuflw $3, %ymm0, %ymm2 ## encoding: [0x62,0xf1,0x7f,0x28,0x70,0xd0,0x03]
+; CHECK-NEXT:    ## ymm2 = ymm0[3,0,0,0,4,5,6,7,11,8,8,8,12,13,14,15]
+; CHECK-NEXT:    kmovw %esi, %k1 ## encoding: [0xc5,0xf8,0x92,0xce]
+; CHECK-NEXT:    vpshuflw $3, %ymm0, %ymm1 {%k1} ## encoding: [0x62,0xf1,0x7f,0x29,0x70,0xc8,0x03]
+; CHECK-NEXT:    ## ymm1 = ymm0[3,0,0,0,4,5,6,7,11,8,8,8,12,13,14,15]
+; CHECK-NEXT:    vpshuflw $3, %ymm0, %ymm0 {%k1} {z} ## encoding: [0x62,0xf1,0x7f,0xa9,0x70,0xc0,0x03]
+; CHECK-NEXT:    ## ymm0 = ymm0[3,0,0,0,4,5,6,7,11,8,8,8,12,13,14,15]
+; CHECK-NEXT:    vpaddw %ymm0, %ymm1, %ymm0 ## encoding: [0x62,0xf1,0x75,0x28,0xfd,0xc0]
+; CHECK-NEXT:    vpaddw %ymm2, %ymm0, %ymm0 ## encoding: [0x62,0xf1,0x7d,0x28,0xfd,0xc2]
+; CHECK-NEXT:    retq ## encoding: [0xc3]
+  %res = call <16 x i16> @llvm.x86.avx512.mask.pshufl.w.256(<16 x i16> %x0, i32 3, <16 x i16> %x2, i16 %x3)
+  %res1 = call <16 x i16> @llvm.x86.avx512.mask.pshufl.w.256(<16 x i16> %x0, i32 3, <16 x i16> zeroinitializer, i16 %x3)
+  %res2 = call <16 x i16> @llvm.x86.avx512.mask.pshufl.w.256(<16 x i16> %x0, i32 3, <16 x i16> %x2, i16 -1)
+  %res3 = add <16 x i16> %res, %res1
+  %res4 = add <16 x i16> %res3, %res2
+  ret <16 x i16> %res4
+}

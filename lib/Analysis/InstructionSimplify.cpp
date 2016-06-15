@@ -2086,7 +2086,7 @@ computePointerICmp(const DataLayout &DL, const TargetLibraryInfo *TLI,
           return AI->getParent() && AI->getFunction() && AI->isStaticAlloca();
         if (const GlobalValue *GV = dyn_cast<GlobalValue>(V))
           return (GV->hasLocalLinkage() || GV->hasHiddenVisibility() ||
-                  GV->hasProtectedVisibility() || GV->hasUnnamedAddr()) &&
+                  GV->hasProtectedVisibility() || GV->hasGlobalUnnamedAddr()) &&
                  !GV->isThreadLocal();
         if (const Argument *A = dyn_cast<Argument>(V))
           return A->hasByValAttr();
@@ -2300,7 +2300,7 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
     } else if (match(LHS, m_SDiv(m_Value(), m_ConstantInt(CI2)))) {
       APInt IntMin = APInt::getSignedMinValue(Width);
       APInt IntMax = APInt::getSignedMaxValue(Width);
-      APInt Val = CI2->getValue();
+      const APInt &Val = CI2->getValue();
       if (Val.isAllOnesValue()) {
         // 'sdiv x, -1' produces [INT_MIN + 1, INT_MAX]
         //    where CI2 != -1 and CI2 != 0 and CI2 != 1

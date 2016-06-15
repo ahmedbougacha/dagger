@@ -12,7 +12,9 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/DebugInfo/CodeView/StreamArray.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/Error.h"
 
 #include <stdint.h>
 
@@ -28,10 +30,13 @@ public:
 
   virtual uint32_t getNumStreams() const = 0;
   virtual uint32_t getStreamByteSize(uint32_t StreamIndex) const = 0;
-  virtual ArrayRef<uint32_t> getStreamBlockList(uint32_t StreamIndex) const = 0;
+  virtual ArrayRef<support::ulittle32_t>
+  getStreamBlockList(uint32_t StreamIndex) const = 0;
 
-  virtual StringRef getBlockData(uint32_t BlockIndex,
-                                 uint32_t NumBytes) const = 0;
+  virtual ArrayRef<uint8_t> getBlockData(uint32_t BlockIndex,
+                                         uint32_t NumBytes) const = 0;
+  virtual Error setBlockData(uint32_t BlockIndex, uint32_t Offset,
+                             ArrayRef<uint8_t> Data) const = 0;
 };
 }
 }

@@ -456,7 +456,14 @@ private:
   ///
   ///     c. After we finish selecting the basic block, in FinishBasicBlock if
   ///        the StackProtectorDescriptor attached to the SelectionDAGBuilder is
-  ///        initialized, we first find a splice point in the parent basic block
+  ///        initialized, we produce the validation code with one of these
+  ///        techniques:
+  ///          1) with a call to a guard check function
+  ///          2) with inlined instrumentation
+  ///
+  ///        1) We insert a call to the check function before the terminator.
+  ///
+  ///        2) We first find a splice point in the parent basic block
   ///        before the terminator and then splice the terminator of said basic
   ///        block into the success basic block. Then we code-gen a new tail for
   ///        the parent basic block consisting of the two loads, the comparison,
@@ -475,15 +482,22 @@ private:
       return ParentMBB && SuccessMBB && FailureMBB;
     }
 
+    bool shouldEmitFunctionBasedCheckStackProtector() const {
+      return ParentMBB && !SuccessMBB && !FailureMBB;
+    }
+
     /// Initialize the stack protector descriptor structure for a new basic
     /// block.
-    void initialize(const BasicBlock *BB, MachineBasicBlock *MBB) {
+    void initialize(const BasicBlock *BB, MachineBasicBlock *MBB,
+                    bool FunctionBasedInstrumentation) {
       // Make sure we are not initialized yet.
       assert(!shouldEmitStackProtector() && "Stack Protector Descriptor is "
              "already initialized!");
       ParentMBB = MBB;
-      SuccessMBB = AddSuccessorMBB(BB, MBB, /* IsLikely */ true);
-      FailureMBB = AddSuccessorMBB(BB, MBB, /* IsLikely */ false, FailureMBB);
+      if (!FunctionBasedInstrumentation) {
+        SuccessMBB = AddSuccessorMBB(BB, MBB, /* IsLikely */ true);
+        FailureMBB = AddSuccessorMBB(BB, MBB, /* IsLikely */ false, FailureMBB);
+      }
     }
 
     /// Reset state that changes when we handle different basic blocks.
@@ -981,8 +995,7 @@ struct RegsForValue {
   /// Chain/Flag as the input and updates them for the output Chain/Flag.
   /// If the Flag pointer is NULL, no flag is used.
   SDValue getCopyFromRegs(SelectionDAG &DAG, FunctionLoweringInfo &FuncInfo,
-                          SDLoc dl,
-                          SDValue &Chain, SDValue *Flag,
+                          const SDLoc &dl, SDValue &Chain, SDValue *Flag,
                           const Value *V = nullptr) const;
 
   /// getCopyToRegs - Emit a series of CopyToReg nodes that copies the specified
@@ -990,18 +1003,16 @@ struct RegsForValue {
   /// as the input and updates them for the output Chain/Flag.  If the Flag
   /// pointer is nullptr, no flag is used.  If V is not nullptr, then it is used
   /// in printing better diagnostic messages on error.
-  void
-  getCopyToRegs(SDValue Val, SelectionDAG &DAG, SDLoc dl, SDValue &Chain,
-                SDValue *Flag, const Value *V = nullptr,
-                ISD::NodeType PreferredExtendType = ISD::ANY_EXTEND) const;
+  void getCopyToRegs(SDValue Val, SelectionDAG &DAG, const SDLoc &dl,
+                     SDValue &Chain, SDValue *Flag, const Value *V = nullptr,
+                     ISD::NodeType PreferredExtendType = ISD::ANY_EXTEND) const;
 
   /// AddInlineAsmOperands - Add this value to the specified inlineasm node
   /// operand list.  This adds the code marker, matching input operand index
   /// (if applicable), and includes the number of values added into it.
-  void AddInlineAsmOperands(unsigned Kind,
-                            bool HasMatching, unsigned MatchingIdx, SDLoc dl,
-                            SelectionDAG &DAG,
-                            std::vector<SDValue> &Ops) const;
+  void AddInlineAsmOperands(unsigned Kind, bool HasMatching,
+                            unsigned MatchingIdx, const SDLoc &dl,
+                            SelectionDAG &DAG, std::vector<SDValue> &Ops) const;
 };
 
 } // end namespace llvm

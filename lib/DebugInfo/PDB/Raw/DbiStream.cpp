@@ -12,6 +12,7 @@
 #include "llvm/DebugInfo/CodeView/StreamArray.h"
 #include "llvm/DebugInfo/CodeView/StreamReader.h"
 #include "llvm/DebugInfo/PDB/Raw/ISectionContribVisitor.h"
+#include "llvm/DebugInfo/PDB/Raw/IndexedStreamData.h"
 #include "llvm/DebugInfo/PDB/Raw/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Raw/ModInfo.h"
 #include "llvm/DebugInfo/PDB/Raw/NameHashTable.h"
@@ -92,17 +93,17 @@ Error loadSectionContribs(FixedStreamArray<ContribType> &Output,
   return Error::success();
 }
 
-DbiStream::DbiStream(PDBFile &File)
-    : Pdb(File), Stream(StreamDBI, File), Header(nullptr) {
+DbiStream::DbiStream(PDBFile &File, std::unique_ptr<MappedBlockStream> Stream)
+    : Pdb(File), Stream(std::move(Stream)), Header(nullptr) {
   static_assert(sizeof(HeaderInfo) == 64, "Invalid HeaderInfo size!");
 }
 
 DbiStream::~DbiStream() {}
 
 Error DbiStream::reload() {
-  StreamReader Reader(Stream);
+  StreamReader Reader(*Stream);
 
-  if (Stream.getLength() < sizeof(HeaderInfo))
+  if (Stream->getLength() < sizeof(HeaderInfo))
     return make_error<RawError>(raw_error_code::corrupt_file,
                                 "DBI Stream does not contain a header.");
   if (auto EC = Reader.readObject(Header))
@@ -120,15 +121,15 @@ Error DbiStream::reload() {
     return make_error<RawError>(raw_error_code::feature_unsupported,
                                 "Unsupported DBI version.");
 
-  auto InfoStream = Pdb.getPDBInfoStream();
-  if (auto EC = InfoStream.takeError())
-    return EC;
+  auto IS = Pdb.getPDBInfoStream();
+  if (!IS)
+    return IS.takeError();
 
-  if (Header->Age != InfoStream.get().getAge())
+  if (Header->Age != IS->getAge())
     return make_error<RawError>(raw_error_code::corrupt_file,
                                 "DBI Age does not match PDB Age.");
 
-  if (Stream.getLength() !=
+  if (Stream->getLength() !=
       sizeof(HeaderInfo) + Header->ModiSubstreamSize +
           Header->SecContrSubstreamSize + Header->SectionMapSize +
           Header->FileInfoSize + Header->TypeServerSize +
@@ -186,8 +187,9 @@ Error DbiStream::reload() {
     return EC;
   if (auto EC = initializeSectionMapData())
     return EC;
-
   if (auto EC = initializeFileInfo())
+    return EC;
+  if (auto EC = initializeFpoRecords())
     return EC;
 
   if (Reader.bytesRemaining() > 0)
@@ -252,6 +254,10 @@ DbiStream::getSectionHeaders() {
   return SectionHeaders;
 }
 
+codeview::FixedStreamArray<object::FpoData> DbiStream::getFpoRecords() {
+  return FpoRecords;
+}
+
 ArrayRef<ModuleInfoEx> DbiStream::modules() const { return ModuleInfos; }
 codeview::FixedStreamArray<SecMapEntry> DbiStream::getSectionMap() const {
   return SectionMap;
@@ -285,18 +291,49 @@ Error DbiStream::initializeSectionContributionData() {
 // Initializes this->SectionHeaders.
 Error DbiStream::initializeSectionHeadersData() {
   uint32_t StreamNum = getDebugStreamIndex(DbgHeaderType::SectionHdr);
-  SectionHeaderStream.reset(new MappedBlockStream(StreamNum, Pdb));
+  if (StreamNum >= Pdb.getNumStreams())
+    return make_error<RawError>(raw_error_code::no_stream);
 
-  size_t StreamLen = SectionHeaderStream->getLength();
+  auto SHS = MappedBlockStream::createIndexedStream(StreamNum, Pdb);
+  if (!SHS)
+    return SHS.takeError();
+
+  size_t StreamLen = (*SHS)->getLength();
   if (StreamLen % sizeof(object::coff_section))
     return make_error<RawError>(raw_error_code::corrupt_file,
                                 "Corrupted section header stream.");
 
   size_t NumSections = StreamLen / sizeof(object::coff_section);
-  codeview::StreamReader Reader(*SectionHeaderStream);
+  codeview::StreamReader Reader(**SHS);
   if (auto EC = Reader.readArray(SectionHeaders, NumSections))
     return make_error<RawError>(raw_error_code::corrupt_file,
                                 "Could not read a bitmap.");
+
+  SectionHeaderStream = std::move(*SHS);
+  return Error::success();
+}
+
+// Initializes this->Fpos.
+Error DbiStream::initializeFpoRecords() {
+  uint32_t StreamNum = getDebugStreamIndex(DbgHeaderType::NewFPO);
+  if (StreamNum >= Pdb.getNumStreams())
+    return make_error<RawError>(raw_error_code::no_stream);
+
+  auto FS = MappedBlockStream::createIndexedStream(StreamNum, Pdb);
+  if (!FS)
+    return FS.takeError();
+
+  size_t StreamLen = (*FS)->getLength();
+  if (StreamLen % sizeof(object::FpoData))
+    return make_error<RawError>(raw_error_code::corrupt_file,
+                                "Corrupted New FPO stream.");
+
+  size_t NumRecords = StreamLen / sizeof(object::FpoData);
+  codeview::StreamReader Reader(**FS);
+  if (auto EC = Reader.readArray(FpoRecords, NumRecords))
+    return make_error<RawError>(raw_error_code::corrupt_file,
+                                "Corrupted New FPO stream.");
+  FpoStream = std::move(*FS);
   return Error::success();
 }
 
@@ -384,10 +421,10 @@ Error DbiStream::initializeFileInfo() {
     uint32_t NumFiles = ModFileCountArray[I];
     ModuleInfos[I].SourceFiles.resize(NumFiles);
     for (size_t J = 0; J < NumFiles; ++J, ++NextFileIndex) {
-      if (auto Name = getFileNameForIndex(NextFileIndex))
-        ModuleInfos[I].SourceFiles[J] = Name.get();
-      else
-        return Name.takeError();
+      auto ThisName = getFileNameForIndex(NextFileIndex);
+      if (!ThisName)
+        return ThisName.takeError();
+      ModuleInfos[I].SourceFiles[J] = *ThisName;
     }
   }
 

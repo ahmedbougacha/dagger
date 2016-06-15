@@ -223,17 +223,25 @@ static WeightedFile parseWeightedFile(const StringRef &WeightedFilename) {
   return WeightedFile(FileName, Weight);
 }
 
-static void parseInputFilenamesFile(const StringRef &InputFilenamesFile,
-                                    WeightedFileVector &WFV) {
+static std::unique_ptr<MemoryBuffer>
+getInputFilenamesFileBuf(const StringRef &InputFilenamesFile) {
   if (InputFilenamesFile == "")
+    return {};
+
+  auto BufOrError = MemoryBuffer::getFileOrSTDIN(InputFilenamesFile);
+  if (!BufOrError)
+    exitWithErrorCode(BufOrError.getError(), InputFilenamesFile);
+
+  return std::move(*BufOrError);
+}
+
+static void parseInputFilenamesFile(MemoryBuffer *Buffer,
+                                    WeightedFileVector &WFV) {
+  if (!Buffer)
     return;
 
-  auto Buf = MemoryBuffer::getFileOrSTDIN(InputFilenamesFile);
-  if (!Buf)
-    exitWithErrorCode(Buf.getError(), InputFilenamesFile);
-
-  StringRef Data = Buf.get()->getBuffer();
   SmallVector<StringRef, 8> Entries;
+  StringRef Data = Buffer->getBuffer();
   Data.split(Entries, '\n', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
   for (const StringRef &FileWeightEntry : Entries) {
     StringRef SanitizedEntry = FileWeightEntry.trim(" \t\v\f\r");
@@ -241,7 +249,7 @@ static void parseInputFilenamesFile(const StringRef &InputFilenamesFile,
     if (SanitizedEntry.startswith("#"))
       continue;
     // If there's no comma, it's an unweighted profile.
-    else if (SanitizedEntry.rfind(',') == StringRef::npos)
+    else if (SanitizedEntry.find(',') == StringRef::npos)
       WFV.emplace_back(SanitizedEntry, 1);
     else
       WFV.emplace_back(parseWeightedFile(SanitizedEntry));
@@ -285,10 +293,14 @@ static int merge_main(int argc, const char *argv[]) {
 
   WeightedFileVector WeightedInputs;
   for (StringRef Filename : InputFilenames)
-    WeightedInputs.push_back(WeightedFile(Filename, 1));
+    WeightedInputs.emplace_back(Filename, 1);
   for (StringRef WeightedFilename : WeightedInputFilenames)
-    WeightedInputs.push_back(parseWeightedFile(WeightedFilename));
-  parseInputFilenamesFile(InputFilenamesFile, WeightedInputs);
+    WeightedInputs.emplace_back(parseWeightedFile(WeightedFilename));
+
+  // Make sure that the file buffer stays alive for the duration of the
+  // weighted input vector's lifetime.
+  auto Buffer = getInputFilenamesFileBuf(InputFilenamesFile);
+  parseInputFilenamesFile(Buffer.get(), WeightedInputs);
 
   if (WeightedInputs.empty())
     exitWithError("No input files specified. See " +
@@ -506,7 +518,7 @@ static int show_main(int argc, const char *argv[]) {
 
 int main(int argc, const char *argv[]) {
   // Print a stack trace if we signal out.
-  sys::PrintStackTraceOnErrorSignal();
+  sys::PrintStackTraceOnErrorSignal(argv[0]);
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y; // Call llvm_shutdown() on exit.
 
