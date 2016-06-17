@@ -1488,8 +1488,7 @@ bool LoopAccessInfo::canAnalyzeLoop() {
   return true;
 }
 
-void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
-
+void LoopAccessInfo::analyzeLoop() {
   typedef SmallPtrSet<Value*, 16> ValueSet;
 
   // Holds the Load and Store instructions.
@@ -1541,6 +1540,8 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
         NumLoads++;
         Loads.push_back(Ld);
         DepChecker.addAccess(Ld);
+        if (SpeculateSymbolicStrides)
+          collectStridedAccess(Ld);
         continue;
       }
 
@@ -1563,6 +1564,8 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
         NumStores++;
         Stores.push_back(St);
         DepChecker.addAccess(St);
+        if (SpeculateSymbolicStrides)
+          collectStridedAccess(St);
       }
     } // Next instr.
   } // Next block.
@@ -1628,7 +1631,8 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
     // read a few words, modify, and write a few words, and some of the
     // words may be written to the same address.
     bool IsReadOnlyPtr = false;
-    if (Seen.insert(Ptr).second || !getPtrStride(PSE, Ptr, TheLoop, Strides)) {
+    if (Seen.insert(Ptr).second ||
+        !getPtrStride(PSE, Ptr, TheLoop, SymbolicStrides)) {
       ++NumReads;
       IsReadOnlyPtr = true;
     }
@@ -1657,8 +1661,8 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
 
   // Find pointers with computable bounds. We are going to use this information
   // to place a runtime bound check.
-  bool CanDoRTIfNeeded =
-      Accesses.canCheckPtrAtRT(PtrRtChecking, PSE.getSE(), TheLoop, Strides);
+  bool CanDoRTIfNeeded = Accesses.canCheckPtrAtRT(PtrRtChecking, PSE.getSE(),
+                                                  TheLoop, SymbolicStrides);
   if (!CanDoRTIfNeeded) {
     emitAnalysis(LoopAccessReport() << "cannot identify array bounds");
     DEBUG(dbgs() << "LAA: We can't vectorize because we can't find "
@@ -1673,7 +1677,7 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
   if (Accesses.isDependencyCheckNeeded()) {
     DEBUG(dbgs() << "LAA: Checking memory dependencies\n");
     CanVecMem = DepChecker.areDepsSafe(
-        DependentAccesses, Accesses.getDependenciesToCheck(), Strides);
+        DependentAccesses, Accesses.getDependenciesToCheck(), SymbolicStrides);
     MaxSafeDepDistBytes = DepChecker.getMaxSafeDepDistBytes();
 
     if (!CanVecMem && DepChecker.shouldRetryWithRuntimeCheck()) {
@@ -1686,8 +1690,8 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
       PtrRtChecking.Need = true;
 
       auto *SE = PSE.getSE();
-      CanDoRTIfNeeded =
-          Accesses.canCheckPtrAtRT(PtrRtChecking, SE, TheLoop, Strides, true);
+      CanDoRTIfNeeded = Accesses.canCheckPtrAtRT(PtrRtChecking, SE, TheLoop,
+                                                 SymbolicStrides, true);
 
       // Check that we found the bounds for the pointer.
       if (!CanDoRTIfNeeded) {
@@ -1878,17 +1882,37 @@ LoopAccessInfo::addRuntimeChecks(Instruction *Loc) const {
   return addRuntimeChecks(Loc, PtrRtChecking.getChecks());
 }
 
+void LoopAccessInfo::collectStridedAccess(Value *MemAccess) {
+  Value *Ptr = nullptr;
+  if (LoadInst *LI = dyn_cast<LoadInst>(MemAccess))
+    Ptr = LI->getPointerOperand();
+  else if (StoreInst *SI = dyn_cast<StoreInst>(MemAccess))
+    Ptr = SI->getPointerOperand();
+  else
+    return;
+
+  Value *Stride = getStrideFromPointer(Ptr, PSE.getSE(), TheLoop);
+  if (!Stride)
+    return;
+
+  DEBUG(dbgs() << "LAA: Found a strided access that we can version");
+  DEBUG(dbgs() << "  Ptr: " << *Ptr << " Stride: " << *Stride << "\n");
+  SymbolicStrides[Ptr] = Stride;
+  StrideSet.insert(Stride);
+}
+
 LoopAccessInfo::LoopAccessInfo(Loop *L, ScalarEvolution *SE,
                                const DataLayout &DL,
                                const TargetLibraryInfo *TLI, AliasAnalysis *AA,
                                DominatorTree *DT, LoopInfo *LI,
-                               const ValueToValueMap &Strides)
-    : PSE(*SE, *L), PtrRtChecking(SE), DepChecker(PSE, L), TheLoop(L), DL(DL),
-      TLI(TLI), AA(AA), DT(DT), LI(LI), NumLoads(0), NumStores(0),
+                               bool SpeculateSymbolicStrides)
+    : SpeculateSymbolicStrides(SpeculateSymbolicStrides), PSE(*SE, *L),
+      PtrRtChecking(SE), DepChecker(PSE, L), TheLoop(L), DL(DL), TLI(TLI),
+      AA(AA), DT(DT), LI(LI), NumLoads(0), NumStores(0),
       MaxSafeDepDistBytes(-1U), CanVecMem(false),
       StoreToLoopInvariantAddress(false) {
   if (canAnalyzeLoop())
-    analyzeLoop(Strides);
+    analyzeLoop();
 }
 
 void LoopAccessInfo::print(raw_ostream &OS, unsigned Depth) const {
@@ -1932,21 +1956,18 @@ void LoopAccessInfo::print(raw_ostream &OS, unsigned Depth) const {
 }
 
 const LoopAccessInfo &
-LoopAccessAnalysis::getInfo(Loop *L, const ValueToValueMap &Strides) {
+LoopAccessAnalysis::getInfo(Loop *L, bool SpeculateSymbolicStrides) {
   auto &LAI = LoopAccessInfoMap[L];
 
 #ifndef NDEBUG
-  assert((!LAI || LAI->NumSymbolicStrides == Strides.size()) &&
+  assert((!LAI || LAI->SpeculateSymbolicStrides == SpeculateSymbolicStrides) &&
          "Symbolic strides changed for loop");
 #endif
 
   if (!LAI) {
     const DataLayout &DL = L->getHeader()->getModule()->getDataLayout();
-    LAI =
-        llvm::make_unique<LoopAccessInfo>(L, SE, DL, TLI, AA, DT, LI, Strides);
-#ifndef NDEBUG
-    LAI->NumSymbolicStrides = Strides.size();
-#endif
+    LAI = llvm::make_unique<LoopAccessInfo>(L, SE, DL, TLI, AA, DT, LI,
+                                            SpeculateSymbolicStrides);
   }
   return *LAI.get();
 }
@@ -1954,12 +1975,10 @@ LoopAccessAnalysis::getInfo(Loop *L, const ValueToValueMap &Strides) {
 void LoopAccessAnalysis::print(raw_ostream &OS, const Module *M) const {
   LoopAccessAnalysis &LAA = *const_cast<LoopAccessAnalysis *>(this);
 
-  ValueToValueMap NoSymbolicStrides;
-
   for (Loop *TopLevelLoop : *LI)
     for (Loop *L : depth_first(TopLevelLoop)) {
       OS.indent(2) << L->getHeader()->getName() << ":\n";
-      auto &LAI = LAA.getInfo(L, NoSymbolicStrides);
+      auto &LAI = LAA.getInfo(L);
       LAI.print(OS, 4);
     }
 }

@@ -897,6 +897,9 @@ bool TargetLibraryInfoImpl::isValidProtoForLibFunc(const FunctionType &FTy,
   case LibFunc::cos:
   case LibFunc::cosf:
   case LibFunc::cosl:
+  case LibFunc::tan:
+  case LibFunc::tanf:
+  case LibFunc::tanl:
   case LibFunc::exp:
   case LibFunc::expf:
   case LibFunc::expl:
@@ -1124,14 +1127,16 @@ StringRef TargetLibraryInfoImpl::getScalarizedFunction(StringRef F,
   return I->ScalarFnName;
 }
 
-TargetLibraryInfo TargetLibraryAnalysis::run(Module &M) {
+TargetLibraryInfo TargetLibraryAnalysis::run(Module &M,
+                                             ModuleAnalysisManager &) {
   if (PresetInfoImpl)
     return TargetLibraryInfo(*PresetInfoImpl);
 
   return TargetLibraryInfo(lookupInfoImpl(Triple(M.getTargetTriple())));
 }
 
-TargetLibraryInfo TargetLibraryAnalysis::run(Function &F) {
+TargetLibraryInfo TargetLibraryAnalysis::run(Function &F,
+                                             FunctionAnalysisManager &) {
   if (PresetInfoImpl)
     return TargetLibraryInfo(*PresetInfoImpl);
 

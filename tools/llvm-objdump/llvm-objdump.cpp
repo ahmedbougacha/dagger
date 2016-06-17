@@ -935,12 +935,10 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
   const Target *TheTarget = getTarget(Obj);
 
   // Package up features to be passed to target/subtarget
-  std::string FeaturesStr;
+  SubtargetFeatures Features = Obj->getFeatures();
   if (MAttrs.size()) {
-    SubtargetFeatures Features;
     for (unsigned i = 0; i != MAttrs.size(); ++i)
       Features.AddFeature(MAttrs[i]);
-    FeaturesStr = Features.getString();
   }
 
   std::unique_ptr<const MCRegisterInfo> MRI(
@@ -954,7 +952,7 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
   if (!AsmInfo)
     report_fatal_error("error: no assembly info for target " + TripleName);
   std::unique_ptr<const MCSubtargetInfo> STI(
-      TheTarget->createMCSubtargetInfo(TripleName, MCPU, FeaturesStr));
+      TheTarget->createMCSubtargetInfo(TripleName, MCPU, Features.getString()));
   if (!STI)
     report_fatal_error("error: no subtarget info for target " + TripleName);
   std::unique_ptr<const MCInstrInfo> MII(TheTarget->createMCInstrInfo());

@@ -1623,8 +1623,14 @@ public:
   /// addAttribute - adds the attribute to the list of attributes.
   void addAttribute(unsigned i, StringRef Kind, StringRef Value);
 
+  /// addAttribute - adds the attribute to the list of attributes.
+  void addAttribute(unsigned i, Attribute Attr);
+
   /// removeAttribute - removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute::AttrKind Kind);
+
+  /// removeAttribute - removes the attribute from the list of attributes.
+  void removeAttribute(unsigned i, StringRef Kind);
 
   /// removeAttribute - removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute Attr);
@@ -1650,6 +1656,12 @@ public:
 
   /// \brief Determine whether the call or the callee has the given attributes.
   bool paramHasAttr(unsigned i, Attribute::AttrKind Kind) const;
+
+  /// \brief Get the attribute of a given kind at a position.
+  Attribute getAttribute(unsigned i, Attribute::AttrKind Kind) const;
+
+  /// \brief Get the attribute of a given kind at a position.
+  Attribute getAttribute(unsigned i, StringRef Kind) const;
 
   /// \brief Return true if the data operand at index \p i has the attribute \p
   /// A.
@@ -3564,8 +3576,14 @@ public:
   /// addAttribute - adds the attribute to the list of attributes.
   void addAttribute(unsigned i, Attribute::AttrKind Kind);
 
+  /// addAttribute - adds the attribute to the list of attributes.
+  void addAttribute(unsigned i, Attribute Attr);
+
   /// removeAttribute - removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute::AttrKind Kind);
+
+  /// removeAttribute - removes the attribute from the list of attributes.
+  void removeAttribute(unsigned i, StringRef Kind);
 
   /// removeAttribute - removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute Attr);
@@ -3591,6 +3609,12 @@ public:
 
   /// \brief Determine whether the call or the callee has the given attributes.
   bool paramHasAttr(unsigned i, Attribute::AttrKind Kind) const;
+
+  /// \brief Get the attribute of a given kind at a position.
+  Attribute getAttribute(unsigned i, Attribute::AttrKind Kind) const;
+
+  /// \brief Get the attribute of a given kind at a position.
+  Attribute getAttribute(unsigned i, StringRef Kind) const;
 
   /// \brief Return true if the data operand at index \p i has the attribute \p
   /// A.

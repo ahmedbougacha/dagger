@@ -343,7 +343,19 @@ void CallInst::addAttribute(unsigned i, StringRef Kind, StringRef Value) {
   setAttributes(PAL);
 }
 
+void CallInst::addAttribute(unsigned i, Attribute Attr) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.addAttribute(getContext(), i, Attr);
+  setAttributes(PAL);
+}
+
 void CallInst::removeAttribute(unsigned i, Attribute::AttrKind Kind) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.removeAttribute(getContext(), i, Kind);
+  setAttributes(PAL);
+}
+
+void CallInst::removeAttribute(unsigned i, StringRef Kind) {
   AttributeSet PAL = getAttributes();
   PAL = PAL.removeAttribute(getContext(), i, Kind);
   setAttributes(PAL);
@@ -378,6 +390,14 @@ bool CallInst::paramHasAttr(unsigned i, Attribute::AttrKind Kind) const {
   if (const Function *F = getCalledFunction())
     return F->getAttributes().hasAttribute(i, Kind);
   return false;
+}
+
+Attribute CallInst::getAttribute(unsigned i, Attribute::AttrKind Kind) const {
+  return getAttributes().getAttribute(i, Kind);
+}
+
+Attribute CallInst::getAttribute(unsigned i, StringRef Kind) const {
+  return getAttributes().getAttribute(i, Kind);
 }
 
 bool CallInst::dataOperandHasImpliedAttr(unsigned i,
@@ -702,7 +722,19 @@ void InvokeInst::addAttribute(unsigned i, Attribute::AttrKind Kind) {
   setAttributes(PAL);
 }
 
+void InvokeInst::addAttribute(unsigned i, Attribute Attr) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.addAttribute(getContext(), i, Attr);
+  setAttributes(PAL);
+}
+
 void InvokeInst::removeAttribute(unsigned i, Attribute::AttrKind Kind) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.removeAttribute(getContext(), i, Kind);
+  setAttributes(PAL);
+}
+
+void InvokeInst::removeAttribute(unsigned i, StringRef Kind) {
   AttributeSet PAL = getAttributes();
   PAL = PAL.removeAttribute(getContext(), i, Kind);
   setAttributes(PAL);
@@ -714,6 +746,15 @@ void InvokeInst::removeAttribute(unsigned i, Attribute Attr) {
   PAL = PAL.removeAttributes(getContext(), i,
                              AttributeSet::get(getContext(), i, B));
   setAttributes(PAL);
+}
+
+Attribute InvokeInst::getAttribute(unsigned i,
+                                   Attribute::AttrKind Kind) const {
+  return getAttributes().getAttribute(i, Kind);
+}
+
+Attribute InvokeInst::getAttribute(unsigned i, StringRef Kind) const {
+  return getAttributes().getAttribute(i, Kind);
 }
 
 void InvokeInst::addDereferenceableAttr(unsigned i, uint64_t Bytes) {

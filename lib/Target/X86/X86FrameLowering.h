@@ -100,8 +100,9 @@ public:
   int getFrameIndexReference(const MachineFunction &MF, int FI,
                              unsigned &FrameReg) const override;
 
-  int getFrameIndexReferenceFromSP(const MachineFunction &MF, int FI,
-                                   unsigned &FrameReg) const override;
+  int getFrameIndexReferencePreferSP(const MachineFunction &MF, int FI,
+                                     unsigned &FrameReg,
+                                     bool IgnoreSPUpdates) const override;
 
   MachineBasicBlock::iterator
   eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,

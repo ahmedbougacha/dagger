@@ -111,22 +111,15 @@ static bool hasMemoryWrite(Instruction *I, const TargetLibraryInfo &TLI) {
   }
   if (auto CS = CallSite(I)) {
     if (Function *F = CS.getCalledFunction()) {
-      if (TLI.has(LibFunc::strcpy) &&
-          F->getName() == TLI.getName(LibFunc::strcpy)) {
+      StringRef FnName = F->getName();
+      if (TLI.has(LibFunc::strcpy) && FnName == TLI.getName(LibFunc::strcpy))
         return true;
-      }
-      if (TLI.has(LibFunc::strncpy) &&
-          F->getName() == TLI.getName(LibFunc::strncpy)) {
+      if (TLI.has(LibFunc::strncpy) && FnName == TLI.getName(LibFunc::strncpy))
         return true;
-      }
-      if (TLI.has(LibFunc::strcat) &&
-          F->getName() == TLI.getName(LibFunc::strcat)) {
+      if (TLI.has(LibFunc::strcat) && FnName == TLI.getName(LibFunc::strcat))
         return true;
-      }
-      if (TLI.has(LibFunc::strncat) &&
-          F->getName() == TLI.getName(LibFunc::strncat)) {
+      if (TLI.has(LibFunc::strncat) && FnName == TLI.getName(LibFunc::strncat))
         return true;
-      }
     }
   }
   return false;
@@ -289,28 +282,21 @@ static OverwriteResult isOverwrite(const MemoryLocation &Later,
                                    const DataLayout &DL,
                                    const TargetLibraryInfo &TLI,
                                    int64_t &EarlierOff, int64_t &LaterOff) {
+  // If we don't know the sizes of either access, then we can't do a comparison.
+  if (Later.Size == MemoryLocation::UnknownSize ||
+      Earlier.Size == MemoryLocation::UnknownSize)
+    return OverwriteUnknown;
+
   const Value *P1 = Earlier.Ptr->stripPointerCasts();
   const Value *P2 = Later.Ptr->stripPointerCasts();
 
   // If the start pointers are the same, we just have to compare sizes to see if
   // the later store was larger than the earlier store.
   if (P1 == P2) {
-    // If we don't know the sizes of either access, then we can't do a
-    // comparison.
-    if (Later.Size == MemoryLocation::UnknownSize ||
-        Earlier.Size == MemoryLocation::UnknownSize)
-      return OverwriteUnknown;
-
     // Make sure that the Later size is >= the Earlier size.
     if (Later.Size >= Earlier.Size)
       return OverwriteComplete;
   }
-
-  // Otherwise, we have to have size information, and the later store has to be
-  // larger than the earlier one.
-  if (Later.Size == MemoryLocation::UnknownSize ||
-      Earlier.Size == MemoryLocation::UnknownSize)
-    return OverwriteUnknown;
 
   // Check to see if the later store is to the entire object (either a global,
   // an alloca, or a byval/inalloca argument).  If so, then it clearly
@@ -835,7 +821,7 @@ static bool eliminateDeadStores(BasicBlock &BB, AliasAnalysis *AA,
       // Get the memory clobbered by the instruction we depend on.  MemDep will
       // skip any instructions that 'Loc' clearly doesn't interact with.  If we
       // end up depending on a may- or must-aliased load, then we can't optimize
-      // away the store and we bail out.  However, if we depend on on something
+      // away the store and we bail out.  However, if we depend on something
       // that overwrites the memory location we *can* potentially optimize it.
       //
       // Find out what memory location the dependent instruction stores.

@@ -1094,10 +1094,8 @@ void PEI::replaceFrameIndices(MachineBasicBlock *BB, MachineFunction &Fn,
                "DBG_VALUE machine instruction");
         unsigned Reg;
         MachineOperand &Offset = MI->getOperand(i + 1);
-        const unsigned refOffset =
-          TFI->getFrameIndexReferenceFromSP(Fn, MI->getOperand(i).getIndex(),
-                                            Reg);
-
+        int refOffset = TFI->getFrameIndexReferencePreferSP(
+            Fn, MI->getOperand(i).getIndex(), Reg, /*IgnoreSPUpdates*/ false);
         Offset.setImm(Offset.getImm() + refOffset);
         MI->getOperand(i).ChangeToRegister(Reg, false /*isDef*/);
         continue;
