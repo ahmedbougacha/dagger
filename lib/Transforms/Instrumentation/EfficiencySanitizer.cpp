@@ -23,6 +23,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -32,6 +33,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 using namespace llvm;
@@ -149,6 +151,7 @@ public:
       const EfficiencySanitizerOptions &Opts = EfficiencySanitizerOptions())
       : ModulePass(ID), Options(OverrideOptionsFromCL(Opts)) {}
   const char *getPassName() const override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
   bool runOnModule(Module &M) override;
   static char ID;
 
@@ -199,11 +202,20 @@ private:
 } // namespace
 
 char EfficiencySanitizer::ID = 0;
-INITIALIZE_PASS(EfficiencySanitizer, "esan",
-                "EfficiencySanitizer: finds performance issues.", false, false)
+INITIALIZE_PASS_BEGIN(
+    EfficiencySanitizer, "esan",
+    "EfficiencySanitizer: finds performance issues.", false, false)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_END(
+    EfficiencySanitizer, "esan",
+    "EfficiencySanitizer: finds performance issues.", false, false)
 
 const char *EfficiencySanitizer::getPassName() const {
   return "EfficiencySanitizer";
+}
+
+void EfficiencySanitizer::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<TargetLibraryInfoWrapperPass>();
 }
 
 ModulePass *
@@ -304,12 +316,13 @@ GlobalVariable *EfficiencySanitizer::createCacheFragInfoGV(
   //   u32 Size;
   //   u32 NumFields;
   //   u32 *FieldOffsets;
+  //   u32 *FieldSize;
   //   u64 *FieldCounters;
   //   const char **FieldTypeNames;
   // };
   auto *StructInfoTy =
-    StructType::get(Int8PtrTy, Int32Ty, Int32Ty, Int32PtrTy, Int64PtrTy,
-                    Int8PtrPtrTy, nullptr);
+    StructType::get(Int8PtrTy, Int32Ty, Int32Ty, Int32PtrTy, Int32PtrTy,
+                    Int64PtrTy, Int8PtrPtrTy, nullptr);
   auto *StructInfoPtrTy = StructInfoTy->getPointerTo();
   // This structure should be kept consistent with the CacheFragInfo struct
   // in the runtime library.
@@ -367,6 +380,12 @@ GlobalVariable *EfficiencySanitizer::createCacheFragInfoGV(
       new GlobalVariable(M, OffsetArrayTy, true,
                          GlobalVariable::InternalLinkage, nullptr);
     SmallVector<Constant *, 16> OffsetVec;
+    // FieldSize
+    auto *SizeArrayTy = ArrayType::get(Int32Ty, StructTy->getNumElements());
+    GlobalVariable *Size =
+      new GlobalVariable(M, SizeArrayTy, true,
+                         GlobalVariable::InternalLinkage, nullptr);
+    SmallVector<Constant *, 16> SizeVec;
     for (unsigned i = 0; i < StructTy->getNumElements(); ++i) {
       Type *Ty = StructTy->getElementType(i);
       std::string Str;
@@ -377,9 +396,12 @@ GlobalVariable *EfficiencySanitizer::createCacheFragInfoGV(
               createPrivateGlobalForString(M, StrOS.str(), true),
               Int8PtrTy));
       OffsetVec.push_back(ConstantInt::get(Int32Ty, SL->getElementOffset(i)));
+      SizeVec.push_back(ConstantInt::get(Int32Ty,
+                                         DL.getTypeAllocSize(Ty)));
     }
     TypeNames->setInitializer(ConstantArray::get(TypeNameArrayTy, TypeNameVec));
     Offsets->setInitializer(ConstantArray::get(OffsetArrayTy, OffsetVec));
+    Size->setInitializer(ConstantArray::get(SizeArrayTy, SizeVec));
 
     Initializers.push_back(
         ConstantStruct::get(
@@ -388,6 +410,7 @@ GlobalVariable *EfficiencySanitizer::createCacheFragInfoGV(
             ConstantInt::get(Int32Ty, SL->getSizeInBytes()),
             ConstantInt::get(Int32Ty, StructTy->getNumElements()),
             ConstantExpr::getPointerCast(Offsets, Int32PtrTy),
+            ConstantExpr::getPointerCast(Size, Int32PtrTy),
             ConstantExpr::getPointerCast(Counters, Int64PtrTy),
             ConstantExpr::getPointerCast(TypeNames, Int8PtrPtrTy),
             nullptr));
@@ -533,6 +556,8 @@ bool EfficiencySanitizer::runOnFunction(Function &F, Module &M) {
   SmallVector<Instruction *, 8> GetElementPtrs;
   bool Res = false;
   const DataLayout &DL = M.getDataLayout();
+  const TargetLibraryInfo *TLI =
+      &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 
   for (auto &BB : F) {
     for (auto &Inst : BB) {
@@ -544,6 +569,8 @@ bool EfficiencySanitizer::runOnFunction(Function &F, Module &M) {
         MemIntrinCalls.push_back(&Inst);
       else if (isa<GetElementPtrInst>(Inst))
         GetElementPtrs.push_back(&Inst);
+      else if (CallInst *CI = dyn_cast<CallInst>(&Inst))
+        maybeMarkSanitizerLibraryCallNoBuiltin(CI, TLI);
     }
   }
 
