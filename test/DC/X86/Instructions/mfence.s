@@ -2,8 +2,10 @@
 
 ## MFENCE
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: fence seq_cst
 mfence
 
 retq

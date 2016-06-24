@@ -671,6 +671,23 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     registerResult(Builder->CreateCall(IntDecl, Op));
     break;
   }
+
+  case ISD::ATOMIC_FENCE: {
+    uint64_t OrdV = cast<ConstantInt>(getNextOperand())->getZExtValue();
+    uint64_t ScopeV = cast<ConstantInt>(getNextOperand())->getZExtValue();
+
+    if (OrdV <= (uint64_t)AtomicOrdering::NotAtomic ||
+        OrdV > (uint64_t)AtomicOrdering::SequentiallyConsistent)
+      llvm_unreachable("Invalid atomic ordering");
+    if (ScopeV != (uint64_t)SingleThread && ScopeV != (uint64_t)CrossThread)
+      llvm_unreachable("Invalid synchronization scope");
+    const AtomicOrdering Ord = (AtomicOrdering)OrdV;
+    const SynchronizationScope Scope = (SynchronizationScope)ScopeV;
+
+    Builder->CreateFence(Ord, Scope);
+    break;
+  }
+
   default:
     errs() << "Couldn't translate opcode for instruction: \n  ";
     errs() << "  " << DRS.MII.getName(CurrentInst->Inst.getOpcode()) << ": "
