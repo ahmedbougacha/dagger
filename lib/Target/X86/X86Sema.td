@@ -133,15 +133,15 @@ defm : Sema_BinOpAI<"AND", and>;
 defm : Sema_BinOpAI<"XOR", xor>;
 defm : Sema_BinOpAI<"OR", or>;
 
-def : Sema_F<CMP8i8,   (set EFLAGS, (X86cmp AL,  i8 :$src))>;
-def : Sema_F<CMP16i16, (set EFLAGS, (X86cmp AX,  i16:$src))>;
-def : Sema_F<CMP32i32, (set EFLAGS, (X86cmp EAX, i32:$src))>;
-def : Sema_F<CMP64i32, (set EFLAGS, (X86cmp RAX, i64:$src))>;
+def : Semantics<CMP8i8,   [(set EFLAGS, (X86cmp AL,  i8 :$src))]>;
+def : Semantics<CMP16i16, [(set EFLAGS, (X86cmp AX,  i16:$src))]>;
+def : Semantics<CMP32i32, [(set EFLAGS, (X86cmp EAX, i32:$src))]>;
+def : Semantics<CMP64i32, [(set EFLAGS, (X86cmp RAX, i64:$src))]>;
 
-def : Sema_F<TEST8i8,   (set EFLAGS, (X86testpat AL,  i8 :$src))>;
-def : Sema_F<TEST16i16, (set EFLAGS, (X86testpat AX,  i16:$src))>;
-def : Sema_F<TEST32i32, (set EFLAGS, (X86testpat EAX, i32:$src))>;
-def : Sema_F<TEST64i32, (set EFLAGS, (X86testpat RAX, i64:$src))>;
+def : Semantics<TEST8i8,   [(set EFLAGS, (X86testpat AL,  i8 :$src))]>;
+def : Semantics<TEST16i16, [(set EFLAGS, (X86testpat AX,  i16:$src))]>;
+def : Semantics<TEST32i32, [(set EFLAGS, (X86testpat EAX, i32:$src))]>;
+def : Semantics<TEST64i32, [(set EFLAGS, (X86testpat RAX, i64:$src))]>;
 
 def : Semantics<PUSH64r, [(store GR64:$reg, (sub RSP, 8)),
                           (set RSP, (sub RSP, 8))]>;
