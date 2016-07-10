@@ -152,6 +152,11 @@ def : Semantics<POP64r, [(set RSP, (add RSP, 8)),
 def : Semantics<POP64rmm, [(set RSP, (add RSP, 8)),
                            (store addr:$dst, (load (sub RSP, 8)))]>;
 
+def : Semantics<PUSHF64, [(store EFLAGS, (sub RSP, 4)),
+                          (set RSP, (sub RSP, 4))]>;
+def : Semantics<POPF64, [(set RSP, (add RSP, 4)),
+                         (set EFLAGS, (load (sub RSP, 4)))]>;
+
 def : Semantics<MOV8rr,  [(set  GR8:$dst,  GR8:$src)]>;
 def : Semantics<MOV16rr, [(set GR16:$dst, GR16:$src)]>;
 def : Semantics<MOV32rr, [(set GR32:$dst, GR32:$src)]>;
