@@ -179,6 +179,11 @@ def : Sema_MOVX_m<MOVSX64rm8,    sext, GR64, i8>;
 def : Sema_MOVX_m<MOVSX64rm16,   sext, GR64, i16>;
 def : Sema_MOVX_m<MOVSX64rm32,   sext, GR64, i32>;
 
+def : Semantics<SHL8r1,   [(set GR8:$dst,   (shl GR8 :$src1, (i8 1)))]>;
+def : Semantics<SHL16r1,  [(set GR16:$dst,  (shl GR16:$src1, (i16 1)))]>;
+def : Semantics<SHL32r1,  [(set GR32:$dst,  (shl GR32:$src1, (i32 1)))]>;
+def : Semantics<SHL64r1,  [(set GR64:$dst,  (shl GR64:$src1, (i64 1)))]>;
+
 // FIXME: We could use custom SD opcodes for this kind of thing.
 def : Semantics<CBW,  [(set AX,  (sext AL))]>;
 def : Semantics<CWDE, [(set EAX, (sext AX))]>;
