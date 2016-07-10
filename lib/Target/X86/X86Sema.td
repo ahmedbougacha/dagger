@@ -217,3 +217,10 @@ defm : Sema_MOVDQ<"U", VR256, v4i64, "V", "Y">;
 
 def : Semantics<MOV64toPQIrr,
         [(set VR128:$dst, (insertelt (v2i64 VR128:$dst), GR64:$src, (i32 0)))]>;
+
+def : Semantics<MOVDI2PDIrr,
+        [(set VR128:$dst, (insertelt (v4i32 VR128:$dst), GR32:$src, (i32 0)))]>;
+def : Semantics<MOVDI2PDIrm,
+        [(set VR128:$dst, (insertelt (v4i32 VR128:$dst), (loadi32 addr:$src), (i32 0)))]>;
+def : Semantics<MOVQI2PQIrm,
+        [(set VR128:$dst, (insertelt (v2i64 VR128:$dst), (loadi64 addr:$src), (i32 0)))]>;
