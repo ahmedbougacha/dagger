@@ -49,6 +49,7 @@ public:
 private:
   Value *translateAddr(unsigned MIOperandNo,
                        MVT::SimpleValueType VT = MVT::iPTRAny);
+  Value *translateMemOffset(unsigned MIOperandNo, MVT::SimpleValueType VT);
 
   void translatePush(Value *Val);
   Value *translatePop(unsigned SizeInBytes);

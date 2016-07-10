@@ -671,6 +671,18 @@ Value *X86InstrSema::translateCustomOperand(unsigned OperandType,
     break;
   }
 
+  case X86::OpTypes::offset16_8 : Res = translateMemOffset(MIOpNo, MVT::i8); break;
+  case X86::OpTypes::offset32_8 : Res = translateMemOffset(MIOpNo, MVT::i8); break;
+  case X86::OpTypes::offset64_8 : Res = translateMemOffset(MIOpNo, MVT::i8); break;
+  case X86::OpTypes::offset16_16: Res = translateMemOffset(MIOpNo, MVT::i16); break;
+  case X86::OpTypes::offset32_16: Res = translateMemOffset(MIOpNo, MVT::i16); break;
+  case X86::OpTypes::offset64_16: Res = translateMemOffset(MIOpNo, MVT::i16); break;
+  case X86::OpTypes::offset16_32: Res = translateMemOffset(MIOpNo, MVT::i32); break;
+  case X86::OpTypes::offset32_32: Res = translateMemOffset(MIOpNo, MVT::i32); break;
+  case X86::OpTypes::offset64_32: Res = translateMemOffset(MIOpNo, MVT::i32); break;
+  case X86::OpTypes::offset32_64: Res = translateMemOffset(MIOpNo, MVT::i64); break;
+  case X86::OpTypes::offset64_64: Res = translateMemOffset(MIOpNo, MVT::i64); break;
+
   case X86::OpTypes::SSECC:
   case X86::OpTypes::u8imm:
   case X86::OpTypes::i1imm:
@@ -756,6 +768,22 @@ Value *X86InstrSema::translateAddr(unsigned MIOperandNo,
   }
 
   return Res;
+}
+
+Value *X86InstrSema::translateMemOffset(unsigned MIOperandNo,
+                                        MVT::SimpleValueType VT) {
+  Value *Offset = Builder->getInt64(getImmOp(MIOperandNo));
+  unsigned SegReg = getRegOp(MIOperandNo + 1);
+
+  if (SegReg)
+    report_fatal_error("Segments are unsupported!");
+
+  if (VT != MVT::iPTRAny) {
+    Type *PtrTy = EVT(VT).getTypeForEVT(Ctx)->getPointerTo();
+    Offset = Builder->CreateIntToPtr(Offset, PtrTy);
+  }
+
+  return Offset;
 }
 
 void X86InstrSema::translatePush(Value *Val) {

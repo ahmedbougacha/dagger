@@ -146,8 +146,12 @@ movl	%r15d, 2(%r11,%rbx,2)
 
 ## MOV32o64a
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 9
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[EAX_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EAX")
+# CHECK-NEXT: [[V1:%.+]] = inttoptr i64 2 to i32*
+# CHECK-NEXT: store i32 [[EAX_0]], i32* [[V1]], align 1
 movabsl	%eax, 2
 
 ## MOV32ri

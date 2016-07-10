@@ -157,6 +157,8 @@ def : Semantics<MOV16rr, [(set GR16:$dst, GR16:$src)]>;
 def : Semantics<MOV32rr, [(set GR32:$dst, GR32:$src)]>;
 def : Semantics<MOV64rr, [(set GR64:$dst, GR64:$src)]>;
 
+def : Semantics<MOV32o64a, [(store EAX, offset64_32:$dst)]>;
+
 class Sema_MOVX_m<Instruction inst, SDNode op, RegisterClass destRC, ValueType VT>
   : Semantics<inst, [(set destRC:$dst, (op (VT (load addr:$src))))]>;
 
