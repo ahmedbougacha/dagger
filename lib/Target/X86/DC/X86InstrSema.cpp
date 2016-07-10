@@ -607,6 +607,18 @@ bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
     break;
   }
 
+  case X86ISD::ANDNP: {
+    Value *LHS = getNextOperand();
+    Value *RHS = getNextOperand();
+    Type *VecTy = ResEVT.getTypeForEVT(Ctx);
+    (void)VecTy;
+    assert(VecTy->isVectorTy() && VecTy->isIntOrIntVectorTy() &&
+           VecTy == LHS->getType() && VecTy == RHS->getType() &&
+           "Operands to ANDNP shuffle aren't vectors!");
+    registerResult(Builder->CreateAnd(Builder->CreateNot(LHS), RHS));
+    break;
+  }
+
   case X86ISD::HSUB:  translateHorizontalBinop(Instruction::Sub);  break;
   case X86ISD::HADD:  translateHorizontalBinop(Instruction::Add);  break;
   case X86ISD::FHSUB: translateHorizontalBinop(Instruction::FSub); break;

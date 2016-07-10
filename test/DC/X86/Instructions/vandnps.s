@@ -16,8 +16,10 @@
 # CHECK-NEXT: [[V6:%.+]] = add i64 [[R14_0]], [[V5]]
 # CHECK-NEXT: [[V7:%.+]] = inttoptr i64 [[V6]] to <4 x i64>*
 # CHECK-NEXT: [[V8:%.+]] = load <4 x i64>, <4 x i64>* [[V7]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V9:%.+]] = xor <4 x i64> [[V3]], <i64 -1, i64 -1, i64 -1, i64 -1>
+# CHECK-NEXT: [[V10:%.+]] = and <4 x i64> [[V9]], [[V8]]
+# CHECK-NEXT: [[V11:%.+]] = bitcast <4 x i64> [[V10]] to i256
+# CHECK-NEXT: call void @llvm.dc.setreg.i256(i256 [[V11]], metadata !"YMM8")
 vandnps	2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VANDNPSYrr
@@ -31,8 +33,10 @@ vandnps	2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[YMM10_0:%.+]] = call <8 x float> @llvm.dc.getreg.v8f32(metadata !"YMM10")
 # CHECK-NEXT: [[V3:%.+]] = bitcast <8 x float> [[YMM10_0]] to i256
 # CHECK-NEXT: [[V4:%.+]] = bitcast i256 [[V3]] to <4 x i64>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V5:%.+]] = xor <4 x i64> [[V2]], <i64 -1, i64 -1, i64 -1, i64 -1>
+# CHECK-NEXT: [[V6:%.+]] = and <4 x i64> [[V5]], [[V4]]
+# CHECK-NEXT: [[V7:%.+]] = bitcast <4 x i64> [[V6]] to i256
+# CHECK-NEXT: call void @llvm.dc.setreg.i256(i256 [[V7]], metadata !"YMM8")
 vandnps	%ymm10, %ymm9, %ymm8
 
 ## VANDNPSrm
@@ -51,8 +55,10 @@ vandnps	%ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V6:%.+]] = add i64 [[R14_0]], [[V5]]
 # CHECK-NEXT: [[V7:%.+]] = inttoptr i64 [[V6]] to <2 x i64>*
 # CHECK-NEXT: [[V8:%.+]] = load <2 x i64>, <2 x i64>* [[V7]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V9:%.+]] = xor <2 x i64> [[V3]], <i64 -1, i64 -1>
+# CHECK-NEXT: [[V10:%.+]] = and <2 x i64> [[V9]], [[V8]]
+# CHECK-NEXT: [[V11:%.+]] = bitcast <2 x i64> [[V10]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V11]], metadata !"XMM8")
 vandnps	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VANDNPSrr
