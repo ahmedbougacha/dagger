@@ -51,8 +51,9 @@ movsd	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = trunc i128 [[V3]] to i64
 # CHECK-NEXT: [[V5:%.+]] = bitcast i64 [[V4]] to double
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V6:%.+]] = insertelement <2 x double> [[V2]], double [[V5]], i32 0
+# CHECK-NEXT: [[V7:%.+]] = bitcast <2 x double> [[V6]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V7]], metadata !"XMM8")
 movsd	%xmm10, %xmm8
 
 ## MOVSDrr_REV:	movsd	%xmm10, %xmm8
