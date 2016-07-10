@@ -197,6 +197,31 @@ bool X86InstrSema::translateTargetInst() {
     return true;
   }
 
+  case X86::XCHG16ar:
+  case X86::XCHG32ar:
+  case X86::XCHG32ar64:
+  case X86::XCHG64ar: {
+    unsigned R1 = getRegOp(0);
+    unsigned R2;
+    switch (Opcode) {
+    case X86::XCHG16ar:
+      R2 = X86::AX;
+      break;
+    case X86::XCHG32ar64:
+    case X86::XCHG32ar:
+      R2 = X86::EAX;
+      break;
+    case X86::XCHG64ar:
+      R2 = X86::RAX;
+      break;
+    }
+    Value *V1 = getReg(R1);
+    Value *V2 = getReg(R2);
+    setReg(R2, V1);
+    setReg(R1, V2);
+    return true;
+  }
+
   case X86::NOOP:
   case X86::NOOPW:
   case X86::NOOPL:
