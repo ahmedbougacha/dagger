@@ -485,6 +485,20 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
 
+  case ISD::ROTL: {
+    Value *LHS = getNextOperand();
+    Type *Ty = LHS->getType();
+    assert(Ty->isIntegerTy());
+    Value *RHS = Builder->CreateZExt(getNextOperand(), Ty);
+    // FIXME: RHS needs to be tweaked to avoid undefined results.
+    registerResult(Builder->CreateOr(
+        Builder->CreateShl(LHS, RHS),
+        Builder->CreateLShr(
+            LHS, Builder->CreateSub(
+                     ConstantInt::get(Ty, Ty->getScalarSizeInBits()), RHS))));
+    break;
+  }
+
   case ISD::INSERT_VECTOR_ELT: {
     Value *Vec = getNextOperand();
     Value *Val = getNextOperand();
