@@ -187,10 +187,10 @@ def : Semantics<SHL64r1,  [(set GR64:$dst,  (shl GR64:$src1, (i64 1)))]>;
 // FIXME: We could use custom SD opcodes for this kind of thing.
 def : Semantics<CBW,  [(set AX,  (sext AL))]>;
 def : Semantics<CWDE, [(set EAX, (sext AX))]>;
-def : Semantics<CWD,  [(set DX,  (sra (shl AX, (i16 15)), (i16 15)))]>;
-def : Semantics<CDQ,  [(set EDX, (sra (shl EAX, (i32 31)), (i32 31)))]>;
+def : Semantics<CWD,  [(set DX,  (sra AX, (i16 15))), (set AX, AX)]>;
+def : Semantics<CDQ,  [(set EDX, (sra EAX, (i32 31))), (set EAX, EAX)]>;
 def : Semantics<CDQE, [(set RAX, (sext EAX))]>;
-def : Semantics<CQO,  [(set RDX, (sra (shl RAX, (i64 63)), (i64 63)))]>;
+def : Semantics<CQO,  [(set RDX, (sra RAX, (i64 63))), (set RAX, RAX)]>;
 
 def : Semantics<MOVUPSrr, [(set (v4f32 VR128:$dst), (v4f32 VR128:$src))]>;
 def : Semantics<MOVAPSrr, [(set (v4f32 VR128:$dst), (v4f32 VR128:$src))]>;
