@@ -586,6 +586,27 @@ bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
     translateShuffle(Mask, Src1, Src2);
     break;
   }
+  case X86ISD::PCMPGT: {
+    Type *ResType = ResEVT.getTypeForEVT(Ctx);
+    Value *Src1 = getNextOperand();
+    Value *Src2 = getNextOperand();
+    Constant *Ones = Constant::getAllOnesValue(ResType);
+    Constant *Zero = Constant::getNullValue(ResType);
+    registerResult(
+        Builder->CreateSelect(Builder->CreateICmpSGT(Src1, Src2), Ones, Zero));
+    break;
+  }
+  case X86ISD::PCMPEQ: { // FIXME
+    Type *ResType = ResEVT.getTypeForEVT(Ctx);
+    Value *Src1 = getNextOperand();
+    Value *Src2 = getNextOperand();
+    Constant *Ones = Constant::getAllOnesValue(ResType);
+    Constant *Zero = Constant::getNullValue(ResType);
+    registerResult(
+        Builder->CreateSelect(Builder->CreateICmpEQ(Src1, Src2), Ones, Zero));
+    break;
+  }
+
   case X86ISD::HSUB:  translateHorizontalBinop(Instruction::Sub);  break;
   case X86ISD::HADD:  translateHorizontalBinop(Instruction::Add);  break;
   case X86ISD::FHSUB: translateHorizontalBinop(Instruction::FSub); break;

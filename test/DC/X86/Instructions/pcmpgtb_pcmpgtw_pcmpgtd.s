@@ -52,8 +52,10 @@ pcmpgtw	%mm6, %mm4
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <2 x i64>*
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: [[V8:%.+]] = bitcast <2 x i64> [[V7]] to <16 x i8>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V9:%.+]] = icmp sgt <16 x i8> [[V2]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = select <16 x i1> [[V9]], <16 x i8> <i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1>, <16 x i8> zeroinitializer
+# CHECK-NEXT: [[V11:%.+]] = bitcast <16 x i8> [[V10]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V11]], metadata !"XMM8")
 pcmpgtb	2(%r14,%r15,2), %xmm8
 
 ## PCMPGTBrr
@@ -67,8 +69,10 @@ pcmpgtb	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[XMM10_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM10")
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <16 x i8>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V5:%.+]] = icmp sgt <16 x i8> [[V2]], [[V4]]
+# CHECK-NEXT: [[V6:%.+]] = select <16 x i1> [[V5]], <16 x i8> <i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1>, <16 x i8> zeroinitializer
+# CHECK-NEXT: [[V7:%.+]] = bitcast <16 x i8> [[V6]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V7]], metadata !"XMM8")
 pcmpgtb	%xmm10, %xmm8
 
 ## PCMPGTDrm
@@ -87,8 +91,10 @@ pcmpgtb	%xmm10, %xmm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <2 x i64>*
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: [[V8:%.+]] = bitcast <2 x i64> [[V7]] to <4 x i32>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V9:%.+]] = icmp sgt <4 x i32> [[V2]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = select <4 x i1> [[V9]], <4 x i32> <i32 -1, i32 -1, i32 -1, i32 -1>, <4 x i32> zeroinitializer
+# CHECK-NEXT: [[V11:%.+]] = bitcast <4 x i32> [[V10]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V11]], metadata !"XMM8")
 pcmpgtd	2(%r14,%r15,2), %xmm8
 
 ## PCMPGTDrr
@@ -102,8 +108,10 @@ pcmpgtd	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[XMM10_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM10")
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x i32>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V5:%.+]] = icmp sgt <4 x i32> [[V2]], [[V4]]
+# CHECK-NEXT: [[V6:%.+]] = select <4 x i1> [[V5]], <4 x i32> <i32 -1, i32 -1, i32 -1, i32 -1>, <4 x i32> zeroinitializer
+# CHECK-NEXT: [[V7:%.+]] = bitcast <4 x i32> [[V6]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V7]], metadata !"XMM8")
 pcmpgtd	%xmm10, %xmm8
 
 ## PCMPGTWrm
@@ -122,8 +130,10 @@ pcmpgtd	%xmm10, %xmm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <2 x i64>*
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: [[V8:%.+]] = bitcast <2 x i64> [[V7]] to <8 x i16>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V9:%.+]] = icmp sgt <8 x i16> [[V2]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = select <8 x i1> [[V9]], <8 x i16> <i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1>, <8 x i16> zeroinitializer
+# CHECK-NEXT: [[V11:%.+]] = bitcast <8 x i16> [[V10]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V11]], metadata !"XMM8")
 pcmpgtw	2(%r14,%r15,2), %xmm8
 
 ## PCMPGTWrr
@@ -137,8 +147,10 @@ pcmpgtw	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[XMM10_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM10")
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <8 x i16>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V5:%.+]] = icmp sgt <8 x i16> [[V2]], [[V4]]
+# CHECK-NEXT: [[V6:%.+]] = select <8 x i1> [[V5]], <8 x i16> <i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1>, <8 x i16> zeroinitializer
+# CHECK-NEXT: [[V7:%.+]] = bitcast <8 x i16> [[V6]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V7]], metadata !"XMM8")
 pcmpgtw	%xmm10, %xmm8
 
 retq
