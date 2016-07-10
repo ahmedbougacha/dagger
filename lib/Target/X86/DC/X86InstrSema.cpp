@@ -619,6 +619,18 @@ bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
     break;
   }
 
+  case X86ISD::VSHLI: {
+    Value *Src1 = getNextOperand();
+    auto *Src2 = cast<ConstantInt>(getNextOperand());
+    registerResult(Builder->CreateShl(Src1, Src2->getZExtValue()));
+    break;
+  }
+  case X86ISD::VSRAI: {
+    Value *Src1 = getNextOperand();
+    auto *Src2 = cast<ConstantInt>(getNextOperand());
+    registerResult(Builder->CreateAShr(Src1, Src2->getZExtValue()));
+    break;
+  }
   case X86ISD::HSUB:  translateHorizontalBinop(Instruction::Sub);  break;
   case X86ISD::HADD:  translateHorizontalBinop(Instruction::Add);  break;
   case X86ISD::FHSUB: translateHorizontalBinop(Instruction::FSub); break;

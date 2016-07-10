@@ -44,8 +44,9 @@ psraw	%mm6, %mm4
 # CHECK-NEXT: [[XMM8_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM8_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V3:%.+]] = ashr <4 x i32> [[V2]], <i32 2, i32 2, i32 2, i32 2>
+# CHECK-NEXT: [[V4:%.+]] = bitcast <4 x i32> [[V3]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V4]], metadata !"XMM8")
 psrad	$2, %xmm8
 
 ## PSRADrm
@@ -91,8 +92,9 @@ psrad	%xmm10, %xmm8
 # CHECK-NEXT: [[XMM8_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM8_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V3:%.+]] = ashr <8 x i16> [[V2]], <i16 2, i16 2, i16 2, i16 2, i16 2, i16 2, i16 2, i16 2>
+# CHECK-NEXT: [[V4:%.+]] = bitcast <8 x i16> [[V3]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V4]], metadata !"XMM8")
 psraw	$2, %xmm8
 
 ## PSRAWrm
