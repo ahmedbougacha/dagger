@@ -410,6 +410,37 @@ bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
     translateDivRem(/* isThreeOperand= */ true, /* isSigned= */ true);
     break;
 
+  case X86ISD::FSETCC: {
+    enum SSECC { EQ, LT, LE, UNORD, NEQ, NLT, NLE, ORD, LastCC = ORD };
+    Value *LHS = getNextOperand(), *RHS = getNextOperand();
+    Value *CCV = getNextOperand();
+
+    const unsigned CCI = cast<ConstantInt>(CCV)->getZExtValue();
+    assert(CCI <= SSECC::LastCC && "Invalid SSE CC!");
+    const SSECC CC = (SSECC)CCI;
+
+    CmpInst::Predicate Pred;
+    switch (CC) {
+    case EQ: Pred = CmpInst::FCMP_OEQ; break;
+    case LT: Pred = CmpInst::FCMP_OLT; break;
+    case LE: Pred = CmpInst::FCMP_OLE; break;
+    case UNORD: Pred = CmpInst::FCMP_UNO; break;
+    case NEQ: Pred = CmpInst::FCMP_UNE; break;
+    case NLT: Pred = CmpInst::FCMP_UGE; break;
+    case NLE: Pred = CmpInst::FCMP_UGT; break;
+    case ORD: Pred = CmpInst::FCMP_ORD; break;
+    }
+
+    Type *ResTy = ResEVT.getTypeForEVT(Ctx);
+    assert(ResTy->isFloatingPointTy());
+
+    Value *Cmp = Builder->CreateFCmp(Pred, LHS, RHS);
+    Cmp = Builder->CreateSExt(
+        Cmp, Builder->getIntNTy(ResTy->getPrimitiveSizeInBits()));
+    registerResult(Builder->CreateBitCast(Cmp, ResTy));
+    break;
+  }
+
   case X86ISD::FMIN:
   case X86ISD::FMAX: {
     // FIXME: Ok this is an interesting one. The short version is: we don't
@@ -555,6 +586,7 @@ Value *X86InstrSema::translateCustomOperand(unsigned OperandType,
     break;
   }
 
+  case X86::OpTypes::SSECC:
   case X86::OpTypes::u8imm:
   case X86::OpTypes::i1imm:
   case X86::OpTypes::i8imm:

@@ -1654,8 +1654,16 @@ cmpps	$2, %xmm10, %xmm8
 # CHECK-NEXT: [[V6:%.+]] = add i64 [[R14_0]], [[V5]]
 # CHECK-NEXT: [[V7:%.+]] = inttoptr i64 [[V6]] to double*
 # CHECK-NEXT: [[V8:%.+]] = load double, double* [[V7]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V9:%.+]] = fcmp ole double [[V3]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = sext i1 [[V9]] to i64
+# CHECK-NEXT: [[V11:%.+]] = bitcast i64 [[V10]] to double
+# CHECK-NEXT: [[V12:%.+]] = bitcast double [[V11]] to i64
+# CHECK-NEXT: [[XMM8_1:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V13:%.+]] = bitcast <4 x float> [[XMM8_1]] to i128
+# CHECK-NEXT: [[V14:%.+]] = zext i64 [[V12]] to i128
+# CHECK-NEXT: [[V15:%.+]] = and i128 [[V13]], -18446744073709551616
+# CHECK-NEXT: [[V16:%.+]] = or i128 [[V14]], [[V15]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V16]], metadata !"XMM8")
 cmplesd	2(%r14,%r15,2), %xmm8
 
 ## CMPSDrm_alt
@@ -1674,8 +1682,16 @@ cmplesd	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V6:%.+]] = add i64 [[R14_0]], [[V5]]
 # CHECK-NEXT: [[V7:%.+]] = inttoptr i64 [[V6]] to double*
 # CHECK-NEXT: [[V8:%.+]] = load double, double* [[V7]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V9:%.+]] = fcmp ole double [[V3]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = sext i1 [[V9]] to i64
+# CHECK-NEXT: [[V11:%.+]] = bitcast i64 [[V10]] to double
+# CHECK-NEXT: [[V12:%.+]] = bitcast double [[V11]] to i64
+# CHECK-NEXT: [[XMM8_1:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V13:%.+]] = bitcast <4 x float> [[XMM8_1]] to i128
+# CHECK-NEXT: [[V14:%.+]] = zext i64 [[V12]] to i128
+# CHECK-NEXT: [[V15:%.+]] = and i128 [[V13]], -18446744073709551616
+# CHECK-NEXT: [[V16:%.+]] = or i128 [[V14]], [[V15]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V16]], metadata !"XMM8")
 cmpsd	$2, 2(%r14,%r15,2), %xmm8
 
 ## CMPSDrr
@@ -1691,8 +1707,16 @@ cmpsd	$2, 2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V4:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V5:%.+]] = trunc i128 [[V4]] to i64
 # CHECK-NEXT: [[V6:%.+]] = bitcast i64 [[V5]] to double
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V7:%.+]] = fcmp ole double [[V3]], [[V6]]
+# CHECK-NEXT: [[V8:%.+]] = sext i1 [[V7]] to i64
+# CHECK-NEXT: [[V9:%.+]] = bitcast i64 [[V8]] to double
+# CHECK-NEXT: [[V10:%.+]] = bitcast double [[V9]] to i64
+# CHECK-NEXT: [[XMM8_1:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V11:%.+]] = bitcast <4 x float> [[XMM8_1]] to i128
+# CHECK-NEXT: [[V12:%.+]] = zext i64 [[V10]] to i128
+# CHECK-NEXT: [[V13:%.+]] = and i128 [[V11]], -18446744073709551616
+# CHECK-NEXT: [[V14:%.+]] = or i128 [[V12]], [[V13]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V14]], metadata !"XMM8")
 cmplesd	%xmm10, %xmm8
 
 ## CMPSDrr_alt
@@ -1708,8 +1732,16 @@ cmplesd	%xmm10, %xmm8
 # CHECK-NEXT: [[V4:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V5:%.+]] = trunc i128 [[V4]] to i64
 # CHECK-NEXT: [[V6:%.+]] = bitcast i64 [[V5]] to double
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V7:%.+]] = fcmp ole double [[V3]], [[V6]]
+# CHECK-NEXT: [[V8:%.+]] = sext i1 [[V7]] to i64
+# CHECK-NEXT: [[V9:%.+]] = bitcast i64 [[V8]] to double
+# CHECK-NEXT: [[V10:%.+]] = bitcast double [[V9]] to i64
+# CHECK-NEXT: [[XMM8_1:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V11:%.+]] = bitcast <4 x float> [[XMM8_1]] to i128
+# CHECK-NEXT: [[V12:%.+]] = zext i64 [[V10]] to i128
+# CHECK-NEXT: [[V13:%.+]] = and i128 [[V11]], -18446744073709551616
+# CHECK-NEXT: [[V14:%.+]] = or i128 [[V12]], [[V13]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V14]], metadata !"XMM8")
 cmpsd	$2, %xmm10, %xmm8
 
 ## CMPSSrm
@@ -1728,8 +1760,16 @@ cmpsd	$2, %xmm10, %xmm8
 # CHECK-NEXT: [[V6:%.+]] = add i64 [[R14_0]], [[V5]]
 # CHECK-NEXT: [[V7:%.+]] = inttoptr i64 [[V6]] to float*
 # CHECK-NEXT: [[V8:%.+]] = load float, float* [[V7]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V9:%.+]] = fcmp ole float [[V3]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = sext i1 [[V9]] to i32
+# CHECK-NEXT: [[V11:%.+]] = bitcast i32 [[V10]] to float
+# CHECK-NEXT: [[V12:%.+]] = bitcast float [[V11]] to i32
+# CHECK-NEXT: [[XMM8_1:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V13:%.+]] = bitcast <4 x float> [[XMM8_1]] to i128
+# CHECK-NEXT: [[V14:%.+]] = zext i32 [[V12]] to i128
+# CHECK-NEXT: [[V15:%.+]] = and i128 [[V13]], -4294967296
+# CHECK-NEXT: [[V16:%.+]] = or i128 [[V14]], [[V15]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V16]], metadata !"XMM8")
 cmpless	2(%r14,%r15,2), %xmm8
 
 ## CMPSSrm_alt
@@ -1748,8 +1788,16 @@ cmpless	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V6:%.+]] = add i64 [[R14_0]], [[V5]]
 # CHECK-NEXT: [[V7:%.+]] = inttoptr i64 [[V6]] to float*
 # CHECK-NEXT: [[V8:%.+]] = load float, float* [[V7]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V9:%.+]] = fcmp ole float [[V3]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = sext i1 [[V9]] to i32
+# CHECK-NEXT: [[V11:%.+]] = bitcast i32 [[V10]] to float
+# CHECK-NEXT: [[V12:%.+]] = bitcast float [[V11]] to i32
+# CHECK-NEXT: [[XMM8_1:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V13:%.+]] = bitcast <4 x float> [[XMM8_1]] to i128
+# CHECK-NEXT: [[V14:%.+]] = zext i32 [[V12]] to i128
+# CHECK-NEXT: [[V15:%.+]] = and i128 [[V13]], -4294967296
+# CHECK-NEXT: [[V16:%.+]] = or i128 [[V14]], [[V15]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V16]], metadata !"XMM8")
 cmpss	$2, 2(%r14,%r15,2), %xmm8
 
 ## CMPSSrr
@@ -1765,8 +1813,16 @@ cmpss	$2, 2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V4:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V5:%.+]] = trunc i128 [[V4]] to i32
 # CHECK-NEXT: [[V6:%.+]] = bitcast i32 [[V5]] to float
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V7:%.+]] = fcmp ole float [[V3]], [[V6]]
+# CHECK-NEXT: [[V8:%.+]] = sext i1 [[V7]] to i32
+# CHECK-NEXT: [[V9:%.+]] = bitcast i32 [[V8]] to float
+# CHECK-NEXT: [[V10:%.+]] = bitcast float [[V9]] to i32
+# CHECK-NEXT: [[XMM8_1:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V11:%.+]] = bitcast <4 x float> [[XMM8_1]] to i128
+# CHECK-NEXT: [[V12:%.+]] = zext i32 [[V10]] to i128
+# CHECK-NEXT: [[V13:%.+]] = and i128 [[V11]], -4294967296
+# CHECK-NEXT: [[V14:%.+]] = or i128 [[V12]], [[V13]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V14]], metadata !"XMM8")
 cmpless	%xmm10, %xmm8
 
 ## CMPSSrr_alt
@@ -1782,8 +1838,16 @@ cmpless	%xmm10, %xmm8
 # CHECK-NEXT: [[V4:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V5:%.+]] = trunc i128 [[V4]] to i32
 # CHECK-NEXT: [[V6:%.+]] = bitcast i32 [[V5]] to float
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V7:%.+]] = fcmp ole float [[V3]], [[V6]]
+# CHECK-NEXT: [[V8:%.+]] = sext i1 [[V7]] to i32
+# CHECK-NEXT: [[V9:%.+]] = bitcast i32 [[V8]] to float
+# CHECK-NEXT: [[V10:%.+]] = bitcast float [[V9]] to i32
+# CHECK-NEXT: [[XMM8_1:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V11:%.+]] = bitcast <4 x float> [[XMM8_1]] to i128
+# CHECK-NEXT: [[V12:%.+]] = zext i32 [[V10]] to i128
+# CHECK-NEXT: [[V13:%.+]] = and i128 [[V11]], -4294967296
+# CHECK-NEXT: [[V14:%.+]] = or i128 [[V12]], [[V13]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V14]], metadata !"XMM8")
 cmpss	$2, %xmm10, %xmm8
 
 retq
