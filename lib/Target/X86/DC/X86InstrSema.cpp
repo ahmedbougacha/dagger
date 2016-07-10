@@ -493,6 +493,46 @@ bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
         Builder->CreateShuffleVector(Src1, Src2, ConstantVector::get(Mask)));
     break;
   }
+  case X86ISD::PSHUFB: {
+    Value *Src = getNextOperand();
+    Value *Mask = getNextOperand();
+    const unsigned NumElts = ResEVT.getVectorNumElements();
+
+    // If the high bit (7) of the byte is set, the element is zeroed.
+    // Do that on the entire vector first.
+    Mask = Builder->CreateSelect(
+        Builder->CreateICmpUGE(
+            Mask, ConstantVector::getSplat(NumElts, Builder->getInt8(0x80))),
+        Constant::getNullValue(Mask->getType()), Mask);
+
+    // Of the remaining bits, only the least significant 4 are used.
+    Mask = Builder->CreateAnd(
+        Mask, ConstantVector::getSplat(NumElts, Builder->getInt8(0xF)));
+
+    // For AVX vectors with 32 bytes the base of the shuffle is the half of
+    // the vector we're inside. Split the whole vector to avoid lane selects.
+    if (NumElts == 16) {
+      registerResult(translatePSHUFB(Src, Mask));
+      break;
+    }
+
+    assert(NumElts == 32);
+    const uint32_t ShufMask[32] = {0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10,
+                                   11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                                   22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    ArrayRef<uint32_t> LoShuf(&ShufMask[0], 16), HiShuf(&ShufMask[16], 16);
+    Value *UndefV = UndefValue::get(Src->getType());
+    Value *SrcLo = Builder->CreateShuffleVector(Src, UndefV, LoShuf);
+    Value *SrcHi = Builder->CreateShuffleVector(Src, UndefV, HiShuf);
+    Value *MaskLo = Builder->CreateShuffleVector(Mask, UndefV, LoShuf);
+    Value *MaskHi = Builder->CreateShuffleVector(Mask, UndefV, HiShuf);
+
+    Value *ResLo = translatePSHUFB(SrcLo, MaskLo);
+    Value *ResHi = translatePSHUFB(SrcHi, MaskHi);
+
+    registerResult(Builder->CreateShuffleVector(ResLo, ResHi, ShufMask));
+    break;
+  }
   case X86ISD::UNPCKL:
   case X86ISD::UNPCKH:
   case X86ISD::MOVLHPS:
@@ -762,6 +802,23 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
                      Builder->CreateBinOp(DivOp, Dividend, Divisor), ResType));
   registerResult(Builder->CreateTrunc(
                      Builder->CreateBinOp(RemOp, Dividend, Divisor), ResType));
+}
+
+Value *X86InstrSema::translatePSHUFB(Value *V, Value *Mask) {
+  assert(V->getType() == Mask->getType());
+  assert(V->getType()->getVectorNumElements() == 16);
+  assert(V->getType()->getVectorElementType() == Builder->getInt8Ty());
+
+  Value *Res = UndefValue::get(V->getType());
+  for (int i = 0; i < 16; ++i) {
+    // Get the next element from the source.
+    Value *Elt = Builder->CreateExtractElement(V, Builder->getInt32(i));
+    // Get the corresponding index from the mask.
+    Value *Idx = Builder->CreateExtractElement(Mask, Builder->getInt32(i));
+    // And put the element at that index in the result.
+    Res = Builder->CreateInsertElement(Res, Elt, Idx);
+  }
+  return Res;
 }
 
 void X86InstrSema::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,

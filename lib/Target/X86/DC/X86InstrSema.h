@@ -58,6 +58,7 @@ private:
 
   void translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
                         Value *V2 = nullptr);
+  Value *translatePSHUFB(Value *V, Value *Mask);
 
   void translateCMPXCHG(unsigned MemOpType, unsigned CmpReg);
 };
