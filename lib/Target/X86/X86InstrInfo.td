@@ -1503,17 +1503,17 @@ def MOV64ao64 : RIi64<0xA1, RawFrmMemOffs, (outs), (ins offset64_64:$src),
 
 let mayStore = 1 in {
 let Uses = [AL] in
-def MOV8o64a : RIi64_NOREX<0xA2, RawFrmMemOffs, (outs offset64_8:$dst), (ins),
+def MOV8o64a : RIi64_NOREX<0xA2, RawFrmMemOffs, (outs), (ins offset64_8:$dst),
                      "movabs{b}\t{%al, $dst|$dst, al}", []>, AdSize64;
 let Uses = [AX] in
-def MOV16o64a : RIi64_NOREX<0xA3, RawFrmMemOffs, (outs offset64_16:$dst), (ins),
+def MOV16o64a : RIi64_NOREX<0xA3, RawFrmMemOffs, (outs), (ins offset64_16:$dst),
                      "movabs{w}\t{%ax, $dst|$dst, ax}", []>, OpSize16, AdSize64;
 let Uses = [EAX] in
-def MOV32o64a : RIi64_NOREX<0xA3, RawFrmMemOffs, (outs offset64_32:$dst), (ins),
+def MOV32o64a : RIi64_NOREX<0xA3, RawFrmMemOffs, (outs), (ins offset64_32:$dst),
                      "movabs{l}\t{%eax, $dst|$dst, eax}", []>, OpSize32,
                      AdSize64;
 let Uses = [RAX] in
-def MOV64o64a : RIi64<0xA3, RawFrmMemOffs, (outs offset64_64:$dst), (ins),
+def MOV64o64a : RIi64<0xA3, RawFrmMemOffs, (outs), (ins offset64_64:$dst),
                      "movabs{q}\t{%rax, $dst|$dst, rax}", []>, AdSize64;
 }
 } // hasSideEffects = 0
