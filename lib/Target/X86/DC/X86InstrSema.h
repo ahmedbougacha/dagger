@@ -40,11 +40,11 @@ class X86InstrSema : public DCInstrSema {
 public:
   X86InstrSema(DCRegisterSema &DRS);
 
-  void translateTargetOpcode(unsigned Opcode);
-  Value *translateCustomOperand(unsigned OperandType, unsigned MIOperandNo);
-  void translateImplicit(unsigned RegNo);
+  bool translateTargetOpcode(unsigned Opcode) override;
+  Value *translateCustomOperand(unsigned OperandType, unsigned MIOperandNo) override;
+  bool translateImplicit(unsigned RegNo) override;
 
-  bool translateTargetInst();
+  bool translateTargetInst() override;
 
 private:
   Value *translateAddr(unsigned MIOperandNo,

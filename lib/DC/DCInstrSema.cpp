@@ -401,44 +401,51 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
     Builder->CreateStore(CurIVal, CurIPtr, true);
   }
 
-  Idx = OpcodeToSemaIdx[CurrentInst->Inst.getOpcode()];
-  if (!translateTargetInst()) {
-    if (Idx == ~0U) {
-      if (!TranslateUnknownToUndef)
-        return false;
-      errs() << "Couldn't translate instruction: \n  ";
-      errs() << "  " << DRS.MII.getName(CurrentInst->Inst.getOpcode()) << ": "
-             << CurrentInst->Inst << "\n";
-      Builder->CreateCall(
-          Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
-      Builder->CreateUnreachable();
-      return true;
-    }
+  bool Success = tryTranslateInst();
 
-    {
-      // Increment the PC before anything.
-      Value *OldPC = getReg(DRS.MRI.getProgramCounter());
-      setReg(DRS.MRI.getProgramCounter(),
-             Builder->CreateAdd(
-                 OldPC, ConstantInt::get(OldPC->getType(), CurrentInst->Size)));
-    }
-
-    while ((Opcode = Next()) != DCINS::END_OF_INSTRUCTION)
-      translateOpcode(Opcode);
+  if (!Success && TranslateUnknownToUndef) {
+    errs() << "Couldn't translate instruction: \n  ";
+    errs() << "  " << DRS.MII.getName(CurrentInst->Inst.getOpcode()) << ": "
+           << CurrentInst->Inst << "\n";
+    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateUnreachable();
+    Success = true;
   }
 
   Vals.clear();
   CurrentInst = nullptr;
   CurrentTInst = nullptr;
+  return Success;
+}
+
+bool DCInstrSema::tryTranslateInst() {
+  if (translateTargetInst())
+    return true;
+
+  Idx = OpcodeToSemaIdx[CurrentInst->Inst.getOpcode()];
+  if (Idx == ~0U)
+    return false;
+
+  {
+    // Increment the PC before anything.
+    Value *OldPC = getReg(DRS.MRI.getProgramCounter());
+    setReg(DRS.MRI.getProgramCounter(),
+           Builder->CreateAdd(
+               OldPC, ConstantInt::get(OldPC->getType(), CurrentInst->Size)));
+  }
+
+  while ((Opcode = Next()) != DCINS::END_OF_INSTRUCTION)
+    if (!translateOpcode(Opcode))
+      return false;
+
   return true;
 }
 
-void DCInstrSema::translateOpcode(unsigned Opcode) {
+bool DCInstrSema::translateOpcode(unsigned Opcode) {
   ResEVT = NextVT();
-  if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START) {
-    translateTargetOpcode(Opcode);
-    return;
-  }
+  if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START)
+    return translateTargetOpcode(Opcode);
+
   switch(Opcode) {
   case ISD::ADD  : translateBinOp(Instruction::Add ); break;
   case ISD::FADD : translateBinOp(Instruction::FAdd); break;
@@ -612,6 +619,8 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   case DCINS::CUSTOM_OP: {
     unsigned OperandType = Next(), MIOperandNo = Next();
     Value *Op = translateCustomOperand(OperandType, MIOperandNo);
+    if (!Op)
+      return false;
     registerResult(Op);
     CurrentTInst->addOpUse(MIOperandNo, OperandType, Op);
     break;
@@ -649,15 +658,11 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   default:
-    if (!TranslateUnknownToUndef)
-      llvm_unreachable(
-          ("Unknown opcode found in semantics: " + utostr(Opcode)).c_str());
-
     errs() << "Couldn't translate opcode for instruction: \n  ";
     errs() << "  " << DRS.MII.getName(CurrentInst->Inst.getOpcode()) << ": "
            << CurrentInst->Inst << "\n";
     errs() << "Opcode: " << Opcode << "\n";
-    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
-    Builder->CreateUnreachable();
+    return false;
   }
+  return true;
 }

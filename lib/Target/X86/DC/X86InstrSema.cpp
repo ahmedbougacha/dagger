@@ -237,11 +237,12 @@ bool X86InstrSema::translateTargetInst() {
   return false;
 }
 
-void X86InstrSema::translateTargetOpcode(unsigned Opcode) {
+bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
   switch (Opcode) {
   default:
-    llvm_unreachable(
-        ("Unknown X86 opcode found in semantics: " + utostr(Opcode)).c_str());
+    errs() << "Unknown X86 opcode found in semantics: " + utostr(Opcode)
+           << "\n";
+    return false;
   case X86ISD::CMOV: {
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand(),
           *Op3 = getNextOperand(), *Op4 = getNextOperand();
@@ -493,6 +494,8 @@ void X86InstrSema::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::FHSUB: translateHorizontalBinop(Instruction::FSub); break;
   case X86ISD::FHADD: translateHorizontalBinop(Instruction::FAdd); break;
   }
+
+  return true;
 }
 
 Value *X86InstrSema::translateCustomOperand(unsigned OperandType,
@@ -501,8 +504,9 @@ Value *X86InstrSema::translateCustomOperand(unsigned OperandType,
 
   switch (OperandType) {
   default:
-    llvm_unreachable(("Unknown X86 operand type found in semantics: " +
-                     utostr(OperandType)).c_str());
+    errs() << "Unknown X86 operand type found in semantics: "
+           << utostr(OperandType) << "\n";
+    return nullptr;
 
   case X86::OpTypes::i8mem : Res = translateAddr(MIOpNo, MVT::i8); break;
   case X86::OpTypes::i16mem: Res = translateAddr(MIOpNo, MVT::i16); break;
@@ -561,7 +565,7 @@ Value *X86InstrSema::translateCustomOperand(unsigned OperandType,
   return Res;
 }
 
-void X86InstrSema::translateImplicit(unsigned RegNo) {
+bool X86InstrSema::translateImplicit(unsigned RegNo) {
   assert(RegNo == X86::EFLAGS);
   // FIXME: We need to understand instructions that define multiple values.
   Value *Def = 0;
@@ -575,6 +579,7 @@ void X86InstrSema::translateImplicit(unsigned RegNo) {
   }
   assert(Def && "Nothing was defined in an instruction with implicit EFLAGS?");
   X86DRS.updateEFLAGS(Def);
+  return true;
 }
 
 Value *X86InstrSema::translateAddr(unsigned MIOperandNo,

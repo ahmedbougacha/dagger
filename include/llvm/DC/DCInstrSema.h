@@ -145,12 +145,12 @@ protected:
   void insertCall(Value *CallTarget);
   Value *insertTranslateAt(Value *OrigTarget);
 
-  void translateOpcode(unsigned Opcode);
+  bool translateOpcode(unsigned Opcode);
 
-  virtual void translateTargetOpcode(unsigned Opcode) = 0;
+  virtual bool translateTargetOpcode(unsigned Opcode) = 0;
   virtual Value *translateCustomOperand(unsigned OperandType,
                                         unsigned MIOperandNo) = 0;
-  virtual void translateImplicit(unsigned RegNo) = 0;
+  virtual bool translateImplicit(unsigned RegNo) = 0;
 
   // Try to do a custom translation of a full instruction.
   // Called before translating an instruction.
@@ -161,6 +161,8 @@ protected:
   uint64_t getBasicBlockEndAddress() const;
 
 private:
+  bool tryTranslateInst();
+
   void translateBinOp(Instruction::BinaryOps Opc);
   void translateCastOp(Instruction::CastOps Opc);
 
