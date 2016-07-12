@@ -40,7 +40,7 @@ class X86InstrSema : public DCInstrSema {
 public:
   X86InstrSema(DCRegisterSema &DRS);
 
-  void translateTargetOpcode();
+  void translateTargetOpcode(unsigned Opcode);
   void translateCustomOperand(unsigned OperandType, unsigned MIOperandNo);
   void translateImplicit(unsigned RegNo);
 

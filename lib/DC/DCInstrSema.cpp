@@ -436,7 +436,7 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
 void DCInstrSema::translateOpcode(unsigned Opcode) {
   ResEVT = NextVT();
   if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START) {
-    translateTargetOpcode();
+    translateTargetOpcode(Opcode);
     return;
   }
   switch(Opcode) {

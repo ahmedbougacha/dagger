@@ -238,8 +238,8 @@ bool X86InstrSema::translateTargetInst() {
   return false;
 }
 
-void X86InstrSema::translateTargetOpcode() {
-  switch(Opcode) {
+void X86InstrSema::translateTargetOpcode(unsigned Opcode) {
+  switch (Opcode) {
   default:
     llvm_unreachable(
         ("Unknown X86 opcode found in semantics: " + utostr(Opcode)).c_str());

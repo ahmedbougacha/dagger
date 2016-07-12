@@ -147,7 +147,7 @@ protected:
 
   void translateOpcode(unsigned Opcode);
 
-  virtual void translateTargetOpcode() = 0;
+  virtual void translateTargetOpcode(unsigned Opcode) = 0;
   virtual void translateCustomOperand(unsigned OperandType,
                                       unsigned MIOperandNo) = 0;
   virtual void translateImplicit(unsigned RegNo) = 0;
