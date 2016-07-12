@@ -109,8 +109,7 @@ bool X86InstrSema::translateTargetInst() {
       if (XADDMemOpType != X86::OpTypes::OPERAND_TYPE_INVALID) {
         AtomicOpc = AtomicRMWInst::Add;
         Opc = Instruction::Add;
-        translateCustomOperand(XADDMemOpType, 0);
-        PointerOperand = Vals.back();
+        PointerOperand = translateCustomOperand(XADDMemOpType, 0);
         Operand2 = getReg(getRegOp(5));
       } else {
         if (AtomicOpc == AtomicRMWInst::BAD_BINOP)
@@ -496,32 +495,33 @@ void X86InstrSema::translateTargetOpcode(unsigned Opcode) {
   }
 }
 
-void X86InstrSema::translateCustomOperand(unsigned OperandType,
-                                          unsigned MIOpNo) {
-  switch(OperandType) {
+Value *X86InstrSema::translateCustomOperand(unsigned OperandType,
+                                            unsigned MIOpNo) {
+  Value *Res = nullptr;
+
+  switch (OperandType) {
   default:
     llvm_unreachable(("Unknown X86 operand type found in semantics: " +
                      utostr(OperandType)).c_str());
 
-  case X86::OpTypes::i8mem : translateAddr(MIOpNo, MVT::i8); break;
-  case X86::OpTypes::i16mem: translateAddr(MIOpNo, MVT::i16); break;
-  case X86::OpTypes::i32mem: translateAddr(MIOpNo, MVT::i32); break;
-  case X86::OpTypes::i64mem: translateAddr(MIOpNo, MVT::i64); break;
-  case X86::OpTypes::f32mem: translateAddr(MIOpNo, MVT::f32); break;
-  case X86::OpTypes::f64mem: translateAddr(MIOpNo, MVT::f64); break;
-  case X86::OpTypes::f80mem: translateAddr(MIOpNo, MVT::f80); break;
+  case X86::OpTypes::i8mem : Res = translateAddr(MIOpNo, MVT::i8); break;
+  case X86::OpTypes::i16mem: Res = translateAddr(MIOpNo, MVT::i16); break;
+  case X86::OpTypes::i32mem: Res = translateAddr(MIOpNo, MVT::i32); break;
+  case X86::OpTypes::i64mem: Res = translateAddr(MIOpNo, MVT::i64); break;
+  case X86::OpTypes::f32mem: Res = translateAddr(MIOpNo, MVT::f32); break;
+  case X86::OpTypes::f64mem: Res = translateAddr(MIOpNo, MVT::f64); break;
+  case X86::OpTypes::f80mem: Res = translateAddr(MIOpNo, MVT::f80); break;
 
   // Just fallback to an integer for the rest, let the user decide the type.
   case X86::OpTypes::i128mem :
   case X86::OpTypes::i256mem :
   case X86::OpTypes::f128mem :
   case X86::OpTypes::f256mem :
-  case X86::OpTypes::lea64mem: translateAddr(MIOpNo); break;
+  case X86::OpTypes::lea64mem: Res = translateAddr(MIOpNo); break;
 
   case X86::OpTypes::lea64_32mem: {
-    translateAddr(MIOpNo);
-    Value *&Ptr = Vals.back();
-    Ptr = Builder->CreateTruncOrBitCast(Ptr, Builder->getInt32Ty());
+    Res = Builder->CreateTruncOrBitCast(translateAddr(MIOpNo),
+                                        Builder->getInt32Ty());
     break;
   }
 
@@ -538,9 +538,7 @@ void X86InstrSema::translateCustomOperand(unsigned OperandType,
   case X86::OpTypes::i64imm: {
     // FIXME: Is there anything special to do with the sext/zext?
     Type *ResType = ResEVT.getTypeForEVT(Ctx);
-    Value *Cst =
-        ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOpNo));
-    registerResult(Cst);
+    Res = ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOpNo));
     // FIXME: factor this out in DIS.
     // lets us maintain DTIT info as well.
     break;
@@ -554,10 +552,13 @@ void X86InstrSema::translateCustomOperand(unsigned OperandType,
     // FIXME: use MCInstrAnalysis for this kind of thing?
     uint64_t Target = getImmOp(MIOpNo) +
       CurrentInst->Address + CurrentInst->Size;
-    registerResult(Builder->getInt64(Target));
+    Res = Builder->getInt64(Target);
     break;
   }
   }
+
+  assert(Res);
+  return Res;
 }
 
 void X86InstrSema::translateImplicit(unsigned RegNo) {
@@ -576,8 +577,8 @@ void X86InstrSema::translateImplicit(unsigned RegNo) {
   X86DRS.updateEFLAGS(Def);
 }
 
-void X86InstrSema::translateAddr(unsigned MIOperandNo,
-                                 MVT::SimpleValueType VT) {
+Value *X86InstrSema::translateAddr(unsigned MIOperandNo,
+                                   MVT::SimpleValueType VT) {
   // FIXME: We should switch to TargetRegisterInfo/InstrInfo instead of MC,
   // first because of all things 64 bit mode (ESP/RSP, size of iPTR, ..).
   // We already depend on codegen in lots of places, maybe completely
@@ -606,7 +607,7 @@ void X86InstrSema::translateAddr(unsigned MIOperandNo,
     Res = Builder->CreateIntToPtr(Res, PtrTy);
   }
 
-  registerResult(Res);
+  return Res;
 }
 
 void X86InstrSema::translatePush(Value *Val) {
@@ -734,8 +735,7 @@ void X86InstrSema::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
 
 void X86InstrSema::translateCMPXCHG(unsigned MemOpType, unsigned CmpReg) {
   // First, translate the mem operand.
-  translateCustomOperand(MemOpType, 0);
-  Value *PointerOperand = Vals.back();
+  Value *PointerOperand = translateCustomOperand(MemOpType, 0);
 
   // Next, get the A-reg compare value.
   Value *CmpVal = getReg(CmpReg);

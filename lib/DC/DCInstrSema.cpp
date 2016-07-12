@@ -611,8 +611,9 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
   }
   case DCINS::CUSTOM_OP: {
     unsigned OperandType = Next(), MIOperandNo = Next();
-    translateOperand(OperandType, MIOperandNo);
-    CurrentTInst->addOpUse(MIOperandNo, OperandType, Vals.back());
+    Value *Op = translateCustomOperand(OperandType, MIOperandNo);
+    registerResult(Op);
+    CurrentTInst->addOpUse(MIOperandNo, OperandType, Op);
     break;
   }
   case DCINS::CONSTANT_OP: {
@@ -659,9 +660,4 @@ void DCInstrSema::translateOpcode(unsigned Opcode) {
     Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
     Builder->CreateUnreachable();
   }
-}
-
-void DCInstrSema::translateOperand(unsigned OperandType, unsigned MIOperandNo) {
-  // FIXME: We don't have target-independent operand types yet.
-  translateCustomOperand(OperandType, MIOperandNo);
 }

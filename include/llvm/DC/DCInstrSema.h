@@ -148,8 +148,8 @@ protected:
   void translateOpcode(unsigned Opcode);
 
   virtual void translateTargetOpcode(unsigned Opcode) = 0;
-  virtual void translateCustomOperand(unsigned OperandType,
-                                      unsigned MIOperandNo) = 0;
+  virtual Value *translateCustomOperand(unsigned OperandType,
+                                        unsigned MIOperandNo) = 0;
   virtual void translateImplicit(unsigned RegNo) = 0;
 
   // Try to do a custom translation of a full instruction.
@@ -161,8 +161,6 @@ protected:
   uint64_t getBasicBlockEndAddress() const;
 
 private:
-  void translateOperand(unsigned OperandType, unsigned MIOperandNo);
-
   void translateBinOp(Instruction::BinaryOps Opc);
   void translateCastOp(Instruction::CastOps Opc);
 

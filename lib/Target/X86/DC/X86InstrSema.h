@@ -41,14 +41,14 @@ public:
   X86InstrSema(DCRegisterSema &DRS);
 
   void translateTargetOpcode(unsigned Opcode);
-  void translateCustomOperand(unsigned OperandType, unsigned MIOperandNo);
+  Value *translateCustomOperand(unsigned OperandType, unsigned MIOperandNo);
   void translateImplicit(unsigned RegNo);
 
   bool translateTargetInst();
 
 private:
-  void translateAddr(unsigned MIOperandNo,
-                     MVT::SimpleValueType VT = MVT::iPTRAny);
+  Value *translateAddr(unsigned MIOperandNo,
+                       MVT::SimpleValueType VT = MVT::iPTRAny);
 
   void translatePush(Value *Val);
   Value *translatePop(unsigned SizeInBytes);
