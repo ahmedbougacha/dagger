@@ -133,8 +133,8 @@ void MCObjectDisassembler::buildCFG(MCModule &Module) {
   for (const SymbolRef &Symbol : Obj.symbols()) {
     SymbolRef::Type SymType = unwrapOrReportError(Symbol.getType());
     if (SymType == SymbolRef::ST_Function) {
-      ErrorOr<uint64_t> SymAddrOrErr = Symbol.getAddress();
-      if (SymAddrOrErr.getError())
+      Expected<uint64_t> SymAddrOrErr = Symbol.getAddress();
+      if (Error E = SymAddrOrErr.takeError())
         continue;
       uint64_t SymAddr = *SymAddrOrErr;
       if (MOS)
