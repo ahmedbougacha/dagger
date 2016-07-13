@@ -11,7 +11,7 @@ def main():
     parser.add_argument('tests', nargs='+')
     args = parser.parse_args()
 
-    mc_cmd = args.llvm_obj + '/bin/llvm-mc -filetype=obj -o - '
+    mc_cmd = args.llvm_obj + '/bin/llvm-mc -triple x86_64--darwin -filetype=obj -o - '
     dec_cmd = args.llvm_obj + '/bin/llvm-dec - ' + \
             '-dc-translate-unknown-to-undef -enable-dc-reg-mock-intrin'
 
@@ -26,9 +26,9 @@ def main():
 
         test_lines = raw_test_lines
 
-        print '# RUN: llvm-mc -filetype=obj -o - %s | llvm-dec -' \
-                ' -dc-translate-unknown-to-undef -enable-dc-reg-mock-intrin' \
-                ' | FileCheck %s\n'
+        print '# RUN: llvm-mc -triple x86_64--darwin -filetype=obj -o - %s' \
+                ' | llvm-dec - -dc-translate-unknown-to-undef' \
+                ' -enable-dc-reg-mock-intrin | FileCheck %s\n'
         # run llvm-dec and get the output
         try:
             with open(test) as f:

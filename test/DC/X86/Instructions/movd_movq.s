@@ -1,4 +1,4 @@
-# RUN: llvm-mc -filetype=obj -o - %s | llvm-dec - -dc-translate-unknown-to-undef -enable-dc-reg-mock-intrin | FileCheck %s
+# RUN: llvm-mc -triple x86_64--darwin -filetype=obj -o - %s | llvm-dec - -dc-translate-unknown-to-undef -enable-dc-reg-mock-intrin | FileCheck %s
 
 ## MMX_MOVD64from64rm:	movd	%mm1, 2(%r11,%rbx,2)
 # CHECK-LABEL: call void @llvm.dc.startinst
