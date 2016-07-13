@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/GlobalsModRef.h"
@@ -39,7 +40,6 @@ STATISTIC(NumSDivs,     "Number of sdiv converted to udiv");
 
 namespace {
   class CorrelatedValuePropagation : public FunctionPass {
-    LazyValueInfo *LVI;
   public:
     static char ID;
     CorrelatedValuePropagation(): FunctionPass(ID) {
@@ -175,9 +175,9 @@ static bool processMemAccess(Instruction *I, LazyValueInfo *LVI) {
   return true;
 }
 
-/// processCmp - See if LazyValueInfo's ability to exploit edge conditions,
-/// or range information is sufficient to prove this comparison.  Even for
-/// local conditions, this can sometimes prove conditions instcombine can't by
+/// See if LazyValueInfo's ability to exploit edge conditions or range
+/// information is sufficient to prove this comparison. Even for local
+/// conditions, this can sometimes prove conditions instcombine can't by
 /// exploiting range information.
 static bool processCmp(CmpInst *C, LazyValueInfo *LVI) {
   Value *Op0 = C->getOperand(0);
@@ -207,13 +207,13 @@ static bool processCmp(CmpInst *C, LazyValueInfo *LVI) {
   return true;
 }
 
-/// processSwitch - Simplify a switch instruction by removing cases which can
-/// never fire.  If the uselessness of a case could be determined locally then
-/// constant propagation would already have figured it out.  Instead, walk the
-/// predecessors and statically evaluate cases based on information available
-/// on that edge.  Cases that cannot fire no matter what the incoming edge can
-/// safely be removed.  If a case fires on every incoming edge then the entire
-/// switch can be removed and replaced with a branch to the case destination.
+/// Simplify a switch instruction by removing cases which can never fire. If the
+/// uselessness of a case could be determined locally then constant propagation
+/// would already have figured it out. Instead, walk the predecessors and
+/// statically evaluate cases based on information available on that edge. Cases
+/// that cannot fire no matter what the incoming edge can safely be removed. If
+/// a case fires on every incoming edge then the entire switch can be removed
+/// and replaced with a branch to the case destination.
 static bool processSwitch(SwitchInst *SI, LazyValueInfo *LVI) {
   Value *Cond = SI->getCondition();
   BasicBlock *BB = SI->getParent();
@@ -293,8 +293,7 @@ static bool processSwitch(SwitchInst *SI, LazyValueInfo *LVI) {
   return Changed;
 }
 
-/// processCallSite - Infer nonnull attributes for the arguments at the
-/// specified callsite.
+/// Infer nonnull attributes for the arguments at the specified callsite.
 static bool processCallSite(CallSite CS, LazyValueInfo *LVI) {
   SmallVector<unsigned, 4> Indices;
   unsigned ArgNo = 0;
@@ -326,7 +325,7 @@ static bool processCallSite(CallSite CS, LazyValueInfo *LVI) {
   return true;
 }
 
-/// See if LazyValueInfo's ability to exploit edge conditions, or range
+/// See if LazyValueInfo's ability to exploit edge conditions or range
 /// information is sufficient to prove the both operands of this SDiv are
 /// positive.  If this is the case, replace the SDiv with a UDiv. Even for local
 /// conditions, this can sometimes prove conditions instcombine can't by
@@ -385,17 +384,12 @@ static Constant *getConstantAt(Value *V, Instruction *At, LazyValueInfo *LVI) {
     ConstantInt::getFalse(C->getContext());
 }
 
-bool CorrelatedValuePropagation::runOnFunction(Function &F) {
-  if (skipFunction(F))
-    return false;
-
-  LVI = &getAnalysis<LazyValueInfoWrapperPass>().getLVI();
-
+static bool runImpl(Function &F, LazyValueInfo *LVI) {
   bool FnChanged = false;
 
-  for (Function::iterator FI = F.begin(), FE = F.end(); FI != FE; ++FI) {
+  for (BasicBlock &BB : F) {
     bool BBChanged = false;
-    for (BasicBlock::iterator BI = FI->begin(), BE = FI->end(); BI != BE; ) {
+    for (BasicBlock::iterator BI = BB.begin(), BE = BB.end(); BI != BE;) {
       Instruction *II = &*BI++;
       switch (II->getOpcode()) {
       case Instruction::Select:
@@ -422,7 +416,7 @@ bool CorrelatedValuePropagation::runOnFunction(Function &F) {
       }
     }
 
-    Instruction *Term = FI->getTerminator();
+    Instruction *Term = BB.getTerminator();
     switch (Term->getOpcode()) {
     case Instruction::Switch:
       BBChanged |= processSwitch(cast<SwitchInst>(Term), LVI);
@@ -447,4 +441,29 @@ bool CorrelatedValuePropagation::runOnFunction(Function &F) {
   }
 
   return FnChanged;
+}
+
+bool CorrelatedValuePropagation::runOnFunction(Function &F) {
+  if (skipFunction(F))
+    return false;
+
+  LazyValueInfo *LVI = &getAnalysis<LazyValueInfoWrapperPass>().getLVI();
+  return runImpl(F, LVI);
+}
+
+PreservedAnalyses
+CorrelatedValuePropagationPass::run(Function &F, FunctionAnalysisManager &AM) {
+
+  LazyValueInfo *LVI = &AM.getResult<LazyValueAnalysis>(F);
+  bool Changed = runImpl(F, LVI);
+
+  // FIXME: We need to invalidate LVI to avoid PR28400. Is there a better
+  // solution?
+  AM.invalidate<LazyValueAnalysis>(F);
+
+  if (!Changed)
+    return PreservedAnalyses::all();
+  PreservedAnalyses PA;
+  PA.preserve<GlobalsAA>();
+  return PA;
 }

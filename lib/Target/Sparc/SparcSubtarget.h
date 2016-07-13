@@ -45,6 +45,17 @@ class SparcSubtarget : public SparcGenSubtargetInfo {
   bool HasUmacSmac;
   bool HasLeonCasa;
   bool InsertNOPLoad;
+  bool FixFSMULD;
+  bool ReplaceFMULS;
+  bool FixAllFDIVSQRT;
+  bool UseSoftFpu;
+  bool PerformSDIVReplace;
+  bool FixCallImmediates;
+  bool IgnoreZeroFlag;
+  bool InsertNOPDoublePrecision;
+  bool PreventRoundChange;
+  bool FlushCacheLineSWAP;
+  bool InsertNOPsLoadStore;
 
   SparcInstrInfo InstrInfo;
   SparcTargetLowering TLInfo;
@@ -82,8 +93,19 @@ public:
   bool useSoftFloat() const { return UseSoftFloat; }
 
   // Leon options
-  bool hasUmacSmac() const { return HasUmacSmac; }
+  bool useSoftFpu() const { return UseSoftFpu; }
   bool hasLeonCasa() const { return HasLeonCasa; }
+  bool hasUmacSmac() const { return HasUmacSmac; }
+  bool performSDIVReplace() const { return PerformSDIVReplace; }
+  bool fixCallImmediates() const { return FixCallImmediates; }
+  bool ignoreZeroFlag() const { return IgnoreZeroFlag; }
+  bool insertNOPDoublePrecision() const { return InsertNOPDoublePrecision; }
+  bool fixFSMULD() const { return FixFSMULD; }
+  bool replaceFMULS() const { return ReplaceFMULS; }
+  bool preventRoundChange() const { return PreventRoundChange; }
+  bool fixAllFDIVSQRT() const { return FixAllFDIVSQRT; }
+  bool flushCacheLineSWAP() const { return FlushCacheLineSWAP; }
+  bool insertNOPsLoadStore() const { return InsertNOPsLoadStore; }
   bool insertNOPLoad() const { return InsertNOPLoad; }
 
   /// ParseSubtargetFeatures - Parses features string setting specified

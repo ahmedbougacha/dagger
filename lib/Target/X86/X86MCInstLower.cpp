@@ -127,9 +127,6 @@ GetSymbolFromOperand(const MachineOperand &MO) const {
     // Handle dllimport linkage.
     Name += "__imp_";
     break;
-  case X86II::MO_DARWIN_STUB:
-    Suffix = "$stub";
-    break;
   case X86II::MO_DARWIN_NONLAZY:
   case X86II::MO_DARWIN_NONLAZY_PIC_BASE:
     Suffix = "$non_lazy_ptr";
@@ -138,8 +135,6 @@ GetSymbolFromOperand(const MachineOperand &MO) const {
 
   if (!Suffix.empty())
     Name += DL.getPrivateGlobalPrefix();
-
-  unsigned PrefixLen = Name.size();
 
   if (MO.isGlobal()) {
     const GlobalValue *GV = MO.getGlobal();
@@ -150,13 +145,10 @@ GetSymbolFromOperand(const MachineOperand &MO) const {
     assert(Suffix.empty());
     Sym = MO.getMBB()->getSymbol();
   }
-  unsigned OrigLen = Name.size() - PrefixLen;
 
   Name += Suffix;
   if (!Sym)
     Sym = Ctx.getOrCreateSymbol(Name);
-
-  StringRef OrigName = StringRef(Name).substr(PrefixLen, OrigLen);
 
   // If the target flags on the operand changes the name of the symbol, do that
   // before we return the symbol.
@@ -172,24 +164,6 @@ GetSymbolFromOperand(const MachineOperand &MO) const {
         MachineModuleInfoImpl::
         StubValueTy(AsmPrinter.getSymbol(MO.getGlobal()),
                     !MO.getGlobal()->hasInternalLinkage());
-    }
-    break;
-  }
-  case X86II::MO_DARWIN_STUB: {
-    MachineModuleInfoImpl::StubValueTy &StubSym =
-      getMachOMMI().getFnStubEntry(Sym);
-    if (StubSym.getPointer())
-      return Sym;
-
-    if (MO.isGlobal()) {
-      StubSym =
-        MachineModuleInfoImpl::
-        StubValueTy(AsmPrinter.getSymbol(MO.getGlobal()),
-                    !MO.getGlobal()->hasInternalLinkage());
-    } else {
-      StubSym =
-        MachineModuleInfoImpl::
-        StubValueTy(Ctx.getOrCreateSymbol(OrigName), false);
     }
     break;
   }
@@ -211,7 +185,6 @@ MCOperand X86MCInstLower::LowerSymbolOperand(const MachineOperand &MO,
   // These affect the name of the symbol, not any suffix.
   case X86II::MO_DARWIN_NONLAZY:
   case X86II::MO_DLLIMPORT:
-  case X86II::MO_DARWIN_STUB:
     break;
 
   case X86II::MO_TLVP:      RefKind = MCSymbolRefExpr::VK_TLVP; break;
@@ -1052,7 +1025,7 @@ PrevCrossBBInst(MachineBasicBlock::const_iterator MBBI) {
   const MachineBasicBlock *MBB = MBBI->getParent();
   while (MBBI == MBB->begin()) {
     if (MBB == &MBB->getParent()->front())
-      return nullptr;
+      return MachineBasicBlock::const_iterator();
     MBB = MBB->getPrevNode();
     MBBI = MBB->end();
   }
@@ -1332,7 +1305,9 @@ void X86AsmPrinter::EmitInstruction(const MachineInstr *MI) {
   case X86::SEH_Epilogue: {
     MachineBasicBlock::const_iterator MBBI(MI);
     // Check if preceded by a call and emit nop if so.
-    for (MBBI = PrevCrossBBInst(MBBI); MBBI; MBBI = PrevCrossBBInst(MBBI)) {
+    for (MBBI = PrevCrossBBInst(MBBI);
+         MBBI != MachineBasicBlock::const_iterator();
+         MBBI = PrevCrossBBInst(MBBI)) {
       // Conservatively assume that pseudo instructions don't emit code and keep
       // looking for a call. We may emit an unnecessary nop in some cases.
       if (!MBBI->isPseudo()) {

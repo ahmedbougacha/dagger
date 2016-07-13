@@ -473,7 +473,7 @@ static void InitLibcallNames(const char **Names, const Triple &TT) {
   Names[RTLIB::ATOMIC_FETCH_NAND_8] = "__atomic_fetch_nand_8";
   Names[RTLIB::ATOMIC_FETCH_NAND_16] = "__atomic_fetch_nand_16";
 
-  if (TT.getEnvironment() == Triple::GNU) {
+  if (TT.isGNUEnvironment()) {
     Names[RTLIB::SINCOS_F32] = "sincosf";
     Names[RTLIB::SINCOS_F64] = "sincos";
     Names[RTLIB::SINCOS_F80] = "sincosl";
@@ -1172,9 +1172,10 @@ bool TargetLoweringBase::isLegalRC(const TargetRegisterClass *RC) const {
 
 /// Replace/modify any TargetFrameIndex operands with a targte-dependent
 /// sequence of memory operands that is recognized by PrologEpilogInserter.
-MachineBasicBlock*
-TargetLoweringBase::emitPatchPoint(MachineInstr *MI,
+MachineBasicBlock *
+TargetLoweringBase::emitPatchPoint(MachineInstr &InitialMI,
                                    MachineBasicBlock *MBB) const {
+  MachineInstr *MI = &InitialMI;
   MachineFunction &MF = *MI->getParent()->getParent();
   MachineFrameInfo &MFI = *MF.getFrameInfo();
 

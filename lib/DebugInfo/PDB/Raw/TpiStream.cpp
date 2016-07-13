@@ -64,6 +64,13 @@ TpiStream::TpiStream(const PDBFile &File,
 
 TpiStream::~TpiStream() {}
 
+// Corresponds to `fUDTAnon`.
+template <typename T> static bool isAnonymous(T &Rec) {
+  StringRef Name = Rec.getName();
+  return Name == "<unnamed-tag>" || Name == "__unnamed" ||
+      Name.endswith("::<unnamed-tag>") || Name.endswith("::__unnamed");
+}
+
 // Computes a hash for a given TPI record.
 template <typename T>
 static uint32_t getTpiHash(T &Rec, const CVRecord<TypeLeafKind> &RawRec) {
@@ -73,10 +80,11 @@ static uint32_t getTpiHash(T &Rec, const CVRecord<TypeLeafKind> &RawRec) {
       Opts & static_cast<uint16_t>(ClassOptions::ForwardReference);
   bool Scoped = Opts & static_cast<uint16_t>(ClassOptions::Scoped);
   bool UniqueName = Opts & static_cast<uint16_t>(ClassOptions::HasUniqueName);
+  bool IsAnon = UniqueName && isAnonymous(Rec);
 
-  if (!ForwardRef && !Scoped)
+  if (!ForwardRef && !Scoped && !IsAnon)
     return hashStringV1(Rec.getName());
-  if (!ForwardRef && UniqueName)
+  if (!ForwardRef && UniqueName && !IsAnon)
     return hashStringV1(Rec.getUniqueName());
   return hashBufferV8(RawRec.RawData);
 }
@@ -110,7 +118,7 @@ private:
   template <typename T> Error verify(T &Rec) {
     uint32_t Hash = getTpiHash(Rec, *RawRecord);
     if (Hash % NumHashBuckets != HashValues[Index])
-      return make_error<RawError>(raw_error_code::invalid_tpi_hash);
+      return errorInvalidHash();
     return Error::success();
   }
 
@@ -119,8 +127,14 @@ private:
     support::endian::write32le(Buf, Rec.getUDT().getIndex());
     uint32_t Hash = hashStringV1(StringRef(Buf, 4));
     if (Hash % NumHashBuckets != HashValues[Index])
-      return make_error<RawError>(raw_error_code::invalid_tpi_hash);
+      return errorInvalidHash();
     return Error::success();
+  }
+
+  Error errorInvalidHash() {
+    return make_error<RawError>(
+        raw_error_code::invalid_tpi_hash,
+        "Type index is 0x" + utohexstr(TypeIndex::FirstNonSimpleIndex + Index));
   }
 
   FixedStreamArray<support::ulittle32_t> HashValues;
@@ -255,3 +269,5 @@ iterator_range<CVTypeArray::Iterator>
 TpiStream::types(bool *HadError) const {
   return llvm::make_range(TypeRecords.begin(HadError), TypeRecords.end());
 }
+
+Error TpiStream::commit() { return Error::success(); }

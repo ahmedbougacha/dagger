@@ -1,4 +1,5 @@
 ; RUN: opt < %s -instsimplify -S | FileCheck %s
+; RUN: opt < %s -passes=instsimplify -S | FileCheck %s
 
 declare {i8, i1} @llvm.uadd.with.overflow.i8(i8 %a, i8 %b)
 declare {i8, i1} @llvm.usub.with.overflow.i8(i8 %a, i8 %b)
@@ -186,5 +187,21 @@ cast.end:                                         ; preds = %cast.notnull, %entr
 ; CHECK-LABEL: @malloc_can_return_null
 ; CHECK: br i1 %cmp, label %cast.end, label %cast.notnull
 }
+
+define i32 @call_null() {
+entry:
+  %call = call i32 null()
+  ret i32 %call
+}
+; CHECK-LABEL: define i32 @call_null(
+; CHECK: ret i32 undef
+
+define i32 @call_undef() {
+entry:
+  %call = call i32 undef()
+  ret i32 %call
+}
+; CHECK-LABEL: define i32 @call_undef(
+; CHECK: ret i32 undef
 
 declare noalias i8* @malloc(i64)

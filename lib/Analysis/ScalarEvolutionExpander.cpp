@@ -1288,6 +1288,13 @@ Value *SCEVExpander::expandAddRecExprLiterally(const SCEVAddRecExpr *S) {
   if (!SE.dominates(Step, L->getHeader())) {
     PostLoopScale = Step;
     Step = SE.getConstant(Normalized->getType(), 1);
+    if (!Start->isZero()) {
+        // The normalization below assumes that Start is constant zero, so if
+        // it isn't re-associate Start to PostLoopOffset.
+        assert(!PostLoopOffset && "Start not-null but PostLoopOffset set?");
+        PostLoopOffset = Start;
+        Start = SE.getConstant(Normalized->getType(), 0);
+    }
     Normalized =
       cast<SCEVAddRecExpr>(SE.getAddRecExpr(
                              Start, Step, Normalized->getLoop(),
@@ -1443,8 +1450,12 @@ Value *SCEVExpander::visitAddRecExpr(const SCEVAddRecExpr *S) {
     }
 
     // Just do a normal add. Pre-expand the operands to suppress folding.
-    return expand(SE.getAddExpr(SE.getUnknown(expand(S->getStart())),
-                                SE.getUnknown(expand(Rest))));
+    //
+    // The LHS and RHS values are factored out of the expand call to make the
+    // output independent of the argument evaluation order.
+    const SCEV *AddExprLHS = SE.getUnknown(expand(S->getStart()));
+    const SCEV *AddExprRHS = SE.getUnknown(expand(Rest));
+    return expand(SE.getAddExpr(AddExprLHS, AddExprRHS));
   }
 
   // If we don't yet have a canonical IV, create one.

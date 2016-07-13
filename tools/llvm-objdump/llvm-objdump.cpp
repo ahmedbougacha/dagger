@@ -268,6 +268,12 @@ void llvm::error(std::error_code EC) {
   exit(1);
 }
 
+LLVM_ATTRIBUTE_NORETURN void llvm::error(Twine Message) {
+  errs() << ToolName << ": " << Message << ".\n";
+  errs().flush();
+  exit(1);
+}
+
 LLVM_ATTRIBUTE_NORETURN void llvm::report_error(StringRef File,
                                                 std::error_code EC) {
   assert(EC);
@@ -653,9 +659,14 @@ static void printRelocationTargetName(const MachOObjectFile *O,
 
     for (const SymbolRef &Symbol : O->symbols()) {
       std::error_code ec;
-      ErrorOr<uint64_t> Addr = Symbol.getAddress();
-      if ((ec = Addr.getError()))
-        report_fatal_error(ec.message());
+      Expected<uint64_t> Addr = Symbol.getAddress();
+      if (!Addr) {
+        std::string Buf;
+        raw_string_ostream OS(Buf);
+        logAllUnhandledErrors(Addr.takeError(), OS, "");
+        OS.flush();
+        report_fatal_error(Buf);
+      }
       if (*Addr != Val)
         continue;
       Expected<StringRef> Name = Symbol.getName();
@@ -1014,8 +1025,8 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
   typedef std::vector<std::pair<uint64_t, StringRef>> SectionSymbolsTy;
   std::map<SectionRef, SectionSymbolsTy> AllSymbols;
   for (const SymbolRef &Symbol : Obj->symbols()) {
-    ErrorOr<uint64_t> AddressOrErr = Symbol.getAddress();
-    error(AddressOrErr.getError());
+    Expected<uint64_t> AddressOrErr = Symbol.getAddress();
+    error(errorToErrorCode(AddressOrErr.takeError()));
     uint64_t Address = *AddressOrErr;
 
     Expected<StringRef> Name = Symbol.getName();
@@ -1411,8 +1422,9 @@ void llvm::PrintSymbolTable(const ObjectFile *o, StringRef ArchiveName,
     return;
   }
   for (const SymbolRef &Symbol : o->symbols()) {
-    ErrorOr<uint64_t> AddressOrError = Symbol.getAddress();
-    error(AddressOrError.getError());
+    Expected<uint64_t> AddressOrError = Symbol.getAddress();
+    if (!AddressOrError)
+      report_error(ArchiveName, o->getFileName(), AddressOrError.takeError());
     uint64_t Address = *AddressOrError;
     Expected<SymbolRef::Type> TypeOrError = Symbol.getType();
     if (!TypeOrError)

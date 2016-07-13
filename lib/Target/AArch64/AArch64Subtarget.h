@@ -39,9 +39,12 @@ public:
     CortexA35,
     CortexA53,
     CortexA57,
+    CortexA72,
+    CortexA73,
     Cyclone,
     ExynosM1,
-    Kryo
+    Kryo,
+    Vulcan
   };
 
 protected:
@@ -242,8 +245,7 @@ public:
   /// returns null.
   const char *getBZeroEntry() const;
 
-  void overrideSchedPolicy(MachineSchedPolicy &Policy, MachineInstr *begin,
-                           MachineInstr *end,
+  void overrideSchedPolicy(MachineSchedPolicy &Policy,
                            unsigned NumRegionInstrs) const override;
 
   bool enableEarlyIfConversion() const override;

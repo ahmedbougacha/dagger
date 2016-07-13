@@ -148,12 +148,16 @@ PreservedAnalyses JumpThreadingPass::run(Function &F,
   }
   bool Changed =
       runImpl(F, &TLI, &LVI, HasProfileData, std::move(BFI), std::move(BPI));
+
+  // FIXME: We need to invalidate LVI to avoid PR28400. Is there a better
+  // solution?
+  AM.invalidate<LazyValueAnalysis>(F);
+
   if (!Changed)
     return PreservedAnalyses::all();
   PreservedAnalyses PA;
-  PA.preserve<LazyValueAnalysis>();
   PA.preserve<GlobalsAA>();
-  return PreservedAnalyses::none();
+  return PA;
 }
 
 bool JumpThreadingPass::runImpl(Function &F, TargetLibraryInfo *TLI_,
@@ -1746,13 +1750,18 @@ bool JumpThreadingPass::DuplicateCondBranchOnPHIIntoPred(
     // phi translation.
     if (Value *IV =
             SimplifyInstruction(New, BB->getModule()->getDataLayout())) {
-      delete New;
       ValueMapping[&*BI] = IV;
+      if (!New->mayHaveSideEffects()) {
+        delete New;
+        New = nullptr;
+      }
     } else {
+      ValueMapping[&*BI] = New;
+    }
+    if (New) {
       // Otherwise, insert the new instruction into the block.
       New->setName(BI->getName());
       PredBB->getInstList().insert(OldPredBranch->getIterator(), New);
-      ValueMapping[&*BI] = New;
     }
   }
 

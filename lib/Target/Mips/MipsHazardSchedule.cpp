@@ -23,8 +23,8 @@
 ///
 /// For example:
 ///
-/// 0x8004	bnec	a1,v0,<P+0x18>
-/// 0x8008	beqc	a1,a2,<P+0x54>
+/// 0x8004      bnec    a1,v0,<P+0x18>
+/// 0x8008      beqc    a1,a2,<P+0x54>
 ///
 /// In such cases, the processor is required to signal a Reserved Instruction
 /// exception.
@@ -137,8 +137,8 @@ bool MipsHazardSchedule::runOnMachineFunction(MachineFunction &MF) {
 
       if (InsertNop) {
         Changed = true;
-        MIBundleBuilder(I)
-            .append(BuildMI(MF, I->getDebugLoc(), TII->get(Mips::NOP)));
+        MIBundleBuilder(&*I).append(
+            BuildMI(MF, I->getDebugLoc(), TII->get(Mips::NOP)));
         NumInsertedNops++;
       }
     }

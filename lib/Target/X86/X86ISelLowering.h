@@ -310,6 +310,11 @@ namespace llvm {
       // Vector shift elements
       VSHL, VSRL, VSRA,
 
+      // Vector variable shift right arithmetic.
+      // Unlike ISD::SRA, in case shift count greater then element size
+      // use sign bit to fill destination data element.
+      VSRAV,
+
       // Vector shift elements by immediate
       VSHLI, VSRLI, VSRAI,
 
@@ -510,8 +515,6 @@ namespace llvm {
       // Memory barriers.
       MEMBARRIER,
       MFENCE,
-      SFENCE,
-      LFENCE,
 
       // Store FP status word into i16 register.
       FNSTSW16r,
@@ -653,7 +656,6 @@ namespace llvm {
   //  X86 Implementation of the TargetLowering interface
   class X86TargetLowering final : public TargetLowering {
   public:
-    bool isPositionIndependent() const;
     explicit X86TargetLowering(const X86TargetMachine &TM,
                                const X86Subtarget &STI);
 
@@ -748,9 +750,8 @@ namespace llvm {
     bool hasCopyImplyingStackAdjustment(MachineFunction *MF) const override;
 
     MachineBasicBlock *
-      EmitInstrWithCustomInserter(MachineInstr *MI,
-                                  MachineBasicBlock *MBB) const override;
-
+    EmitInstrWithCustomInserter(MachineInstr &MI,
+                                MachineBasicBlock *MBB) const override;
 
     /// This method returns the name of a target specific DAG node.
     const char *getTargetNodeName(unsigned Opcode) const override;
@@ -1159,50 +1160,50 @@ namespace llvm {
 
     bool needsCmpXchgNb(Type *MemType) const;
 
-    void SetupEntryBlockForSjLj(MachineInstr *MI, MachineBasicBlock *MBB,
+    void SetupEntryBlockForSjLj(MachineInstr &MI, MachineBasicBlock *MBB,
                                 MachineBasicBlock *DispatchBB, int FI) const;
 
     // Utility function to emit the low-level va_arg code for X86-64.
-    MachineBasicBlock *EmitVAARG64WithCustomInserter(
-                       MachineInstr *MI,
-                       MachineBasicBlock *MBB) const;
+    MachineBasicBlock *
+    EmitVAARG64WithCustomInserter(MachineInstr &MI,
+                                  MachineBasicBlock *MBB) const;
 
     /// Utility function to emit the xmm reg save portion of va_start.
-    MachineBasicBlock *EmitVAStartSaveXMMRegsWithCustomInserter(
-                                                   MachineInstr *BInstr,
-                                                   MachineBasicBlock *BB) const;
+    MachineBasicBlock *
+    EmitVAStartSaveXMMRegsWithCustomInserter(MachineInstr &BInstr,
+                                             MachineBasicBlock *BB) const;
 
-    MachineBasicBlock *EmitLoweredSelect(MachineInstr *I,
+    MachineBasicBlock *EmitLoweredSelect(MachineInstr &I,
                                          MachineBasicBlock *BB) const;
 
-    MachineBasicBlock *EmitLoweredAtomicFP(MachineInstr *I,
+    MachineBasicBlock *EmitLoweredAtomicFP(MachineInstr &I,
                                            MachineBasicBlock *BB) const;
 
-    MachineBasicBlock *EmitLoweredCatchRet(MachineInstr *MI,
+    MachineBasicBlock *EmitLoweredCatchRet(MachineInstr &MI,
                                            MachineBasicBlock *BB) const;
 
-    MachineBasicBlock *EmitLoweredCatchPad(MachineInstr *MI,
+    MachineBasicBlock *EmitLoweredCatchPad(MachineInstr &MI,
                                            MachineBasicBlock *BB) const;
 
-    MachineBasicBlock *EmitLoweredSegAlloca(MachineInstr *MI,
+    MachineBasicBlock *EmitLoweredSegAlloca(MachineInstr &MI,
                                             MachineBasicBlock *BB) const;
 
-    MachineBasicBlock *EmitLoweredTLSAddr(MachineInstr *MI,
+    MachineBasicBlock *EmitLoweredTLSAddr(MachineInstr &MI,
                                           MachineBasicBlock *BB) const;
 
-    MachineBasicBlock *EmitLoweredTLSCall(MachineInstr *MI,
+    MachineBasicBlock *EmitLoweredTLSCall(MachineInstr &MI,
                                           MachineBasicBlock *BB) const;
 
-    MachineBasicBlock *emitEHSjLjSetJmp(MachineInstr *MI,
+    MachineBasicBlock *emitEHSjLjSetJmp(MachineInstr &MI,
                                         MachineBasicBlock *MBB) const;
 
-    MachineBasicBlock *emitEHSjLjLongJmp(MachineInstr *MI,
+    MachineBasicBlock *emitEHSjLjLongJmp(MachineInstr &MI,
                                          MachineBasicBlock *MBB) const;
 
-    MachineBasicBlock *emitFMA3Instr(MachineInstr *MI,
+    MachineBasicBlock *emitFMA3Instr(MachineInstr &MI,
                                      MachineBasicBlock *MBB) const;
 
-    MachineBasicBlock *EmitSjLjDispatchBlock(MachineInstr *MI,
+    MachineBasicBlock *EmitSjLjDispatchBlock(MachineInstr &MI,
                                              MachineBasicBlock *MBB) const;
 
     /// Emit nodes that will be selected as "test Op0,Op0", or something

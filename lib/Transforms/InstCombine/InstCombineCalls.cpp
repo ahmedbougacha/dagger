@@ -2320,7 +2320,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
         return replaceInstUsesWith(*II, ConstantPointerNull::get(PT));
 
       // isKnownNonNull -> nonnull attribute
-      if (isKnownNonNullAt(DerivedPtr, II, DT, TLI))
+      if (isKnownNonNullAt(DerivedPtr, II, DT))
         II->addAttribute(AttributeSet::ReturnIndex, Attribute::NonNull);
     }
 
@@ -2483,7 +2483,7 @@ Instruction *InstCombiner::visitCallSite(CallSite CS) {
   for (Value *V : CS.args()) {
     if (V->getType()->isPointerTy() &&
         !CS.paramHasAttr(ArgNo + 1, Attribute::NonNull) &&
-        isKnownNonNullAt(V, CS.getInstruction(), DT, TLI))
+        isKnownNonNullAt(V, CS.getInstruction(), DT))
       Indices.push_back(ArgNo + 1);
     ArgNo++;
   }
@@ -2507,7 +2507,8 @@ Instruction *InstCombiner::visitCallSite(CallSite CS) {
 
   if (Function *CalleeF = dyn_cast<Function>(Callee)) {
     // Remove the convergent attr on calls when the callee is not convergent.
-    if (CS.isConvergent() && !CalleeF->isConvergent()) {
+    if (CS.isConvergent() && !CalleeF->isConvergent() &&
+        !CalleeF->isIntrinsic()) {
       DEBUG(dbgs() << "Removing convergent attr from instr "
                    << CS.getInstruction() << "\n");
       CS.setNotConvergent();
