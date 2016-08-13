@@ -491,8 +491,9 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     assert(Ty->isIntegerTy());
     Value *RHS = Builder->CreateZExt(getNextOperand(), Ty);
     // FIXME: RHS needs to be tweaked to avoid undefined results.
+    Value *Shl = Builder->CreateShl(LHS, RHS);
     registerResult(Builder->CreateOr(
-        Builder->CreateShl(LHS, RHS),
+        Shl,
         Builder->CreateLShr(
             LHS, Builder->CreateSub(
                      ConstantInt::get(Ty, Ty->getScalarSizeInBits()), RHS))));
@@ -520,9 +521,9 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(Ctx));
     IntegerType *ResType = IntegerType::get(
         Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
-    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
-    Value *Full = Builder->CreateMul(Builder->CreateSExt(Op1, ResType),
-                                     Builder->CreateSExt(Op2, ResType));
+    Value *Op1 = Builder->CreateSExt(getNextOperand(), ResType);
+    Value *Op2 = Builder->CreateSExt(getNextOperand(), ResType);
+    Value *Full = Builder->CreateMul(Op1, Op2);
     registerResult(Builder->CreateTrunc(Full, LoResType));
     registerResult(
         Builder->CreateTrunc(
@@ -535,9 +536,9 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(Ctx));
     IntegerType *ResType = IntegerType::get(
         Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
-    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
-    Value *Full = Builder->CreateMul(Builder->CreateZExt(Op1, ResType),
-                                     Builder->CreateZExt(Op2, ResType));
+    Value *Op1 = Builder->CreateZExt(getNextOperand(), ResType);
+    Value *Op2 = Builder->CreateZExt(getNextOperand(), ResType);
+    Value *Full = Builder->CreateMul(Op1, Op2);
     registerResult(Builder->CreateTrunc(Full, LoResType));
     registerResult(
         Builder->CreateTrunc(

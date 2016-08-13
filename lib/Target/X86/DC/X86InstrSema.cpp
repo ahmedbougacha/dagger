@@ -826,9 +826,11 @@ void X86InstrSema::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
   Value *Srcs[2] = { Src1, Src2 };
   for (int opi = 0, ope = 2; opi != ope; ++opi) {
     for (int i = 0, e = NumElt / 2; i != e; ++i) {
-      Value *EltRes = Builder->CreateBinOp(
-          BinOp, Builder->CreateExtractElement(Srcs[opi], Builder->getInt32(i)),
-          Builder->CreateExtractElement(Srcs[opi], Builder->getInt32(i + 1)));
+      Value *EltL =
+          Builder->CreateExtractElement(Srcs[opi], Builder->getInt32(i));
+      Value *EltR =
+          Builder->CreateExtractElement(Srcs[opi], Builder->getInt32(i + 1));
+      Value *EltRes = Builder->CreateBinOp(BinOp, EltL, EltR);
       Res = Builder->CreateInsertElement(Res, EltRes,
                                          Builder->getInt32(i + opi * NumElt));
     }
