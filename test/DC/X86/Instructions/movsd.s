@@ -62,10 +62,4 @@ movsd	%xmm10, %xmm8
 # CHECK-NEXT: unreachable
 .byte 0xf2; .byte 0x45; .byte 0x0f; .byte 0x11; .byte 0xd0
 
-## MOVSL
-# CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
-movsl	(%rsi), %es:(%rdi)
-
 retq
