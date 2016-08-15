@@ -3,6 +3,10 @@
 import argparse
 import subprocess
 
+# FIXME: Insert final 'retq'
+# FIXME: Provide a stable ordering for opcodes, to avoid spurious changes when
+# LLVM instr names change (see FMA change).  For instance: order by encoding?
+
 def parseOutput(l):
     lines = l.split('\n')
 

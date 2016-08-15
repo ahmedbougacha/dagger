@@ -1,52 +1,30 @@
 # RUN: llvm-mc -triple x86_64--darwin -filetype=obj -o - %s | llvm-dec - -dc-translate-unknown-to-undef -enable-dc-reg-mock-intrin | FileCheck %s
 
-## VFMADDSUBPSr132m
-# CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
-vfmaddsub132ps	2(%r15,%r12,2), %xmm10, %xmm8
-
-## VFMADDSUBPSr132mY
+## VFMADDSUB132PSYm
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 vfmaddsub132ps	2(%r15,%r12,2), %ymm10, %ymm8
 
-## VFMADDSUBPSr132r
-# CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
-vfmaddsub132ps	%xmm11, %xmm10, %xmm8
-
-## VFMADDSUBPSr132rY
+## VFMADDSUB132PSYr
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 vfmaddsub132ps	%ymm11, %ymm10, %ymm8
 
-## VFMADDSUBPSr213m
+## VFMADDSUB132PSm
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
-# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
-# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
-# CHECK-NEXT: [[XMM10_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM10")
-# CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
-# CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
-# CHECK-NEXT: [[XMM8_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
-# CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM8_0]] to i128
-# CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
-# CHECK-NEXT: [[R15_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R15")
-# CHECK-NEXT: [[R12_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R12")
-# CHECK-NEXT: [[V5:%.+]] = mul i64 [[R12_0]], 2
-# CHECK-NEXT: [[V6:%.+]] = add i64 [[V5]], 2
-# CHECK-NEXT: [[V7:%.+]] = add i64 [[R15_0]], [[V6]]
-# CHECK-NEXT: [[V8:%.+]] = inttoptr i64 [[V7]] to <4 x float>*
-# CHECK-NEXT: [[V9:%.+]] = load <4 x float>, <4 x float>* [[V8]], align 1
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
-vfmaddsub213ps	2(%r15,%r12,2), %xmm10, %xmm8
+vfmaddsub132ps	2(%r15,%r12,2), %xmm10, %xmm8
 
-## VFMADDSUBPSr213mY
+## VFMADDSUB132PSr
+# CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: call void @llvm.trap()
+# CHECK-NEXT: unreachable
+vfmaddsub132ps	%xmm11, %xmm10, %xmm8
+
+## VFMADDSUB213PSYm
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
@@ -68,25 +46,7 @@ vfmaddsub213ps	2(%r15,%r12,2), %xmm10, %xmm8
 # CHECK-NEXT: unreachable
 vfmaddsub213ps	2(%r15,%r12,2), %ymm10, %ymm8
 
-## VFMADDSUBPSr213r
-# CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
-# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
-# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
-# CHECK-NEXT: [[XMM10_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM10")
-# CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
-# CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
-# CHECK-NEXT: [[XMM8_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
-# CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM8_0]] to i128
-# CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
-# CHECK-NEXT: [[XMM11_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM11")
-# CHECK-NEXT: [[V5:%.+]] = bitcast <4 x float> [[XMM11_0]] to i128
-# CHECK-NEXT: [[V6:%.+]] = bitcast i128 [[V5]] to <4 x float>
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
-vfmaddsub213ps	%xmm11, %xmm10, %xmm8
-
-## VFMADDSUBPSr213rY
+## VFMADDSUB213PSYr
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
@@ -104,28 +64,68 @@ vfmaddsub213ps	%xmm11, %xmm10, %xmm8
 # CHECK-NEXT: unreachable
 vfmaddsub213ps	%ymm11, %ymm10, %ymm8
 
-## VFMADDSUBPSr231m
+## VFMADDSUB213PSm
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[XMM10_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM10")
+# CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
+# CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
+# CHECK-NEXT: [[XMM8_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM8_0]] to i128
+# CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
+# CHECK-NEXT: [[R15_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R15")
+# CHECK-NEXT: [[R12_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R12")
+# CHECK-NEXT: [[V5:%.+]] = mul i64 [[R12_0]], 2
+# CHECK-NEXT: [[V6:%.+]] = add i64 [[V5]], 2
+# CHECK-NEXT: [[V7:%.+]] = add i64 [[R15_0]], [[V6]]
+# CHECK-NEXT: [[V8:%.+]] = inttoptr i64 [[V7]] to <4 x float>*
+# CHECK-NEXT: [[V9:%.+]] = load <4 x float>, <4 x float>* [[V8]], align 1
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
-vfmaddsub231ps	2(%r15,%r12,2), %xmm10, %xmm8
+vfmaddsub213ps	2(%r15,%r12,2), %xmm10, %xmm8
 
-## VFMADDSUBPSr231mY
+## VFMADDSUB213PSr
+# CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[XMM10_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM10")
+# CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
+# CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
+# CHECK-NEXT: [[XMM8_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM8")
+# CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM8_0]] to i128
+# CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
+# CHECK-NEXT: [[XMM11_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM11")
+# CHECK-NEXT: [[V5:%.+]] = bitcast <4 x float> [[XMM11_0]] to i128
+# CHECK-NEXT: [[V6:%.+]] = bitcast i128 [[V5]] to <4 x float>
+# CHECK-NEXT: call void @llvm.trap()
+# CHECK-NEXT: unreachable
+vfmaddsub213ps	%xmm11, %xmm10, %xmm8
+
+## VFMADDSUB231PSYm
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 vfmaddsub231ps	2(%r15,%r12,2), %ymm10, %ymm8
 
-## VFMADDSUBPSr231r
-# CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
-vfmaddsub231ps	%xmm11, %xmm10, %xmm8
-
-## VFMADDSUBPSr231rY
+## VFMADDSUB231PSYr
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 vfmaddsub231ps	%ymm11, %ymm10, %ymm8
+
+## VFMADDSUB231PSm
+# CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: call void @llvm.trap()
+# CHECK-NEXT: unreachable
+vfmaddsub231ps	2(%r15,%r12,2), %xmm10, %xmm8
+
+## VFMADDSUB231PSr
+# CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: call void @llvm.trap()
+# CHECK-NEXT: unreachable
+vfmaddsub231ps	%xmm11, %xmm10, %xmm8
 
 retq

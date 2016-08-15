@@ -1,18 +1,18 @@
 # RUN: llvm-mc -triple x86_64--darwin -filetype=obj -o - %s | llvm-dec - -dc-translate-unknown-to-undef -enable-dc-reg-mock-intrin | FileCheck %s
 
-## VFMSUBSSr132m
+## VFMSUB132SSm
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 vfmsub132ss	2(%r15,%r12,2), %xmm10, %xmm8
 
-## VFMSUBSSr132r
+## VFMSUB132SSr
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 vfmsub132ss	%xmm11, %xmm10, %xmm8
 
-## VFMSUBSSr213m
+## VFMSUB213SSm
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
@@ -36,7 +36,7 @@ vfmsub132ss	%xmm11, %xmm10, %xmm8
 # CHECK-NEXT: unreachable
 vfmsub213ss	2(%r15,%r12,2), %xmm10, %xmm8
 
-## VFMSUBSSr213r
+## VFMSUB213SSr
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
@@ -57,13 +57,13 @@ vfmsub213ss	2(%r15,%r12,2), %xmm10, %xmm8
 # CHECK-NEXT: unreachable
 vfmsub213ss	%xmm11, %xmm10, %xmm8
 
-## VFMSUBSSr231m
+## VFMSUB231SSm
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 vfmsub231ss	2(%r15,%r12,2), %xmm10, %xmm8
 
-## VFMSUBSSr231r
+## VFMSUB231SSr
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
