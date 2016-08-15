@@ -184,7 +184,7 @@ LoadedELFObjectInfo::getObjectForDebug(const ObjectFile &Obj) const {
 namespace llvm {
 
 RuntimeDyldELF::RuntimeDyldELF(RuntimeDyld::MemoryManager &MemMgr,
-                               RuntimeDyld::SymbolResolver &Resolver)
+                               JITSymbolResolver &Resolver)
     : RuntimeDyldImpl(MemMgr, Resolver), GOTSectionID(0), CurrentGOTIndex(0) {}
 RuntimeDyldELF::~RuntimeDyldELF() {}
 
@@ -1258,6 +1258,7 @@ RuntimeDyldELF::processRelocationRef(
       break;
     }
     case SymbolRef::ST_Data:
+    case SymbolRef::ST_Function:
     case SymbolRef::ST_Unknown: {
       Value.SymbolName = TargetName.data();
       Value.Addend = Addend;
@@ -1402,8 +1403,12 @@ RuntimeDyldELF::processRelocationRef(
         // Create a new stub function.
         DEBUG(dbgs() << " Create a new stub function\n");
         Stubs[Value] = Section.getStubOffset();
+
+        unsigned AbiVariant;
+        O.getPlatformFlags(AbiVariant);
+
         uint8_t *StubTargetAddr = createStubFunction(
-            Section.getAddressWithOffset(Section.getStubOffset()));
+            Section.getAddressWithOffset(Section.getStubOffset()), AbiVariant);
 
         // Creating Hi and Lo relocations for the filled stub instructions.
         RelocationEntry REHi(SectionID, StubTargetAddr - Section.getAddress(),

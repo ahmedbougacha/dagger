@@ -81,19 +81,11 @@ template<> struct FoldingSetTrait<SDVTListNode> : DefaultFoldingSetTrait<SDVTLis
   }
 };
 
-template<> struct ilist_traits<SDNode> : public ilist_default_traits<SDNode> {
-private:
-  mutable ilist_half_node<SDNode> Sentinel;
-public:
-  SDNode *createSentinel() const {
-    return static_cast<SDNode*>(&Sentinel);
-  }
-  static void destroySentinel(SDNode *) {}
+template <>
+struct ilist_sentinel_traits<SDNode>
+    : public ilist_half_embedded_sentinel_traits<SDNode> {};
 
-  SDNode *provideInitialHead() const { return createSentinel(); }
-  SDNode *ensureHead(SDNode*) const { return createSentinel(); }
-  static void noteHead(SDNode*, SDNode*) {}
-
+template <> struct ilist_traits<SDNode> : public ilist_default_traits<SDNode> {
   static void deleteNode(SDNode *) {
     llvm_unreachable("ilist_traits<SDNode> shouldn't see a deleteNode call!");
   }
@@ -912,18 +904,21 @@ public:
   /// Loads are not normal binary operators: their result type is not
   /// determined by their operands, and they produce a value AND a token chain.
   ///
+  /// This function will set the MOLoad flag on MMOFlags, but you can set it if
+  /// you want.  The MOStore flag must not be set.
   SDValue getLoad(EVT VT, const SDLoc &dl, SDValue Chain, SDValue Ptr,
-                  MachinePointerInfo PtrInfo, bool isVolatile,
-                  bool isNonTemporal, bool isInvariant, unsigned Alignment,
+                  MachinePointerInfo PtrInfo, unsigned Alignment = 0,
+                  MachineMemOperand::Flags MMOFlags = MachineMemOperand::MONone,
                   const AAMDNodes &AAInfo = AAMDNodes(),
                   const MDNode *Ranges = nullptr);
   SDValue getLoad(EVT VT, const SDLoc &dl, SDValue Chain, SDValue Ptr,
                   MachineMemOperand *MMO);
-  SDValue getExtLoad(ISD::LoadExtType ExtType, const SDLoc &dl, EVT VT,
-                     SDValue Chain, SDValue Ptr, MachinePointerInfo PtrInfo,
-                     EVT MemVT, bool isVolatile, bool isNonTemporal,
-                     bool isInvariant, unsigned Alignment,
-                     const AAMDNodes &AAInfo = AAMDNodes());
+  SDValue
+  getExtLoad(ISD::LoadExtType ExtType, const SDLoc &dl, EVT VT, SDValue Chain,
+             SDValue Ptr, MachinePointerInfo PtrInfo, EVT MemVT,
+             unsigned Alignment = 0,
+             MachineMemOperand::Flags MMOFlags = MachineMemOperand::MONone,
+             const AAMDNodes &AAInfo = AAMDNodes());
   SDValue getExtLoad(ISD::LoadExtType ExtType, const SDLoc &dl, EVT VT,
                      SDValue Chain, SDValue Ptr, EVT MemVT,
                      MachineMemOperand *MMO);
@@ -931,8 +926,8 @@ public:
                          SDValue Offset, ISD::MemIndexedMode AM);
   SDValue getLoad(ISD::MemIndexedMode AM, ISD::LoadExtType ExtType, EVT VT,
                   const SDLoc &dl, SDValue Chain, SDValue Ptr, SDValue Offset,
-                  MachinePointerInfo PtrInfo, EVT MemVT, bool isVolatile,
-                  bool isNonTemporal, bool isInvariant, unsigned Alignment,
+                  MachinePointerInfo PtrInfo, EVT MemVT, unsigned Alignment = 0,
+                  MachineMemOperand::Flags MMOFlags = MachineMemOperand::MONone,
                   const AAMDNodes &AAInfo = AAMDNodes(),
                   const MDNode *Ranges = nullptr);
   SDValue getLoad(ISD::MemIndexedMode AM, ISD::LoadExtType ExtType, EVT VT,
@@ -940,16 +935,21 @@ public:
                   EVT MemVT, MachineMemOperand *MMO);
 
   /// Helper function to build ISD::STORE nodes.
-  SDValue getStore(SDValue Chain, const SDLoc &dl, SDValue Val, SDValue Ptr,
-                   MachinePointerInfo PtrInfo, bool isVolatile,
-                   bool isNonTemporal, unsigned Alignment,
-                   const AAMDNodes &AAInfo = AAMDNodes());
+  ///
+  /// This function will set the MOStore flag on MMOFlags, but you can set it if
+  /// you want.  The MOLoad and MOInvariant flags must not be set.
+  SDValue
+  getStore(SDValue Chain, const SDLoc &dl, SDValue Val, SDValue Ptr,
+           MachinePointerInfo PtrInfo, unsigned Alignment = 0,
+           MachineMemOperand::Flags MMOFlags = MachineMemOperand::MONone,
+           const AAMDNodes &AAInfo = AAMDNodes());
   SDValue getStore(SDValue Chain, const SDLoc &dl, SDValue Val, SDValue Ptr,
                    MachineMemOperand *MMO);
-  SDValue getTruncStore(SDValue Chain, const SDLoc &dl, SDValue Val,
-                        SDValue Ptr, MachinePointerInfo PtrInfo, EVT TVT,
-                        bool isNonTemporal, bool isVolatile, unsigned Alignment,
-                        const AAMDNodes &AAInfo = AAMDNodes());
+  SDValue
+  getTruncStore(SDValue Chain, const SDLoc &dl, SDValue Val, SDValue Ptr,
+                MachinePointerInfo PtrInfo, EVT TVT, unsigned Alignment = 0,
+                MachineMemOperand::Flags MMOFlags = MachineMemOperand::MONone,
+                const AAMDNodes &AAInfo = AAMDNodes());
   SDValue getTruncStore(SDValue Chain, const SDLoc &dl, SDValue Val,
                         SDValue Ptr, EVT TVT, MachineMemOperand *MMO);
   SDValue getIndexedStore(SDValue OrigStoe, const SDLoc &dl, SDValue Base,

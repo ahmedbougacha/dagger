@@ -31,15 +31,13 @@ bool isPositiveHalfWord(SDNode *N);
 
       CONST32 = OP_BEGIN,
       CONST32_GP,  // For marking data present in GP.
-      FCONST32,
       ALLOCA,
-      ARGEXTEND,
 
       AT_GOT,      // Index in GOT.
       AT_PCREL,    // Offset relative to PC.
 
-      CALLv3,      // A V3+ call instruction.
-      CALLv3nr,    // A V3+ call instruction that doesn't return.
+      CALL,        // Function call.
+      CALLnr,      // Function call that does not return.
       CALLR,
 
       RET_FLAG,    // Return with a flag operand.
@@ -79,6 +77,7 @@ bool isPositiveHalfWord(SDNode *N);
       EXTRACTU,
       EXTRACTURP,
       VCOMBINE,
+      VPACK,
       TC_RETURN,
       EH_RETURN,
       DCFETCH,
@@ -124,7 +123,10 @@ bool isPositiveHalfWord(SDNode *N);
     const char *getTargetNodeName(unsigned Opcode) const override;
     SDValue LowerCONCAT_VECTORS(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEXTRACT_VECTOR(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerEXTRACT_SUBVECTOR_HVX(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINSERT_VECTOR(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerVECTOR_SHIFT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINLINEASM(SDValue Op, SelectionDAG &DAG) const;
@@ -242,6 +244,10 @@ bool isPositiveHalfWord(SDNode *N);
     /// compare a register against the immediate without having to materialize
     /// the immediate into a register.
     bool isLegalICmpImmediate(int64_t Imm) const override;
+
+    EVT getOptimalMemOpType(uint64_t Size, unsigned DstAlign,
+        unsigned SrcAlign, bool IsMemset, bool ZeroMemset, bool MemcpyStrSrc,
+        MachineFunction &MF) const override;
 
     bool allowsMisalignedMemoryAccesses(EVT VT, unsigned AddrSpace,
         unsigned Align, bool *Fast) const override;

@@ -4,15 +4,10 @@
 ; RUN: llc < %s -mtriple=i686-apple-darwin9 -mcpu=knl | FileCheck %s --check-prefix=KNL_X32
 
 define <16 x i1> @test1() {
-; KNL-LABEL: test1:
-; KNL:       ## BB#0:
-; KNL-NEXT:    vxorps %xmm0, %xmm0, %xmm0
-; KNL-NEXT:    retq
-;
-; SKX-LABEL: test1:
-; SKX:       ## BB#0:
-; SKX-NEXT:    vpxord %xmm0, %xmm0, %xmm0
-; SKX-NEXT:    retq
+; ALL_X64-LABEL: test1:
+; ALL_X64:       ## BB#0:
+; ALL_X64-NEXT:    vxorps %xmm0, %xmm0, %xmm0
+; ALL_X64-NEXT:    retq
 ;
 ; KNL_X32-LABEL: test1:
 ; KNL_X32:       ## BB#0:
@@ -340,14 +335,23 @@ define <8 x i1> @test7a(<8 x i32>%a, <8 x i32>%b) {
 }
 
 define <16 x i8> @test8(<16 x i8> %a1, <16 x i8> %a2, i1 %cond) {
-; ALL_X64-LABEL: test8:
-; ALL_X64:       ## BB#0:
-; ALL_X64-NEXT:    testb $1, %dil
-; ALL_X64-NEXT:    jne LBB8_2
-; ALL_X64-NEXT:  ## BB#1:
-; ALL_X64-NEXT:    vmovaps %zmm1, %zmm0
-; ALL_X64-NEXT:  LBB8_2:
-; ALL_X64-NEXT:    retq
+; KNL-LABEL: test8:
+; KNL:       ## BB#0:
+; KNL-NEXT:    testb $1, %dil
+; KNL-NEXT:    jne LBB8_2
+; KNL-NEXT:  ## BB#1:
+; KNL-NEXT:    vmovaps %zmm1, %zmm0
+; KNL-NEXT:  LBB8_2:
+; KNL-NEXT:    retq
+;
+; SKX-LABEL: test8:
+; SKX:       ## BB#0:
+; SKX-NEXT:    testb $1, %dil
+; SKX-NEXT:    jne LBB8_2
+; SKX-NEXT:  ## BB#1:
+; SKX-NEXT:    vmovaps %xmm1, %xmm0
+; SKX-NEXT:  LBB8_2:
+; SKX-NEXT:    retq
 ;
 ; KNL_X32-LABEL: test8:
 ; KNL_X32:       ## BB#0:

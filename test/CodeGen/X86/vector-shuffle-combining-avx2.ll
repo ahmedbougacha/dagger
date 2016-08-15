@@ -62,6 +62,18 @@ define <4 x i64> @combine_permq_pshufb_as_vperm2i128(<4 x i64> %a0) {
   ret <4 x i64> %5
 }
 
+define <32 x i8> @combine_permq_pshufb_as_vpblendd(<4 x i64> %a0) {
+; CHECK-LABEL: combine_permq_pshufb_as_vpblendd:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    vpxor %ymm1, %ymm1, %ymm1
+; CHECK-NEXT:    vpblendd {{.*#+}} ymm0 = ymm0[0,1,2,3],ymm1[4,5,6,7]
+; CHECK-NEXT:    retq
+  %1 = shufflevector <4 x i64> %a0, <4 x i64> undef, <4 x i32> <i32 1, i32 0, i32 3, i32 2>
+  %2 = bitcast <4 x i64> %1 to <32 x i8>
+  %3 = call <32 x i8> @llvm.x86.avx2.pshuf.b(<32 x i8> %2, <32 x i8> <i8 8, i8 9, i8 10, i8 11, i8 12, i8 13, i8 14, i8 15, i8 0, i8 1, i8 2, i8 3, i8 4, i8 5, i8 6, i8 7, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255, i8 255>)
+  ret <32 x i8> %3
+}
+
 define <16 x i8> @combine_pshufb_as_vpbroadcastb128(<16 x i8> %a) {
 ; CHECK-LABEL: combine_pshufb_as_vpbroadcastb128:
 ; CHECK:       # BB#0:
@@ -191,6 +203,62 @@ define <4 x double> @combine_permd_as_vpbroadcastsd256(<2 x double> %a) {
   ret <4 x double> %4
 }
 
+define <16 x i8> @combine_vpbroadcast_pshufb_as_vpbroadcastb128(<16 x i8> %a) {
+; CHECK-LABEL: combine_vpbroadcast_pshufb_as_vpbroadcastb128:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    vpbroadcastb %xmm0, %xmm0
+; CHECK-NEXT:    retq
+  %1 = shufflevector <16 x i8> %a, <16 x i8> undef, <16 x i32> zeroinitializer
+  %2 = call <16 x i8> @llvm.x86.ssse3.pshuf.b.128(<16 x i8> %1, <16 x i8> zeroinitializer)
+  ret <16 x i8> %2
+}
+
+define <32 x i8> @combine_vpbroadcast_pshufb_as_vpbroadcastb256(<32 x i8> %a) {
+; CHECK-LABEL: combine_vpbroadcast_pshufb_as_vpbroadcastb256:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    vpbroadcastb %xmm0, %ymm0
+; CHECK-NEXT:    retq
+  %1 = shufflevector <32 x i8> %a, <32 x i8> undef, <32 x i32> zeroinitializer
+  %2 = call <32 x i8> @llvm.x86.avx2.pshuf.b(<32 x i8> %1, <32 x i8> zeroinitializer)
+  ret <32 x i8> %2
+}
+
+define <4 x float> @combine_vpbroadcast_pshufb_as_vpbroadcastss128(<4 x float> %a) {
+; CHECK-LABEL: combine_vpbroadcast_pshufb_as_vpbroadcastss128:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    vbroadcastss %xmm0, %xmm0
+; CHECK-NEXT:    retq
+  %1 = shufflevector <4 x float> %a, <4 x float> undef, <4 x i32> zeroinitializer
+  %2 = bitcast <4 x float> %1 to <16 x i8>
+  %3 = call <16 x i8> @llvm.x86.ssse3.pshuf.b.128(<16 x i8> %2, <16 x i8> <i8 0, i8 1, i8 2, i8 3, i8 0, i8 1, i8 2, i8 3, i8 0, i8 1, i8 2, i8 3, i8 0, i8 1, i8 2, i8 3>)
+  %4 = bitcast <16 x i8> %3 to <4 x float>
+  ret <4 x float> %4
+}
+
+define <8 x float> @combine_vpbroadcast_permd_as_vpbroadcastss256(<4 x float> %a) {
+; CHECK-LABEL: combine_vpbroadcast_permd_as_vpbroadcastss256:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    vbroadcastss %xmm0, %ymm0
+; CHECK-NEXT:    vbroadcastss %xmm0, %ymm0
+; CHECK-NEXT:    retq
+  %1 = shufflevector <4 x float> %a, <4 x float> undef, <8 x i32> zeroinitializer
+  %2 = call <8 x float> @llvm.x86.avx2.permps(<8 x float> %1, <8 x i32> zeroinitializer)
+  ret <8 x float> %2
+}
+
+define <4 x double> @combine_vpbroadcast_permd_as_vpbroadcastsd256(<2 x double> %a) {
+; CHECK-LABEL: combine_vpbroadcast_permd_as_vpbroadcastsd256:
+; CHECK:       # BB#0:
+; CHECK-NEXT:    vbroadcastsd %xmm0, %ymm0
+; CHECK-NEXT:    vbroadcastsd %xmm0, %ymm0
+; CHECK-NEXT:    retq
+  %1 = shufflevector <2 x double> %a, <2 x double> undef, <4 x i32> zeroinitializer
+  %2 = bitcast <4 x double> %1 to <8 x float>
+  %3 = call <8 x float> @llvm.x86.avx2.permps(<8 x float> %2, <8 x i32> <i32 0, i32 1, i32 0, i32 1, i32 0, i32 1, i32 0, i32 1>)
+  %4 = bitcast <8 x float> %3 to <4 x double>
+  ret <4 x double> %4
+}
+
 define <8 x i32> @combine_permd_as_permq(<8 x i32> %a) {
 ; CHECK-LABEL: combine_permd_as_permq:
 ; CHECK:       # BB#0:
@@ -212,7 +280,7 @@ define <8 x float> @combine_permps_as_permpd(<8 x float> %a) {
 define <32 x i8> @combine_pshufb_as_pslldq(<32 x i8> %a0) {
 ; CHECK-LABEL: combine_pshufb_as_pslldq:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    vpshufb {{.*#+}} ymm0 = zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,ymm0[0,1,2,3,4,5],zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,ymm0[16,17,18,19,20,21]
+; CHECK-NEXT:    vpslldq {{.*#+}} ymm0 = zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,ymm0[0,1,2,3,4,5],zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,ymm0[16,17,18,19,20,21]
 ; CHECK-NEXT:    retq
   %res0 = call <32 x i8> @llvm.x86.avx2.pshuf.b(<32 x i8> %a0, <32 x i8> <i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 0, i8 1, i8 2, i8 3, i8 4, i8 5, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 0, i8 1, i8 2, i8 3, i8 4, i8 5>)
   ret <32 x i8> %res0
@@ -221,7 +289,7 @@ define <32 x i8> @combine_pshufb_as_pslldq(<32 x i8> %a0) {
 define <32 x i8> @combine_pshufb_as_psrldq(<32 x i8> %a0) {
 ; CHECK-LABEL: combine_pshufb_as_psrldq:
 ; CHECK:       # BB#0:
-; CHECK-NEXT:    vpshufb {{.*#+}} ymm0 = ymm0[15],zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,ymm0[31],zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero
+; CHECK-NEXT:    vpsrldq {{.*#+}} ymm0 = ymm0[15],zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,ymm0[31],zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero
 ; CHECK-NEXT:    retq
   %res0 = call <32 x i8> @llvm.x86.avx2.pshuf.b(<32 x i8> %a0, <32 x i8> <i8 15, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 15, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128, i8 128>)
   ret <32 x i8> %res0

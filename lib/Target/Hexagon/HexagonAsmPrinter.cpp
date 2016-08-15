@@ -81,7 +81,7 @@ HexagonAsmPrinter::HexagonAsmPrinter(TargetMachine &TM,
     : AsmPrinter(TM, std::move(Streamer)), Subtarget(nullptr) {}
 
 void HexagonAsmPrinter::printOperand(const MachineInstr *MI, unsigned OpNo,
-                                    raw_ostream &O) {
+                                     raw_ostream &O) {
   const MachineOperand &MO = MI->getOperand(OpNo);
 
   switch (MO.getType()) {
@@ -141,14 +141,22 @@ bool HexagonAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
       // Hexagon never has a prefix.
       printOperand(MI, OpNo, OS);
       return false;
-    case 'L': // Write second word of DImode reference.
-      // Verify that this operand has two consecutive registers.
-      if (!MI->getOperand(OpNo).isReg() ||
-          OpNo+1 == MI->getNumOperands() ||
-          !MI->getOperand(OpNo+1).isReg())
+    case 'L':
+    case 'H': { // The highest-numbered register of a pair.
+      const MachineOperand &MO = MI->getOperand(OpNo);
+      const MachineFunction &MF = *MI->getParent()->getParent();
+      const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+      if (!MO.isReg())
         return true;
-      ++OpNo;   // Return the high-part.
-      break;
+      unsigned RegNumber = MO.getReg();
+      // This should be an assert in the frontend.
+      if (Hexagon::DoubleRegsRegClass.contains(RegNumber))
+        RegNumber = TRI->getSubReg(RegNumber, ExtraCode[0] == 'L' ?
+                                              Hexagon::subreg_loreg :
+                                              Hexagon::subreg_hireg);
+      OS << HexagonInstPrinter::getRegisterName(RegNumber);
+      return false;
+    }
     case 'I':
       // Write 'i' if an integer constant, otherwise nothing.  Used to print
       // addi vs add, etc.
@@ -275,8 +283,7 @@ void HexagonAsmPrinter::HexagonProcessInstruction(MCInst &Inst,
   }
 
   // "$dst = CONST64(#$src1)",
-  case Hexagon::CONST64_Float_Real:
-  case Hexagon::CONST64_Int_Real:
+  case Hexagon::CONST64:
     if (!OutStreamer->hasRawTextSupport()) {
       const MCOperand &Imm = MappedInst.getOperand(1);
       MCSectionSubPair Current = OutStreamer->getCurrentSection();
@@ -295,9 +302,6 @@ void HexagonAsmPrinter::HexagonProcessInstruction(MCInst &Inst,
     }
     break;
   case Hexagon::CONST32:
-  case Hexagon::CONST32_Float_Real:
-  case Hexagon::CONST32_Int_Real:
-  case Hexagon::FCONST32_nsdata:
     if (!OutStreamer->hasRawTextSupport()) {
       MCOperand &Imm = MappedInst.getOperand(1);
       MCSectionSubPair Current = OutStreamer->getCurrentSection();
@@ -458,21 +462,6 @@ void HexagonAsmPrinter::HexagonProcessInstruction(MCInst &Inst,
     MappedInst = TmpInst;
     return;
   }
-  case Hexagon::TFRI_f:
-    MappedInst.setOpcode(Hexagon::A2_tfrsi);
-    return;
-  case Hexagon::TFRI_cPt_f:
-    MappedInst.setOpcode(Hexagon::C2_cmoveit);
-    return;
-  case Hexagon::TFRI_cNotPt_f:
-    MappedInst.setOpcode(Hexagon::C2_cmoveif);
-    return;
-  case Hexagon::MUX_ri_f:
-    MappedInst.setOpcode(Hexagon::C2_muxri);
-    return;
-  case Hexagon::MUX_ir_f:
-    MappedInst.setOpcode(Hexagon::C2_muxir);
-    return;
 
   // Translate a "$Rdd = #imm" to "$Rdd = combine(#[-1,0], #imm)"
   case Hexagon::A2_tfrpi: {

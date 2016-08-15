@@ -16,11 +16,11 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
+#include "llvm/ExecutionEngine/JITSymbol.h"
 #include "llvm/ExecutionEngine/RuntimeDyld.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
 #include "llvm/ExecutionEngine/Orc/CompileOnDemandLayer.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
-#include "llvm/ExecutionEngine/Orc/JITSymbol.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/IRTransformLayer.h"
 #include "llvm/ExecutionEngine/Orc/LambdaResolver.h"
@@ -42,7 +42,6 @@ class KaleidoscopeJIT {
 private:
   std::unique_ptr<TargetMachine> TM;
   const DataLayout DL;
-  std::unique_ptr<JITCompileCallbackManager> CompileCallbackManager;
   ObjectLinkingLayer<> ObjectLayer;
   IRCompileLayer<decltype(ObjectLayer)> CompileLayer;
 
@@ -50,6 +49,8 @@ private:
     OptimizeFunction;
 
   IRTransformLayer<decltype(CompileLayer), OptimizeFunction> OptimizeLayer;
+
+  std::unique_ptr<JITCompileCallbackManager> CompileCallbackManager;
   CompileOnDemandLayer<decltype(OptimizeLayer)> CODLayer;
 
 public:
@@ -57,13 +58,13 @@ public:
 
   KaleidoscopeJIT()
       : TM(EngineBuilder().selectTarget()), DL(TM->createDataLayout()),
-        CompileCallbackManager(
-            orc::createLocalCompileCallbackManager(TM->getTargetTriple(), 0)),
         CompileLayer(ObjectLayer, SimpleCompiler(*TM)),
         OptimizeLayer(CompileLayer,
                       [this](std::unique_ptr<Module> M) {
                         return optimizeModule(std::move(M));
                       }),
+        CompileCallbackManager(
+            orc::createLocalCompileCallbackManager(TM->getTargetTriple(), 0)),
         CODLayer(OptimizeLayer,
                  [this](Function &F) { return std::set<Function*>({&F}); },
                  *CompileCallbackManager,
@@ -82,14 +83,14 @@ public:
     auto Resolver = createLambdaResolver(
         [&](const std::string &Name) {
           if (auto Sym = CODLayer.findSymbol(Name, false))
-            return Sym.toRuntimeDyldSymbol();
-          return RuntimeDyld::SymbolInfo(nullptr);
+            return Sym;
+          return JITSymbol(nullptr);
         },
         [](const std::string &Name) {
           if (auto SymAddr =
                 RTDyldMemoryManager::getSymbolAddressInProcess(Name))
-            return RuntimeDyld::SymbolInfo(SymAddr, JITSymbolFlags::Exported);
-          return RuntimeDyld::SymbolInfo(nullptr);
+            return JITSymbol(SymAddr, JITSymbolFlags::Exported);
+          return JITSymbol(nullptr);
         });
 
     // Build a singlton module set to hold our module.

@@ -315,7 +315,7 @@ class CallGraphPrinterPass : public PassInfoMixin<CallGraphPrinterPass> {
 
 public:
   explicit CallGraphPrinterPass(raw_ostream &OS) : OS(OS) {}
-  PreservedAnalyses run(Module &M, AnalysisManager<Module> &AM);
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
 };
 
 /// \brief The \c ModulePass which wraps up a \c CallGraph and the logic to
@@ -410,6 +410,7 @@ public:
 // traversals.
 template <> struct GraphTraits<CallGraphNode *> {
   typedef CallGraphNode NodeType;
+  typedef CallGraphNode *NodeRef;
 
   typedef CallGraphNode::CallRecord CGNPairTy;
   typedef std::pointer_to_unary_function<CGNPairTy, CallGraphNode *>
@@ -431,6 +432,7 @@ template <> struct GraphTraits<CallGraphNode *> {
 
 template <> struct GraphTraits<const CallGraphNode *> {
   typedef const CallGraphNode NodeType;
+  typedef const CallGraphNode *NodeRef;
 
   typedef CallGraphNode::CallRecord CGNPairTy;
   typedef std::pointer_to_unary_function<CGNPairTy, const CallGraphNode *>

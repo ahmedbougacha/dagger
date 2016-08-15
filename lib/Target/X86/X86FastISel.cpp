@@ -1151,11 +1151,10 @@ bool X86FastISel::X86SelectRet(const Instruction *I) {
   if (CC != CallingConv::C &&
       CC != CallingConv::Fast &&
       CC != CallingConv::X86_FastCall &&
+      CC != CallingConv::X86_StdCall &&
       CC != CallingConv::X86_ThisCall &&
-      CC != CallingConv::X86_64_SysV)
-    return false;
-
-  if (Subtarget->isCallingConvWin64(CC))
+      CC != CallingConv::X86_64_SysV &&
+      CC != CallingConv::X86_64_Win64)
     return false;
 
   // Don't handle popping bytes if they don't fit the ret's immediate.
@@ -2523,8 +2522,8 @@ bool X86FastISel::fastLowerIntrinsicCall(const IntrinsicInst *II) {
 
     // This needs to be set before we call getPtrSizedFrameRegister, otherwise
     // we get the wrong frame register.
-    MachineFrameInfo *MFI = MF->getFrameInfo();
-    MFI->setFrameAddressIsTaken(true);
+    MachineFrameInfo &MFI = MF->getFrameInfo();
+    MFI.setFrameAddressIsTaken(true);
 
     const X86RegisterInfo *RegInfo = Subtarget->getRegisterInfo();
     unsigned FrameReg = RegInfo->getPtrSizedFrameRegister(*MF);
@@ -2983,9 +2982,9 @@ bool X86FastISel::fastLowerArguments() {
   return true;
 }
 
-static unsigned computeBytesPoppedByCallee(const X86Subtarget *Subtarget,
-                                           CallingConv::ID CC,
-                                           ImmutableCallSite *CS) {
+static unsigned computeBytesPoppedByCalleeForSRet(const X86Subtarget *Subtarget,
+                                                  CallingConv::ID CC,
+                                                  ImmutableCallSite *CS) {
   if (Subtarget->is64Bit())
     return 0;
   if (Subtarget->getTargetTriple().isOSMSVCRT())
@@ -3025,6 +3024,8 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
   case CallingConv::WebKit_JS:
   case CallingConv::Swift:
   case CallingConv::X86_FastCall:
+  case CallingConv::X86_StdCall:
+  case CallingConv::X86_ThisCall:
   case CallingConv::X86_64_Win64:
   case CallingConv::X86_64_SysV:
     break;
@@ -3051,11 +3052,6 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
   for (auto Flag : CLI.OutFlags)
     if (Flag.isSwiftError())
       return false;
-
-  // Fast-isel doesn't know about callee-pop yet.
-  if (X86::isCalleePop(CC, Subtarget->is64Bit(), IsVarArg,
-                       TM.Options.GuaranteedTailCallOpt))
-    return false;
 
   SmallVector<MVT, 16> OutVTs;
   SmallVector<unsigned, 16> ArgRegs;
@@ -3336,7 +3332,10 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
 
   // Issue CALLSEQ_END
   unsigned NumBytesForCalleeToPop =
-    computeBytesPoppedByCallee(Subtarget, CC, CLI.CS);
+      X86::isCalleePop(CC, Subtarget->is64Bit(), IsVarArg,
+                       TM.Options.GuaranteedTailCallOpt)
+          ? NumBytes // Callee pops everything.
+          : computeBytesPoppedByCalleeForSRet(Subtarget, CC, CLI.CS);
   unsigned AdjStackUp = TII.getCallFrameDestroyOpcode();
   BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(AdjStackUp))
     .addImm(NumBytes).addImm(NumBytesForCalleeToPop);

@@ -15,7 +15,7 @@
 include "R600Intrinsics.td"
 include "R600InstrFormats.td"
 
-class InstR600ISA <dag outs, dag ins, string asm, list<dag> pattern> :
+class InstR600ISA <dag outs, dag ins, string asm, list<dag> pattern = []> :
     InstR600 <outs, ins, asm, pattern, NullALU> {
 
   let Namespace = "AMDGPU";
@@ -434,8 +434,7 @@ def : Pat<(TEXTURE_FETCH (i32 TextureOp), vt:$SRC_GPR,
 def INTERP_VEC_LOAD :  AMDGPUShaderInst <
   (outs R600_Reg128:$dst),
   (ins i32imm:$src0),
-  "INTERP_LOAD $src0 : $dst",
-  [(set R600_Reg128:$dst, (int_R600_interp_const imm:$src0))]>;
+  "INTERP_LOAD $src0 : $dst">;
 
 def INTERP_XY : R600_2OP <0xD6, "INTERP_XY", []> {
   let bank_swizzle = 5;
@@ -501,28 +500,6 @@ class ExportBufWord1 {
 }
 
 multiclass ExportPattern<Instruction ExportInst, bits<8> cf_inst> {
-  def : Pat<(int_R600_store_pixel_depth R600_Reg32:$reg),
-    (ExportInst
-        (INSERT_SUBREG (v4f32 (IMPLICIT_DEF)), $reg, sub0),
-        0, 61, 0, 7, 7, 7, cf_inst, 0)
-  >;
-
-  def : Pat<(int_R600_store_pixel_stencil R600_Reg32:$reg),
-    (ExportInst
-        (INSERT_SUBREG (v4f32 (IMPLICIT_DEF)), $reg, sub0),
-        0, 61, 7, 0, 7, 7, cf_inst, 0)
-  >;
-
-  def : Pat<(int_R600_store_dummy (i32 imm:$type)),
-    (ExportInst
-        (v4f32 (IMPLICIT_DEF)), imm:$type, 0, 7, 7, 7, 7, cf_inst, 0)
-  >;
-
-  def : Pat<(int_R600_store_dummy 1),
-    (ExportInst
-        (v4f32 (IMPLICIT_DEF)), 1, 60, 7, 7, 7, 7, cf_inst, 0)
-  >;
-
   def : Pat<(EXPORT (v4f32 R600_Reg128:$src), (i32 imm:$base), (i32 imm:$type),
     (i32 imm:$swz_x), (i32 imm:$swz_y), (i32 imm:$swz_z), (i32 imm:$swz_w)),
         (ExportInst R600_Reg128:$src, imm:$type, imm:$base,
@@ -534,22 +511,22 @@ multiclass ExportPattern<Instruction ExportInst, bits<8> cf_inst> {
 multiclass SteamOutputExportPattern<Instruction ExportInst,
     bits<8> buf0inst, bits<8> buf1inst, bits<8> buf2inst, bits<8> buf3inst> {
 // Stream0
-  def : Pat<(int_R600_store_stream_output (v4f32 R600_Reg128:$src),
+  def : Pat<(int_r600_store_stream_output (v4f32 R600_Reg128:$src),
       (i32 imm:$arraybase), (i32 0), (i32 imm:$mask)),
       (ExportInst R600_Reg128:$src, 0, imm:$arraybase,
       4095, imm:$mask, buf0inst, 0)>;
 // Stream1
-  def : Pat<(int_R600_store_stream_output (v4f32 R600_Reg128:$src),
+  def : Pat<(int_r600_store_stream_output (v4f32 R600_Reg128:$src),
       (i32 imm:$arraybase), (i32 1), (i32 imm:$mask)),
       (ExportInst $src, 0, imm:$arraybase,
       4095, imm:$mask, buf1inst, 0)>;
 // Stream2
-  def : Pat<(int_R600_store_stream_output (v4f32 R600_Reg128:$src),
+  def : Pat<(int_r600_store_stream_output (v4f32 R600_Reg128:$src),
       (i32 imm:$arraybase), (i32 2), (i32 imm:$mask)),
       (ExportInst $src, 0, imm:$arraybase,
       4095, imm:$mask, buf2inst, 0)>;
 // Stream3
-  def : Pat<(int_R600_store_stream_output (v4f32 R600_Reg128:$src),
+  def : Pat<(int_r600_store_stream_output (v4f32 R600_Reg128:$src),
       (i32 imm:$arraybase), (i32 3), (i32 imm:$mask)),
       (ExportInst $src, 0, imm:$arraybase,
       4095, imm:$mask, buf3inst, 0)>;
@@ -1140,8 +1117,7 @@ class RECIPSQRT_CLAMPED_Common <bits<11> inst> : R600_1OP_Helper <
 }
 
 class RECIPSQRT_IEEE_Common <bits<11> inst> : R600_1OP_Helper <
-  inst, "RECIPSQRT_IEEE", AMDGPUrsq_legacy
-> {
+  inst, "RECIPSQRT_IEEE", AMDGPUrsq> {
   let Itinerary = TransALU;
 }
 
@@ -1355,9 +1331,7 @@ def TXD: InstR600 <
   (outs R600_Reg128:$dst),
   (ins R600_Reg128:$src0, R600_Reg128:$src1, R600_Reg128:$src2,
        i32imm:$resourceId, i32imm:$samplerId, i32imm:$textureTarget),
-  "TXD $dst, $src0, $src1, $src2, $resourceId, $samplerId, $textureTarget",
-  [(set v4f32:$dst, (int_AMDGPU_txd v4f32:$src0, v4f32:$src1, v4f32:$src2,
-                     imm:$resourceId, imm:$samplerId, imm:$textureTarget))],
+  "TXD $dst, $src0, $src1, $src2, $resourceId, $samplerId, $textureTarget", [],
   NullALU > {
   let TEXInst = 1;
 }
@@ -1367,10 +1341,7 @@ def TXD_SHADOW: InstR600 <
   (ins R600_Reg128:$src0, R600_Reg128:$src1, R600_Reg128:$src2,
        i32imm:$resourceId, i32imm:$samplerId, i32imm:$textureTarget),
   "TXD_SHADOW $dst, $src0, $src1, $src2, $resourceId, $samplerId, $textureTarget",
-  [(set v4f32:$dst, (int_AMDGPU_txd v4f32:$src0, v4f32:$src1, v4f32:$src2,
-        imm:$resourceId, imm:$samplerId, TEX_SHADOW:$textureTarget))],
-   NullALU
-> {
+  [], NullALU> {
   let TEXInst = 1;
 }
 } // End isPseudo = 1
@@ -1449,8 +1420,7 @@ def TEX_VTX_CONSTBUF :
 }
 
 def TEX_VTX_TEXBUF:
-  InstR600ISA <(outs R600_Reg128:$dst), (ins MEMxi:$ptr, i32imm:$BUFFER_ID), "TEX_VTX_EXPLICIT_READ $dst, $ptr",
-      [(set v4f32:$dst, (int_R600_load_texbuf ADDRGA_VAR_OFFSET:$ptr, imm:$BUFFER_ID))]>,
+  InstR600ISA <(outs R600_Reg128:$dst), (ins MEMxi:$ptr, i32imm:$BUFFER_ID), "TEX_VTX_EXPLICIT_READ $dst, $ptr">,
 VTX_WORD1_GPR, VTX_WORD0_eg {
 
 let VC_INST = 0;

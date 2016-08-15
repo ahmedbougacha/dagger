@@ -562,6 +562,19 @@ bool EarlyCSE::processNode(DomTreeNode *Node) {
       continue;
     }
 
+    // Skip invariant.start intrinsics since they only read memory, and we can
+    // forward values across it. Also, we dont need to consume the last store
+    // since the semantics of invariant.start allow us to perform DSE of the
+    // last store, if there was a store following invariant.start. Consider:
+    //
+    // store 30, i8* p
+    // invariant.start(p)
+    // store 40, i8* p
+    // We can DSE the store to 30, since the store 40 to invariant location p
+    // causes undefined behaviour.
+    if (match(Inst, m_Intrinsic<Intrinsic::invariant_start>()))
+      continue;
+
     if (match(Inst, m_Intrinsic<Intrinsic::experimental_guard>())) {
       if (auto *CondI =
               dyn_cast<Instruction>(cast<CallInst>(Inst)->getArgOperand(0))) {
@@ -582,6 +595,7 @@ bool EarlyCSE::processNode(DomTreeNode *Node) {
     // its simpler value.
     if (Value *V = SimplifyInstruction(Inst, DL, &TLI, &DT, &AC)) {
       DEBUG(dbgs() << "EarlyCSE Simplify: " << *Inst << "  to: " << *V << '\n');
+      bool Killed = false;
       if (!Inst->use_empty()) {
         Inst->replaceAllUsesWith(V);
         Changed = true;
@@ -589,11 +603,12 @@ bool EarlyCSE::processNode(DomTreeNode *Node) {
       if (isInstructionTriviallyDead(Inst, &TLI)) {
         Inst->eraseFromParent();
         Changed = true;
+        Killed = true;
       }
-      if (Changed) {
+      if (Changed)
         ++NumSimplify;
+      if (Killed)
         continue;
-      }
     }
 
     // If this is a simple instruction that we can value number, process it.
@@ -845,7 +860,7 @@ bool EarlyCSE::run() {
 }
 
 PreservedAnalyses EarlyCSEPass::run(Function &F,
-                                    AnalysisManager<Function> &AM) {
+                                    FunctionAnalysisManager &AM) {
   auto &TLI = AM.getResult<TargetLibraryAnalysis>(F);
   auto &TTI = AM.getResult<TargetIRAnalysis>(F);
   auto &DT = AM.getResult<DominatorTreeAnalysis>(F);

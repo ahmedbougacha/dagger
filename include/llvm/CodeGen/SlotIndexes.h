@@ -69,18 +69,12 @@ namespace llvm {
   };
 
   template <>
-  struct ilist_traits<IndexListEntry> : public ilist_default_traits<IndexListEntry> {
-  private:
-    mutable ilist_half_node<IndexListEntry> Sentinel;
-  public:
-    IndexListEntry *createSentinel() const {
-      return static_cast<IndexListEntry*>(&Sentinel);
-    }
-    void destroySentinel(IndexListEntry *) const {}
+  struct ilist_sentinel_traits<IndexListEntry>
+      : public ilist_half_embedded_sentinel_traits<IndexListEntry> {};
 
-    IndexListEntry *provideInitialHead() const { return createSentinel(); }
-    IndexListEntry *ensureHead(IndexListEntry*) const { return createSentinel(); }
-    static void noteHead(IndexListEntry*, IndexListEntry*) {}
+  template <>
+  struct ilist_traits<IndexListEntry>
+      : public ilist_default_traits<IndexListEntry> {
     void deleteNode(IndexListEntry *N) {}
 
   private:
@@ -632,11 +626,12 @@ namespace llvm {
     }
 
     /// ReplaceMachineInstrInMaps - Replacing a machine instr with a new one in
-    /// maps used by register allocator.
-    void replaceMachineInstrInMaps(MachineInstr &MI, MachineInstr &NewMI) {
+    /// maps used by register allocator. \returns the index where the new
+    /// instruction was inserted.
+    SlotIndex replaceMachineInstrInMaps(MachineInstr &MI, MachineInstr &NewMI) {
       Mi2IndexMap::iterator mi2iItr = mi2iMap.find(&MI);
       if (mi2iItr == mi2iMap.end())
-        return;
+        return SlotIndex();
       SlotIndex replaceBaseIndex = mi2iItr->second;
       IndexListEntry *miEntry(replaceBaseIndex.listEntry());
       assert(miEntry->getInstr() == &MI &&
@@ -644,6 +639,7 @@ namespace llvm {
       miEntry->setInstr(&NewMI);
       mi2iMap.erase(mi2iItr);
       mi2iMap.insert(std::make_pair(&NewMI, replaceBaseIndex));
+      return replaceBaseIndex;
     }
 
     /// Add the given MachineBasicBlock into the maps.

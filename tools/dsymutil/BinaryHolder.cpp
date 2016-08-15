@@ -102,14 +102,15 @@ BinaryHolder::GetArchiveMemberBuffers(StringRef Filename,
   Buffers.reserve(CurrentArchives.size());
 
   for (const auto &CurrentArchive : CurrentArchives) {
-    for (auto ChildOrErr : CurrentArchive->children()) {
-      if (std::error_code Err = ChildOrErr.getError())
-        return Err;
-      const auto &Child = *ChildOrErr;
+    Error Err;
+    for (auto Child : CurrentArchive->children(Err)) {
       if (auto NameOrErr = Child.getName()) {
         if (*NameOrErr == Filename) {
+          Expected<sys::TimeValue> ModTimeOrErr = Child.getLastModified();
+          if (!ModTimeOrErr)
+            return errorToErrorCode(ModTimeOrErr.takeError());
           if (Timestamp != sys::TimeValue::PosixZeroTime() &&
-              Timestamp != Child.getLastModified()) {
+              Timestamp != ModTimeOrErr.get()) {
             if (Verbose)
               outs() << "\tmember had timestamp mismatch.\n";
             continue;
@@ -117,12 +118,14 @@ BinaryHolder::GetArchiveMemberBuffers(StringRef Filename,
           if (Verbose)
             outs() << "\tfound member in current archive.\n";
           auto ErrOrMem = Child.getMemoryBufferRef();
-          if (auto Err = ErrOrMem.getError())
-            return Err;
+          if (!ErrOrMem)
+            return errorToErrorCode(ErrOrMem.takeError());
           Buffers.push_back(*ErrOrMem);
         }
       }
     }
+    if (Err)
+      return errorToErrorCode(std::move(Err));
   }
 
   if (Buffers.empty())

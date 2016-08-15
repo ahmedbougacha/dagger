@@ -1,6 +1,5 @@
 # RUN: llc -O0 -run-pass=regbankselect -global-isel %s -o - 2>&1 | FileCheck %s --check-prefix=CHECK --check-prefix=FAST
 # RUN: llc -O0 -run-pass=regbankselect -global-isel %s -regbankselect-greedy -o - 2>&1 | FileCheck %s --check-prefix=CHECK --check-prefix=GREEDY
-# REQUIRES: global-isel
 
 --- |
   ; ModuleID = 'generic-virtual-registers-type-error.mir'
@@ -54,6 +53,10 @@
   entry:
     ret void
   }
+
+  define void @ignoreTargetSpecificInst() { ret void }
+
+  define void @regBankSelected_property() { ret void }
 ...
 
 ---
@@ -61,6 +64,7 @@
 # Based on the type i32, this should be gpr.
 name:            defaultMapping
 isSSA:           true
+legalized:       true
 # CHECK:      registers:
 # CHECK-NEXT:   - { id: 0, class: gpr }
 registers:
@@ -68,8 +72,8 @@ registers:
 body: |
   bb.0.entry:
     liveins: %x0
-    ; CHECK:      %0(32) = G_ADD i32 %x0
-    %0(32) = G_ADD i32 %x0, %x0
+    ; CHECK:      %0(32) = G_ADD s32 %w0
+    %0(32) = G_ADD s32 %w0, %w0
 ...
 
 ---
@@ -78,6 +82,7 @@ body: |
 # FPR is used for both floating point and vector registers.
 name:            defaultMappingVector
 isSSA:           true
+legalized:       true
 # CHECK:      registers:
 # CHECK-NEXT:   - { id: 0, class: fpr }
 registers:
@@ -85,8 +90,8 @@ registers:
 body: |
   bb.0.entry:
     liveins: %d0
-    ; CHECK:      %0(32) = G_ADD <2 x i32> %d0
-    %0(32) = G_ADD <2 x i32> %d0, %d0
+    ; CHECK:      %0(64) = G_ADD <2 x s32> %d0
+    %0(64) = G_ADD <2 x s32> %d0, %d0
 ...
 
 ---
@@ -95,6 +100,7 @@ body: |
 # in FPR, but at the use, it should be GPR.
 name:            defaultMapping1Repair
 isSSA:           true
+legalized:       true
 # CHECK:      registers:
 # CHECK-NEXT:   - { id: 0, class: fpr }
 # CHECK-NEXT:   - { id: 1, class: gpr }
@@ -107,14 +113,15 @@ body: |
     liveins: %s0, %x0
     ; CHECK:           %0(32) = COPY %s0
     ; CHECK-NEXT:      %2(32) = COPY %0
-    ; CHECK-NEXT:      %1(32) = G_ADD i32 %2, %x0
+    ; CHECK-NEXT:      %1(32) = G_ADD s32 %2, %w0
     %0(32) = COPY %s0
-    %1(32) = G_ADD i32 %0, %x0
+    %1(32) = G_ADD s32 %0, %w0
 ...
 
 # Check that we repair the assignment for %0 differently for both uses.
 name:            defaultMapping2Repairs
 isSSA:           true
+legalized:       true
 # CHECK:      registers:
 # CHECK-NEXT:   - { id: 0, class: fpr }
 # CHECK-NEXT:   - { id: 1, class: gpr }
@@ -129,9 +136,9 @@ body: |
     ; CHECK:           %0(32) = COPY %s0
     ; CHECK-NEXT:      %2(32) = COPY %0
     ; CHECK-NEXT:      %3(32) = COPY %0
-    ; CHECK-NEXT:      %1(32) = G_ADD i32 %2, %3
+    ; CHECK-NEXT:      %1(32) = G_ADD s32 %2, %3
     %0(32) = COPY %s0
-    %1(32) = G_ADD i32 %0, %0
+    %1(32) = G_ADD s32 %0, %0
 ...
 
 ---
@@ -141,6 +148,7 @@ body: |
 # fixes that.
 name:            defaultMappingDefRepair
 isSSA:           true
+legalized:       true
 # CHECK:      registers:
 # CHECK-NEXT:   - { id: 0, class: gpr }
 # CHECK-NEXT:   - { id: 1, class: fpr }
@@ -152,16 +160,17 @@ body: |
   bb.0.entry:
     liveins: %w0
     ; CHECK:           %0(32) = COPY %w0
-    ; CHECK-NEXT:      %2(32) = G_ADD i32 %0, %w0
+    ; CHECK-NEXT:      %2(32) = G_ADD s32 %0, %w0
     ; CHECK-NEXT:      %1(32) = COPY %2
     %0(32) = COPY %w0
-    %1(32) = G_ADD i32 %0, %w0
+    %1(32) = G_ADD s32 %0, %w0
 ...
 
 ---
 # Check that we are able to propagate register banks from phis.
 name:            phiPropagation
 isSSA:           true
+legalized:       true
 tracksRegLiveness:   true
 # CHECK:      registers:
 # CHECK-NEXT:   - { id: 0, class: gpr32 }
@@ -187,7 +196,7 @@ body: |
   
   bb.1.then:
     successors: %bb.2.end
-    %3(32) = G_ADD i32 %0, %0
+    %3(32) = G_ADD s32 %0, %0
   
   bb.2.end:
     %4(32) = PHI %0, %bb.0.entry, %3, %bb.1.then
@@ -199,6 +208,7 @@ body: |
 # Make sure we can repair physical register uses as well.
 name:            defaultMappingUseRepairPhysReg
 isSSA:           true
+legalized:       true
 # CHECK:      registers:
 # CHECK-NEXT:   - { id: 0, class: gpr }
 # CHECK-NEXT:   - { id: 1, class: gpr }
@@ -211,15 +221,16 @@ body: |
     liveins: %w0, %s0
     ; CHECK:           %0(32) = COPY %w0
     ; CHECK-NEXT:      %2(32) = COPY %s0
-    ; CHECK-NEXT:      %1(32) = G_ADD i32 %0, %2
+    ; CHECK-NEXT:      %1(32) = G_ADD s32 %0, %2
     %0(32) = COPY %w0
-    %1(32) = G_ADD i32 %0, %s0
+    %1(32) = G_ADD s32 %0, %s0
 ...
 
 ---
 # Make sure we can repair physical register defs.
 name:            defaultMappingDefRepairPhysReg
 isSSA:           true
+legalized:       true
 # CHECK:      registers:
 # CHECK-NEXT:   - { id: 0, class: gpr }
 # CHECK-NEXT:   - { id: 1, class: gpr }
@@ -229,10 +240,10 @@ body: |
   bb.0.entry:
     liveins: %w0
     ; CHECK:           %0(32) = COPY %w0
-    ; CHECK-NEXT:      %1(32) = G_ADD i32 %0, %0
+    ; CHECK-NEXT:      %1(32) = G_ADD s32 %0, %0
     ; CHECK-NEXT:      %s0 = COPY %1
     %0(32) = COPY %w0
-    %s0 = G_ADD i32 %0, %0
+    %s0 = G_ADD s32 %0, %0
 ...
 
 ---
@@ -240,6 +251,7 @@ body: |
 # G_OR instruction from fpr to gpr.
 name:            greedyMappingOr
 isSSA:           true
+legalized:       true
 # CHECK:      registers:
 # CHECK-NEXT:  - { id: 0, class: gpr }
 # CHECK-NEXT:  - { id: 1, class: gpr }
@@ -271,13 +283,13 @@ body: |
     ; FAST-NEXT: %3(64) = COPY %0
     ; FAST-NEXT: %4(64) = COPY %1
     ; The mapping of G_OR is on FPR.
-    ; FAST-NEXT: %2(64) = G_OR <2 x i32> %3, %4
+    ; FAST-NEXT: %2(64) = G_OR <2 x s32> %3, %4
 
     ; Greedy mode remapped the instruction on the GPR bank.
-    ; GREEDY-NEXT: %2(64) = G_OR <2 x i32> %0, %1
+    ; GREEDY-NEXT: %2(64) = G_OR <2 x s32> %0, %1
     %0(64) = COPY %x0
     %1(64) = COPY %x1
-    %2(64) = G_OR <2 x i32> %0, %1
+    %2(64) = G_OR <2 x s32> %0, %1
 ...
 
 ---
@@ -286,6 +298,7 @@ body: |
 # %2 constraint.
 name:            greedyMappingOrWithConstraints
 isSSA:           true
+legalized:       true
 # CHECK:      registers:
 # CHECK-NEXT:  - { id: 0, class: gpr }
 # CHECK-NEXT:  - { id: 1, class: gpr }
@@ -317,13 +330,53 @@ body: |
     ; FAST-NEXT: %3(64) = COPY %0
     ; FAST-NEXT: %4(64) = COPY %1
     ; The mapping of G_OR is on FPR.
-    ; FAST-NEXT: %2(64) = G_OR <2 x i32> %3, %4
+    ; FAST-NEXT: %2(64) = G_OR <2 x s32> %3, %4
 
     ; Greedy mode remapped the instruction on the GPR bank.
-    ; GREEDY-NEXT: %3(64) = G_OR <2 x i32> %0, %1
+    ; GREEDY-NEXT: %3(64) = G_OR <2 x s32> %0, %1
     ; We need to keep %2 into FPR because we do not know anything about it.
     ; GREEDY-NEXT: %2(64) = COPY %3
     %0(64) = COPY %x0
     %1(64) = COPY %x1
-    %2(64) = G_OR <2 x i32> %0, %1
+    %2(64) = G_OR <2 x s32> %0, %1
+...
+
+---
+# CHECK-LABEL: name: ignoreTargetSpecificInst
+name:            ignoreTargetSpecificInst
+isSSA:           true
+legalized:       true
+# CHECK:      registers:
+# CHECK-NEXT:  - { id: 0, class: gpr64 }
+# CHECK-NEXT:  - { id: 1, class: gpr64 }
+registers:
+  - { id: 0, class: gpr64 }
+  - { id: 1, class: gpr64 }
+body: |
+  bb.0:
+    liveins: %x0
+
+    ; CHECK: %0 = COPY %x0
+    ; CHECK-NEXT: %1 = ADDXrr %0, %0
+    ; CHECK-NEXT: %x0 = COPY %1
+    ; CHECK-NEXT: RET_ReallyLR implicit %x0
+
+    %0 = COPY %x0
+    %1 = ADDXrr %0, %0
+    %x0 = COPY %1
+    RET_ReallyLR implicit %x0
+...
+
+---
+# Check that we set the "regBankSelected" property.
+# CHECK-LABEL: name: regBankSelected_property
+# CHECK: legalized: true
+# CHECK: regBankSelected: true
+# CHECK: isSSA: true
+name:            regBankSelected_property
+isSSA:           true
+legalized:       true
+regBankSelected: false
+body:             |
+  bb.0:
 ...

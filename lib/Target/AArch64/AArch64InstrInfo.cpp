@@ -29,13 +29,28 @@ using namespace llvm;
 #define GET_INSTRINFO_CTOR_DTOR
 #include "AArch64GenInstrInfo.inc"
 
+static LLVM_CONSTEXPR MachineMemOperand::Flags MOSuppressPair =
+    MachineMemOperand::MOTargetFlag1;
+
+static cl::opt<unsigned>
+TBZDisplacementBits("aarch64-tbz-offset-bits", cl::Hidden, cl::init(14),
+                    cl::desc("Restrict range of TB[N]Z instructions (DEBUG)"));
+
+static cl::opt<unsigned>
+CBZDisplacementBits("aarch64-cbz-offset-bits", cl::Hidden, cl::init(19),
+                    cl::desc("Restrict range of CB[N]Z instructions (DEBUG)"));
+
+static cl::opt<unsigned>
+BCCDisplacementBits("aarch64-bcc-offset-bits", cl::Hidden, cl::init(19),
+                    cl::desc("Restrict range of Bcc instructions (DEBUG)"));
+
 AArch64InstrInfo::AArch64InstrInfo(const AArch64Subtarget &STI)
     : AArch64GenInstrInfo(AArch64::ADJCALLSTACKDOWN, AArch64::ADJCALLSTACKUP),
       RI(STI.getTargetTriple()), Subtarget(STI) {}
 
 /// GetInstSize - Return the number of bytes of code the specified
 /// instruction may be.  This returns the maximum number of bytes.
-unsigned AArch64InstrInfo::GetInstSizeInBytes(const MachineInstr &MI) const {
+unsigned AArch64InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   const MachineBasicBlock &MBB = *MI.getParent();
   const MachineFunction *MF = MBB.getParent();
   const MCAsmInfo *MAI = MF->getTarget().getMCAsmInfo();
@@ -46,16 +61,19 @@ unsigned AArch64InstrInfo::GetInstSizeInBytes(const MachineInstr &MI) const {
   const MCInstrDesc &Desc = MI.getDesc();
   switch (Desc.getOpcode()) {
   default:
-    // Anything not explicitly designated otherwise is a nomal 4-byte insn.
+    // Anything not explicitly designated otherwise is a normal 4-byte insn.
     return 4;
   case TargetOpcode::DBG_VALUE:
   case TargetOpcode::EH_LABEL:
   case TargetOpcode::IMPLICIT_DEF:
   case TargetOpcode::KILL:
     return 0;
+  case AArch64::TLSDESC_CALLSEQ:
+    // This gets lowered to an instruction sequence which takes 16 bytes
+    return 16;
   }
 
-  llvm_unreachable("GetInstSizeInBytes()- Unable to determin insn size");
+  llvm_unreachable("getInstSizeInBytes()- Unable to determin insn size");
 }
 
 static void parseCondBranch(MachineInstr *LastInst, MachineBasicBlock *&Target,
@@ -89,12 +107,57 @@ static void parseCondBranch(MachineInstr *LastInst, MachineBasicBlock *&Target,
   }
 }
 
+static unsigned getBranchDisplacementBits(unsigned Opc) {
+  switch (Opc) {
+  default:
+    llvm_unreachable("unexpected opcode!");
+  case AArch64::TBNZW:
+  case AArch64::TBZW:
+  case AArch64::TBNZX:
+  case AArch64::TBZX:
+    return TBZDisplacementBits;
+  case AArch64::CBNZW:
+  case AArch64::CBZW:
+  case AArch64::CBNZX:
+  case AArch64::CBZX:
+    return CBZDisplacementBits;
+  case AArch64::Bcc:
+    return BCCDisplacementBits;
+  }
+}
+
+static unsigned getBranchMaxDisplacementBytes(unsigned Opc) {
+  if (Opc == AArch64::B)
+    return -1;
+
+  unsigned Bits = getBranchDisplacementBits(Opc);
+  unsigned MaxOffs = ((1 << (Bits - 1)) - 1) << 2;
+
+  // Verify the displacement bits options have sane values.
+  // XXX: Is there a better place for this?
+  assert(MaxOffs >= 8 &&
+         "max branch displacement must be enough to jump"
+         "over conditional branch expansion");
+
+  return MaxOffs;
+}
+
+bool AArch64InstrInfo::isBranchInRange(unsigned BranchOp, uint64_t BrOffset,
+                                       uint64_t DestOffset) const {
+  unsigned MaxOffs = getBranchMaxDisplacementBytes(BranchOp);
+
+  // Branch before the Dest.
+  if (BrOffset <= DestOffset)
+    return (DestOffset - BrOffset <= MaxOffs);
+  return (BrOffset - DestOffset <= MaxOffs);
+}
+
 // Branch analysis.
-bool AArch64InstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
-                                   MachineBasicBlock *&TBB,
-                                   MachineBasicBlock *&FBB,
-                                   SmallVectorImpl<MachineOperand> &Cond,
-                                   bool AllowModify) const {
+bool AArch64InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
+                                     MachineBasicBlock *&TBB,
+                                     MachineBasicBlock *&FBB,
+                                     SmallVectorImpl<MachineOperand> &Cond,
+                                     bool AllowModify) const {
   // If the block has no terminators, it just falls into the block after it.
   MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
   if (I == MBB.end())
@@ -621,11 +684,15 @@ bool AArch64InstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
   case AArch64::MOVi64imm:
     return canBeExpandedToORR(MI, 64);
 
-  // It is cheap to move #0 to float registers if the subtarget has 
-  // ZeroCycleZeroing feature.
+  // It is cheap to zero out registers if the subtarget has ZeroCycleZeroing
+  // feature.
   case AArch64::FMOVS0:
   case AArch64::FMOVD0:
     return Subtarget.hasZeroCycleZeroing();
+  case TargetOpcode::COPY:
+    return (Subtarget.hasZeroCycleZeroing() &&
+            (MI.getOperand(1).getReg() == AArch64::WZR ||
+             MI.getOperand(1).getReg() == AArch64::XZR));
   }
 
   llvm_unreachable("Unknown opcode to check as cheap as a move!");
@@ -961,6 +1028,7 @@ static bool areCFlagsAliveInSuccessors(MachineBasicBlock *MBB) {
   return false;
 }
 
+namespace {
 struct UsedNZCV {
   bool N;
   bool Z;
@@ -975,6 +1043,7 @@ struct UsedNZCV {
     return *this;
   }
 };
+} // end anonymous namespace
 
 /// Find a condition code used by the instruction.
 /// Returns AArch64CC::Invalid if either the instruction does not use condition
@@ -1449,26 +1518,16 @@ bool AArch64InstrInfo::isScaledAddr(const MachineInstr &MI) const {
 
 /// Check all MachineMemOperands for a hint to suppress pairing.
 bool AArch64InstrInfo::isLdStPairSuppressed(const MachineInstr &MI) const {
-  static_assert(MOSuppressPair < (1 << MachineMemOperand::MOTargetNumBits),
-                "Too many target MO flags");
-  for (auto *MM : MI.memoperands()) {
-    if (MM->getFlags() &
-        (MOSuppressPair << MachineMemOperand::MOTargetStartBit)) {
-      return true;
-    }
-  }
-  return false;
+  return any_of(MI.memoperands(), [](MachineMemOperand *MMO) {
+    return MMO->getFlags() & MOSuppressPair;
+  });
 }
 
 /// Set a flag on the first MachineMemOperand to suppress pairing.
 void AArch64InstrInfo::suppressLdStPair(MachineInstr &MI) const {
   if (MI.memoperands_empty())
     return;
-
-  static_assert(MOSuppressPair < (1 << MachineMemOperand::MOTargetNumBits),
-                "Too many target MO flags");
-  (*MI.memoperands_begin())
-      ->setFlags(MOSuppressPair << MachineMemOperand::MOTargetStartBit);
+  (*MI.memoperands_begin())->setFlags(MOSuppressPair);
 }
 
 bool AArch64InstrInfo::isUnscaledLdSt(unsigned Opc) const {
@@ -1544,36 +1603,8 @@ bool AArch64InstrInfo::isCandidateToMergeOrPair(MachineInstr &MI) const {
 bool AArch64InstrInfo::getMemOpBaseRegImmOfs(
     MachineInstr &LdSt, unsigned &BaseReg, int64_t &Offset,
     const TargetRegisterInfo *TRI) const {
-  switch (LdSt.getOpcode()) {
-  default:
-    return false;
-  // Scaled instructions.
-  case AArch64::STRSui:
-  case AArch64::STRDui:
-  case AArch64::STRQui:
-  case AArch64::STRXui:
-  case AArch64::STRWui:
-  case AArch64::LDRSui:
-  case AArch64::LDRDui:
-  case AArch64::LDRQui:
-  case AArch64::LDRXui:
-  case AArch64::LDRWui:
-  case AArch64::LDRSWui:
-  // Unscaled instructions.
-  case AArch64::STURSi:
-  case AArch64::STURDi:
-  case AArch64::STURQi:
-  case AArch64::STURXi:
-  case AArch64::STURWi:
-  case AArch64::LDURSi:
-  case AArch64::LDURDi:
-  case AArch64::LDURQi:
-  case AArch64::LDURWi:
-  case AArch64::LDURXi:
-  case AArch64::LDURSWi:
-    unsigned Width;
-    return getMemOpBaseRegImmOfsWidth(LdSt, BaseReg, Offset, Width, TRI);
-  };
+  unsigned Width;
+  return getMemOpBaseRegImmOfsWidth(LdSt, BaseReg, Offset, Width, TRI);
 }
 
 bool AArch64InstrInfo::getMemOpBaseRegImmOfsWidth(
@@ -1770,6 +1801,9 @@ bool AArch64InstrInfo::shouldClusterMemOps(MachineInstr &FirstLdSt,
                                            unsigned NumLoads) const {
   // Only cluster up to a single pair.
   if (NumLoads > 1)
+    return false;
+
+  if (!isPairableLdStInst(FirstLdSt) || !isPairableLdStInst(SecondLdSt))
     return false;
 
   // Can we pair these instructions based on their opcodes?
@@ -2189,7 +2223,7 @@ void AArch64InstrInfo::storeRegToStackSlot(
   if (MBBI != MBB.end())
     DL = MBBI->getDebugLoc();
   MachineFunction &MF = *MBB.getParent();
-  MachineFrameInfo &MFI = *MF.getFrameInfo();
+  MachineFrameInfo &MFI = MF.getFrameInfo();
   unsigned Align = MFI.getObjectAlignment(FI);
 
   MachinePointerInfo PtrInfo = MachinePointerInfo::getFixedStack(MF, FI);
@@ -2293,7 +2327,7 @@ void AArch64InstrInfo::loadRegFromStackSlot(
   if (MBBI != MBB.end())
     DL = MBBI->getDebugLoc();
   MachineFunction &MF = *MBB.getParent();
-  MachineFrameInfo &MFI = *MF.getFrameInfo();
+  MachineFrameInfo &MFI = MF.getFrameInfo();
   unsigned Align = MFI.getObjectAlignment(FI);
   MachinePointerInfo PtrInfo = MachinePointerInfo::getFixedStack(MF, FI);
   MachineMemOperand *MMO = MF.getMachineMemOperand(
@@ -3465,7 +3499,7 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
       unsigned Val = Root.getOperand(3).getImm();
       Imm = Imm << Val;
     }
-    uint64_t UImm = Imm << (64 - BitSize) >> (64 - BitSize);
+    uint64_t UImm = SignExtend64(Imm, BitSize);
     uint64_t Encoding;
     if (AArch64_AM::processLogicalImmediate(UImm, BitSize, Encoding)) {
       MachineInstrBuilder MIB1 =
@@ -3551,12 +3585,12 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
       RC = &AArch64::GPR64RegClass;
     }
     unsigned NewVR = MRI.createVirtualRegister(OrrRC);
-    int Imm = Root.getOperand(2).getImm();
+    uint64_t Imm = Root.getOperand(2).getImm();
     if (Root.getOperand(3).isImm()) {
       unsigned Val = Root.getOperand(3).getImm();
       Imm = Imm << Val;
     }
-    uint64_t UImm = -Imm << (64 - BitSize) >> (64 - BitSize);
+    uint64_t UImm = SignExtend64(-Imm, BitSize);
     uint64_t Encoding;
     if (AArch64_AM::processLogicalImmediate(UImm, BitSize, Encoding)) {
       MachineInstrBuilder MIB1 =

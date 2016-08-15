@@ -351,7 +351,7 @@ quality patches.  If you would like commit access, please send an email to
    comes with apache) in *crypt* mode (often enabled with "``-d``"), or find a web
    page that will do it for you.  Note that our system does not work with MD5
    hashes.  These are significantly longer than a crypt hash - e.g.
-   "``$apr1$vea6bBV2$Z8IFx.AfeD8LhqlZFqJer0``".
+   "``$apr1$vea6bBV2$Z8IFx.AfeD8LhqlZFqJer0``", we only accept the shorter crypt hash.
 
 Once you've been granted commit access, you should be able to check out an LLVM
 tree with an SVN URL of "https://username@llvm.org/..." instead of the normal
@@ -510,8 +510,7 @@ for llvm users and not imposing a big burden on llvm developers:
 * Additions and changes to the IR should be reflected in
   ``test/Bitcode/compatibility.ll``.
 
-* The bitcode format produced by a X.Y release will be readable by all
-  following X.Z releases and the (X+1).0 release.
+* The current LLVM version supports loading any bitcode since version 3.0.
 
 * After each X.Y release, ``compatibility.ll`` must be copied to
   ``compatibility-X.Y.ll``. The corresponding bitcode file should be assembled

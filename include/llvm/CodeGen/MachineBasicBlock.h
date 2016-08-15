@@ -39,24 +39,17 @@ class MachineBranchProbabilityInfo;
 typedef unsigned LaneBitmask;
 
 template <>
+struct ilist_sentinel_traits<MachineInstr>
+    : public ilist_half_embedded_sentinel_traits<MachineInstr> {};
+
+template <>
 struct ilist_traits<MachineInstr> : public ilist_default_traits<MachineInstr> {
 private:
-  mutable ilist_half_node<MachineInstr> Sentinel;
-
   // this is only set by the MachineBasicBlock owning the LiveList
   friend class MachineBasicBlock;
   MachineBasicBlock* Parent;
 
 public:
-  MachineInstr *createSentinel() const {
-    return static_cast<MachineInstr*>(&Sentinel);
-  }
-  void destroySentinel(MachineInstr *) const {}
-
-  MachineInstr *provideInitialHead() const { return createSentinel(); }
-  MachineInstr *ensureHead(MachineInstr*) const { return createSentinel(); }
-  static void noteHead(MachineInstr*, MachineInstr*) {}
-
   void addNodeToList(MachineInstr* N);
   void removeNodeFromList(MachineInstr* N);
   void transferNodesFromList(ilist_traits &SrcTraits,
@@ -740,6 +733,7 @@ struct MBB2NumberFunctor :
 
 template <> struct GraphTraits<MachineBasicBlock *> {
   typedef MachineBasicBlock NodeType;
+  typedef MachineBasicBlock *NodeRef;
   typedef MachineBasicBlock::succ_iterator ChildIteratorType;
 
   static NodeType *getEntryNode(MachineBasicBlock *BB) { return BB; }
@@ -753,6 +747,7 @@ template <> struct GraphTraits<MachineBasicBlock *> {
 
 template <> struct GraphTraits<const MachineBasicBlock *> {
   typedef const MachineBasicBlock NodeType;
+  typedef const MachineBasicBlock *NodeRef;
   typedef MachineBasicBlock::const_succ_iterator ChildIteratorType;
 
   static NodeType *getEntryNode(const MachineBasicBlock *BB) { return BB; }
@@ -772,6 +767,7 @@ template <> struct GraphTraits<const MachineBasicBlock *> {
 //
 template <> struct GraphTraits<Inverse<MachineBasicBlock*> > {
   typedef MachineBasicBlock NodeType;
+  typedef MachineBasicBlock *NodeRef;
   typedef MachineBasicBlock::pred_iterator ChildIteratorType;
   static NodeType *getEntryNode(Inverse<MachineBasicBlock *> G) {
     return G.Graph;
@@ -786,6 +782,7 @@ template <> struct GraphTraits<Inverse<MachineBasicBlock*> > {
 
 template <> struct GraphTraits<Inverse<const MachineBasicBlock*> > {
   typedef const MachineBasicBlock NodeType;
+  typedef const MachineBasicBlock *NodeRef;
   typedef MachineBasicBlock::const_pred_iterator ChildIteratorType;
   static NodeType *getEntryNode(Inverse<const MachineBasicBlock*> G) {
     return G.Graph;

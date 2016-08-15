@@ -18,6 +18,7 @@
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/LazyValueInfo.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
@@ -37,6 +38,7 @@ STATISTIC(NumCmps,      "Number of comparisons propagated");
 STATISTIC(NumReturns,   "Number of return values propagated");
 STATISTIC(NumDeadCases, "Number of switch cases removed");
 STATISTIC(NumSDivs,     "Number of sdiv converted to udiv");
+STATISTIC(NumSRems,     "Number of srem converted to urem");
 
 namespace {
   class CorrelatedValuePropagation : public FunctionPass {
@@ -325,31 +327,50 @@ static bool processCallSite(CallSite CS, LazyValueInfo *LVI) {
   return true;
 }
 
+// Helper function to rewrite srem and sdiv. As a policy choice, we choose not
+// to waste compile time on anything where the operands are local defs.  While
+// LVI can sometimes reason about such cases, it's not its primary purpose.
+static bool hasLocalDefs(BinaryOperator *SDI) {
+  for (Value *O : SDI->operands()) {
+    auto *I = dyn_cast<Instruction>(O);
+    if (I && I->getParent() == SDI->getParent())
+      return true;
+  }
+  return false;
+}
+
+static bool hasPositiveOperands(BinaryOperator *SDI, LazyValueInfo *LVI) {
+  Constant *Zero = ConstantInt::get(SDI->getType(), 0);
+  for (Value *O : SDI->operands()) {
+    auto Result = LVI->getPredicateAt(ICmpInst::ICMP_SGE, O, Zero, SDI);
+    if (Result != LazyValueInfo::True)
+      return false;
+  }
+  return true;
+}
+
+static bool processSRem(BinaryOperator *SDI, LazyValueInfo *LVI) {
+  if (SDI->getType()->isVectorTy() || hasLocalDefs(SDI) ||
+      !hasPositiveOperands(SDI, LVI))
+    return false;
+
+  ++NumSRems;
+  auto *BO = BinaryOperator::CreateURem(SDI->getOperand(0), SDI->getOperand(1),
+                                        SDI->getName(), SDI);
+  SDI->replaceAllUsesWith(BO);
+  SDI->eraseFromParent();
+  return true;
+}
+
 /// See if LazyValueInfo's ability to exploit edge conditions or range
 /// information is sufficient to prove the both operands of this SDiv are
 /// positive.  If this is the case, replace the SDiv with a UDiv. Even for local
 /// conditions, this can sometimes prove conditions instcombine can't by
 /// exploiting range information.
 static bool processSDiv(BinaryOperator *SDI, LazyValueInfo *LVI) {
-  if (SDI->getType()->isVectorTy())
+  if (SDI->getType()->isVectorTy() || hasLocalDefs(SDI) ||
+      !hasPositiveOperands(SDI, LVI))
     return false;
-
-  for (Value *O : SDI->operands()) {
-    // As a policy choice, we choose not to waste compile time on anything where
-    // the operands are local defs.  While LVI can sometimes reason about such
-    // cases, it's not its primary purpose.
-    auto *I = dyn_cast<Instruction>(O);
-    if (I && I->getParent() == SDI->getParent())
-      return false;
-  }
-
-  Constant *Zero = ConstantInt::get(SDI->getType(), 0);
-  for (Value *O : SDI->operands()) {
-    LazyValueInfo::Tristate Result =
-        LVI->getPredicateAt(ICmpInst::ICMP_SGE, O, Zero, SDI);
-    if (Result != LazyValueInfo::True)
-      return false;
-  }
 
   ++NumSDivs;
   auto *BO = BinaryOperator::CreateUDiv(SDI->getOperand(0), SDI->getOperand(1),
@@ -359,6 +380,59 @@ static bool processSDiv(BinaryOperator *SDI, LazyValueInfo *LVI) {
   SDI->eraseFromParent();
 
   return true;
+}
+
+static bool processAdd(BinaryOperator *AddOp, LazyValueInfo *LVI) {
+  typedef OverflowingBinaryOperator OBO;
+
+  if (AddOp->getType()->isVectorTy() || hasLocalDefs(AddOp))
+    return false;
+
+  bool NSW = AddOp->hasNoSignedWrap();
+  bool NUW = AddOp->hasNoUnsignedWrap();
+  if (NSW && NUW)
+    return false;
+
+  BasicBlock *BB = AddOp->getParent();
+
+  Value *LHS = AddOp->getOperand(0);
+  Value *RHS = AddOp->getOperand(1);
+
+  ConstantRange LRange = LVI->getConstantRange(LHS, BB, AddOp);
+
+  // Initialize RRange only if we need it. If we know that guaranteed no wrap
+  // range for the given LHS range is empty don't spend time calculating the
+  // range for the RHS.
+  Optional<ConstantRange> RRange;
+  auto LazyRRange = [&] () {
+      if (!RRange)
+        RRange = LVI->getConstantRange(RHS, BB, AddOp);
+      return RRange.getValue();
+  };
+
+  bool Changed = false;
+  if (!NUW) {
+    ConstantRange NUWRange =
+            LRange.makeGuaranteedNoWrapRegion(BinaryOperator::Add, LRange,
+                                              OBO::NoUnsignedWrap);
+    if (!NUWRange.isEmptySet()) {
+      bool NewNUW = NUWRange.contains(LazyRRange());
+      AddOp->setHasNoUnsignedWrap(NewNUW);
+      Changed |= NewNUW;
+    }
+  }
+  if (!NSW) {
+    ConstantRange NSWRange =
+            LRange.makeGuaranteedNoWrapRegion(BinaryOperator::Add, LRange,
+                                              OBO::NoSignedWrap);
+    if (!NSWRange.isEmptySet()) {
+      bool NewNSW = NSWRange.contains(LazyRRange());
+      AddOp->setHasNoSignedWrap(NewNSW);
+      Changed |= NewNSW;
+    }
+  }
+
+  return Changed;
 }
 
 static Constant *getConstantAt(Value *V, Instruction *At, LazyValueInfo *LVI) {
@@ -410,8 +484,14 @@ static bool runImpl(Function &F, LazyValueInfo *LVI) {
       case Instruction::Invoke:
         BBChanged |= processCallSite(CallSite(II), LVI);
         break;
+      case Instruction::SRem:
+        BBChanged |= processSRem(cast<BinaryOperator>(II), LVI);
+        break;
       case Instruction::SDiv:
         BBChanged |= processSDiv(cast<BinaryOperator>(II), LVI);
+        break;
+      case Instruction::Add:
+        BBChanged |= processAdd(cast<BinaryOperator>(II), LVI);
         break;
       }
     }

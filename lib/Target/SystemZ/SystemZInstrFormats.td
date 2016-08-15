@@ -158,6 +158,14 @@ def getThreeOperandOpcode : InstrMapping {
 //
 //===----------------------------------------------------------------------===//
 
+class InstE<bits<16> op, dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSystemZ<2, outs, ins, asmstr, pattern> {
+  field bits<16> Inst;
+  field bits<16> SoftFail = 0;
+
+  let Inst = op;
+}
+
 class InstI<bits<8> op, dag outs, dag ins, string asmstr, list<dag> pattern>
   : InstSystemZ<2, outs, ins, asmstr, pattern> {
   field bits<16> Inst;
@@ -487,6 +495,21 @@ class InstRS<bits<8> op, dag outs, dag ins, string asmstr, list<dag> pattern>
   let Inst{15-0}  = BD2;
 }
 
+class InstRSI<bits<8> op, dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSystemZ<4, outs, ins, asmstr, pattern> {
+  field bits<32> Inst;
+  field bits<32> SoftFail = 0;
+
+  bits<4> R1;
+  bits<4> R3;
+  bits<16> RI2;
+
+  let Inst{31-24} = op;
+  let Inst{23-20} = R1;
+  let Inst{19-16} = R3;
+  let Inst{15-0}  = RI2;
+}
+
 class InstRSY<bits<16> op, dag outs, dag ins, string asmstr, list<dag> pattern>
   : InstSystemZ<6, outs, ins, asmstr, pattern> {
   field bits<48> Inst;
@@ -557,6 +580,51 @@ class InstSS<bits<8> op, dag outs, dag ins, string asmstr, list<dag> pattern>
 
   let Inst{47-40} = op;
   let Inst{39-16} = BDL1;
+  let Inst{15-0}  = BD2;
+}
+
+class InstSSd<bits<8> op, dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSystemZ<6, outs, ins, asmstr, pattern> {
+  field bits<48> Inst;
+  field bits<48> SoftFail = 0;
+
+  bits<20> XBD1;
+  bits<16> BD2;
+  bits<4> R3;
+
+  let Inst{47-40} = op;
+  let Inst{39-36} = XBD1{19-16};
+  let Inst{35-32} = R3;
+  let Inst{31-16} = XBD1{15-0};
+  let Inst{15-0}  = BD2;
+}
+
+class InstSSE<bits<16> op, dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSystemZ<6, outs, ins, asmstr, pattern> {
+  field bits<48> Inst;
+  field bits<48> SoftFail = 0;
+
+  bits<16> BD1;
+  bits<16> BD2;
+
+  let Inst{47-32} = op;
+  let Inst{31-16} = BD1;
+  let Inst{15-0}  = BD2;
+}
+
+class InstSSF<bits<12> op, dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSystemZ<6, outs, ins, asmstr, pattern> {
+  field bits<48> Inst;
+  field bits<48> SoftFail = 0;
+
+  bits<16> BD1;
+  bits<16> BD2;
+  bits<4>  R3;
+
+  let Inst{47-40} = op{11-4};
+  let Inst{39-36} = R3;
+  let Inst{35-32} = op{3-0};
+  let Inst{31-16} = BD1;
   let Inst{15-0}  = BD2;
 }
 
@@ -948,6 +1016,196 @@ class InstVRX<bits<16> op, dag outs, dag ins, string asmstr, list<dag> pattern>
 }
 
 //===----------------------------------------------------------------------===//
+// Instruction classes for .insn directives
+//===----------------------------------------------------------------------===//
+
+class DirectiveInsnE<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstE<0, outs, ins, asmstr, pattern> {
+  bits<16> enc;
+
+  let Inst = enc;
+}
+
+class DirectiveInsnRI<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRI<0, outs, ins, asmstr, pattern> {
+  bits<32> enc;
+
+  let Inst{31-24} = enc{31-24};
+  let Inst{19-16} = enc{19-16};
+}
+
+class DirectiveInsnRIE<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRIEd<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{7-0}   = enc{7-0};
+}
+
+class DirectiveInsnRIL<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRIL<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+  string type;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{35-32} = enc{35-32};
+}
+
+class DirectiveInsnRIS<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRIS<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{7-0}   = enc{7-0};
+}
+
+class DirectiveInsnRR<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRR<0, outs, ins, asmstr, pattern> {
+  bits<16> enc;
+
+  let Inst{15-8} = enc{15-8};
+}
+
+class DirectiveInsnRRE<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRRE<0, outs, ins, asmstr, pattern> {
+  bits<32> enc;
+
+  let Inst{31-16} = enc{31-16};
+}
+
+class DirectiveInsnRRF<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRRF<0, outs, ins, asmstr, pattern> {
+  bits<32> enc;
+
+  let Inst{31-16} = enc{31-16};
+}
+
+class DirectiveInsnRRS<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRRS<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{7-0}   = enc{7-0};
+}
+
+class DirectiveInsnRS<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRS<0, outs, ins, asmstr, pattern> {
+  bits<32> enc;
+
+  let Inst{31-24} = enc{31-24};
+}
+
+// RSE is like RSY except with a 12 bit displacement (instead of 20).
+class DirectiveInsnRSE<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRSY<6, outs, ins, asmstr, pattern> {
+  bits <48> enc;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{31-16} = BD2{15-0};
+  let Inst{15-8}  = 0;
+  let Inst{7-0}   = enc{7-0};
+}
+
+class DirectiveInsnRSI<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRSI<0, outs, ins, asmstr, pattern> {
+  bits<32> enc;
+
+  let Inst{31-24} = enc{31-24};
+}
+
+class DirectiveInsnRSY<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRSY<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{7-0}   = enc{7-0};
+}
+
+class DirectiveInsnRX<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRX<0, outs, ins, asmstr, pattern> {
+  bits<32> enc;
+
+  let Inst{31-24} = enc{31-24};
+}
+
+class DirectiveInsnRXE<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRXE<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let M3 = 0;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{7-0}   = enc{7-0};
+}
+
+class DirectiveInsnRXF<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRXF<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{7-0}   = enc{7-0};
+}
+
+class DirectiveInsnRXY<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstRXY<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{7-0}   = enc{7-0};
+}
+
+class DirectiveInsnS<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstS<0, outs, ins, asmstr, pattern> {
+  bits<32> enc;
+
+  let Inst{31-16} = enc{31-16};
+}
+
+class DirectiveInsnSI<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSI<0, outs, ins, asmstr, pattern> {
+  bits<32> enc;
+
+  let Inst{31-24} = enc{31-24};
+}
+
+class DirectiveInsnSIY<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSIY<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{7-0}   = enc{7-0};
+}
+
+class DirectiveInsnSIL<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSIL<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-32} = enc{47-32};
+}
+
+class DirectiveInsnSS<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSSd<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-40} = enc{47-40};
+}
+
+class DirectiveInsnSSE<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSSE<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-32} = enc{47-32};
+}
+
+class DirectiveInsnSSF<dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSSF<0, outs, ins, asmstr, pattern> {
+  bits<48> enc;
+
+  let Inst{47-40} = enc{47-40};
+  let Inst{35-32} = enc{35-32};
+}
+
+//===----------------------------------------------------------------------===//
 // Instruction definitions with semantics
 //===----------------------------------------------------------------------===//
 //
@@ -965,6 +1223,11 @@ class InstVRX<bits<16> op, dag outs, dag ins, string asmstr, list<dag> pattern>
 //     one branch displacement.  The instructions stores a modified
 //     form of the source register in the destination register and
 //     branches on the result.
+//
+//   BranchBinary:
+//     One register output operand, two register input operands and one branch
+//     displacement. The instructions stores a modified form of one of the
+//     source registers in the destination register and branches on the result.
 //
 //   LoadMultiple:
 //     One address input operand and two explicit output operands.
@@ -1054,6 +1317,15 @@ class InherentVRIa<string mnemonic, bits<16> opcode, bits<16> value>
 class BranchUnaryRI<string mnemonic, bits<12> opcode, RegisterOperand cls>
   : InstRI<opcode, (outs cls:$R1), (ins cls:$R1src, brtarget16:$I2),
            mnemonic##"\t$R1, $I2", []> {
+  let isBranch = 1;
+  let isTerminator = 1;
+  let Constraints = "$R1 = $R1src";
+  let DisableEncoding = "$R1src";
+}
+
+class BranchBinaryRSI<string mnemonic, bits<8> opcode, RegisterOperand cls>
+  : InstRSI<opcode, (outs cls:$R1), (ins cls:$R1src, cls:$R3, brtarget16:$RI2),
+            mnemonic##"\t$R1, $R3, $RI2", []> {
   let isBranch = 1;
   let isTerminator = 1;
   let Constraints = "$R1 = $R1src";

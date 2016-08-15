@@ -120,6 +120,8 @@ namespace opts {
   // -dynamic-table
   cl::opt<bool> DynamicTable("dynamic-table",
     cl::desc("Display the ELF .dynamic section table"));
+  cl::alias DynamicTableShort("d", cl::desc("Alias for --dynamic-table"),
+                              cl::aliasopt(DynamicTable));
 
   // -needed-libs
   cl::opt<bool> NeededLibraries("needed-libs",
@@ -128,6 +130,8 @@ namespace opts {
   // -program-headers
   cl::opt<bool> ProgramHeaders("program-headers",
     cl::desc("Display ELF program headers"));
+  cl::alias ProgramHeadersShort("l", cl::desc("Alias for --program-headers"),
+                                cl::aliasopt(ProgramHeaders));
 
   // -hash-table
   cl::opt<bool> HashTable("hash-table",
@@ -268,10 +272,16 @@ LLVM_ATTRIBUTE_NORETURN void reportError(Twine Msg) {
   exit(1);
 }
 
+void error(Error EC) {
+  if (!EC)
+    return;
+  handleAllErrors(std::move(EC),
+                  [&](const ErrorInfoBase &EI) { reportError(EI.message()); });
+}
+
 void error(std::error_code EC) {
   if (!EC)
     return;
-
   reportError(EC.message());
 }
 
@@ -293,6 +303,17 @@ static void reportError(StringRef Input, StringRef Message) {
     Input = "<stdin>";
 
   reportError(Twine(Input) + ": " + Message);
+}
+
+static void reportError(StringRef Input, Error Err) {
+  if (Input == "-")
+    Input = "<stdin>";
+  std::string ErrMsg;
+  {
+    raw_string_ostream ErrStream(ErrMsg);
+    logAllUnhandledErrors(std::move(Err), ErrStream, Input + ": ");
+  }
+  reportError(ErrMsg);
 }
 
 static bool isMipsArch(unsigned Arch) {
@@ -424,10 +445,8 @@ static void dumpObject(const ObjectFile *Obj) {
 
 /// @brief Dumps each object file in \a Arc;
 static void dumpArchive(const Archive *Arc) {
-  for (auto &ErrorOrChild : Arc->children()) {
-    if (std::error_code EC = ErrorOrChild.getError())
-      reportError(Arc->getFileName(), EC.message());
-    const auto &Child = *ErrorOrChild;
+  Error Err;
+  for (auto &Child : Arc->children(Err)) {
     Expected<std::unique_ptr<Binary>> ChildOrErr = Child.getAsBinary();
     if (!ChildOrErr) {
       if (auto E = isNotObjectErrorInvalidFileType(ChildOrErr.takeError())) {
@@ -444,6 +463,8 @@ static void dumpArchive(const Archive *Arc) {
     else
       reportError(Arc->getFileName(), readobj_error::unrecognized_file_format);
   }
+  if (Err)
+    reportError(Arc->getFileName(), std::move(Err));
 }
 
 /// @brief Dumps each object file in \a MachO Universal Binary;

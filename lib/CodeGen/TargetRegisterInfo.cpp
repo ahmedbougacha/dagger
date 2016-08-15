@@ -354,7 +354,7 @@ TargetRegisterInfo::getRegAllocationHints(unsigned VirtReg,
   // Check that Phys is in the allocation order. We shouldn't heed hints
   // from VirtReg's register class if they aren't in the allocation order. The
   // target probably has a reason for removing the register.
-  if (std::find(Order.begin(), Order.end(), Phys) == Order.end())
+  if (!is_contained(Order, Phys))
     return;
 
   // All clear, tell the register allocator to prefer this register.
@@ -367,11 +367,11 @@ bool TargetRegisterInfo::canRealignStack(const MachineFunction &MF) const {
 
 bool TargetRegisterInfo::needsStackRealignment(
     const MachineFunction &MF) const {
-  const MachineFrameInfo *MFI = MF.getFrameInfo();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
   const TargetFrameLowering *TFI = MF.getSubtarget().getFrameLowering();
   const Function *F = MF.getFunction();
   unsigned StackAlign = TFI->getStackAlignment();
-  bool requiresRealignment = ((MFI->getMaxAlignment() > StackAlign) ||
+  bool requiresRealignment = ((MFI.getMaxAlignment() > StackAlign) ||
                               F->hasFnAttribute(Attribute::StackAlignment));
   if (MF.getFunction()->hasFnAttribute("stackrealign") || requiresRealignment) {
     if (canRealignStack(MF))

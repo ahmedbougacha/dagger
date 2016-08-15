@@ -624,6 +624,7 @@ void BranchProbabilityInfo::setEdgeProbability(const BasicBlock *Src,
                                                unsigned IndexInSuccessors,
                                                BranchProbability Prob) {
   Probs[std::make_pair(Src, IndexInSuccessors)] = Prob;
+  Handles.insert(BasicBlockCallbackVH(Src, this));
   DEBUG(dbgs() << "set edge " << Src->getName() << " -> " << IndexInSuccessors
                << " successor probability to " << Prob << "\n");
 }
@@ -639,6 +640,14 @@ BranchProbabilityInfo::printEdgeProbability(raw_ostream &OS,
      << (isEdgeHot(Src, Dst) ? " [HOT edge]\n" : "\n");
 
   return OS;
+}
+
+void BranchProbabilityInfo::eraseBlock(const BasicBlock *BB) {
+  for (auto I = Probs.begin(), E = Probs.end(); I != E; ++I) {
+    auto Key = I->first;
+    if (Key.first == BB)
+      Probs.erase(Key);
+  }
 }
 
 void BranchProbabilityInfo::calculate(const Function &F, const LoopInfo &LI) {
@@ -694,14 +703,14 @@ void BranchProbabilityInfoWrapperPass::print(raw_ostream &OS,
 
 char BranchProbabilityAnalysis::PassID;
 BranchProbabilityInfo
-BranchProbabilityAnalysis::run(Function &F, AnalysisManager<Function> &AM) {
+BranchProbabilityAnalysis::run(Function &F, FunctionAnalysisManager &AM) {
   BranchProbabilityInfo BPI;
   BPI.calculate(F, AM.getResult<LoopAnalysis>(F));
   return BPI;
 }
 
 PreservedAnalyses
-BranchProbabilityPrinterPass::run(Function &F, AnalysisManager<Function> &AM) {
+BranchProbabilityPrinterPass::run(Function &F, FunctionAnalysisManager &AM) {
   OS << "Printing analysis results of BPI for function "
      << "'" << F.getName() << "':"
      << "\n";

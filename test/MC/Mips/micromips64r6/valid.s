@@ -47,6 +47,11 @@ a:
         rotr $9, $6, 7                  # CHECK: rotr $9, $6, 7                  # encoding: [0x01,0x26,0x38,0xc0]
         rotrv $9, $6, $7                # CHECK: rotrv $9, $6, $7                # encoding: [0x00,0xc7,0x48,0xd0]
         sc $2, 8($4)                    # CHECK: sc $2, 8($4)                    # encoding: [0x60,0x44,0xb0,0x08]
+        sgt $4, $5, $6                  # CHECK: slt $4, $6, $5                  # encoding: [0x00,0xa6,0x23,0x50]
+        sgtu $4, $5, $6                 # CHECK: sltu $4, $6, $5                 # encoding: [0x00,0xa6,0x23,0x90]
+        sll $4, $5                      # CHECK: sllv $4, $4, $5                 # encoding: [0x00,0x85,0x20,0x10]
+        sra $4, $5                      # CHECK: srav $4, $4, $5                 # encoding: [0x00,0x85,0x20,0x90]
+        srl $4, $5                      # CHECK: srlv $4, $4, $5                 # encoding: [0x00,0x85,0x20,0x50]
         swm32 $16, $17, 8($4)           # CHECK: swm32 $16, $17, 8($4)           # encoding: [0x20,0x44,0xd0,0x08]
         swm32 $16, $17, 8($sp)          # CHECK: swm32 $16, $17, 8($sp)          # encoding: [0x20,0x5d,0xd0,0x08]
         swm32 $16, $17, $ra, 8($4)      # CHECK: swm32 $16, $17, $ra, 8($4)      # encoding: [0x22,0x44,0xd0,0x08]
@@ -317,5 +322,9 @@ a:
         sdc2 $2, 8($16)          # CHECK: sdc2 $2, 8($16)         # encoding: [0x20,0x50,0xa0,0x08]
         swc1 $f6, 369($13)       # CHECK: swc1 $f6, 369($13)      # encoding: [0x98,0xcd,0x01,0x71]
         swc2 $7, 777($17)        # CHECK: swc2 $7, 777($17)       # encoding: [0x20,0xf1,0x83,0x09]
+        cfc1 $1, $2              # CHECK: cfc1 $1, $2             # encoding: [0x54,0x22,0x10,0x3b]
+        cfc2 $3, $4              # CHECK: cfc2 $3, $4             # encoding: [0x00,0x64,0xcd,0x3c]
+        ctc1 $5, $6              # CHECK: ctc1 $5, $6             # encoding: [0x54,0xa6,0x18,0x3b]
+        ctc2 $7, $8              # CHECK: ctc2 $7, $8             # encoding: [0x00,0xe8,0xdd,0x3c]
 
 1:

@@ -24,6 +24,7 @@
 #include "SIFrameLowering.h"
 #include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/CodeGen/GlobalISel/GISelAccessor.h"
+#include "llvm/CodeGen/SelectionDAGTargetInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 
 #define GET_SUBTARGETINFO_HEADER
@@ -108,6 +109,7 @@ protected:
   bool FeatureDisable;
 
   InstrItineraryData InstrItins;
+  SelectionDAGTargetInfo TSInfo;
 
 public:
   AMDGPUSubtarget(const Triple &TT, StringRef GPU, StringRef FS,
@@ -116,13 +118,18 @@ public:
   AMDGPUSubtarget &initializeSubtargetDependencies(const Triple &TT,
                                                    StringRef GPU, StringRef FS);
 
-  const AMDGPUInstrInfo *getInstrInfo() const override;
-  const AMDGPUFrameLowering *getFrameLowering() const override;
-  const AMDGPUTargetLowering *getTargetLowering() const override;
-  const AMDGPURegisterInfo *getRegisterInfo() const override;
+  const AMDGPUInstrInfo *getInstrInfo() const override = 0;
+  const AMDGPUFrameLowering *getFrameLowering() const override = 0;
+  const AMDGPUTargetLowering *getTargetLowering() const override = 0;
+  const AMDGPURegisterInfo *getRegisterInfo() const override = 0;
 
   const InstrItineraryData *getInstrItineraryData() const override {
     return &InstrItins;
+  }
+
+  // Nothing implemented, just prevent crashes on use.
+  const SelectionDAGTargetInfo *getSelectionDAGInfo() const override {
+    return &TSInfo;
   }
 
   void ParseSubtargetFeatures(StringRef CPU, StringRef FS);
@@ -328,14 +335,14 @@ public:
   short getTexVTXClauseSize() const {
     return TexVTXClauseSize;
   }
-
-  unsigned getStackEntrySize() const;
 };
 
 class SISubtarget final : public AMDGPUSubtarget {
 public:
   enum {
-    FIXED_SGPR_COUNT_FOR_INIT_BUG = 80
+    // The closed Vulkan driver sets 96, which limits the wave count to 8 but
+    // doesn't spill SGPRs as much as when 80 is set.
+    FIXED_SGPR_COUNT_FOR_INIT_BUG = 96
   };
 
 private:
@@ -377,10 +384,6 @@ public:
                            unsigned NumRegionInstrs) const override;
 
   bool isVGPRSpillingEnabled(const Function& F) const;
-
-  unsigned getAmdKernelCodeChipID() const;
-
-  AMDGPU::IsaVersion getIsaVersion() const;
 
   unsigned getMaxNumUserSGPRs() const {
     return 16;
@@ -427,35 +430,6 @@ public:
     return SGPRInitBug;
   }
 };
-
-
-inline const AMDGPUInstrInfo *AMDGPUSubtarget::getInstrInfo() const {
-  if (getGeneration() >= SOUTHERN_ISLANDS)
-    return static_cast<const SISubtarget *>(this)->getInstrInfo();
-
-  return static_cast<const R600Subtarget *>(this)->getInstrInfo();
-}
-
-inline const AMDGPUFrameLowering *AMDGPUSubtarget::getFrameLowering() const  {
-  if (getGeneration() >= SOUTHERN_ISLANDS)
-    return static_cast<const SISubtarget *>(this)->getFrameLowering();
-
-  return static_cast<const R600Subtarget *>(this)->getFrameLowering();
-}
-
-inline const AMDGPUTargetLowering *AMDGPUSubtarget::getTargetLowering() const  {
-  if (getGeneration() >= SOUTHERN_ISLANDS)
-    return static_cast<const SISubtarget *>(this)->getTargetLowering();
-
-  return static_cast<const R600Subtarget *>(this)->getTargetLowering();
-}
-
-inline const AMDGPURegisterInfo *AMDGPUSubtarget::getRegisterInfo() const  {
-  if (getGeneration() >= SOUTHERN_ISLANDS)
-    return static_cast<const SISubtarget *>(this)->getRegisterInfo();
-
-  return static_cast<const R600Subtarget *>(this)->getRegisterInfo();
-}
 
 } // End namespace llvm
 

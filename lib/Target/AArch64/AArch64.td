@@ -224,6 +224,7 @@ def ProcExynosM1 : SubtargetFeature<"exynosm1", "ARMProcFamily", "ExynosM1",
                                     FeatureFPARMv8,
                                     FeatureNEON,
                                     FeaturePerfMon,
+                                    FeaturePostRAScheduler,
                                     FeatureUseRSqrt
                                     ]>;
 
@@ -249,6 +250,7 @@ def ProcVulcan  : SubtargetFeature<"vulcan", "ARMProcFamily", "Vulcan",
                                    FeatureMacroOpFusion,
                                    FeatureNEON,
                                    FeaturePostRAScheduler,
+                                   FeaturePredictableSelectIsExpensive,
                                    HasV8_1aOps]>;
 
 def : ProcessorModel<"generic", NoSchedModel, [
@@ -268,6 +270,7 @@ def : ProcessorModel<"cortex-a72", CortexA57Model, [ProcA72]>;
 def : ProcessorModel<"cortex-a73", CortexA57Model, [ProcA73]>;
 def : ProcessorModel<"cyclone", CycloneModel, [ProcCyclone]>;
 def : ProcessorModel<"exynos-m1", ExynosM1Model, [ProcExynosM1]>;
+def : ProcessorModel<"exynos-m2", ExynosM1Model, [ProcExynosM1]>;
 def : ProcessorModel<"kryo", KryoModel, [ProcKryo]>;
 def : ProcessorModel<"vulcan", VulcanModel, [ProcVulcan]>;
 

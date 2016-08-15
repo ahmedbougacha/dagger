@@ -7,6 +7,7 @@ set(ADTSources
   APIntTest.cpp
   APSIntTest.cpp
   ArrayRefTest.cpp
+  BitmaskEnumTest.cpp
   BitVectorTest.cpp
   DAGDeltaAlgorithmTest.cpp
   DeltaAlgorithmTest.cpp
@@ -33,6 +34,7 @@ set(ADTSources
   PriorityWorklistTest.cpp
   RangeAdapterTest.cpp
   SCCIteratorTest.cpp
+  ScopeExitTest.cpp
   SequenceTest.cpp
   SetVectorTest.cpp
   SmallPtrSetTest.cpp

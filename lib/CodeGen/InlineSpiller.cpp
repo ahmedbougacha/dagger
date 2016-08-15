@@ -114,7 +114,7 @@ public:
         AA(&pass.getAnalysis<AAResultsWrapperPass>().getAAResults()),
         MDT(pass.getAnalysis<MachineDominatorTree>()),
         Loops(pass.getAnalysis<MachineLoopInfo>()), VRM(vrm),
-        MFI(*mf.getFrameInfo()), MRI(mf.getRegInfo()),
+        MFI(mf.getFrameInfo()), MRI(mf.getRegInfo()),
         TII(*mf.getSubtarget().getInstrInfo()),
         TRI(*mf.getSubtarget().getRegisterInfo()),
         MBFI(pass.getAnalysis<MachineBlockFrequencyInfo>()),
@@ -172,7 +172,7 @@ public:
         AA(&pass.getAnalysis<AAResultsWrapperPass>().getAAResults()),
         MDT(pass.getAnalysis<MachineDominatorTree>()),
         Loops(pass.getAnalysis<MachineLoopInfo>()), VRM(vrm),
-        MFI(*mf.getFrameInfo()), MRI(mf.getRegInfo()),
+        MFI(mf.getFrameInfo()), MRI(mf.getRegInfo()),
         TII(*mf.getSubtarget().getInstrInfo()),
         TRI(*mf.getSubtarget().getRegisterInfo()),
         MBFI(pass.getAnalysis<MachineBlockFrequencyInfo>()),
@@ -185,10 +185,7 @@ private:
   bool isSnippet(const LiveInterval &SnipLI);
   void collectRegsToSpill();
 
-  bool isRegToSpill(unsigned Reg) {
-    return std::find(RegsToSpill.begin(),
-                     RegsToSpill.end(), Reg) != RegsToSpill.end();
-  }
+  bool isRegToSpill(unsigned Reg) { return is_contained(RegsToSpill, Reg); }
 
   bool isSibling(unsigned Reg);
   bool hoistSpillInsideBB(LiveInterval &SpillLI, MachineInstr &CopyMI);

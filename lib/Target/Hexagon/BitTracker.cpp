@@ -169,6 +169,12 @@ namespace llvm {
   }
 }
 
+void BitTracker::print_cells(raw_ostream &OS) const {
+  for (CellMapType::iterator I = Map.begin(), E = Map.end(); I != E; ++I)
+    dbgs() << PrintReg(I->first, &ME.TRI) << " -> " << I->second << "\n";
+}
+
+
 BitTracker::BitTracker(const MachineEvaluator &E, MachineFunction &F)
     : Trace(false), ME(E), MF(F), MRI(F.getRegInfo()), Map(*new CellMapType) {}
 
@@ -1042,6 +1048,15 @@ bool BT::reached(const MachineBasicBlock *B) const {
 }
 
 
+// Visit an individual instruction. This could be a newly added instruction,
+// or one that has been modified by an optimization.
+void BT::visit(const llvm::MachineInstr &MI) {
+  assert(!MI.isBranch() && "Only non-branches are allowed");
+  InstrExec.insert(&MI);
+  visitNonBranch(MI);
+}
+
+
 void BT::reset() {
   EdgeExec.clear();
   InstrExec.clear();
@@ -1118,10 +1133,7 @@ void BT::run() {
     }
   } // while (!FlowQ->empty())
 
-  if (Trace) {
-    dbgs() << "Cells after propagation:\n";
-    for (CellMapType::iterator I = Map.begin(), E = Map.end(); I != E; ++I)
-      dbgs() << PrintReg(I->first, &ME.TRI) << " -> " << I->second << "\n";
-  }
+  if (Trace)
+    print_cells(dbgs() << "Cells after propagation:\n");
 }
 

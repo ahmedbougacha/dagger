@@ -16,6 +16,7 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Bitcode/ReaderWriter.h"
 #include "llvm/IR/Attributes.h"
+#include "AttributeSetNode.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -1844,6 +1845,18 @@ void LLVMAddAttributeAtIndex(LLVMValueRef F, LLVMAttributeIndex Idx,
   unwrap<Function>(F)->addAttribute(Idx, unwrap(A));
 }
 
+unsigned LLVMGetAttributeCountAtIndex(LLVMValueRef F, LLVMAttributeIndex Idx) {
+  auto *ASN = AttributeSetNode::get(unwrap<Function>(F)->getAttributes(), Idx);
+  return ASN->getNumAttributes();
+}
+
+void LLVMGetAttributesAtIndex(LLVMValueRef F, LLVMAttributeIndex Idx,
+                              LLVMAttributeRef *Attrs) {
+  auto *ASN = AttributeSetNode::get(unwrap<Function>(F)->getAttributes(), Idx);
+  for (auto A: make_range(ASN->begin(), ASN->end()))
+    *Attrs++ = wrap(A);
+}
+
 LLVMAttributeRef LLVMGetEnumAttributeAtIndex(LLVMValueRef F,
                                              LLVMAttributeIndex Idx,
                                              unsigned KindID) {
@@ -2216,6 +2229,21 @@ void LLVMAddCallSiteAttribute(LLVMValueRef C, LLVMAttributeIndex Idx,
   CallSite(unwrap<Instruction>(C)).addAttribute(Idx, unwrap(A));
 }
 
+unsigned LLVMGetCallSiteAttributeCount(LLVMValueRef C,
+                                       LLVMAttributeIndex Idx) {
+  auto CS = CallSite(unwrap<Instruction>(C));
+  auto *ASN = AttributeSetNode::get(CS.getAttributes(), Idx);
+  return ASN->getNumAttributes();
+}
+
+void LLVMGetCallSiteAttributes(LLVMValueRef C, LLVMAttributeIndex Idx,
+                               LLVMAttributeRef *Attrs) {
+  auto CS = CallSite(unwrap<Instruction>(C));
+  auto *ASN = AttributeSetNode::get(CS.getAttributes(), Idx);
+  for (auto A: make_range(ASN->begin(), ASN->end()))
+    *Attrs++ = wrap(A);
+}
+
 LLVMAttributeRef LLVMGetCallSiteEnumAttribute(LLVMValueRef C,
                                               LLVMAttributeIndex Idx,
                                               unsigned KindID) {
@@ -2382,8 +2410,8 @@ LLVMBuilderRef LLVMCreateBuilder(void) {
 void LLVMPositionBuilder(LLVMBuilderRef Builder, LLVMBasicBlockRef Block,
                          LLVMValueRef Instr) {
   BasicBlock *BB = unwrap(Block);
-  Instruction *I = Instr? unwrap<Instruction>(Instr) : (Instruction*) BB->end();
-  unwrap(Builder)->SetInsertPoint(BB, I->getIterator());
+  auto I = Instr ? unwrap<Instruction>(Instr)->getIterator() : BB->end();
+  unwrap(Builder)->SetInsertPoint(BB, I);
 }
 
 void LLVMPositionBuilderBefore(LLVMBuilderRef Builder, LLVMValueRef Instr) {

@@ -125,10 +125,15 @@ define <8 x i64> @orq_broadcast(<8 x i64> %a) nounwind {
 }
 
 define <16 x i32> @andd512fold(<16 x i32> %y, <16 x i32>* %x) {
-; ALL-LABEL: andd512fold:
-; ALL:       ## BB#0: ## %entry
-; ALL-NEXT:    vpandd (%rdi), %zmm0, %zmm0
-; ALL-NEXT:    retq
+; KNL-LABEL: andd512fold:
+; KNL:       ## BB#0: ## %entry
+; KNL-NEXT:    vpandd (%rdi), %zmm0, %zmm0
+; KNL-NEXT:    retq
+;
+; SKX-LABEL: andd512fold:
+; SKX:       ## BB#0: ## %entry
+; SKX-NEXT:    vandps (%rdi), %zmm0, %zmm0
+; SKX-NEXT:    retq
 entry:
   %a = load <16 x i32>, <16 x i32>* %x, align 4
   %b = and <16 x i32> %y, %a
@@ -157,7 +162,7 @@ define <64 x i8> @and_v64i8(<64 x i8> %a, <64 x i8> %b) {
 ;
 ; SKX-LABEL: and_v64i8:
 ; SKX:       ## BB#0:
-; SKX-NEXT:    vpandq %zmm1, %zmm0, %zmm0
+; SKX-NEXT:    vandps %zmm1, %zmm0, %zmm0
 ; SKX-NEXT:    retq
   %res = and <64 x i8> %a, %b
   ret <64 x i8> %res
@@ -172,7 +177,7 @@ define <64 x i8> @andn_v64i8(<64 x i8> %a, <64 x i8> %b) {
 ;
 ; SKX-LABEL: andn_v64i8:
 ; SKX:       ## BB#0:
-; SKX-NEXT:    vpandnq %zmm0, %zmm1, %zmm0
+; SKX-NEXT:    vandnps %zmm0, %zmm1, %zmm0
 ; SKX-NEXT:    retq
   %b2 = xor <64 x i8> %b, <i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1,
                            i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1,
@@ -191,7 +196,7 @@ define <64 x i8> @or_v64i8(<64 x i8> %a, <64 x i8> %b) {
 ;
 ; SKX-LABEL: or_v64i8:
 ; SKX:       ## BB#0:
-; SKX-NEXT:    vporq %zmm1, %zmm0, %zmm0
+; SKX-NEXT:    vorps %zmm1, %zmm0, %zmm0
 ; SKX-NEXT:    retq
   %res = or <64 x i8> %a, %b
   ret <64 x i8> %res
@@ -206,7 +211,7 @@ define <64 x i8> @xor_v64i8(<64 x i8> %a, <64 x i8> %b) {
 ;
 ; SKX-LABEL: xor_v64i8:
 ; SKX:       ## BB#0:
-; SKX-NEXT:    vpxorq %zmm1, %zmm0, %zmm0
+; SKX-NEXT:    vxorps %zmm1, %zmm0, %zmm0
 ; SKX-NEXT:    retq
   %res = xor <64 x i8> %a, %b
   ret <64 x i8> %res
@@ -221,7 +226,7 @@ define <32 x i16> @and_v32i16(<32 x i16> %a, <32 x i16> %b) {
 ;
 ; SKX-LABEL: and_v32i16:
 ; SKX:       ## BB#0:
-; SKX-NEXT:    vpandq %zmm1, %zmm0, %zmm0
+; SKX-NEXT:    vandps %zmm1, %zmm0, %zmm0
 ; SKX-NEXT:    retq
   %res = and <32 x i16> %a, %b
   ret <32 x i16> %res
@@ -236,7 +241,7 @@ define <32 x i16> @andn_v32i16(<32 x i16> %a, <32 x i16> %b) {
 ;
 ; SKX-LABEL: andn_v32i16:
 ; SKX:       ## BB#0:
-; SKX-NEXT:    vpandnq %zmm0, %zmm1, %zmm0
+; SKX-NEXT:    vandnps %zmm0, %zmm1, %zmm0
 ; SKX-NEXT:    retq
   %b2 = xor <32 x i16> %b, <i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1,
                             i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1, i16 -1>
@@ -253,7 +258,7 @@ define <32 x i16> @or_v32i16(<32 x i16> %a, <32 x i16> %b) {
 ;
 ; SKX-LABEL: or_v32i16:
 ; SKX:       ## BB#0:
-; SKX-NEXT:    vporq %zmm1, %zmm0, %zmm0
+; SKX-NEXT:    vorps %zmm1, %zmm0, %zmm0
 ; SKX-NEXT:    retq
   %res = or <32 x i16> %a, %b
   ret <32 x i16> %res
@@ -268,8 +273,158 @@ define <32 x i16> @xor_v32i16(<32 x i16> %a, <32 x i16> %b) {
 ;
 ; SKX-LABEL: xor_v32i16:
 ; SKX:       ## BB#0:
-; SKX-NEXT:    vpxorq %zmm1, %zmm0, %zmm0
+; SKX-NEXT:    vxorps %zmm1, %zmm0, %zmm0
 ; SKX-NEXT:    retq
   %res = xor <32 x i16> %a, %b
   ret <32 x i16> %res
+}
+
+define <16 x float> @masked_and_v16f32(<16 x float> %a, <16 x float> %b, <16 x float> %passThru, i16 %mask, <16 x float> %c) {
+; KNL-LABEL: masked_and_v16f32:
+; KNL:       ## BB#0:
+; KNL-NEXT:    kmovw %edi, %k1
+; KNL-NEXT:    vpandd %zmm1, %zmm0, %zmm2 {%k1}
+; KNL-NEXT:    vaddps %zmm2, %zmm3, %zmm0
+; KNL-NEXT:    retq
+;
+; SKX-LABEL: masked_and_v16f32:
+; SKX:       ## BB#0:
+; SKX-NEXT:    kmovw %edi, %k1
+; SKX-NEXT:    vandps %zmm1, %zmm0, %zmm2 {%k1}
+; SKX-NEXT:    vaddps %zmm2, %zmm3, %zmm0
+; SKX-NEXT:    retq
+  %a1 = bitcast <16 x float> %a to <16 x i32>
+  %b1 = bitcast <16 x float> %b to <16 x i32>
+  %passThru1 = bitcast <16 x float> %passThru to <16 x i32>
+  %mask1 = bitcast i16 %mask to <16 x i1>
+  %op = and <16 x i32> %a1, %b1
+  %select = select <16 x i1> %mask1, <16 x i32> %op, <16 x i32> %passThru1
+  %cast = bitcast <16 x i32> %select to <16 x float>
+  %add = fadd <16 x float> %c, %cast
+  ret <16 x float> %add
+}
+
+define <16 x float> @masked_or_v16f32(<16 x float> %a, <16 x float> %b, <16 x float> %passThru, i16 %mask, <16 x float> %c) {
+; KNL-LABEL: masked_or_v16f32:
+; KNL:       ## BB#0:
+; KNL-NEXT:    kmovw %edi, %k1
+; KNL-NEXT:    vpandd %zmm1, %zmm0, %zmm2 {%k1}
+; KNL-NEXT:    vaddps %zmm2, %zmm3, %zmm0
+; KNL-NEXT:    retq
+;
+; SKX-LABEL: masked_or_v16f32:
+; SKX:       ## BB#0:
+; SKX-NEXT:    kmovw %edi, %k1
+; SKX-NEXT:    vandps %zmm1, %zmm0, %zmm2 {%k1}
+; SKX-NEXT:    vaddps %zmm2, %zmm3, %zmm0
+; SKX-NEXT:    retq
+  %a1 = bitcast <16 x float> %a to <16 x i32>
+  %b1 = bitcast <16 x float> %b to <16 x i32>
+  %passThru1 = bitcast <16 x float> %passThru to <16 x i32>
+  %mask1 = bitcast i16 %mask to <16 x i1>
+  %op = and <16 x i32> %a1, %b1
+  %select = select <16 x i1> %mask1, <16 x i32> %op, <16 x i32> %passThru1
+  %cast = bitcast <16 x i32> %select to <16 x float>
+  %add = fadd <16 x float> %c, %cast
+  ret <16 x float> %add
+}
+
+define <16 x float> @masked_xor_v16f32(<16 x float> %a, <16 x float> %b, <16 x float> %passThru, i16 %mask, <16 x float> %c) {
+; KNL-LABEL: masked_xor_v16f32:
+; KNL:       ## BB#0:
+; KNL-NEXT:    kmovw %edi, %k1
+; KNL-NEXT:    vpandd %zmm1, %zmm0, %zmm2 {%k1}
+; KNL-NEXT:    vaddps %zmm2, %zmm3, %zmm0
+; KNL-NEXT:    retq
+;
+; SKX-LABEL: masked_xor_v16f32:
+; SKX:       ## BB#0:
+; SKX-NEXT:    kmovw %edi, %k1
+; SKX-NEXT:    vandps %zmm1, %zmm0, %zmm2 {%k1}
+; SKX-NEXT:    vaddps %zmm2, %zmm3, %zmm0
+; SKX-NEXT:    retq
+  %a1 = bitcast <16 x float> %a to <16 x i32>
+  %b1 = bitcast <16 x float> %b to <16 x i32>
+  %passThru1 = bitcast <16 x float> %passThru to <16 x i32>
+  %mask1 = bitcast i16 %mask to <16 x i1>
+  %op = and <16 x i32> %a1, %b1
+  %select = select <16 x i1> %mask1, <16 x i32> %op, <16 x i32> %passThru1
+  %cast = bitcast <16 x i32> %select to <16 x float>
+  %add = fadd <16 x float> %c, %cast
+  ret <16 x float> %add
+}
+
+define <8 x double> @masked_and_v8f64(<8 x double> %a, <8 x double> %b, <8 x double> %passThru, i8 %mask, <8 x double> %c) {
+; KNL-LABEL: masked_and_v8f64:
+; KNL:       ## BB#0:
+; KNL-NEXT:    kmovw %edi, %k1
+; KNL-NEXT:    vpandq %zmm1, %zmm0, %zmm2 {%k1}
+; KNL-NEXT:    vaddpd %zmm2, %zmm3, %zmm0
+; KNL-NEXT:    retq
+;
+; SKX-LABEL: masked_and_v8f64:
+; SKX:       ## BB#0:
+; SKX-NEXT:    kmovb %edi, %k1
+; SKX-NEXT:    vandpd %zmm1, %zmm0, %zmm2 {%k1}
+; SKX-NEXT:    vaddpd %zmm2, %zmm3, %zmm0
+; SKX-NEXT:    retq
+  %a1 = bitcast <8 x double> %a to <8 x i64>
+  %b1 = bitcast <8 x double> %b to <8 x i64>
+  %passThru1 = bitcast <8 x double> %passThru to <8 x i64>
+  %mask1 = bitcast i8 %mask to <8 x i1>
+  %op = and <8 x i64> %a1, %b1
+  %select = select <8 x i1> %mask1, <8 x i64> %op, <8 x i64> %passThru1
+  %cast = bitcast <8 x i64> %select to <8 x double>
+  %add = fadd <8 x double> %c, %cast
+  ret <8 x double> %add
+}
+
+define <8 x double> @masked_or_v8f64(<8 x double> %a, <8 x double> %b, <8 x double> %passThru, i8 %mask, <8 x double> %c) {
+; KNL-LABEL: masked_or_v8f64:
+; KNL:       ## BB#0:
+; KNL-NEXT:    kmovw %edi, %k1
+; KNL-NEXT:    vpandq %zmm1, %zmm0, %zmm2 {%k1}
+; KNL-NEXT:    vaddpd %zmm2, %zmm3, %zmm0
+; KNL-NEXT:    retq
+;
+; SKX-LABEL: masked_or_v8f64:
+; SKX:       ## BB#0:
+; SKX-NEXT:    kmovb %edi, %k1
+; SKX-NEXT:    vandpd %zmm1, %zmm0, %zmm2 {%k1}
+; SKX-NEXT:    vaddpd %zmm2, %zmm3, %zmm0
+; SKX-NEXT:    retq
+  %a1 = bitcast <8 x double> %a to <8 x i64>
+  %b1 = bitcast <8 x double> %b to <8 x i64>
+  %passThru1 = bitcast <8 x double> %passThru to <8 x i64>
+  %mask1 = bitcast i8 %mask to <8 x i1>
+  %op = and <8 x i64> %a1, %b1
+  %select = select <8 x i1> %mask1, <8 x i64> %op, <8 x i64> %passThru1
+  %cast = bitcast <8 x i64> %select to <8 x double>
+  %add = fadd <8 x double> %c, %cast
+  ret <8 x double> %add
+}
+
+define <8 x double> @masked_xor_v8f64(<8 x double> %a, <8 x double> %b, <8 x double> %passThru, i8 %mask, <8 x double> %c) {
+; KNL-LABEL: masked_xor_v8f64:
+; KNL:       ## BB#0:
+; KNL-NEXT:    kmovw %edi, %k1
+; KNL-NEXT:    vpandq %zmm1, %zmm0, %zmm2 {%k1}
+; KNL-NEXT:    vaddpd %zmm2, %zmm3, %zmm0
+; KNL-NEXT:    retq
+;
+; SKX-LABEL: masked_xor_v8f64:
+; SKX:       ## BB#0:
+; SKX-NEXT:    kmovb %edi, %k1
+; SKX-NEXT:    vandpd %zmm1, %zmm0, %zmm2 {%k1}
+; SKX-NEXT:    vaddpd %zmm2, %zmm3, %zmm0
+; SKX-NEXT:    retq
+  %a1 = bitcast <8 x double> %a to <8 x i64>
+  %b1 = bitcast <8 x double> %b to <8 x i64>
+  %passThru1 = bitcast <8 x double> %passThru to <8 x i64>
+  %mask1 = bitcast i8 %mask to <8 x i1>
+  %op = and <8 x i64> %a1, %b1
+  %select = select <8 x i1> %mask1, <8 x i64> %op, <8 x i64> %passThru1
+  %cast = bitcast <8 x i64> %select to <8 x double>
+  %add = fadd <8 x double> %c, %cast
+  ret <8 x double> %add
 }

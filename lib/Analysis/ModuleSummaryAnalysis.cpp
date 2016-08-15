@@ -16,6 +16,7 @@
 #include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/BlockFrequencyInfoImpl.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
+#include "llvm/Analysis/IndirectCallPromotionAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Dominators.h"
@@ -73,7 +74,9 @@ void ModuleSummaryIndexBuilder::computeFunctionSummary(
   // Map from callee ValueId to profile count. Used to accumulate profile
   // counts for all static calls to a given callee.
   DenseMap<const Value *, CalleeInfo> CallGraphEdges;
+  DenseMap<GlobalValue::GUID, CalleeInfo> IndirectCallEdges;
   DenseSet<const Value *> RefEdges;
+  ICallPromotionAnalysis ICallAnalysis;
 
   SmallPtrSet<const User *, 8> Visited;
   for (const BasicBlock &BB : F)
@@ -83,13 +86,29 @@ void ModuleSummaryIndexBuilder::computeFunctionSummary(
 
       if (auto CS = ImmutableCallSite(&I)) {
         auto *CalledFunction = CS.getCalledFunction();
-        if (CalledFunction && CalledFunction->hasName() &&
-            !CalledFunction->isIntrinsic()) {
-          auto ScaledCount = BFI ? BFI->getBlockProfileCount(&BB) : None;
-          auto *CalleeId =
-              M->getValueSymbolTable().lookup(CalledFunction->getName());
-          CallGraphEdges[CalleeId] +=
-              (ScaledCount ? ScaledCount.getValue() : 0);
+        // Check if this is a direct call to a known function.
+        if (CalledFunction) {
+          if (CalledFunction->hasName() && !CalledFunction->isIntrinsic()) {
+            auto ScaledCount = BFI ? BFI->getBlockProfileCount(&BB) : None;
+            auto *CalleeId =
+                M->getValueSymbolTable().lookup(CalledFunction->getName());
+            CallGraphEdges[CalleeId] +=
+                (ScaledCount ? ScaledCount.getValue() : 0);
+          }
+        } else {
+          // Otherwise, check for an indirect call (call to a non-const value
+          // that isn't an inline assembly call).
+          const CallInst *CI = dyn_cast<CallInst>(&I);
+          if (CS.getCalledValue() && !isa<Constant>(CS.getCalledValue()) &&
+              !(CI && CI->isInlineAsm())) {
+            uint32_t NumVals, NumCandidates;
+            uint64_t TotalCount;
+            auto CandidateProfileData =
+                ICallAnalysis.getPromotionCandidatesForInstruction(
+                    &I, NumVals, TotalCount, NumCandidates);
+            for (auto &Candidate : CandidateProfileData)
+              IndirectCallEdges[Candidate.Value] += Candidate.Count;
+          }
         }
       }
       findRefEdges(&I, RefEdges, Visited);
@@ -99,6 +118,7 @@ void ModuleSummaryIndexBuilder::computeFunctionSummary(
   std::unique_ptr<FunctionSummary> FuncSummary =
       llvm::make_unique<FunctionSummary>(Flags, NumInsts);
   FuncSummary->addCallGraphEdges(CallGraphEdges);
+  FuncSummary->addCallGraphEdges(IndirectCallEdges);
   FuncSummary->addRefEdges(RefEdges);
   Index->addGlobalValueSummary(F.getName(), std::move(FuncSummary));
 }
@@ -152,6 +172,19 @@ ModuleSummaryIndexBuilder::ModuleSummaryIndexBuilder(
       continue;
     computeVariableSummary(G);
   }
+}
+
+char ModuleSummaryIndexAnalysis::PassID;
+
+const ModuleSummaryIndex &
+ModuleSummaryIndexAnalysis::run(Module &M, ModuleAnalysisManager &AM) {
+  auto &FAM = AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+  IndexBuilder = llvm::make_unique<ModuleSummaryIndexBuilder>(
+      &M, [&FAM](const Function &F) {
+        return &(
+            FAM.getResult<BlockFrequencyAnalysis>(*const_cast<Function *>(&F)));
+      });
+  return IndexBuilder->getIndex();
 }
 
 char ModuleSummaryIndexWrapperPass::ID = 0;
@@ -212,13 +245,13 @@ bool llvm::moduleCanBeRenamedForThinLTO(const Module &M) {
   SmallPtrSet<GlobalValue *, 8> Used;
   collectUsedGlobalVariables(M, Used, /*CompilerUsed*/ false);
   bool LocalIsUsed =
-      llvm::any_of(Used, [](GlobalValue *V) { return V->hasLocalLinkage(); });
+      any_of(Used, [](GlobalValue *V) { return V->hasLocalLinkage(); });
   if (!LocalIsUsed)
     return true;
 
   // Walk all the instructions in the module and find if one is inline ASM
-  auto HasInlineAsm = llvm::any_of(M, [](const Function &F) {
-    return llvm::any_of(instructions(F), [](const Instruction &I) {
+  auto HasInlineAsm = any_of(M, [](const Function &F) {
+    return any_of(instructions(F), [](const Instruction &I) {
       const CallInst *CallI = dyn_cast<CallInst>(&I);
       if (!CallI)
         return false;

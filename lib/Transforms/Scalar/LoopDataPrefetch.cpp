@@ -11,14 +11,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Transforms/Scalar/LoopDataPrefetch.h"
+
 #define DEBUG_TYPE "loop-data-prefetch"
-#include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/OptimizationDiagnosticInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
@@ -26,13 +28,13 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/CFG.h"
-#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
@@ -59,77 +61,89 @@ static cl::opt<unsigned> MaxPrefetchIterationsAhead(
 
 STATISTIC(NumPrefetches, "Number of prefetches inserted");
 
-namespace llvm {
-  void initializeLoopDataPrefetchPass(PassRegistry&);
-}
-
 namespace {
 
-  class LoopDataPrefetch : public FunctionPass {
-  public:
-    static char ID; // Pass ID, replacement for typeid
-    LoopDataPrefetch() : FunctionPass(ID) {
-      initializeLoopDataPrefetchPass(*PassRegistry::getPassRegistry());
-    }
+/// Loop prefetch implementation class.
+class LoopDataPrefetch {
+public:
+  LoopDataPrefetch(AssumptionCache *AC, LoopInfo *LI, ScalarEvolution *SE,
+                   const TargetTransformInfo *TTI,
+                   OptimizationRemarkEmitter *ORE)
+      : AC(AC), LI(LI), SE(SE), TTI(TTI), ORE(ORE) {}
 
-    void getAnalysisUsage(AnalysisUsage &AU) const override {
-      AU.addRequired<AssumptionCacheTracker>();
-      AU.addPreserved<DominatorTreeWrapperPass>();
-      AU.addRequired<LoopInfoWrapperPass>();
-      AU.addPreserved<LoopInfoWrapperPass>();
-      AU.addRequired<ScalarEvolutionWrapperPass>();
-      // FIXME: For some reason, preserving SE here breaks LSR (even if
-      // this pass changes nothing).
-      // AU.addPreserved<ScalarEvolutionWrapperPass>();
-      AU.addRequired<TargetTransformInfoWrapperPass>();
-    }
+  bool run();
 
-    bool runOnFunction(Function &F) override;
+private:
+  bool runOnLoop(Loop *L);
 
-  private:
-    bool runOnLoop(Loop *L);
+  /// \brief Check if the the stride of the accesses is large enough to
+  /// warrant a prefetch.
+  bool isStrideLargeEnough(const SCEVAddRecExpr *AR);
 
-    /// \brief Check if the the stride of the accesses is large enough to
-    /// warrant a prefetch.
-    bool isStrideLargeEnough(const SCEVAddRecExpr *AR);
+  unsigned getMinPrefetchStride() {
+    if (MinPrefetchStride.getNumOccurrences() > 0)
+      return MinPrefetchStride;
+    return TTI->getMinPrefetchStride();
+  }
 
-    unsigned getMinPrefetchStride() {
-      if (MinPrefetchStride.getNumOccurrences() > 0)
-        return MinPrefetchStride;
-      return TTI->getMinPrefetchStride();
-    }
+  unsigned getPrefetchDistance() {
+    if (PrefetchDistance.getNumOccurrences() > 0)
+      return PrefetchDistance;
+    return TTI->getPrefetchDistance();
+  }
 
-    unsigned getPrefetchDistance() {
-      if (PrefetchDistance.getNumOccurrences() > 0)
-        return PrefetchDistance;
-      return TTI->getPrefetchDistance();
-    }
+  unsigned getMaxPrefetchIterationsAhead() {
+    if (MaxPrefetchIterationsAhead.getNumOccurrences() > 0)
+      return MaxPrefetchIterationsAhead;
+    return TTI->getMaxPrefetchIterationsAhead();
+  }
 
-    unsigned getMaxPrefetchIterationsAhead() {
-      if (MaxPrefetchIterationsAhead.getNumOccurrences() > 0)
-        return MaxPrefetchIterationsAhead;
-      return TTI->getMaxPrefetchIterationsAhead();
-    }
+  AssumptionCache *AC;
+  LoopInfo *LI;
+  ScalarEvolution *SE;
+  const TargetTransformInfo *TTI;
+  OptimizationRemarkEmitter *ORE;
+};
 
-    AssumptionCache *AC;
-    LoopInfo *LI;
-    ScalarEvolution *SE;
-    const TargetTransformInfo *TTI;
-    const DataLayout *DL;
+/// Legacy class for inserting loop data prefetches.
+class LoopDataPrefetchLegacyPass : public FunctionPass {
+public:
+  static char ID; // Pass ID, replacement for typeid
+  LoopDataPrefetchLegacyPass() : FunctionPass(ID) {
+    initializeLoopDataPrefetchLegacyPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<AssumptionCacheTracker>();
+    AU.addPreserved<DominatorTreeWrapperPass>();
+    AU.addRequired<LoopInfoWrapperPass>();
+    AU.addPreserved<LoopInfoWrapperPass>();
+    AU.addRequired<OptimizationRemarkEmitterWrapperPass>();
+    AU.addRequired<ScalarEvolutionWrapperPass>();
+    // FIXME: For some reason, preserving SE here breaks LSR (even if
+    // this pass changes nothing).
+    // AU.addPreserved<ScalarEvolutionWrapperPass>();
+    AU.addRequired<TargetTransformInfoWrapperPass>();
+  }
+
+  bool runOnFunction(Function &F) override;
   };
 }
 
-char LoopDataPrefetch::ID = 0;
-INITIALIZE_PASS_BEGIN(LoopDataPrefetch, "loop-data-prefetch",
+char LoopDataPrefetchLegacyPass::ID = 0;
+INITIALIZE_PASS_BEGIN(LoopDataPrefetchLegacyPass, "loop-data-prefetch",
                       "Loop Data Prefetch", false, false)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(OptimizationRemarkEmitterWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
-INITIALIZE_PASS_END(LoopDataPrefetch, "loop-data-prefetch",
+INITIALIZE_PASS_END(LoopDataPrefetchLegacyPass, "loop-data-prefetch",
                     "Loop Data Prefetch", false, false)
 
-FunctionPass *llvm::createLoopDataPrefetchPass() { return new LoopDataPrefetch(); }
+FunctionPass *llvm::createLoopDataPrefetchPass() {
+  return new LoopDataPrefetchLegacyPass();
+}
 
 bool LoopDataPrefetch::isStrideLargeEnough(const SCEVAddRecExpr *AR) {
   unsigned TargetMinStride = getMinPrefetchStride();
@@ -147,16 +161,46 @@ bool LoopDataPrefetch::isStrideLargeEnough(const SCEVAddRecExpr *AR) {
   return TargetMinStride <= AbsStride;
 }
 
-bool LoopDataPrefetch::runOnFunction(Function &F) {
+PreservedAnalyses LoopDataPrefetchPass::run(Function &F,
+                                            FunctionAnalysisManager &AM) {
+  LoopInfo *LI = &AM.getResult<LoopAnalysis>(F);
+  ScalarEvolution *SE = &AM.getResult<ScalarEvolutionAnalysis>(F);
+  AssumptionCache *AC = &AM.getResult<AssumptionAnalysis>(F);
+  OptimizationRemarkEmitter *ORE =
+      &AM.getResult<OptimizationRemarkEmitterAnalysis>(F);
+  const TargetTransformInfo *TTI = &AM.getResult<TargetIRAnalysis>(F);
+
+  LoopDataPrefetch LDP(AC, LI, SE, TTI, ORE);
+  bool Changed = LDP.run();
+
+  if (Changed) {
+    PreservedAnalyses PA;
+    PA.preserve<DominatorTreeAnalysis>();
+    PA.preserve<LoopAnalysis>();
+    return PA;
+  }
+
+  return PreservedAnalyses::all();
+}
+
+bool LoopDataPrefetchLegacyPass::runOnFunction(Function &F) {
   if (skipFunction(F))
     return false;
 
-  LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  DL = &F.getParent()->getDataLayout();
-  AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
-  TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
+  LoopInfo *LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  ScalarEvolution *SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+  AssumptionCache *AC =
+      &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
+  OptimizationRemarkEmitter *ORE =
+      &getAnalysis<OptimizationRemarkEmitterWrapperPass>().getORE();
+  const TargetTransformInfo *TTI =
+      &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
 
+  LoopDataPrefetch LDP(AC, LI, SE, TTI, ORE);
+  return LDP.run();
+}
+
+bool LoopDataPrefetch::run() {
   // If PrefetchDistance is not set, don't run the pass.  This gives an
   // opportunity for targets to run this pass for selected subtargets only
   // (whose TTI sets PrefetchDistance).
@@ -210,10 +254,9 @@ bool LoopDataPrefetch::runOnLoop(Loop *L) {
   if (ItersAhead > getMaxPrefetchIterationsAhead())
     return MadeChange;
 
-  Function *F = L->getHeader()->getParent();
   DEBUG(dbgs() << "Prefetching " << ItersAhead
                << " iterations ahead (loop size: " << LoopSize << ") in "
-               << F->getName() << ": " << *L);
+               << L->getHeader()->getParent()->getName() << ": " << *L);
 
   SmallVector<std::pair<Instruction *, const SCEVAddRecExpr *>, 16> PrefLoads;
   for (Loop::block_iterator I = L->block_begin(), IE = L->block_end();
@@ -291,9 +334,7 @@ bool LoopDataPrefetch::runOnLoop(Loop *L) {
       ++NumPrefetches;
       DEBUG(dbgs() << "  Access: " << *PtrValue << ", SCEV: " << *LSCEV
                    << "\n");
-      emitOptimizationRemark(F->getContext(), DEBUG_TYPE, *F,
-                             MemI->getDebugLoc(), "prefetched memory access");
-
+      ORE->emitOptimizationRemark(DEBUG_TYPE, MemI, "prefetched memory access");
 
       MadeChange = true;
     }

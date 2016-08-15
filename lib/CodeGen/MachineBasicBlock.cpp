@@ -323,9 +323,8 @@ void MachineBasicBlock::printAsOperand(raw_ostream &OS,
 }
 
 void MachineBasicBlock::removeLiveIn(MCPhysReg Reg, LaneBitmask LaneMask) {
-  LiveInVector::iterator I = std::find_if(
-      LiveIns.begin(), LiveIns.end(),
-      [Reg] (const RegisterMaskPair &LI) { return LI.PhysReg == Reg; });
+  LiveInVector::iterator I = find_if(
+      LiveIns, [Reg](const RegisterMaskPair &LI) { return LI.PhysReg == Reg; });
   if (I == LiveIns.end())
     return;
 
@@ -335,9 +334,8 @@ void MachineBasicBlock::removeLiveIn(MCPhysReg Reg, LaneBitmask LaneMask) {
 }
 
 bool MachineBasicBlock::isLiveIn(MCPhysReg Reg, LaneBitmask LaneMask) const {
-  livein_iterator I = std::find_if(
-      LiveIns.begin(), LiveIns.end(),
-      [Reg] (const RegisterMaskPair &LI) { return LI.PhysReg == Reg; });
+  livein_iterator I = find_if(
+      LiveIns, [Reg](const RegisterMaskPair &LI) { return LI.PhysReg == Reg; });
   return I != livein_end() && (I->LaneMask & LaneMask) != 0;
 }
 
@@ -410,7 +408,7 @@ void MachineBasicBlock::updateTerminator() {
   MachineBasicBlock *TBB = nullptr, *FBB = nullptr;
   SmallVector<MachineOperand, 4> Cond;
   DebugLoc DL;  // FIXME: this is nowhere
-  bool B = TII->AnalyzeBranch(*this, TBB, FBB, Cond);
+  bool B = TII->analyzeBranch(*this, TBB, FBB, Cond);
   (void) B;
   assert(!B && "UpdateTerminators requires analyzable predecessors!");
   if (Cond.empty()) {
@@ -545,7 +543,7 @@ void MachineBasicBlock::addSuccessorWithoutProb(MachineBasicBlock *Succ) {
 
 void MachineBasicBlock::removeSuccessor(MachineBasicBlock *Succ,
                                         bool NormalizeSuccProbs) {
-  succ_iterator I = std::find(Successors.begin(), Successors.end(), Succ);
+  succ_iterator I = find(Successors, Succ);
   removeSuccessor(I, NormalizeSuccProbs);
 }
 
@@ -611,7 +609,7 @@ void MachineBasicBlock::addPredecessor(MachineBasicBlock *Pred) {
 }
 
 void MachineBasicBlock::removePredecessor(MachineBasicBlock *Pred) {
-  pred_iterator I = std::find(Predecessors.begin(), Predecessors.end(), Pred);
+  pred_iterator I = find(Predecessors, Pred);
   assert(I != Predecessors.end() && "Pred is not a predecessor of this block!");
   Predecessors.erase(I);
 }
@@ -661,11 +659,11 @@ MachineBasicBlock::transferSuccessorsAndUpdatePHIs(MachineBasicBlock *FromMBB) {
 }
 
 bool MachineBasicBlock::isPredecessor(const MachineBasicBlock *MBB) const {
-  return std::find(pred_begin(), pred_end(), MBB) != pred_end();
+  return is_contained(predecessors(), MBB);
 }
 
 bool MachineBasicBlock::isSuccessor(const MachineBasicBlock *MBB) const {
-  return std::find(succ_begin(), succ_end(), MBB) != succ_end();
+  return is_contained(successors(), MBB);
 }
 
 bool MachineBasicBlock::isLayoutSuccessor(const MachineBasicBlock *MBB) const {
@@ -688,7 +686,7 @@ bool MachineBasicBlock::canFallThrough() {
   MachineBasicBlock *TBB = nullptr, *FBB = nullptr;
   SmallVector<MachineOperand, 4> Cond;
   const TargetInstrInfo *TII = getParent()->getSubtarget().getInstrInfo();
-  if (TII->AnalyzeBranch(*this, TBB, FBB, Cond)) {
+  if (TII->analyzeBranch(*this, TBB, FBB, Cond)) {
     // If we couldn't analyze the branch, examine the last instruction.
     // If the block doesn't end in a known control barrier, assume fallthrough
     // is possible. The isPredicated check is needed because this code can be
@@ -775,7 +773,7 @@ MachineBasicBlock *MachineBasicBlock::SplitCriticalEdge(MachineBasicBlock *Succ,
           continue;
 
         unsigned Reg = OI->getReg();
-        if (std::find(UsedRegs.begin(), UsedRegs.end(), Reg) == UsedRegs.end())
+        if (!is_contained(UsedRegs, Reg))
           UsedRegs.push_back(Reg);
       }
     }
@@ -802,9 +800,8 @@ MachineBasicBlock *MachineBasicBlock::SplitCriticalEdge(MachineBasicBlock *Succ,
 
     for (SmallVectorImpl<MachineInstr*>::iterator I = Terminators.begin(),
         E = Terminators.end(); I != E; ++I) {
-      if (std::find(NewTerminators.begin(), NewTerminators.end(), *I) ==
-          NewTerminators.end())
-       Indexes->removeMachineInstrFromMaps(**I);
+      if (!is_contained(NewTerminators, *I))
+        Indexes->removeMachineInstrFromMaps(**I);
     }
   }
 
@@ -973,7 +970,7 @@ bool MachineBasicBlock::canSplitCriticalEdge(
   MachineBasicBlock *TBB = nullptr, *FBB = nullptr;
   SmallVector<MachineOperand, 4> Cond;
   // AnalyzeBanch should modify this, since we did not allow modification.
-  if (TII->AnalyzeBranch(*const_cast<MachineBasicBlock *>(this), TBB, FBB, Cond,
+  if (TII->analyzeBranch(*const_cast<MachineBasicBlock *>(this), TBB, FBB, Cond,
                          /*AllowModify*/ false))
     return false;
 

@@ -13,15 +13,6 @@
 // S_CBRANCH_CDBGSYS
 // S_CBRANCH_CDBGSYS_OR_USER
 // S_CBRANCH_CDBGSYS_AND_USER
-// DS_NOP
-// DS_GWS_SEMA_RELEASE_ALL
-// DS_WRAP_RTN_B32
-// DS_CNDXCHG32_RTN_B64
-// DS_WRITE_B96
-// DS_WRITE_B128
-// DS_CONDXCHG32_RTN_B128
-// DS_READ_B96
-// DS_READ_B128
 // BUFFER_LOAD_DWORDX3
 // BUFFER_STORE_DWORDX3
 
@@ -59,15 +50,15 @@ defm V_EXP_LEGACY_F32 : VOP1Inst <vop1<0x46, 0x4b>, "v_exp_legacy_f32",
 // VOP3 Instructions
 //===----------------------------------------------------------------------===//
 
-defm V_QSAD_PK_U16_U8 : VOP3Inst <vop3<0x173>, "v_qsad_pk_u16_u8",
-  VOP_I32_I32_I32
->;
 defm V_MQSAD_U16_U8 : VOP3Inst <vop3<0x172>, "v_mqsad_u16_u8",
   VOP_I32_I32_I32
 >;
-defm V_MQSAD_U32_U8 : VOP3Inst <vop3<0x175>, "v_mqsad_u32_u8",
-  VOP_I32_I32_I32
->;
+
+defm V_QSAD_PK_U16_U8 : VOP3Inst <vop3<0x172, 0x1e5>, "v_qsad_pk_u16_u8",
+  VOP_I32_I32_I32_I32, int_amdgcn_qsad_pk_u16_u8>;
+
+defm V_MQSAD_U32_U8 : VOP3Inst <vop3<0x174, 0x1e7>, "v_mqsad_u32_u8",
+  VOP_I32_I32_I32_I32, int_amdgcn_mqsad_u32_u8>;
 
 let isCommutable = 1 in {
 defm V_MAD_U64_U32 : VOP3Inst <vop3<0x176>, "v_mad_u64_u32",
@@ -80,14 +71,6 @@ defm V_MAD_I64_I32 : VOP3Inst <vop3<0x177>, "v_mad_i64_i32",
 >;
 } // End isCommutable = 1
 
-
-//===----------------------------------------------------------------------===//
-// DS Instructions
-//===----------------------------------------------------------------------===//
-defm DS_WRAP_RTN_F32 : DS_1A1D_RET <0x34, "ds_wrap_rtn_f32", VGPR_32, "ds_wrap_f32">;
-
-// DS_CONDXCHG32_RTN_B64
-// DS_CONDXCHG32_RTN_B128
 
 //===----------------------------------------------------------------------===//
 // SMRD Instructions

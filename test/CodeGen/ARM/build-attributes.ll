@@ -128,6 +128,9 @@
 ; RUN: llc < %s -mtriple=armv8-linux-gnueabi -mcpu=exynos-m1 | FileCheck %s --check-prefix=EXYNOS-M1
 ; RUN: llc < %s -mtriple=armv8-linux-gnueabi -mcpu=exynos-m1  -enable-unsafe-fp-math -disable-fp-elim -enable-no-infs-fp-math -enable-no-nans-fp-math -fp-contract=fast | FileCheck %s --check-prefix=EXYNOS-M1-FAST
 ; RUN: llc < %s -mtriple=armv8-linux-gnueabi -mcpu=exynos-m1 -enable-sign-dependent-rounding-fp-math | FileCheck %s --check-prefix=DYN-ROUNDING
+; RUN: llc < %s -mtriple=armv8-linux-gnueabi -mcpu=exynos-m2 | FileCheck %s --check-prefix=EXYNOS-M2
+; RUN: llc < %s -mtriple=armv8-linux-gnueabi -mcpu=exynos-m2  -enable-unsafe-fp-math -disable-fp-elim -enable-no-infs-fp-math -enable-no-nans-fp-math -fp-contract=fast | FileCheck %s --check-prefix=EXYNOS-M1-FAST
+; RUN: llc < %s -mtriple=armv8-linux-gnueabi -mcpu=exynos-m2 -enable-sign-dependent-rounding-fp-math | FileCheck %s --check-prefix=DYN-ROUNDING
 ; RUN: llc < %s -mtriple=armv8.1a-linux-gnueabi  -enable-unsafe-fp-math -disable-fp-elim -enable-no-infs-fp-math -enable-no-nans-fp-math -fp-contract=fast | FileCheck %s --check-prefix=GENERIC-ARMV8_1-A-FAST
 ; RUN: llc < %s -mtriple=armv8.1a-linux-gnueabi -enable-sign-dependent-rounding-fp-math | FileCheck %s --check-prefix=DYN-ROUNDING
 ; RUN: llc < %s -mtriple=armv7-none-linux-gnueabi -mcpu=cortex-a7 | FileCheck %s  --check-prefix=CORTEX-A7-CHECK
@@ -144,6 +147,9 @@
 ; RUN: llc < %s -mtriple=arm-none-linux-gnueabi -mattr=+strict-align | FileCheck %s --check-prefix=RELOC-OTHER
 ; RUN: llc < %s -mtriple=arm-none-linux-gnueabi -mattr=+strict-align | FileCheck %s --check-prefix=PCS-R9-USE
 ; RUN: llc < %s -mtriple=arm-none-linux-gnueabi -mattr=+reserve-r9,+strict-align | FileCheck %s --check-prefix=PCS-R9-RESERVE
+; RUN: llc < %s -mtriple=arm-none-linux-gnueabi -mattr=+strict-align -relocation-model=ropi | FileCheck %s --check-prefix=RELOC-ROPI
+; RUN: llc < %s -mtriple=arm-none-linux-gnueabi -mattr=+strict-align -relocation-model=rwpi | FileCheck %s --check-prefix=RELOC-RWPI
+; RUN: llc < %s -mtriple=arm-none-linux-gnueabi -mattr=+strict-align -relocation-model=ropi-rwpi | FileCheck %s --check-prefix=RELOC-ROPI-RWPI
 
 ; ARMv8.1a (AArch32)
 ; RUN: llc < %s -mtriple=armv8.1a-none-linux-gnueabi | FileCheck %s --check-prefix=NO-STRICT-ALIGN
@@ -160,6 +166,8 @@
 ; RUN: llc < %s -mtriple=armv8-none-linux-gnueabi -mcpu=cortex-a72 -mattr=+strict-align | FileCheck %s --check-prefix=STRICT-ALIGN
 ; RUN: llc < %s -mtriple=armv8-none-linux-gnueabi -mcpu=exynos-m1 | FileCheck %s --check-prefix=NO-STRICT-ALIGN
 ; RUN: llc < %s -mtriple=armv8-none-linux-gnueabi -mcpu=exynos-m1 -mattr=+strict-align | FileCheck %s --check-prefix=STRICT-ALIGN
+; RUN: llc < %s -mtriple=armv8-none-linux-gnueabi -mcpu=exynos-m2 | FileCheck %s --check-prefix=NO-STRICT-ALIGN
+; RUN: llc < %s -mtriple=armv8-none-linux-gnueabi -mcpu=exynos-m2 -mattr=+strict-align | FileCheck %s --check-prefix=STRICT-ALIGN
 
 ; ARMv7a
 ; RUN: llc < %s -mtriple=armv7-none-linux-gnueabi -mcpu=cortex-a7 | FileCheck %s --check-prefix=NO-STRICT-ALIGN
@@ -1446,7 +1454,7 @@
 ; EXYNOS-M1:  .eabi_attribute 38, 1
 ; EXYNOS-M1:  .eabi_attribute 42, 1
 ; EXYNOS-M1-NOT:  .eabi_attribute 44
-; EXYNOS-M15:  .eabi_attribute 68, 3
+; EXYNOS-M1:  .eabi_attribute 68, 3
 
 ; EXYNOS-M1-FAST-NOT:   .eabi_attribute 19
 ;; The exynos-m1 has the ARMv8 FP unit, which always flushes preserving sign.
@@ -1454,6 +1462,29 @@
 ; EXYNOS-M1-FAST-NOT:  .eabi_attribute 21
 ; EXYNOS-M1-FAST-NOT:  .eabi_attribute 22
 ; EXYNOS-M1-FAST:  .eabi_attribute 23, 1
+
+; EXYNOS-M2:  .cpu exynos-m2
+; EXYNOS-M2:  .eabi_attribute 6, 14
+; EXYNOS-M2:  .eabi_attribute 7, 65
+; EXYNOS-M2:  .eabi_attribute 8, 1
+; EXYNOS-M2:  .eabi_attribute 9, 2
+; EXYNOS-M2:  .fpu crypto-neon-fp-armv8
+; EXYNOS-M2:  .eabi_attribute 12, 3
+; EXYNOS-M2-NOT:   .eabi_attribute 19
+;; We default to IEEE 754 compliance
+; EXYNOS-M2:  .eabi_attribute 20, 1
+; EXYNOS-M2:  .eabi_attribute 21, 1
+; EXYNOS-M2-NOT:  .eabi_attribute 22
+; EXYNOS-M2:  .eabi_attribute 23, 3
+; EXYNOS-M2:  .eabi_attribute 24, 1
+; EXYNOS-M2:  .eabi_attribute 25, 1
+; EXYNOS-M2-NOT:  .eabi_attribute 27
+; EXYNOS-M2-NOT:  .eabi_attribute 28
+; EXYNOS-M2:  .eabi_attribute 36, 1
+; EXYNOS-M2:  .eabi_attribute 38, 1
+; EXYNOS-M2:  .eabi_attribute 42, 1
+; EXYNOS-M2-NOT:  .eabi_attribute 44
+; EXYNOS-M2:  .eabi_attribute 68, 3
 
 ; GENERIC-FPU-VFPV3-FP16: .fpu vfpv3-fp16
 ; GENERIC-FPU-VFPV3-D16-FP16: .fpu vfpv3-d16-fp16
@@ -1494,6 +1525,15 @@
 ; RELOC-PIC:  .eabi_attribute 16, 1
 ; RELOC-PIC:  .eabi_attribute 17, 2
 ; RELOC-OTHER:  .eabi_attribute 17, 1
+; RELOC-ROPI-NOT:  .eabi_attribute 15,
+; RELOC-ROPI:      .eabi_attribute 16, 1
+; RELOC-ROPI:      .eabi_attribute 17, 1
+; RELOC-RWPI:      .eabi_attribute 15, 2
+; RELOC-RWPI-NOT:  .eabi_attribute 16,
+; RELOC-RWPI:      .eabi_attribute 17, 1
+; RELOC-ROPI-RWPI: .eabi_attribute 15, 2
+; RELOC-ROPI-RWPI: .eabi_attribute 16, 1
+; RELOC-ROPI-RWPI:  .eabi_attribute 17, 1
 
 ; PCS-R9-USE:  .eabi_attribute 14, 0
 ; PCS-R9-RESERVE:  .eabi_attribute 14, 3

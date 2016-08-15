@@ -36,6 +36,7 @@
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
@@ -481,7 +482,7 @@ Value *IndVarSimplify::expandSCEVIfNeeded(SCEVExpander &Rewriter, const SCEV *S,
                                           Type *ResultTy) {
   // Before expanding S into an expensive LLVM expression, see if we can use an
   // already existing value as the expansion for S.
-  if (Value *ExistingValue = Rewriter.findExistingExpansion(S, InsertPt, L))
+  if (Value *ExistingValue = Rewriter.getExactExistingExpansion(S, InsertPt, L))
     if (ExistingValue->getType() == ResultTy)
       return ExistingValue;
 
@@ -813,6 +814,14 @@ static void visitIVCast(CastInst *Cast, WideIVInfo &WI, ScalarEvolution *SE,
   Type *Ty = Cast->getType();
   uint64_t Width = SE->getTypeSizeInBits(Ty);
   if (!Cast->getModule()->getDataLayout().isLegalInteger(Width))
+    return;
+
+  // Check that `Cast` actually extends the induction variable (we rely on this
+  // later).  This takes care of cases where `Cast` is extending a truncation of
+  // the narrow induction variable, and thus can end up being narrower than the
+  // "narrow" induction variable.
+  uint64_t NarrowIVWidth = SE->getTypeSizeInBits(WI.NarrowIV->getType());
+  if (NarrowIVWidth >= Width)
     return;
 
   // Cast is either an sext or zext up to this point.
@@ -1176,8 +1185,8 @@ const SCEVAddRecExpr *WidenIV::getWideRecurrence(Instruction *NarrowUse) {
     return nullptr;
 
   const SCEV *NarrowExpr = SE->getSCEV(NarrowUse);
-  if (SE->getTypeSizeInBits(NarrowExpr->getType())
-      >= SE->getTypeSizeInBits(WideType)) {
+  if (SE->getTypeSizeInBits(NarrowExpr->getType()) >=
+      SE->getTypeSizeInBits(WideType)) {
     // NarrowUse implicitly widens its operand. e.g. a gep with a narrow
     // index. So don't follow this use.
     return nullptr;
@@ -1281,7 +1290,8 @@ Instruction *WidenIV::widenIVUse(NarrowIVDefUse DU, SCEVExpander &Rewriter) {
     }
   }
   // Our raison d'etre! Eliminate sign and zero extension.
-  if (IsSigned ? isa<SExtInst>(DU.NarrowUse) : isa<ZExtInst>(DU.NarrowUse)) {
+  if ((isa<SExtInst>(DU.NarrowUse) && (IsSigned || DU.NeverNegative)) ||
+      (isa<ZExtInst>(DU.NarrowUse) && (!IsSigned || DU.NeverNegative))) {
     Value *NewDef = DU.WideDef;
     if (DU.NarrowUse->getType() != WideType) {
       unsigned CastWidth = SE->getTypeSizeInBits(DU.NarrowUse->getType());
@@ -1370,9 +1380,12 @@ Instruction *WidenIV::widenIVUse(NarrowIVDefUse DU, SCEVExpander &Rewriter) {
 ///
 void WidenIV::pushNarrowIVUsers(Instruction *NarrowDef, Instruction *WideDef) {
   const SCEV *NarrowSCEV = SE->getSCEV(NarrowDef);
+  // isKnownPredicate is enough for most cases but still need isKnownNonNegative 
+  // here to work around conservatism in ScalarEvolution about no-wrap flags. 
   bool NeverNegative =
       SE->isKnownPredicate(ICmpInst::ICMP_SGE, NarrowSCEV,
-                           SE->getConstant(NarrowSCEV->getType(), 0));
+                           SE->getConstant(NarrowSCEV->getType(), 0)) ||
+      isKnownNonNegative(NarrowDef, NarrowDef->getModule()->getDataLayout());
   for (User *U : NarrowDef->users()) {
     Instruction *NarrowUser = cast<Instruction>(U);
 
@@ -1984,8 +1997,36 @@ linearFunctionTestReplace(Loop *L,
 
       DEBUG(dbgs() << "  Widen RHS:\t" << *ExitCnt << "\n");
     } else {
-      CmpIndVar = Builder.CreateTrunc(CmpIndVar, ExitCnt->getType(),
-                                      "lftr.wideiv");
+      // We try to extend trip count first. If that doesn't work we truncate IV.
+      // Zext(trunc(IV)) == IV implies equivalence of the following two:
+      // Trunc(IV) == ExitCnt and IV == zext(ExitCnt). Similarly for sext. If
+      // one of the two holds, extend the trip count, otherwise we truncate IV.
+      bool Extended = false;
+      const SCEV *IV = SE->getSCEV(CmpIndVar);
+      const SCEV *ZExtTrunc =
+           SE->getZeroExtendExpr(SE->getTruncateExpr(SE->getSCEV(CmpIndVar),
+                                                     ExitCnt->getType()),
+                                 CmpIndVar->getType());
+
+      if (ZExtTrunc == IV) {
+        Extended = true;
+        ExitCnt = Builder.CreateZExt(ExitCnt, IndVar->getType(),
+                                     "wide.trip.count");
+      } else {
+        const SCEV *SExtTrunc =
+          SE->getSignExtendExpr(SE->getTruncateExpr(SE->getSCEV(CmpIndVar),
+                                                    ExitCnt->getType()),
+                                CmpIndVar->getType());
+        if (SExtTrunc == IV) {
+          Extended = true;
+          ExitCnt = Builder.CreateSExt(ExitCnt, IndVar->getType(),
+                                       "wide.trip.count");
+        }
+      }
+
+      if (!Extended)
+        CmpIndVar = Builder.CreateTrunc(CmpIndVar, ExitCnt->getType(),
+                                        "lftr.wideiv");
     }
   }
   Value *Cond = Builder.CreateICmp(P, CmpIndVar, ExitCnt, "exitcond");
@@ -2213,7 +2254,7 @@ bool IndVarSimplify::run(Loop *L) {
   return Changed;
 }
 
-PreservedAnalyses IndVarSimplifyPass::run(Loop &L, AnalysisManager<Loop> &AM) {
+PreservedAnalyses IndVarSimplifyPass::run(Loop &L, LoopAnalysisManager &AM) {
   auto &FAM = AM.getResult<FunctionAnalysisManagerLoopProxy>(L).getManager();
   Function *F = L.getHeader()->getParent();
   const DataLayout &DL = F->getParent()->getDataLayout();

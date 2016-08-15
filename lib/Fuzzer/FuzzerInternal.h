@@ -19,6 +19,7 @@
 #include <climits>
 #include <cstddef>
 #include <cstdlib>
+#include <memory>
 #include <random>
 #include <string.h>
 #include <string>
@@ -217,6 +218,7 @@ struct FuzzingOptions {
   bool UseIndirCalls = true;
   bool UseTraces = false;
   bool UseMemcmp = true;
+  bool UseMemmem = true;
   bool UseFullCoverageSet = false;
   bool Reload = true;
   bool ShuffleAtStartUp = true;
@@ -293,7 +295,7 @@ public:
 
   void AddWordToManualDictionary(const Word &W);
 
-  void AddWordToAutoDictionary(const Word &W, size_t PositionHint);
+  void AddWordToAutoDictionary(DictionaryEntry DE);
   void ClearAutoDictionary();
   void PrintRecommendedDictionary();
 
@@ -333,6 +335,8 @@ private:
   std::vector<Mutator> DefaultMutators;
 };
 
+class CoverageController;
+
 class Fuzzer {
 public:
 
@@ -345,17 +349,16 @@ public:
       CallerCalleeCoverage = 0;
       PcMapBits = 0;
       CounterBitmapBits = 0;
-      PcBufferLen = 0;
       CounterBitmap.clear();
       PCMap.Reset();
+      PcBufferPos = 0;
     }
 
     std::string DebugString() const;
 
     size_t BlockCoverage;
     size_t CallerCalleeCoverage;
-
-    size_t PcBufferLen;
+    size_t PcBufferPos;
     // Precalculated number of bits in CounterBitmap.
     size_t CounterBitmapBits;
     std::vector<uint8_t> CounterBitmap;
@@ -365,6 +368,7 @@ public:
   };
 
   Fuzzer(UserCallback CB, MutationDispatcher &MD, FuzzingOptions Options);
+  ~Fuzzer();
   void AddToCorpus(const Unit &U) {
     Corpus.push_back(U);
     UpdateCorpusDistribution();
@@ -480,6 +484,7 @@ private:
 
   // Maximum recorded coverage.
   Coverage MaxCoverage;
+  std::unique_ptr<CoverageController> CController;
 
   // Need to know our own thread.
   static thread_local bool IsMyThread;

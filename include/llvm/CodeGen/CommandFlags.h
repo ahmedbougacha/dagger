@@ -54,6 +54,12 @@ cl::opt<Reloc::Model> RelocModel(
                    "Fully relocatable, position independent code"),
         clEnumValN(Reloc::DynamicNoPIC, "dynamic-no-pic",
                    "Relocatable external references, non-relocatable code"),
+        clEnumValN(Reloc::ROPI, "ropi",
+                   "Code and read-only data relocatable, accessed PC-relative"),
+        clEnumValN(Reloc::RWPI, "rwpi",
+                   "Read-write data relocatable, accessed relative to static base"),
+        clEnumValN(Reloc::ROPI_RWPI, "ropi-rwpi",
+                   "Combination of ropi and rwpi"),
         clEnumValEnd));
 
 static inline Optional<Reloc::Model> getRelocModel() {
@@ -220,15 +226,6 @@ cl::opt<bool>
 UseCtors("use-ctors",
              cl::desc("Use .ctors instead of .init_array."),
              cl::init(false));
-
-cl::opt<std::string> StopAfter("stop-after",
-                            cl::desc("Stop compilation after a specific pass"),
-                            cl::value_desc("pass-name"),
-                                      cl::init(""));
-cl::opt<std::string> StartAfter("start-after",
-                          cl::desc("Resume compilation after a specific pass"),
-                          cl::value_desc("pass-name"),
-                          cl::init(""));
 
 cl::opt<bool> DataSections("data-sections",
                            cl::desc("Emit data into separate sections"),

@@ -84,6 +84,13 @@ module LLVM_DebugInfo_PDB_DIA {
   module * { export * }
 }
 
+module LLVM_DebugInfo_MSF {
+  requires cplusplus
+
+  umbrella "DebugInfo/MSF"
+  module * { export * }
+}
+
 module LLVM_DebugInfo_CodeView {
   requires cplusplus
 
@@ -207,6 +214,16 @@ module LLVM_Object {
 }
 
 module LLVM_Option { requires cplusplus umbrella "Option" module * { export * } }
+
+module LLVM_ProfileData {
+  requires cplusplus
+
+  umbrella "ProfileData"
+  module * { export * }
+
+  textual header "ProfileData/InstrProfData.inc"
+}
+
 module LLVM_TableGen { requires cplusplus umbrella "TableGen" module * { export * } }
 
 module LLVM_Transforms {
@@ -252,6 +269,7 @@ module LLVM_Utils {
     textual header "Support/ELFRelocs/AMDGPU.def"
     textual header "Support/ELFRelocs/ARM.def"
     textual header "Support/ELFRelocs/AVR.def"
+    textual header "Support/ELFRelocs/BPF.def"
     textual header "Support/ELFRelocs/Hexagon.def"
     textual header "Support/ELFRelocs/i386.def"
     textual header "Support/ELFRelocs/Lanai.def"

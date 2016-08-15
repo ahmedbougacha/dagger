@@ -833,8 +833,7 @@ void RegsForValue::AddInlineAsmOperands(unsigned Code, bool HasMatching,
 
       if (TheReg == SP && Code == InlineAsm::Kind_Clobber) {
         // If we clobbered the stack pointer, MFI should know about it.
-        assert(DAG.getMachineFunction().getFrameInfo()->
-            hasOpaqueSPAdjustment());
+        assert(DAG.getMachineFunction().getFrameInfo().hasOpaqueSPAdjustment());
       }
     }
   }
@@ -1423,11 +1422,10 @@ void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
                                 DAG.getIntPtrConstant(Offsets[i],
                                                       getCurSDLoc()),
                                 &Flags);
-      Chains[i] =
-        DAG.getStore(Chain, getCurSDLoc(),
-                     SDValue(RetOp.getNode(), RetOp.getResNo() + i),
-                     // FIXME: better loc info would be nice.
-                     Add, MachinePointerInfo(), false, false, 0);
+      Chains[i] = DAG.getStore(Chain, getCurSDLoc(),
+                               SDValue(RetOp.getNode(), RetOp.getResNo() + i),
+                               // FIXME: better loc info would be nice.
+                               Add, MachinePointerInfo());
     }
 
     Chain = DAG.getNode(ISD::TokenFactor, getCurSDLoc(),
@@ -2013,7 +2011,7 @@ static SDValue getLoadStackGuard(SelectionDAG &DAG, const SDLoc &DL,
   if (Global) {
     MachinePointerInfo MPInfo(Global);
     MachineInstr::mmo_iterator MemRefs = MF.allocateMemRefsArray(1);
-    unsigned Flags = MachineMemOperand::MOLoad | MachineMemOperand::MOInvariant;
+    auto Flags = MachineMemOperand::MOLoad | MachineMemOperand::MOInvariant;
     *MemRefs = MF.getMachineMemOperand(MPInfo, Flags, PtrTy.getSizeInBits() / 8,
                                        DAG.getEVTAlignment(PtrTy));
     Node->setMemRefs(MemRefs, MemRefs + 1);
@@ -2034,8 +2032,8 @@ void SelectionDAGBuilder::visitSPDescriptorParent(StackProtectorDescriptor &SPD,
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   EVT PtrTy = TLI.getPointerTy(DAG.getDataLayout());
 
-  MachineFrameInfo *MFI = ParentBB->getParent()->getFrameInfo();
-  int FI = MFI->getStackProtectorIndex();
+  MachineFrameInfo &MFI = ParentBB->getParent()->getFrameInfo();
+  int FI = MFI.getStackProtectorIndex();
 
   SDValue Guard;
   SDLoc dl = getCurSDLoc();
@@ -2046,8 +2044,8 @@ void SelectionDAGBuilder::visitSPDescriptorParent(StackProtectorDescriptor &SPD,
   // Generate code to load the content of the guard slot.
   SDValue StackSlot = DAG.getLoad(
       PtrTy, dl, DAG.getEntryNode(), StackSlotPtr,
-      MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI), true,
-      false, false, Align);
+      MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI), Align,
+      MachineMemOperand::MOVolatile);
 
   // Retrieve guard check function, nullptr if instrumentation is inlined.
   if (const Value *GuardCheck = TLI.getSSPStackGuardCheck(M)) {
@@ -2088,7 +2086,7 @@ void SelectionDAGBuilder::visitSPDescriptorParent(StackProtectorDescriptor &SPD,
 
     Guard =
         DAG.getLoad(PtrTy, dl, Chain, GuardPtr, MachinePointerInfo(IRGuard, 0),
-                    true, false, false, Align);
+                    Align, MachineMemOperand::MOVolatile);
   }
 
   // Perform the comparison via a subtract/getsetcc.
@@ -2732,7 +2730,7 @@ void SelectionDAGBuilder::visitFCmp(const User &I) {
 // Check if the condition of the select has one use or two users that are both
 // selects with the same condition.
 static bool hasOnlySelectUsers(const Value *Cond) {
-  return std::all_of(Cond->user_begin(), Cond->user_end(), [](const Value *V) {
+  return all_of(Cond->users(), [](const Value *V) {
     return isa<SelectInst>(V);
   });
 }
@@ -3434,7 +3432,7 @@ void SelectionDAGBuilder::visitAlloca(const AllocaInst &I) {
   setValue(&I, DSA);
   DAG.setRoot(DSA.getValue(1));
 
-  assert(FuncInfo.MF->getFrameInfo()->hasVarSizedObjects());
+  assert(FuncInfo.MF->getFrameInfo().hasVarSizedObjects());
 }
 
 void SelectionDAGBuilder::visitLoad(const LoadInst &I) {
@@ -3534,10 +3532,17 @@ void SelectionDAGBuilder::visitLoad(const LoadInst &I) {
                             PtrVT, Ptr,
                             DAG.getConstant(Offsets[i], dl, PtrVT),
                             &Flags);
-    SDValue L = DAG.getLoad(ValueVTs[i], dl, Root,
-                            A, MachinePointerInfo(SV, Offsets[i]), isVolatile,
-                            isNonTemporal, isInvariant, Alignment, AAInfo,
-                            Ranges);
+    auto MMOFlags = MachineMemOperand::MONone;
+    if (isVolatile)
+      MMOFlags |= MachineMemOperand::MOVolatile;
+    if (isNonTemporal)
+      MMOFlags |= MachineMemOperand::MONonTemporal;
+    if (isInvariant)
+      MMOFlags |= MachineMemOperand::MOInvariant;
+
+    SDValue L = DAG.getLoad(ValueVTs[i], dl, Root, A,
+                            MachinePointerInfo(SV, Offsets[i]), Alignment,
+                            MMOFlags, AAInfo, Ranges);
 
     Values[i] = L;
     Chains[ChainI] = L.getValue(1);
@@ -3652,14 +3657,17 @@ void SelectionDAGBuilder::visitStore(const StoreInst &I) {
 
   SDValue Root = getRoot();
   SmallVector<SDValue, 4> Chains(std::min(MaxParallelChains, NumValues));
-  EVT PtrVT = Ptr.getValueType();
-  bool isVolatile = I.isVolatile();
-  bool isNonTemporal = I.getMetadata(LLVMContext::MD_nontemporal) != nullptr;
-  unsigned Alignment = I.getAlignment();
   SDLoc dl = getCurSDLoc();
-
+  EVT PtrVT = Ptr.getValueType();
+  unsigned Alignment = I.getAlignment();
   AAMDNodes AAInfo;
   I.getAAMetadata(AAInfo);
+
+  auto MMOFlags = MachineMemOperand::MONone;
+  if (I.isVolatile())
+    MMOFlags |= MachineMemOperand::MOVolatile;
+  if (I.getMetadata(LLVMContext::MD_nontemporal) != nullptr)
+    MMOFlags |= MachineMemOperand::MONonTemporal;
 
   // An aggregate load cannot wrap around the address space, so offsets to its
   // parts don't wrap either.
@@ -3677,10 +3685,9 @@ void SelectionDAGBuilder::visitStore(const StoreInst &I) {
     }
     SDValue Add = DAG.getNode(ISD::ADD, dl, PtrVT, Ptr,
                               DAG.getConstant(Offsets[i], dl, PtrVT), &Flags);
-    SDValue St = DAG.getStore(Root, dl,
-                              SDValue(Src.getNode(), Src.getResNo() + i),
-                              Add, MachinePointerInfo(PtrV, Offsets[i]),
-                              isVolatile, isNonTemporal, Alignment, AAInfo);
+    SDValue St = DAG.getStore(
+        Root, dl, SDValue(Src.getNode(), Src.getResNo() + i), Add,
+        MachinePointerInfo(PtrV, Offsets[i]), Alignment, MMOFlags, AAInfo);
     Chains[ChainI] = St;
   }
 
@@ -3831,13 +3838,10 @@ void SelectionDAGBuilder::visitMaskedLoad(const CallInst &I) {
   I.getAAMetadata(AAInfo);
   const MDNode *Ranges = I.getMetadata(LLVMContext::MD_range);
 
-  SDValue InChain = DAG.getRoot();
-  if (AA->pointsToConstantMemory(MemoryLocation(
-          PtrOperand, DAG.getDataLayout().getTypeStoreSize(I.getType()),
-          AAInfo))) {
-    // Do not serialize (non-volatile) loads of constant memory with anything.
-    InChain = DAG.getEntryNode();
-  }
+  // Do not serialize masked loads of constant memory with anything.
+  bool AddToChain = !AA->pointsToConstantMemory(MemoryLocation(
+      PtrOperand, DAG.getDataLayout().getTypeStoreSize(I.getType()), AAInfo));
+  SDValue InChain = AddToChain ? DAG.getRoot() : DAG.getEntryNode();
 
   MachineMemOperand *MMO =
     DAG.getMachineFunction().
@@ -3847,8 +3851,10 @@ void SelectionDAGBuilder::visitMaskedLoad(const CallInst &I) {
 
   SDValue Load = DAG.getMaskedLoad(VT, sdl, InChain, Ptr, Mask, Src0, VT, MMO,
                                    ISD::NON_EXTLOAD);
-  SDValue OutChain = Load.getValue(1);
-  DAG.setRoot(OutChain);
+  if (AddToChain) {
+    SDValue OutChain = Load.getValue(1);
+    DAG.setRoot(OutChain);
+  }
   setValue(&I, Load);
 }
 
@@ -5017,11 +5023,11 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
   }
   case Intrinsic::eh_sjlj_functioncontext: {
     // Get and store the index of the function context.
-    MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
+    MachineFrameInfo &MFI = DAG.getMachineFunction().getFrameInfo();
     AllocaInst *FnCtx =
       cast<AllocaInst>(I.getArgOperand(0)->stripPointerCasts());
     int FI = FuncInfo.StaticAllocaMap[FnCtx];
-    MFI->setFunctionContextIndex(FI);
+    MFI.setFunctionContextIndex(FI);
     return nullptr;
   }
   case Intrinsic::eh_sjlj_setjmp: {
@@ -5359,9 +5365,9 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     } else {
       const Value *Global = TLI.getSDagStackGuard(M);
       unsigned Align = DL->getPrefTypeAlignment(Global->getType());
-      Res =
-          DAG.getLoad(PtrTy, sdl, Chain, getValue(Global),
-                      MachinePointerInfo(Global, 0), true, false, false, Align);
+      Res = DAG.getLoad(PtrTy, sdl, Chain, getValue(Global),
+                        MachinePointerInfo(Global, 0), Align,
+                        MachineMemOperand::MOVolatile);
     }
     DAG.setRoot(Chain);
     setValue(&I, Res);
@@ -5370,7 +5376,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
   case Intrinsic::stackprotector: {
     // Emit code into the DAG to store the stack guard onto the stack.
     MachineFunction &MF = DAG.getMachineFunction();
-    MachineFrameInfo *MFI = MF.getFrameInfo();
+    MachineFrameInfo &MFI = MF.getFrameInfo();
     EVT PtrTy = TLI.getPointerTy(DAG.getDataLayout());
     SDValue Src, Chain = getRoot();
 
@@ -5382,14 +5388,14 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     AllocaInst *Slot = cast<AllocaInst>(I.getArgOperand(1));
 
     int FI = FuncInfo.StaticAllocaMap[Slot];
-    MFI->setStackProtectorIndex(FI);
+    MFI.setStackProtectorIndex(FI);
 
     SDValue FIN = DAG.getFrameIndex(FI, PtrTy);
 
     // Store the stack protector onto the stack.
     Res = DAG.getStore(Chain, sdl, Src, FIN, MachinePointerInfo::getFixedStack(
                                                  DAG.getMachineFunction(), FI),
-                       true, false, 0);
+                       /* Alignment = */ 0, MachineMemOperand::MOVolatile);
     setValue(&I, Res);
     DAG.setRoot(Res);
     return nullptr;
@@ -5882,9 +5888,7 @@ static SDValue getMemCmpLoad(const Value *PtrVal, MVT LoadVT,
   SDValue Ptr = Builder.getValue(PtrVal);
   SDValue LoadVal = Builder.DAG.getLoad(LoadVT, Builder.getCurSDLoc(), Root,
                                         Ptr, MachinePointerInfo(PtrVal),
-                                        false /*volatile*/,
-                                        false /*nontemporal*/,
-                                        false /*isinvariant*/, 1 /* align=1 */);
+                                        /* Alignment = */ 1);
 
   if (!ConstantMemory)
     Builder.PendingLoads.push_back(LoadVal.getValue(1));
@@ -6037,6 +6041,49 @@ bool SelectionDAGBuilder::visitMemChrCall(const CallInst &I) {
   }
 
   return false;
+}
+
+///
+/// visitMemPCpyCall -- lower a mempcpy call as a memcpy followed by code to
+/// to adjust the dst pointer by the size of the copied memory.
+bool SelectionDAGBuilder::visitMemPCpyCall(const CallInst &I) {
+
+  // Verify argument count: void *mempcpy(void *, const void *, size_t)
+  if (I.getNumArgOperands() != 3)
+    return false;
+
+  SDValue Dst = getValue(I.getArgOperand(0));
+  SDValue Src = getValue(I.getArgOperand(1));
+  SDValue Size = getValue(I.getArgOperand(2));
+
+  unsigned DstAlign = DAG.InferPtrAlignment(Dst);
+  unsigned SrcAlign = DAG.InferPtrAlignment(Src);
+  unsigned Align = std::min(DstAlign, SrcAlign);
+  if (Align == 0) // Alignment of one or both could not be inferred.
+    Align = 1; // 0 and 1 both specify no alignment, but 0 is reserved.
+
+  bool isVol = false;
+  SDLoc sdl = getCurSDLoc();
+
+  // In the mempcpy context we need to pass in a false value for isTailCall
+  // because the return pointer needs to be adjusted by the size of
+  // the copied memory.
+  SDValue MC = DAG.getMemcpy(getRoot(), sdl, Dst, Src, Size, Align, isVol,
+                             false, /*isTailCall=*/false,
+                             MachinePointerInfo(I.getArgOperand(0)),
+                             MachinePointerInfo(I.getArgOperand(1)));
+  assert(MC.getNode() != nullptr &&
+         "** memcpy should not be lowered as TailCall in mempcpy context **");
+  DAG.setRoot(MC);
+
+  // Check if Size needs to be truncated or extended.
+  Size = DAG.getSExtOrTrunc(Size, sdl, Dst.getValueType());
+
+  // Adjust return pointer to point just past the last dst byte.
+  SDValue DstPlusSize = DAG.getNode(ISD::ADD, sdl, Dst.getValueType(),
+                                    Dst, Size);
+  setValue(&I, DstPlusSize);
+  return true;
 }
 
 /// visitStrCpyCall -- See if we can lower a strcpy or stpcpy call into an
@@ -6329,6 +6376,10 @@ void SelectionDAGBuilder::visitCall(const CallInst &I) {
         if (visitMemCmpCall(I))
           return;
         break;
+      case LibFunc::mempcpy:
+        if (visitMemPCpyCall(I))
+          return;
+        break;
       case LibFunc::memchr:
         if (visitMemChrCall(I))
           return;
@@ -6399,6 +6450,19 @@ public:
     : TargetLowering::AsmOperandInfo(info), CallOperand(nullptr,0) {
   }
 
+  /// Whether or not this operand accesses memory
+  bool hasMemory(const TargetLowering &TLI) const {
+    // Indirect operand accesses access memory.
+    if (isIndirect)
+      return true;
+
+    for (const auto &Code : Codes)
+      if (TLI.getConstraintType(Code) == TargetLowering::C_Memory)
+        return true;
+
+    return false;
+  }
+
   /// getCallOperandValEVT - Return the EVT of the Value* that this operand
   /// corresponds to.  If there is no Value* for this operand, it returns
   /// MVT::Other.
@@ -6450,6 +6514,75 @@ public:
 typedef SmallVector<SDISelAsmOperandInfo,16> SDISelAsmOperandInfoVector;
 
 } // end anonymous namespace
+
+/// Make sure that the output operand \p OpInfo and its corresponding input
+/// operand \p MatchingOpInfo have compatible constraint types (otherwise error
+/// out).
+static void patchMatchingInput(const SDISelAsmOperandInfo &OpInfo,
+                               SDISelAsmOperandInfo &MatchingOpInfo,
+                               SelectionDAG &DAG) {
+  if (OpInfo.ConstraintVT == MatchingOpInfo.ConstraintVT)
+    return;
+
+  const TargetRegisterInfo *TRI = DAG.getSubtarget().getRegisterInfo();
+  const auto &TLI = DAG.getTargetLoweringInfo();
+
+  std::pair<unsigned, const TargetRegisterClass *> MatchRC =
+      TLI.getRegForInlineAsmConstraint(TRI, OpInfo.ConstraintCode,
+                                       OpInfo.ConstraintVT);
+  std::pair<unsigned, const TargetRegisterClass *> InputRC =
+      TLI.getRegForInlineAsmConstraint(TRI, MatchingOpInfo.ConstraintCode,
+                                       MatchingOpInfo.ConstraintVT);
+  if ((OpInfo.ConstraintVT.isInteger() !=
+       MatchingOpInfo.ConstraintVT.isInteger()) ||
+      (MatchRC.second != InputRC.second)) {
+    // FIXME: error out in a more elegant fashion
+    report_fatal_error("Unsupported asm: input constraint"
+                       " with a matching output constraint of"
+                       " incompatible type!");
+  }
+  MatchingOpInfo.ConstraintVT = OpInfo.ConstraintVT;
+}
+
+/// Get a direct memory input to behave well as an indirect operand.
+/// This may introduce stores, hence the need for a \p Chain.
+/// \return The (possibly updated) chain.
+static SDValue getAddressForMemoryInput(SDValue Chain, const SDLoc &Location,
+                                        SDISelAsmOperandInfo &OpInfo,
+                                        SelectionDAG &DAG) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+
+  // If we don't have an indirect input, put it in the constpool if we can,
+  // otherwise spill it to a stack slot.
+  // TODO: This isn't quite right. We need to handle these according to
+  // the addressing mode that the constraint wants. Also, this may take
+  // an additional register for the computation and we don't want that
+  // either.
+
+  // If the operand is a float, integer, or vector constant, spill to a
+  // constant pool entry to get its address.
+  const Value *OpVal = OpInfo.CallOperandVal;
+  if (isa<ConstantFP>(OpVal) || isa<ConstantInt>(OpVal) ||
+      isa<ConstantVector>(OpVal) || isa<ConstantDataVector>(OpVal)) {
+    OpInfo.CallOperand = DAG.getConstantPool(
+        cast<Constant>(OpVal), TLI.getPointerTy(DAG.getDataLayout()));
+    return Chain;
+  }
+
+  // Otherwise, create a stack slot and emit a store to it before the asm.
+  Type *Ty = OpVal->getType();
+  auto &DL = DAG.getDataLayout();
+  uint64_t TySize = DL.getTypeAllocSize(Ty);
+  unsigned Align = DL.getPrefTypeAlignment(Ty);
+  MachineFunction &MF = DAG.getMachineFunction();
+  int SSFI = MF.getFrameInfo().CreateStackObject(TySize, Align, false);
+  SDValue StackSlot = DAG.getFrameIndex(SSFI, TLI.getPointerTy(DL));
+  Chain = DAG.getStore(Chain, Location, OpInfo.CallOperand, StackSlot,
+                       MachinePointerInfo::getFixedStack(MF, SSFI));
+  OpInfo.CallOperand = StackSlot;
+
+  return Chain;
+}
 
 /// GetRegistersForValue - Assign registers (virtual or physical) for the
 /// specified operand.  We prefer to assign virtual registers, to allow the
@@ -6559,6 +6692,73 @@ static void GetRegistersForValue(SelectionDAG &DAG, const TargetLowering &TLI,
   // Otherwise, we couldn't allocate enough registers for this.
 }
 
+static unsigned
+findMatchingInlineAsmOperand(unsigned OperandNo,
+                             const std::vector<SDValue> &AsmNodeOperands) {
+  // Scan until we find the definition we already emitted of this operand.
+  unsigned CurOp = InlineAsm::Op_FirstOperand;
+  for (; OperandNo; --OperandNo) {
+    // Advance to the next operand.
+    unsigned OpFlag =
+        cast<ConstantSDNode>(AsmNodeOperands[CurOp])->getZExtValue();
+    assert((InlineAsm::isRegDefKind(OpFlag) ||
+            InlineAsm::isRegDefEarlyClobberKind(OpFlag) ||
+            InlineAsm::isMemKind(OpFlag)) &&
+           "Skipped past definitions?");
+    CurOp += InlineAsm::getNumOperandRegisters(OpFlag) + 1;
+  }
+  return CurOp;
+}
+
+/// Fill \p Regs with \p NumRegs new virtual registers of type \p RegVT
+/// \return true if it has succeeded, false otherwise
+static bool createVirtualRegs(SmallVector<unsigned, 4> &Regs, unsigned NumRegs,
+                              MVT RegVT, SelectionDAG &DAG) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  MachineRegisterInfo &RegInfo = DAG.getMachineFunction().getRegInfo();
+  for (unsigned i = 0, e = NumRegs; i != e; ++i) {
+    if (const TargetRegisterClass *RC = TLI.getRegClassFor(RegVT))
+      Regs.push_back(RegInfo.createVirtualRegister(RC));
+    else
+      return false;
+  }
+  return true;
+}
+
+class ExtraFlags {
+  unsigned Flags = 0;
+
+public:
+  explicit ExtraFlags(ImmutableCallSite CS) {
+    const InlineAsm *IA = cast<InlineAsm>(CS.getCalledValue());
+    if (IA->hasSideEffects())
+      Flags |= InlineAsm::Extra_HasSideEffects;
+    if (IA->isAlignStack())
+      Flags |= InlineAsm::Extra_IsAlignStack;
+    if (CS.isConvergent())
+      Flags |= InlineAsm::Extra_IsConvergent;
+    Flags |= IA->getDialect() * InlineAsm::Extra_AsmDialect;
+  }
+
+  void update(const llvm::TargetLowering::AsmOperandInfo &OpInfo) {
+    // Ideally, we would only check against memory constraints.  However, the
+    // meaning of an Other constraint can be target-specific and we can't easily
+    // reason about it.  Therefore, be conservative and set MayLoad/MayStore
+    // for Other constraints as well.
+    if (OpInfo.ConstraintType == TargetLowering::C_Memory ||
+        OpInfo.ConstraintType == TargetLowering::C_Other) {
+      if (OpInfo.Type == InlineAsm::isInput)
+        Flags |= InlineAsm::Extra_MayLoad;
+      else if (OpInfo.Type == InlineAsm::isOutput)
+        Flags |= InlineAsm::Extra_MayStore;
+      else if (OpInfo.Type == InlineAsm::isClobber)
+        Flags |= (InlineAsm::Extra_MayLoad | InlineAsm::Extra_MayStore);
+    }
+  }
+
+  unsigned get() const { return Flags; }
+};
+
 /// visitInlineAsm - Handle a call to an InlineAsm object.
 ///
 void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
@@ -6573,6 +6773,9 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
 
   bool hasMemory = false;
 
+  // Remember the HasSideEffect, AlignStack, AsmDialect, MayLoad and MayStore
+  ExtraFlags ExtraInfo(CS);
+
   unsigned ArgNo = 0;   // ArgNo - The argument of the CallInst.
   unsigned ResNo = 0;   // ResNo - The result number of the next output.
   for (unsigned i = 0, e = TargetConstraints.size(); i != e; ++i) {
@@ -6582,14 +6785,25 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
     MVT OpVT = MVT::Other;
 
     // Compute the value type for each operand.
-    switch (OpInfo.Type) {
-    case InlineAsm::isOutput:
-      // Indirect outputs just consume an argument.
-      if (OpInfo.isIndirect) {
-        OpInfo.CallOperandVal = const_cast<Value *>(CS.getArgument(ArgNo++));
-        break;
+    if (OpInfo.Type == InlineAsm::isInput ||
+        (OpInfo.Type == InlineAsm::isOutput && OpInfo.isIndirect)) {
+      OpInfo.CallOperandVal = const_cast<Value *>(CS.getArgument(ArgNo++));
+
+      // Process the call argument. BasicBlocks are labels, currently appearing
+      // only in asm's.
+      if (const BasicBlock *BB = dyn_cast<BasicBlock>(OpInfo.CallOperandVal)) {
+        OpInfo.CallOperand = DAG.getBasicBlock(FuncInfo.MBBMap[BB]);
+      } else {
+        OpInfo.CallOperand = getValue(OpInfo.CallOperandVal);
       }
 
+      OpVT =
+          OpInfo
+              .getCallOperandValEVT(*DAG.getContext(), TLI, DAG.getDataLayout())
+              .getSimpleVT();
+    }
+
+    if (OpInfo.Type == InlineAsm::isOutput && !OpInfo.isIndirect) {
       // The return value of the call is this value.  As such, there is no
       // corresponding argument.
       assert(!CS.getType()->isVoidTy() && "Bad inline asm!");
@@ -6601,43 +6815,21 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
         OpVT = TLI.getSimpleValueType(DAG.getDataLayout(), CS.getType());
       }
       ++ResNo;
-      break;
-    case InlineAsm::isInput:
-      OpInfo.CallOperandVal = const_cast<Value *>(CS.getArgument(ArgNo++));
-      break;
-    case InlineAsm::isClobber:
-      // Nothing to do.
-      break;
-    }
-
-    // If this is an input or an indirect output, process the call argument.
-    // BasicBlocks are labels, currently appearing only in asm's.
-    if (OpInfo.CallOperandVal) {
-      if (const BasicBlock *BB = dyn_cast<BasicBlock>(OpInfo.CallOperandVal)) {
-        OpInfo.CallOperand = DAG.getBasicBlock(FuncInfo.MBBMap[BB]);
-      } else {
-        OpInfo.CallOperand = getValue(OpInfo.CallOperandVal);
-      }
-
-      OpVT = OpInfo.getCallOperandValEVT(*DAG.getContext(), TLI,
-                                         DAG.getDataLayout()).getSimpleVT();
     }
 
     OpInfo.ConstraintVT = OpVT;
 
-    // Indirect operand accesses access memory.
-    if (OpInfo.isIndirect)
-      hasMemory = true;
-    else {
-      for (unsigned j = 0, ee = OpInfo.Codes.size(); j != ee; ++j) {
-        TargetLowering::ConstraintType
-          CType = TLI.getConstraintType(OpInfo.Codes[j]);
-        if (CType == TargetLowering::C_Memory) {
-          hasMemory = true;
-          break;
-        }
-      }
-    }
+    if (!hasMemory)
+      hasMemory = OpInfo.hasMemory(TLI);
+
+    // Determine if this InlineAsm MayLoad or MayStore based on the constraints.
+    // FIXME: Could we compute this on OpInfo rather than TargetConstraints[i]?
+    auto TargetConstraint = TargetConstraints[i];
+
+    // Compute the constraint code and ConstraintType to use.
+    TLI.ComputeConstraintToUse(TargetConstraint, SDValue());
+
+    ExtraInfo.update(TargetConstraint);
   }
 
   SDValue Chain, Flag;
@@ -6660,24 +6852,7 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
     // error.
     if (OpInfo.hasMatchingInput()) {
       SDISelAsmOperandInfo &Input = ConstraintOperands[OpInfo.MatchingInput];
-
-      if (OpInfo.ConstraintVT != Input.ConstraintVT) {
-        const TargetRegisterInfo *TRI = DAG.getSubtarget().getRegisterInfo();
-        std::pair<unsigned, const TargetRegisterClass *> MatchRC =
-            TLI.getRegForInlineAsmConstraint(TRI, OpInfo.ConstraintCode,
-                                             OpInfo.ConstraintVT);
-        std::pair<unsigned, const TargetRegisterClass *> InputRC =
-            TLI.getRegForInlineAsmConstraint(TRI, Input.ConstraintCode,
-                                             Input.ConstraintVT);
-        if ((OpInfo.ConstraintVT.isInteger() !=
-             Input.ConstraintVT.isInteger()) ||
-            (MatchRC.second != InputRC.second)) {
-          report_fatal_error("Unsupported asm: input constraint"
-                             " with a matching output constraint of"
-                             " incompatible type!");
-        }
-        Input.ConstraintVT = OpInfo.ConstraintVT;
-      }
+      patchMatchingInput(OpInfo, Input, DAG);
     }
 
     // Compute the constraint code and ConstraintType to use.
@@ -6695,38 +6870,8 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
               (OpInfo.Type == InlineAsm::isInput)) &&
              "Can only indirectify direct input operands!");
 
-      // Memory operands really want the address of the value.  If we don't have
-      // an indirect input, put it in the constpool if we can, otherwise spill
-      // it to a stack slot.
-      // TODO: This isn't quite right. We need to handle these according to
-      // the addressing mode that the constraint wants. Also, this may take
-      // an additional register for the computation and we don't want that
-      // either.
-
-      // If the operand is a float, integer, or vector constant, spill to a
-      // constant pool entry to get its address.
-      const Value *OpVal = OpInfo.CallOperandVal;
-      if (isa<ConstantFP>(OpVal) || isa<ConstantInt>(OpVal) ||
-          isa<ConstantVector>(OpVal) || isa<ConstantDataVector>(OpVal)) {
-        OpInfo.CallOperand = DAG.getConstantPool(
-            cast<Constant>(OpVal), TLI.getPointerTy(DAG.getDataLayout()));
-      } else {
-        // Otherwise, create a stack slot and emit a store to it before the
-        // asm.
-        Type *Ty = OpVal->getType();
-        auto &DL = DAG.getDataLayout();
-        uint64_t TySize = DL.getTypeAllocSize(Ty);
-        unsigned Align = DL.getPrefTypeAlignment(Ty);
-        MachineFunction &MF = DAG.getMachineFunction();
-        int SSFI = MF.getFrameInfo()->CreateStackObject(TySize, Align, false);
-        SDValue StackSlot =
-            DAG.getFrameIndex(SSFI, TLI.getPointerTy(DAG.getDataLayout()));
-        Chain = DAG.getStore(
-            Chain, getCurSDLoc(), OpInfo.CallOperand, StackSlot,
-            MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), SSFI),
-            false, false, 0);
-        OpInfo.CallOperand = StackSlot;
-      }
+      // Memory operands really want the address of the value.
+      Chain = getAddressForMemoryInput(Chain, getCurSDLoc(), OpInfo, DAG);
 
       // There is no longer a Value* corresponding to this operand.
       OpInfo.CallOperandVal = nullptr;
@@ -6741,7 +6886,7 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
       GetRegistersForValue(DAG, TLI, getCurSDLoc(), OpInfo);
   }
 
-  // Second pass - Loop over all of the operands, assigning virtual or physregs
+  // Third pass - Loop over all of the operands, assigning virtual or physregs
   // to register class operands.
   for (unsigned i = 0, e = ConstraintOperands.size(); i != e; ++i) {
     SDISelAsmOperandInfo &OpInfo = ConstraintOperands[i];
@@ -6766,40 +6911,8 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
 
   // Remember the HasSideEffect, AlignStack, AsmDialect, MayLoad and MayStore
   // bits as operand 3.
-  unsigned ExtraInfo = 0;
-  if (IA->hasSideEffects())
-    ExtraInfo |= InlineAsm::Extra_HasSideEffects;
-  if (IA->isAlignStack())
-    ExtraInfo |= InlineAsm::Extra_IsAlignStack;
-  if (CS.isConvergent())
-    ExtraInfo |= InlineAsm::Extra_IsConvergent;
-  // Set the asm dialect.
-  ExtraInfo |= IA->getDialect() * InlineAsm::Extra_AsmDialect;
-
-  // Determine if this InlineAsm MayLoad or MayStore based on the constraints.
-  for (unsigned i = 0, e = TargetConstraints.size(); i != e; ++i) {
-    TargetLowering::AsmOperandInfo &OpInfo = TargetConstraints[i];
-
-    // Compute the constraint code and ConstraintType to use.
-    TLI.ComputeConstraintToUse(OpInfo, SDValue());
-
-    // Ideally, we would only check against memory constraints.  However, the
-    // meaning of an other constraint can be target-specific and we can't easily
-    // reason about it.  Therefore, be conservative and set MayLoad/MayStore
-    // for other constriants as well.
-    if (OpInfo.ConstraintType == TargetLowering::C_Memory ||
-        OpInfo.ConstraintType == TargetLowering::C_Other) {
-      if (OpInfo.Type == InlineAsm::isInput)
-        ExtraInfo |= InlineAsm::Extra_MayLoad;
-      else if (OpInfo.Type == InlineAsm::isOutput)
-        ExtraInfo |= InlineAsm::Extra_MayStore;
-      else if (OpInfo.Type == InlineAsm::isClobber)
-        ExtraInfo |= (InlineAsm::Extra_MayLoad | InlineAsm::Extra_MayStore);
-    }
-  }
-
   AsmNodeOperands.push_back(DAG.getTargetConstant(
-      ExtraInfo, getCurSDLoc(), TLI.getPointerTy(DAG.getDataLayout())));
+      ExtraInfo.get(), getCurSDLoc(), TLI.getPointerTy(DAG.getDataLayout())));
 
   // Loop over all of the inputs, copying the operand values into the
   // appropriate registers and processing the output regs.
@@ -6867,24 +6980,11 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
     case InlineAsm::isInput: {
       SDValue InOperandVal = OpInfo.CallOperand;
 
-      if (OpInfo.isMatchingInputConstraint()) {   // Matching constraint?
+      if (OpInfo.isMatchingInputConstraint()) {
         // If this is required to match an output register we have already set,
         // just use its register.
-        unsigned OperandNo = OpInfo.getMatchedOperand();
-
-        // Scan until we find the definition we already emitted of this operand.
-        // When we find it, create a RegsForValue operand.
-        unsigned CurOp = InlineAsm::Op_FirstOperand;
-        for (; OperandNo; --OperandNo) {
-          // Advance to the next operand.
-          unsigned OpFlag =
-            cast<ConstantSDNode>(AsmNodeOperands[CurOp])->getZExtValue();
-          assert((InlineAsm::isRegDefKind(OpFlag) ||
-                  InlineAsm::isRegDefEarlyClobberKind(OpFlag) ||
-                  InlineAsm::isMemKind(OpFlag)) && "Skipped past definitions?");
-          CurOp += InlineAsm::getNumOperandRegisters(OpFlag)+1;
-        }
-
+        auto CurOp = findMatchingInlineAsmOperand(OpInfo.getMatchedOperand(),
+                                                  AsmNodeOperands);
         unsigned OpFlag =
           cast<ConstantSDNode>(AsmNodeOperands[CurOp])->getZExtValue();
         if (InlineAsm::isRegDefKind(OpFlag) ||
@@ -6898,22 +6998,19 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
             return;
           }
 
-          RegsForValue MatchedRegs;
-          MatchedRegs.ValueVTs.push_back(InOperandVal.getValueType());
           MVT RegVT = AsmNodeOperands[CurOp+1].getSimpleValueType();
-          MatchedRegs.RegVTs.push_back(RegVT);
-          MachineRegisterInfo &RegInfo = DAG.getMachineFunction().getRegInfo();
-          for (unsigned i = 0, e = InlineAsm::getNumOperandRegisters(OpFlag);
-               i != e; ++i) {
-            if (const TargetRegisterClass *RC = TLI.getRegClassFor(RegVT))
-              MatchedRegs.Regs.push_back(RegInfo.createVirtualRegister(RC));
-            else {
-              emitInlineAsmError(
-                  CS, "inline asm error: This value"
-                      " type register class is not natively supported!");
-              return;
-            }
+          SmallVector<unsigned, 4> Regs;
+
+          if (!createVirtualRegs(Regs,
+                                 InlineAsm::getNumOperandRegisters(OpFlag),
+                                 RegVT, DAG)) {
+            emitInlineAsmError(CS, "inline asm error: This value type register "
+                                   "class is not natively supported!");
+            return;
           }
+
+          RegsForValue MatchedRegs(Regs, RegVT, InOperandVal.getValueType());
+
           SDLoc dl = getCurSDLoc();
           // Use the produced MatchedRegs object to
           MatchedRegs.getCopyToRegs(InOperandVal, DAG, dl,
@@ -7083,11 +7180,9 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
   // Emit the non-flagged stores from the physregs.
   SmallVector<SDValue, 8> OutChains;
   for (unsigned i = 0, e = StoresToEmit.size(); i != e; ++i) {
-    SDValue Val = DAG.getStore(Chain, getCurSDLoc(),
-                               StoresToEmit[i].first,
+    SDValue Val = DAG.getStore(Chain, getCurSDLoc(), StoresToEmit[i].first,
                                getValue(StoresToEmit[i].second),
-                               MachinePointerInfo(StoresToEmit[i].second),
-                               false, false, 0);
+                               MachinePointerInfo(StoresToEmit[i].second));
     OutChains.push_back(Val);
   }
 
@@ -7306,7 +7401,7 @@ void SelectionDAGBuilder::visitStackmap(const CallInst &CI) {
   DAG.setRoot(Chain);
 
   // Inform the Frame Information that we have a stackmap in this function.
-  FuncInfo.MF->getFrameInfo()->setHasStackMap();
+  FuncInfo.MF->getFrameInfo().setHasStackMap();
 }
 
 /// \brief Lower llvm.experimental.patchpoint directly to its target opcode.
@@ -7457,7 +7552,7 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
   DAG.DeleteNode(Call);
 
   // Inform the Frame Information that we have a patchpoint in this function.
-  FuncInfo.MF->getFrameInfo()->setHasPatchPoint();
+  FuncInfo.MF->getFrameInfo().setHasPatchPoint();
 }
 
 /// Returns an AttributeSet representing the attributes applied to the return
@@ -7505,7 +7600,7 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
     uint64_t TySize = DL.getTypeAllocSize(CLI.RetTy);
     unsigned Align = DL.getPrefTypeAlignment(CLI.RetTy);
     MachineFunction &MF = CLI.DAG.getMachineFunction();
-    DemoteStackIdx = MF.getFrameInfo()->CreateStackObject(TySize, Align, false);
+    DemoteStackIdx = MF.getFrameInfo().CreateStackObject(TySize, Align, false);
     Type *StackSlotPtrType = PointerType::getUnqual(CLI.RetTy);
 
     DemoteStackSlot = CLI.DAG.getFrameIndex(DemoteStackIdx, getPointerTy(DL));
@@ -7739,7 +7834,7 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
           RetTys[i], CLI.DL, CLI.Chain, Add,
           MachinePointerInfo::getFixedStack(CLI.DAG.getMachineFunction(),
                                             DemoteStackIdx, Offsets[i]),
-          false, false, false, 1);
+          /* Alignment = */ 1);
       ReturnValues[i] = L;
       Chains[i] = L.getValue(1);
     }

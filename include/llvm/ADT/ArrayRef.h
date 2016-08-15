@@ -13,6 +13,7 @@
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/SmallVector.h"
+#include <array>
 #include <vector>
 
 namespace llvm {
@@ -77,6 +78,11 @@ namespace llvm {
     template<typename A>
     /*implicit*/ ArrayRef(const std::vector<T, A> &Vec)
       : Data(Vec.data()), Length(Vec.size()) {}
+
+    /// Construct an ArrayRef from a std::array
+    template <size_t N>
+    /*implicit*/ LLVM_CONSTEXPR ArrayRef(const std::array<T, N> &Arr)
+      : Data(Arr.data()), Length(N) {}
 
     /// Construct an ArrayRef from a C array.
     template <size_t N>
@@ -161,6 +167,7 @@ namespace llvm {
     }
 
     /// slice(n) - Chop off the first N elements of the array.
+    LLVM_ATTRIBUTE_UNUSED_RESULT
     ArrayRef<T> slice(size_t N) const {
       assert(N <= size() && "Invalid specifier");
       return ArrayRef<T>(data()+N, size()-N);
@@ -168,18 +175,21 @@ namespace llvm {
 
     /// slice(n, m) - Chop off the first N elements of the array, and keep M
     /// elements in the array.
+    LLVM_ATTRIBUTE_UNUSED_RESULT
     ArrayRef<T> slice(size_t N, size_t M) const {
       assert(N+M <= size() && "Invalid specifier");
       return ArrayRef<T>(data()+N, M);
     }
 
     /// \brief Drop the first \p N elements of the array.
+    LLVM_ATTRIBUTE_UNUSED_RESULT
     ArrayRef<T> drop_front(size_t N = 1) const {
       assert(size() >= N && "Dropping more elements than exist");
       return slice(N, size() - N);
     }
 
     /// \brief Drop the last \p N elements of the array.
+    LLVM_ATTRIBUTE_UNUSED_RESULT
     ArrayRef<T> drop_back(size_t N = 1) const {
       assert(size() >= N && "Dropping more elements than exist");
       return slice(0, size() - N);
@@ -253,6 +263,11 @@ namespace llvm {
     /*implicit*/ MutableArrayRef(std::vector<T> &Vec)
     : ArrayRef<T>(Vec) {}
 
+    /// Construct an ArrayRef from a std::array
+    template <size_t N>
+    /*implicit*/ LLVM_CONSTEXPR MutableArrayRef(std::array<T, N> &Arr)
+      : ArrayRef<T>(Arr) {}
+
     /// Construct an MutableArrayRef from a C array.
     template <size_t N>
     /*implicit*/ LLVM_CONSTEXPR MutableArrayRef(T (&Arr)[N])
@@ -279,6 +294,7 @@ namespace llvm {
     }
 
     /// slice(n) - Chop off the first N elements of the array.
+    LLVM_ATTRIBUTE_UNUSED_RESULT
     MutableArrayRef<T> slice(size_t N) const {
       assert(N <= this->size() && "Invalid specifier");
       return MutableArrayRef<T>(data()+N, this->size()-N);
@@ -286,17 +302,20 @@ namespace llvm {
 
     /// slice(n, m) - Chop off the first N elements of the array, and keep M
     /// elements in the array.
+    LLVM_ATTRIBUTE_UNUSED_RESULT
     MutableArrayRef<T> slice(size_t N, size_t M) const {
       assert(N+M <= this->size() && "Invalid specifier");
       return MutableArrayRef<T>(data()+N, M);
     }
 
     /// \brief Drop the first \p N elements of the array.
+    LLVM_ATTRIBUTE_UNUSED_RESULT
     MutableArrayRef<T> drop_front(size_t N = 1) const {
       assert(this->size() >= N && "Dropping more elements than exist");
       return slice(N, this->size() - N);
     }
 
+    LLVM_ATTRIBUTE_UNUSED_RESULT
     MutableArrayRef<T> drop_back(size_t N = 1) const {
       assert(this->size() >= N && "Dropping more elements than exist");
       return slice(0, this->size() - N);

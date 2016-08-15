@@ -41,8 +41,8 @@ defm int_r600_read_tgid : AMDGPUReadPreloadRegisterIntrinsic_xyz_named
 defm int_r600_read_local_size : AMDGPUReadPreloadRegisterIntrinsic_xyz;
 defm int_r600_read_tidig : AMDGPUReadPreloadRegisterIntrinsic_xyz;
 
-def int_r600_read_workdim : AMDGPUReadPreloadRegisterIntrinsic;
-
+def int_r600_group_barrier : GCCBuiltin<"__builtin_r600_group_barrier">,
+  Intrinsic<[], [], [IntrConvergent]>;
 
 // AS 7 is PARAM_I_ADDRESS, used for kernel arguments
 def int_r600_implicitarg_ptr :
@@ -56,25 +56,53 @@ def int_r600_rat_store_typed :
   Intrinsic<[], [llvm_v4i32_ty, llvm_v4i32_ty, llvm_i32_ty], []>,
   GCCBuiltin<"__builtin_r600_rat_store_typed">;
 
-def int_r600_rsq : Intrinsic<
+def int_r600_recipsqrt_ieee :  Intrinsic<
   [llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]
 >;
 
+def int_r600_recipsqrt_clamped : Intrinsic<
+  [llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]
+>;
 
 } // End TargetPrefix = "r600"
 
-// FIXME: These should be renamed/moved to r600
-let TargetPrefix = "AMDGPU" in {
-def int_AMDGPU_ldexp : Intrinsic<
-  [llvm_anyfloat_ty], [LLVMMatchType<0>, llvm_i32_ty], [IntrNoMem]
->;
-}
-
 let TargetPrefix = "amdgcn" in {
+
+//===----------------------------------------------------------------------===//
+// ABI Special Intrinsics
+//===----------------------------------------------------------------------===//
 
 defm int_amdgcn_workitem_id : AMDGPUReadPreloadRegisterIntrinsic_xyz;
 defm int_amdgcn_workgroup_id : AMDGPUReadPreloadRegisterIntrinsic_xyz_named
                                <"__builtin_amdgcn_workgroup_id">;
+
+def int_amdgcn_dispatch_ptr :
+  GCCBuiltin<"__builtin_amdgcn_dispatch_ptr">,
+  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
+
+def int_amdgcn_queue_ptr :
+  GCCBuiltin<"__builtin_amdgcn_queue_ptr">,
+  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
+
+def int_amdgcn_kernarg_segment_ptr :
+  GCCBuiltin<"__builtin_amdgcn_kernarg_segment_ptr">,
+  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
+
+def int_amdgcn_implicitarg_ptr :
+  GCCBuiltin<"__builtin_amdgcn_implicitarg_ptr">,
+  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
+
+def int_amdgcn_groupstaticsize :
+  GCCBuiltin<"__builtin_amdgcn_groupstaticsize">,
+  Intrinsic<[llvm_i32_ty], [], [IntrNoMem]>;
+
+def int_amdgcn_dispatch_id :
+  GCCBuiltin<"__builtin_amdgcn_dispatch_id">,
+  Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
+
+//===----------------------------------------------------------------------===//
+// Instruction Intrinsics
+//===----------------------------------------------------------------------===//
 
 def int_amdgcn_s_barrier : GCCBuiltin<"__builtin_amdgcn_s_barrier">,
   Intrinsic<[], [], [IntrConvergent]>;
@@ -117,8 +145,16 @@ def int_amdgcn_log_clamp : Intrinsic<
   [llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]
 >;
 
+def int_amdgcn_fmul_legacy : GCCBuiltin<"__builtin_amdgcn_fmul_legacy">,
+  Intrinsic<[llvm_float_ty], [llvm_float_ty, llvm_float_ty], [IntrNoMem]
+>;
+
 def int_amdgcn_rcp : Intrinsic<
   [llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]
+>;
+
+def int_amdgcn_rcp_legacy : GCCBuiltin<"__builtin_amdgcn_rcp_legacy">,
+  Intrinsic<[llvm_float_ty], [llvm_float_ty], [IntrNoMem]
 >;
 
 def int_amdgcn_rsq :  Intrinsic<
@@ -176,6 +212,11 @@ def int_amdgcn_cubetc : GCCBuiltin<"__builtin_amdgcn_cubetc">,
     [llvm_float_ty, llvm_float_ty, llvm_float_ty], [IntrNoMem]
 >;
 
+// v_ffbh_i32, as opposed to v_ffbh_u32. For v_ffbh_u32, llvm.ctlz
+// should be used.
+def int_amdgcn_sffbh :
+  Intrinsic<[llvm_anyint_ty], [LLVMMatchType<0>], [IntrNoMem]>;
+
 // TODO: Do we want an ordering for these?
 def int_amdgcn_atomic_inc : Intrinsic<[llvm_anyint_ty],
   [llvm_anyptr_ty, LLVMMatchType<0>],
@@ -215,6 +256,101 @@ class AMDGPUImageStore : Intrinsic <
 
 def int_amdgcn_image_store : AMDGPUImageStore;
 def int_amdgcn_image_store_mip : AMDGPUImageStore;
+
+class AMDGPUImageSample : Intrinsic <
+    [llvm_anyfloat_ty], // vdata(VGPR)
+    [llvm_anyfloat_ty,  // vaddr(VGPR)
+     llvm_anyint_ty,    // rsrc(SGPR)
+     llvm_v4i32_ty,     // sampler(SGPR)
+     llvm_i32_ty,       // dmask(imm)
+     llvm_i1_ty,        // unorm(imm)
+     llvm_i1_ty,        // glc(imm)
+     llvm_i1_ty,        // slc(imm)
+     llvm_i1_ty,        // lwe(imm)
+     llvm_i1_ty],       // da(imm)
+     [IntrReadMem]>;
+
+// Basic sample
+def int_amdgcn_image_sample : AMDGPUImageSample;
+def int_amdgcn_image_sample_cl : AMDGPUImageSample;
+def int_amdgcn_image_sample_d : AMDGPUImageSample;
+def int_amdgcn_image_sample_d_cl : AMDGPUImageSample;
+def int_amdgcn_image_sample_l : AMDGPUImageSample;
+def int_amdgcn_image_sample_b : AMDGPUImageSample;
+def int_amdgcn_image_sample_b_cl : AMDGPUImageSample;
+def int_amdgcn_image_sample_lz : AMDGPUImageSample;
+def int_amdgcn_image_sample_cd : AMDGPUImageSample;
+def int_amdgcn_image_sample_cd_cl : AMDGPUImageSample;
+
+// Sample with comparison
+def int_amdgcn_image_sample_c : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_cl : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_d : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_d_cl : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_l : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_b : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_b_cl : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_lz : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_cd : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_cd_cl : AMDGPUImageSample;
+
+// Sample with offsets
+def int_amdgcn_image_sample_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_d_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_d_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_l_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_b_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_b_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_lz_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_cd_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_cd_cl_o : AMDGPUImageSample;
+
+// Sample with comparison and offsets
+def int_amdgcn_image_sample_c_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_d_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_d_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_l_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_b_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_b_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_lz_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_cd_o : AMDGPUImageSample;
+def int_amdgcn_image_sample_c_cd_cl_o : AMDGPUImageSample;
+
+// Basic gather4
+def int_amdgcn_image_gather4 : AMDGPUImageSample;
+def int_amdgcn_image_gather4_cl : AMDGPUImageSample;
+def int_amdgcn_image_gather4_l : AMDGPUImageSample;
+def int_amdgcn_image_gather4_b : AMDGPUImageSample;
+def int_amdgcn_image_gather4_b_cl : AMDGPUImageSample;
+def int_amdgcn_image_gather4_lz : AMDGPUImageSample;
+
+// Gather4 with comparison
+def int_amdgcn_image_gather4_c : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_cl : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_l : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_b : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_b_cl : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_lz : AMDGPUImageSample;
+
+// Gather4 with offsets
+def int_amdgcn_image_gather4_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_l_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_b_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_b_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_lz_o : AMDGPUImageSample;
+
+// Gather4 with comparison and offsets
+def int_amdgcn_image_gather4_c_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_l_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_b_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_b_cl_o : AMDGPUImageSample;
+def int_amdgcn_image_gather4_c_lz_o : AMDGPUImageSample;
+
+def int_amdgcn_image_getlod : AMDGPUImageSample;
 
 class AMDGPUImageAtomic : Intrinsic <
   [llvm_i32_ty],
@@ -300,9 +436,6 @@ def int_amdgcn_buffer_atomic_cmpswap : Intrinsic<
    llvm_i1_ty],       // slc(imm)
   []>;
 
-def int_amdgcn_read_workdim : AMDGPUReadPreloadRegisterIntrinsic;
-
-
 def int_amdgcn_buffer_wbinvl1_sc :
   GCCBuiltin<"__builtin_amdgcn_buffer_wbinvl1_sc">,
   Intrinsic<[], [], []>;
@@ -327,26 +460,6 @@ def int_amdgcn_s_sleep :
 def int_amdgcn_s_getreg :
   GCCBuiltin<"__builtin_amdgcn_s_getreg">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty], [IntrReadMem]>;
-
-def int_amdgcn_groupstaticsize :
-  GCCBuiltin<"__builtin_amdgcn_groupstaticsize">,
-  Intrinsic<[llvm_i32_ty], [], [IntrNoMem]>;
-
-def int_amdgcn_dispatch_ptr :
-  GCCBuiltin<"__builtin_amdgcn_dispatch_ptr">,
-  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
-
-def int_amdgcn_queue_ptr :
-  GCCBuiltin<"__builtin_amdgcn_queue_ptr">,
-  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
-
-def int_amdgcn_kernarg_segment_ptr :
-  GCCBuiltin<"__builtin_amdgcn_kernarg_segment_ptr">,
-  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
-
-def int_amdgcn_implicitarg_ptr :
-  GCCBuiltin<"__builtin_amdgcn_implicitarg_ptr">,
-  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
 
 // __builtin_amdgcn_interp_p1 <i>, <attr_chan>, <attr>, <m0>
 def int_amdgcn_interp_p1 :
@@ -388,6 +501,46 @@ def int_amdgcn_ds_swizzle :
 def int_amdgcn_lerp :
   GCCBuiltin<"__builtin_amdgcn_lerp">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+
+def int_amdgcn_sad_u8 :
+  GCCBuiltin<"__builtin_amdgcn_sad_u8">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+
+def int_amdgcn_msad_u8 :
+  GCCBuiltin<"__builtin_amdgcn_msad_u8">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+
+def int_amdgcn_sad_hi_u8 :
+  GCCBuiltin<"__builtin_amdgcn_sad_hi_u8">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+
+def int_amdgcn_sad_u16 :
+  GCCBuiltin<"__builtin_amdgcn_sad_u16">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+
+def int_amdgcn_qsad_pk_u16_u8 :
+  GCCBuiltin<"__builtin_amdgcn_qsad_pk_u16_u8">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+
+def int_amdgcn_mqsad_pk_u16_u8 :
+  GCCBuiltin<"__builtin_amdgcn_mqsad_pk_u16_u8">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+
+def int_amdgcn_mqsad_u32_u8 :
+  GCCBuiltin<"__builtin_amdgcn_mqsad_u32_u8">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+
+def int_amdgcn_cvt_pk_u8_f32 :
+  GCCBuiltin<"__builtin_amdgcn_cvt_pk_u8_f32">,
+  Intrinsic<[llvm_i32_ty], [llvm_float_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+
+def int_amdgcn_icmp :
+  Intrinsic<[llvm_i64_ty], [llvm_anyint_ty, LLVMMatchType<0>, llvm_i32_ty],
+            [IntrNoMem, IntrConvergent]>;
+
+def int_amdgcn_fcmp :
+  Intrinsic<[llvm_i64_ty], [llvm_anyfloat_ty, LLVMMatchType<0>, llvm_i32_ty],
+            [IntrNoMem, IntrConvergent]>;
 
 //===----------------------------------------------------------------------===//
 // CI+ Intrinsics

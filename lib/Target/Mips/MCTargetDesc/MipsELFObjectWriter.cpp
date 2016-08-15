@@ -329,6 +329,8 @@ unsigned MipsELFObjectWriter::getRelocType(MCContext &Ctx,
     return ELF::R_MIPS_HIGHER;
   case Mips::fixup_Mips_HIGHEST:
     return ELF::R_MIPS_HIGHEST;
+  case Mips::fixup_Mips_SUB:
+    return ELF::R_MIPS_SUB;
   case Mips::fixup_Mips_GOT_HI16:
     return ELF::R_MIPS_GOT_HI16;
   case Mips::fixup_Mips_GOT_LO16:
@@ -365,6 +367,8 @@ unsigned MipsELFObjectWriter::getRelocType(MCContext &Ctx,
     return ELF::R_MICROMIPS_TLS_TPREL_HI16;
   case Mips::fixup_MICROMIPS_TLS_TPREL_LO16:
     return ELF::R_MICROMIPS_TLS_TPREL_LO16;
+  case Mips::fixup_MICROMIPS_SUB:
+    return ELF::R_MICROMIPS_SUB;
   }
 
   llvm_unreachable("invalid fixup kind!");
@@ -518,6 +522,10 @@ bool MipsELFObjectWriter::needsRelocateWithSymbol(const MCSymbol &Sym,
       return true;
     return false;
 
+  case ELF::R_MIPS_GOT_PAGE:
+  case ELF::R_MICROMIPS_GOT_PAGE:
+  case ELF::R_MIPS_GOT_OFST:
+  case ELF::R_MICROMIPS_GOT_OFST:
   case ELF::R_MIPS_16:
   case ELF::R_MIPS_32:
   case ELF::R_MIPS_GPREL32:
@@ -539,8 +547,6 @@ bool MipsELFObjectWriter::needsRelocateWithSymbol(const MCSymbol &Sym,
   case ELF::R_MIPS_SHIFT5:
   case ELF::R_MIPS_SHIFT6:
   case ELF::R_MIPS_GOT_DISP:
-  case ELF::R_MIPS_GOT_PAGE:
-  case ELF::R_MIPS_GOT_OFST:
   case ELF::R_MIPS_GOT_HI16:
   case ELF::R_MIPS_GOT_LO16:
   case ELF::R_MIPS_INSERT_A:
@@ -589,8 +595,6 @@ bool MipsELFObjectWriter::needsRelocateWithSymbol(const MCSymbol &Sym,
   case ELF::R_MICROMIPS_PC16_S1:
   case ELF::R_MICROMIPS_CALL16:
   case ELF::R_MICROMIPS_GOT_DISP:
-  case ELF::R_MICROMIPS_GOT_PAGE:
-  case ELF::R_MICROMIPS_GOT_OFST:
   case ELF::R_MICROMIPS_GOT_HI16:
   case ELF::R_MICROMIPS_GOT_LO16:
   case ELF::R_MICROMIPS_SUB:

@@ -1078,7 +1078,7 @@ static void AddAlignmentAssumptions(CallSite CS, InlineFunctionInfo &IFI) {
       // caller, then don't bother inserting the assumption.
       Value *Arg = CS.getArgument(I->getArgNo());
       if (getKnownAlignment(Arg, DL, CS.getInstruction(),
-                            &IFI.ACT->getAssumptionCache(*CS.getCaller()),
+                            &(*IFI.GetAssumptionCache)(*CS.getCaller()),
                             &DT) >= Align)
         continue;
 
@@ -1199,7 +1199,7 @@ static Value *HandleByValArgument(Value *Arg, Instruction *TheCall,
     // If the pointer is already known to be sufficiently aligned, or if we can
     // round it up to a larger alignment, then we don't need a temporary.
     if (getOrEnforceKnownAlignment(Arg, ByValAlignment, DL, TheCall,
-                                   &IFI.ACT->getAssumptionCache(*Caller)) >=
+                                   &(*IFI.GetAssumptionCache)(*Caller)) >=
         ByValAlignment)
       return Arg;
     
@@ -1294,6 +1294,13 @@ updateInlinedAtInfo(const DebugLoc &DL, DILocation *InlinedAtNode,
   return DebugLoc::get(DL.getLine(), DL.getCol(), DL.getScope(), Last);
 }
 
+/// Return the result of AI->isStaticAlloca() if AI were moved to the entry
+/// block. Allocas used in inalloca calls and allocas of dynamic array size
+/// cannot be static.
+static bool allocaWouldBeStaticInEntry(const AllocaInst *AI ) {
+  return isa<Constant>(AI->getArraySize()) && !AI->isUsedWithInAlloca();
+}
+
 /// Update inlined instructions' line numbers to
 /// to encode location where these instructions are inlined.
 static void fixupLineNumbers(Function *Fn, Function::iterator FI,
@@ -1328,7 +1335,7 @@ static void fixupLineNumbers(Function *Fn, Function::iterator FI,
 
         // Don't update static allocas, as they may get moved later.
         if (auto *AI = dyn_cast<AllocaInst>(BI))
-          if (isa<Constant>(AI->getArraySize()))
+          if (allocaWouldBeStaticInEntry(AI))
             continue;
 
         BI->setDebugLoc(TheCallDL);
@@ -1604,8 +1611,8 @@ bool llvm::InlineFunction(CallSite CS, InlineFunctionInfo &IFI,
 
     // FIXME: We could register any cloned assumptions instead of clearing the
     // whole function's cache.
-    if (IFI.ACT)
-      IFI.ACT->getAssumptionCache(*Caller).clear();
+    if (IFI.GetAssumptionCache)
+      (*IFI.GetAssumptionCache)(*Caller).clear();
   }
 
   // If there are any alloca instructions in the block that used to be the entry
@@ -1626,7 +1633,7 @@ bool llvm::InlineFunction(CallSite CS, InlineFunctionInfo &IFI,
         continue;
       }
 
-      if (!isa<Constant>(AI->getArraySize()))
+      if (!allocaWouldBeStaticInEntry(AI))
         continue;
       
       // Keep track of the static allocas that we inline into the caller.
@@ -1635,7 +1642,7 @@ bool llvm::InlineFunction(CallSite CS, InlineFunctionInfo &IFI,
       // Scan for the block of allocas that we can move over, and move them
       // all at once.
       while (isa<AllocaInst>(I) &&
-             isa<Constant>(cast<AllocaInst>(I)->getArraySize())) {
+             allocaWouldBeStaticInEntry(cast<AllocaInst>(I))) {
         IFI.StaticAllocas.push_back(cast<AllocaInst>(I));
         ++I;
       }
@@ -2125,7 +2132,7 @@ bool llvm::InlineFunction(CallSite CS, InlineFunctionInfo &IFI,
   if (PHI) {
     auto &DL = Caller->getParent()->getDataLayout();
     if (Value *V = SimplifyInstruction(PHI, DL, nullptr, nullptr,
-                                       &IFI.ACT->getAssumptionCache(*Caller))) {
+                                       &(*IFI.GetAssumptionCache)(*Caller))) {
       PHI->replaceAllUsesWith(V);
       PHI->eraseFromParent();
     }

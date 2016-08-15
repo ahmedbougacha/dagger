@@ -244,18 +244,17 @@ private:
   llvm::object::ObjectFile const &Object;
 };
 SectionFilter ToolSectionFilter(llvm::object::ObjectFile const &O) {
-  return SectionFilter([](llvm::object::SectionRef const &S) {
-                         if(FilterSections.empty())
-                           return true;
-                         llvm::StringRef String;
-                         std::error_code error = S.getName(String);
-                         if (error)
-                           return false;
-                         return std::find(FilterSections.begin(),
-                                          FilterSections.end(),
-                                          String) != FilterSections.end();
-                       },
-                       O);
+  return SectionFilter(
+      [](llvm::object::SectionRef const &S) {
+        if (FilterSections.empty())
+          return true;
+        llvm::StringRef String;
+        std::error_code error = S.getName(String);
+        if (error)
+          return false;
+        return is_contained(FilterSections, String);
+      },
+      O);
 }
 }
 
@@ -316,13 +315,14 @@ LLVM_ATTRIBUTE_NORETURN void llvm::report_error(StringRef ArchiveName,
                                                 const object::Archive::Child &C,
                                                 llvm::Error E,
                                                 StringRef ArchitectureName) {
-  ErrorOr<StringRef> NameOrErr = C.getName();
+  Expected<StringRef> NameOrErr = C.getName();
   // TODO: if we have a error getting the name then it would be nice to print
   // the index of which archive member this is and or its offset in the
   // archive instead of "???" as the name.
-  if (NameOrErr.getError())
+  if (!NameOrErr) {
+    consumeError(NameOrErr.takeError());
     llvm::report_error(ArchiveName, "???", std::move(E), ArchitectureName);
-  else
+  } else
     llvm::report_error(ArchiveName, NameOrErr.get(), std::move(E),
                        ArchitectureName);
 }
@@ -593,6 +593,7 @@ static std::error_code getRelocationValueString(const ELFObjectFile<ELFT> *Obj,
   case ELF::EM_ARM:
   case ELF::EM_HEXAGON:
   case ELF::EM_MIPS:
+  case ELF::EM_BPF:
     res = Target;
     break;
   case ELF::EM_WEBASSEMBLY:
@@ -1724,10 +1725,8 @@ static void DumpObject(const ObjectFile *o, const Archive *a = nullptr) {
 
 /// @brief Dump each object file in \a a;
 static void DumpArchive(const Archive *a) {
-  for (auto &ErrorOrChild : a->children()) {
-    if (std::error_code EC = ErrorOrChild.getError())
-      report_error(a->getFileName(), EC);
-    const Archive::Child &C = *ErrorOrChild;
+  Error Err;
+  for (auto &C : a->children(Err)) {
     Expected<std::unique_ptr<Binary>> ChildOrErr = C.getAsBinary();
     if (!ChildOrErr) {
       if (auto E = isNotObjectErrorInvalidFileType(ChildOrErr.takeError()))
@@ -1739,6 +1738,8 @@ static void DumpArchive(const Archive *a) {
     else
       report_error(a->getFileName(), object_error::invalid_file_type);
   }
+  if (Err)
+    report_error(a->getFileName(), std::move(Err));
 }
 
 /// @brief Open file and figure out how to dump it.

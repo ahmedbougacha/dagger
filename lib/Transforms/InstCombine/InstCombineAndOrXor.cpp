@@ -524,53 +524,6 @@ static unsigned conjugateICmpMask(unsigned Mask) {
   return NewMask;
 }
 
-/// Decompose an icmp into the form ((X & Y) pred Z) if possible.
-/// The returned predicate is either == or !=. Returns false if
-/// decomposition fails.
-static bool decomposeBitTestICmp(const ICmpInst *I, ICmpInst::Predicate &Pred,
-                                 Value *&X, Value *&Y, Value *&Z) {
-  ConstantInt *C = dyn_cast<ConstantInt>(I->getOperand(1));
-  if (!C)
-    return false;
-
-  switch (I->getPredicate()) {
-  default:
-    return false;
-  case ICmpInst::ICMP_SLT:
-    // X < 0 is equivalent to (X & SignBit) != 0.
-    if (!C->isZero())
-      return false;
-    Y = ConstantInt::get(I->getContext(), APInt::getSignBit(C->getBitWidth()));
-    Pred = ICmpInst::ICMP_NE;
-    break;
-  case ICmpInst::ICMP_SGT:
-    // X > -1 is equivalent to (X & SignBit) == 0.
-    if (!C->isAllOnesValue())
-      return false;
-    Y = ConstantInt::get(I->getContext(), APInt::getSignBit(C->getBitWidth()));
-    Pred = ICmpInst::ICMP_EQ;
-    break;
-  case ICmpInst::ICMP_ULT:
-    // X <u 2^n is equivalent to (X & ~(2^n-1)) == 0.
-    if (!C->getValue().isPowerOf2())
-      return false;
-    Y = ConstantInt::get(I->getContext(), -C->getValue());
-    Pred = ICmpInst::ICMP_EQ;
-    break;
-  case ICmpInst::ICMP_UGT:
-    // X >u 2^n-1 is equivalent to (X & ~(2^n-1)) != 0.
-    if (!(C->getValue() + 1).isPowerOf2())
-      return false;
-    Y = ConstantInt::get(I->getContext(), ~C->getValue());
-    Pred = ICmpInst::ICMP_NE;
-    break;
-  }
-
-  X = I->getOperand(0);
-  Z = ConstantInt::getNullValue(C->getType());
-  return true;
-}
-
 /// Handle (icmp(A & B) ==/!= C) &/| (icmp(A & D) ==/!= E)
 /// Return the set of pattern classes (from MaskedICmpType)
 /// that both LHS and RHS satisfy.
@@ -1170,27 +1123,29 @@ static Instruction *matchDeMorgansLaws(BinaryOperator &I,
         return BinaryOperator::CreateNot(LogicOp);
       }
 
-  // De Morgan's Law in disguise:
-  // (zext(bool A) ^ 1) & (zext(bool B) ^ 1) -> zext(~(A | B))
-  // (zext(bool A) ^ 1) | (zext(bool B) ^ 1) -> zext(~(A & B))
-  Value *A = nullptr;
-  Value *B = nullptr;
-  ConstantInt *C1 = nullptr;
-  if (match(Op0, m_OneUse(m_Xor(m_ZExt(m_Value(A)), m_ConstantInt(C1)))) &&
-      match(Op1, m_OneUse(m_Xor(m_ZExt(m_Value(B)), m_Specific(C1))))) {
-    // TODO: This check could be loosened to handle different type sizes.
-    // Alternatively, we could fix the definition of m_Not to recognize a not
-    // operation hidden by a zext?
-    if (A->getType()->isIntegerTy(1) && B->getType()->isIntegerTy(1) &&
-        C1->isOne()) {
-      Value *LogicOp = Builder->CreateBinOp(Opcode, A, B,
-                                            I.getName() + ".demorgan");
-      Value *Not = Builder->CreateNot(LogicOp);
-      return CastInst::CreateZExtOrBitCast(Not, I.getType());
-    }
-  }
-
   return nullptr;
+}
+
+bool InstCombiner::shouldOptimizeCast(CastInst *CI) {
+  Value *CastSrc = CI->getOperand(0);
+
+  // Noop casts and casts of constants should be eliminated trivially.
+  if (CI->getSrcTy() == CI->getDestTy() || isa<Constant>(CastSrc))
+    return false;
+
+  // If this cast is paired with another cast that can be eliminated, we prefer
+  // to have it eliminated.
+  if (const auto *PrecedingCI = dyn_cast<CastInst>(CastSrc))
+    if (isEliminableCastPair(PrecedingCI, CI))
+      return false;
+
+  // If this is a vector sext from a compare, then we don't want to break the
+  // idiom where each element of the extended vector is either zero or all ones.
+  if (CI->getOpcode() == Instruction::SExt &&
+      isa<CmpInst>(CastSrc) && CI->getDestTy()->isVectorTy())
+    return false;
+
+  return true;
 }
 
 Instruction *InstCombiner::foldCastedBitwiseLogic(BinaryOperator &I) {
@@ -1224,6 +1179,22 @@ Instruction *InstCombiner::foldCastedBitwiseLogic(BinaryOperator &I) {
     return CastInst::CreateBitOrPointerCast(NewOp, DestTy);
   }
 
+  // Similarly, if one operand is zexted and the other is a constant, move the
+  // logic operation ahead of the zext if the constant is unchanged in the
+  // smaller source type. Performing the logic in a smaller type may provide
+  // more information to later folds, and the smaller logic instruction may be
+  // cheaper (particularly in the case of vectors).
+  Value *X;
+  if (match(Op0, m_OneUse(m_ZExt(m_Value(X)))) && match(Op1, m_Constant(C))) {
+    Constant *TruncC = ConstantExpr::getTrunc(C, SrcTy);
+    Constant *ZextTruncC = ConstantExpr::getZExt(TruncC, DestTy);
+    if (ZextTruncC == C) {
+      // LogicOpc (zext X), C --> zext (LogicOpc X, C)
+      Value *NewOp = Builder->CreateBinOp(LogicOpc, X, TruncC);
+      return new ZExtInst(NewOp, DestTy);
+    }
+  }
+
   CastInst *Cast1 = dyn_cast<CastInst>(Op1);
   if (!Cast1)
     return nullptr;
@@ -1237,12 +1208,8 @@ Instruction *InstCombiner::foldCastedBitwiseLogic(BinaryOperator &I) {
   Value *Cast0Src = Cast0->getOperand(0);
   Value *Cast1Src = Cast1->getOperand(0);
 
-  // fold (logic (cast A), (cast B)) -> (cast (logic A, B))
-
-  // Only do this if the casts both really cause code to be generated.
-  if ((!isa<ICmpInst>(Cast0Src) || !isa<ICmpInst>(Cast1Src)) &&
-      ShouldOptimizeCast(CastOpcode, Cast0Src, DestTy) &&
-      ShouldOptimizeCast(CastOpcode, Cast1Src, DestTy)) {
+  // fold logic(cast(A), cast(B)) -> cast(logic(A, B))
+  if (shouldOptimizeCast(Cast0) && shouldOptimizeCast(Cast1)) {
     Value *NewOp = Builder->CreateBinOp(LogicOpc, Cast0Src, Cast1Src,
                                         I.getName());
     return CastInst::Create(CastOpcode, NewOp, DestTy);
@@ -1301,7 +1268,7 @@ static Instruction *foldBoolSextMaskToSelect(BinaryOperator &I) {
     Value *Zero = Constant::getNullValue(Op0->getType());
     return SelectInst::Create(X, Zero, Op1);
   }
-  
+
   return nullptr;
 }
 
@@ -1312,7 +1279,7 @@ Instruction *InstCombiner::visitAnd(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (Value *V = SimplifyAndInst(Op0, Op1, DL, TLI, DT, AC))
+  if (Value *V = SimplifyAndInst(Op0, Op1, DL, &TLI, &DT, &AC))
     return replaceInstUsesWith(I, V);
 
   // (A|B)&(A|C) -> A|(B&C) etc
@@ -1589,10 +1556,29 @@ Instruction *InstCombiner::MatchBSwap(BinaryOperator &I) {
   return LastInst;
 }
 
+/// If all elements of two constant vectors are 0/-1 and inverses, return true.
+static bool areInverseVectorBitmasks(Constant *C1, Constant *C2) {
+  unsigned NumElts = C1->getType()->getVectorNumElements();
+  for (unsigned i = 0; i != NumElts; ++i) {
+    Constant *EltC1 = C1->getAggregateElement(i);
+    Constant *EltC2 = C2->getAggregateElement(i);
+    if (!EltC1 || !EltC2)
+      return false;
+
+    // One element must be all ones, and the other must be all zeros.
+    // FIXME: Allow undef elements.
+    if (!((match(EltC1, m_Zero()) && match(EltC2, m_AllOnes())) ||
+          (match(EltC2, m_Zero()) && match(EltC1, m_AllOnes()))))
+      return false;
+  }
+  return true;
+}
+
 /// We have an expression of the form (A & C) | (B & D). If A is a scalar or
 /// vector composed of all-zeros or all-ones values and is the bitwise 'not' of
 /// B, it can be used as the condition operand of a select instruction.
-static Value *getSelectCondition(Value *A, Value *B) {
+static Value *getSelectCondition(Value *A, Value *B,
+                                 InstCombiner::BuilderTy &Builder) {
   // If these are scalars or vectors of i1, A can be used directly.
   Type *Ty = A->getType();
   if (match(A, m_Not(m_Specific(B))) && Ty->getScalarType()->isIntegerTy(1))
@@ -1606,8 +1592,26 @@ static Value *getSelectCondition(Value *A, Value *B) {
                            m_SExt(m_Not(m_Specific(Cond))))))
     return Cond;
 
-  // TODO: Try more matches that only apply to non-splat constant vectors.
+  // All scalar (and most vector) possibilities should be handled now.
+  // Try more matches that only apply to non-splat constant vectors.
+  if (!Ty->isVectorTy())
+    return nullptr;
 
+  // If both operands are constants, see if the constants are inverse bitmasks.
+  Constant *AC, *BC;
+  if (match(A, m_Constant(AC)) && match(B, m_Constant(BC)) &&
+      areInverseVectorBitmasks(AC, BC))
+    return ConstantExpr::getTrunc(AC, CmpInst::makeCmpResultType(Ty));
+
+  // If both operands are xor'd with constants using the same sexted boolean
+  // operand, see if the constants are inverse bitmasks.
+  if (match(A, (m_Xor(m_SExt(m_Value(Cond)), m_Constant(AC)))) &&
+      match(B, (m_Xor(m_SExt(m_Specific(Cond)), m_Constant(BC)))) &&
+      Cond->getType()->getScalarType()->isIntegerTy(1) &&
+      areInverseVectorBitmasks(AC, BC)) {
+    AC = ConstantExpr::getTrunc(AC, CmpInst::makeCmpResultType(Ty));
+    return Builder.CreateXor(Cond, AC);
+  }
   return nullptr;
 }
 
@@ -1625,7 +1629,7 @@ static Value *matchSelectFromAndOr(Value *A, Value *C, Value *B, Value *D,
     B = SrcB;
   }
 
-  if (Value *Cond = getSelectCondition(A, B)) {
+  if (Value *Cond = getSelectCondition(A, B, Builder)) {
     // ((bc Cond) & C) | ((bc ~Cond) & D) --> bc (select Cond, (bc C), (bc D))
     // The bitcasts will either all exist or all not exist. The builder will
     // not create unnecessary casts if the types already match.
@@ -1660,17 +1664,17 @@ Value *InstCombiner::FoldOrOfICmps(ICmpInst *LHS, ICmpInst *RHS,
       Value *Mask = nullptr;
       Value *Masked = nullptr;
       if (LAnd->getOperand(0) == RAnd->getOperand(0) &&
-          isKnownToBeAPowerOfTwo(LAnd->getOperand(1), DL, false, 0, AC, CxtI,
-                                 DT) &&
-          isKnownToBeAPowerOfTwo(RAnd->getOperand(1), DL, false, 0, AC, CxtI,
-                                 DT)) {
+          isKnownToBeAPowerOfTwo(LAnd->getOperand(1), DL, false, 0, &AC, CxtI,
+                                 &DT) &&
+          isKnownToBeAPowerOfTwo(RAnd->getOperand(1), DL, false, 0, &AC, CxtI,
+                                 &DT)) {
         Mask = Builder->CreateOr(LAnd->getOperand(1), RAnd->getOperand(1));
         Masked = Builder->CreateAnd(LAnd->getOperand(0), Mask);
       } else if (LAnd->getOperand(1) == RAnd->getOperand(1) &&
-                 isKnownToBeAPowerOfTwo(LAnd->getOperand(0), DL, false, 0, AC,
-                                        CxtI, DT) &&
-                 isKnownToBeAPowerOfTwo(RAnd->getOperand(0), DL, false, 0, AC,
-                                        CxtI, DT)) {
+                 isKnownToBeAPowerOfTwo(LAnd->getOperand(0), DL, false, 0, &AC,
+                                        CxtI, &DT) &&
+                 isKnownToBeAPowerOfTwo(RAnd->getOperand(0), DL, false, 0, &AC,
+                                        CxtI, &DT)) {
         Mask = Builder->CreateOr(LAnd->getOperand(0), RAnd->getOperand(0));
         Masked = Builder->CreateAnd(LAnd->getOperand(1), Mask);
       }
@@ -1788,7 +1792,7 @@ Value *InstCombiner::FoldOrOfICmps(ICmpInst *LHS, ICmpInst *RHS,
   // E.g. (icmp sgt x, n) | (icmp slt x, 0) --> icmp ugt x, n
   if (Value *V = simplifyRangeCheck(RHS, LHS, /*Inverted=*/true))
     return V;
- 
+
   // This only handles icmp of constants: (icmp1 A, C1) | (icmp2 B, C2).
   if (!LHSCst || !RHSCst) return nullptr;
 
@@ -2089,7 +2093,7 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (Value *V = SimplifyOrInst(Op0, Op1, DL, TLI, DT, AC))
+  if (Value *V = SimplifyOrInst(Op0, Op1, DL, &TLI, &DT, &AC))
     return replaceInstUsesWith(I, V);
 
   // (A&B)|(A&C) -> A&(B|C) etc
@@ -2442,7 +2446,7 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (Value *V = SimplifyXorInst(Op0, Op1, DL, TLI, DT, AC))
+  if (Value *V = SimplifyXorInst(Op0, Op1, DL, &TLI, &DT, &AC))
     return replaceInstUsesWith(I, V);
 
   // (A&B)^(A&C) -> A&(B^C) etc

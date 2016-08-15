@@ -1108,9 +1108,7 @@ unsigned FilterChooser::getDecoderIndex(DecoderSet &Decoders,
   // Make sure the predicate is in the table.
   Decoders.insert(StringRef(Decoder));
   // Now figure out the index for when we write out the table.
-  DecoderSet::const_iterator P = std::find(Decoders.begin(),
-                                           Decoders.end(),
-                                           Decoder.str());
+  DecoderSet::const_iterator P = find(Decoders, Decoder.str());
   return (unsigned)(P - Decoders.begin());
 }
 
@@ -1183,9 +1181,7 @@ unsigned FilterChooser::getPredicateIndex(DecoderTableInfo &TableInfo,
   // Make sure the predicate is in the table.
   TableInfo.Predicates.insert(Predicate.str());
   // Now figure out the index for when we write out the table.
-  PredicateSet::const_iterator P = std::find(TableInfo.Predicates.begin(),
-                                             TableInfo.Predicates.end(),
-                                             Predicate.str());
+  PredicateSet::const_iterator P = find(TableInfo.Predicates, Predicate.str());
   return (unsigned)(P - TableInfo.Predicates.begin());
 }
 
@@ -1692,6 +1688,34 @@ void FilterChooser::emitTableEntries(DecoderTableInfo &TableInfo) const {
   }
 }
 
+static std::string findOperandDecoderMethod(TypedInit *TI) {
+  std::string Decoder;
+
+  RecordRecTy *Type = cast<RecordRecTy>(TI->getType());
+  Record *TypeRecord = Type->getRecord();
+
+  RecordVal *DecoderString = TypeRecord->getValue("DecoderMethod");
+  StringInit *String = DecoderString ?
+    dyn_cast<StringInit>(DecoderString->getValue()) : nullptr;
+  if (String) {
+    Decoder = String->getValue();
+    if (!Decoder.empty())
+      return Decoder;
+  }
+
+  if (TypeRecord->isSubClassOf("RegisterOperand"))
+    TypeRecord = TypeRecord->getValueAsDef("RegClass");
+
+  if (TypeRecord->isSubClassOf("RegisterClass")) {
+    Decoder = "Decode" + TypeRecord->getName() + "RegisterClass";
+  } else if (TypeRecord->isSubClassOf("PointerLikeRegClass")) {
+    Decoder = "DecodePointerLikeRegClass" +
+      utostr(TypeRecord->getValueAsInt("RegClassKind"));
+  }
+
+  return Decoder;
+}
+
 static bool populateInstruction(CodeGenTarget &Target,
                        const CodeGenInstruction &CGI, unsigned Opc,
                        std::map<unsigned, std::vector<OperandInfo> > &Operands){
@@ -1917,33 +1941,13 @@ static bool populateInstruction(CodeGenTarget &Target,
       continue;
     }
 
-    std::string Decoder = "";
-
-    // At this point, we can locate the field, but we need to know how to
-    // interpret it.  As a first step, require the target to provide callbacks
-    // for decoding register classes.
-    // FIXME: This need to be extended to handle instructions with custom
-    // decoder methods, and operands with (simple) MIOperandInfo's.
     TypedInit *TI = cast<TypedInit>(Op.first);
-    RecordRecTy *Type = cast<RecordRecTy>(TI->getType());
-    Record *TypeRecord = Type->getRecord();
-    bool isReg = false;
-    if (TypeRecord->isSubClassOf("RegisterOperand"))
-      TypeRecord = TypeRecord->getValueAsDef("RegClass");
-    if (TypeRecord->isSubClassOf("RegisterClass")) {
-      Decoder = "Decode" + TypeRecord->getName() + "RegisterClass";
-      isReg = true;
-    } else if (TypeRecord->isSubClassOf("PointerLikeRegClass")) {
-      Decoder = "DecodePointerLikeRegClass" +
-                utostr(TypeRecord->getValueAsInt("RegClassKind"));
-      isReg = true;
-    }
 
-    RecordVal *DecoderString = TypeRecord->getValue("DecoderMethod");
-    StringInit *String = DecoderString ?
-      dyn_cast<StringInit>(DecoderString->getValue()) : nullptr;
-    if (!isReg && String && String->getValue() != "")
-      Decoder = String->getValue();
+    // At this point, we can locate the decoder field, but we need to know how
+    // to interpret it.  As a first step, require the target to provide
+    // callbacks for decoding register classes.
+    std::string Decoder = findOperandDecoderMethod(TI);
+    Record *TypeRecord = cast<RecordRecTy>(TI->getType())->getRecord();
 
     RecordVal *HasCompleteDecoderVal =
       TypeRecord->getValue("hasCompleteDecoder");

@@ -331,6 +331,8 @@ void SIAnnotateControlFlow::handleLoop(BranchInst *Term) {
 
   BasicBlock *BB = Term->getParent();
   llvm::Loop *L = LI->getLoopFor(BB);
+  if (!L)
+    return;
   BasicBlock *Target = Term->getSuccessor(1);
   PHINode *Broken = PHINode::Create(Int64, 0, "", &Target->front());
 
@@ -361,7 +363,7 @@ void SIAnnotateControlFlow::closeControlFlow(BasicBlock *BB) {
 
     std::vector<BasicBlock*> Preds;
     for (pred_iterator PI = pred_begin(BB), PE = pred_end(BB); PI != PE; ++PI) {
-      if (std::find(Latches.begin(), Latches.end(), *PI) == Latches.end())
+      if (!is_contained(Latches, *PI))
         Preds.push_back(*PI);
     }
     BB = llvm::SplitBlockPredecessors(BB, Preds, "endcf.split", DT, LI, false);

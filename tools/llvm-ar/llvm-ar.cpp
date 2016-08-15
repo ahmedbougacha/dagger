@@ -116,6 +116,7 @@ static cl::extrahelp MoreHelp(
   "  [o] - preserve original dates\n"
   "  [s] - create an archive index (cf. ranlib)\n"
   "  [S] - do not build a symbol table\n"
+  "  [T] - create a thin archive\n"
   "  [u] - update only files newer than archive contents\n"
   "\nMODIFIERS (generic):\n"
   "  [c] - do not warn if the library had to be created\n"
@@ -317,8 +318,8 @@ static void doPrint(StringRef Name, const object::Archive::Child &C) {
   if (Verbose)
     outs() << "Printing " << Name << "\n";
 
-  ErrorOr<StringRef> DataOrErr = C.getBuffer();
-  failIfError(DataOrErr.getError());
+  Expected<StringRef> DataOrErr = C.getBuffer();
+  failIfError(DataOrErr.takeError());
   StringRef Data = *DataOrErr;
   outs().write(Data.data(), Data.size());
 }
@@ -337,16 +338,24 @@ static void printMode(unsigned mode) {
 // modification time are also printed.
 static void doDisplayTable(StringRef Name, const object::Archive::Child &C) {
   if (Verbose) {
-    sys::fs::perms Mode = C.getAccessMode();
+    Expected<sys::fs::perms> ModeOrErr = C.getAccessMode();
+    failIfError(ModeOrErr.takeError());
+    sys::fs::perms Mode = ModeOrErr.get();
     printMode((Mode >> 6) & 007);
     printMode((Mode >> 3) & 007);
     printMode(Mode & 007);
-    outs() << ' ' << C.getUID();
-    outs() << '/' << C.getGID();
-    ErrorOr<uint64_t> Size = C.getSize();
-    failIfError(Size.getError());
+    Expected<unsigned> UIDOrErr = C.getUID();
+    failIfError(UIDOrErr.takeError());
+    outs() << ' ' << UIDOrErr.get();
+    Expected<unsigned> GIDOrErr = C.getGID();
+    failIfError(GIDOrErr.takeError());
+    outs() << '/' << GIDOrErr.get();
+    Expected<uint64_t> Size = C.getSize();
+    failIfError(Size.takeError());
     outs() << ' ' << format("%6llu", Size.get());
-    outs() << ' ' << C.getLastModified().str();
+    Expected<sys::TimeValue> ModTimeOrErr = C.getLastModified();
+    failIfError(ModTimeOrErr.takeError());
+    outs() << ' ' << ModTimeOrErr.get().str();
     outs() << ' ';
   }
   outs() << Name << "\n";
@@ -356,7 +365,9 @@ static void doDisplayTable(StringRef Name, const object::Archive::Child &C) {
 // system.
 static void doExtract(StringRef Name, const object::Archive::Child &C) {
   // Retain the original mode.
-  sys::fs::perms Mode = C.getAccessMode();
+  Expected<sys::fs::perms> ModeOrErr = C.getAccessMode();
+  failIfError(ModeOrErr.takeError());
+  sys::fs::perms Mode = ModeOrErr.get();
 
   int FD;
   failIfError(sys::fs::openFileForWrite(Name, FD, sys::fs::F_None, Mode), Name);
@@ -365,7 +376,9 @@ static void doExtract(StringRef Name, const object::Archive::Child &C) {
     raw_fd_ostream file(FD, false);
 
     // Get the data and its length
-    StringRef Data = *C.getBuffer();
+    Expected<StringRef> BufOrErr = C.getBuffer();
+    failIfError(BufOrErr.takeError());
+    StringRef Data = BufOrErr.get();
 
     // Write the data.
     file.write(Data.data(), Data.size());
@@ -373,9 +386,12 @@ static void doExtract(StringRef Name, const object::Archive::Child &C) {
 
   // If we're supposed to retain the original modification times, etc. do so
   // now.
-  if (OriginalDates)
+  if (OriginalDates) {
+    Expected<sys::TimeValue> ModTimeOrErr = C.getLastModified();
+    failIfError(ModTimeOrErr.takeError());
     failIfError(
-        sys::fs::setLastModificationAndAccessTime(FD, C.getLastModified()));
+        sys::fs::setLastModificationAndAccessTime(FD, ModTimeOrErr.get()));
+  }
 
   if (close(FD))
     fail("Could not close the file");
@@ -405,35 +421,37 @@ static void performReadOperation(ArchiveOperation Operation,
     fail("extracting from a thin archive is not supported");
 
   bool Filter = !Members.empty();
-  for (auto &ChildOrErr : OldArchive->children()) {
-    failIfError(ChildOrErr.getError());
-    const object::Archive::Child &C = *ChildOrErr;
+  {
+    Error Err;
+    for (auto &C : OldArchive->children(Err)) {
+      Expected<StringRef> NameOrErr = C.getName();
+      failIfError(NameOrErr.takeError());
+      StringRef Name = NameOrErr.get();
 
-    ErrorOr<StringRef> NameOrErr = C.getName();
-    failIfError(NameOrErr.getError());
-    StringRef Name = NameOrErr.get();
+      if (Filter) {
+        auto I = find(Members, Name);
+        if (I == Members.end())
+          continue;
+        Members.erase(I);
+      }
 
-    if (Filter) {
-      auto I = std::find(Members.begin(), Members.end(), Name);
-      if (I == Members.end())
-        continue;
-      Members.erase(I);
+      switch (Operation) {
+      default:
+        llvm_unreachable("Not a read operation");
+      case Print:
+        doPrint(Name, C);
+        break;
+      case DisplayTable:
+        doDisplayTable(Name, C);
+        break;
+      case Extract:
+        doExtract(Name, C);
+        break;
+      }
     }
-
-    switch (Operation) {
-    default:
-      llvm_unreachable("Not a read operation");
-    case Print:
-      doPrint(Name, C);
-      break;
-    case DisplayTable:
-      doDisplayTable(Name, C);
-      break;
-    case Extract:
-      doExtract(Name, C);
-      break;
-    }
+    failIfError(std::move(Err));
   }
+
   if (Members.empty())
     return;
   for (StringRef Name : Members)
@@ -480,10 +498,9 @@ static InsertAction computeInsertAction(ArchiveOperation Operation,
   if (Operation == QuickAppend || Members.empty())
     return IA_AddOldMember;
 
-  auto MI =
-      std::find_if(Members.begin(), Members.end(), [Name](StringRef Path) {
-        return Name == sys::path::filename(Path);
-      });
+  auto MI = find_if(Members, [Name](StringRef Path) {
+    return Name == sys::path::filename(Path);
+  });
 
   if (MI == Members.end())
     return IA_AddOldMember;
@@ -508,7 +525,9 @@ static InsertAction computeInsertAction(ArchiveOperation Operation,
     // operation.
     sys::fs::file_status Status;
     failIfError(sys::fs::status(*MI, Status), *MI);
-    if (Status.getLastModificationTime() < Member.getLastModified()) {
+    Expected<sys::TimeValue> ModTimeOrErr = Member.getLastModified();
+    failIfError(ModTimeOrErr.takeError());
+    if (Status.getLastModificationTime() < ModTimeOrErr.get()) {
       if (PosName.empty())
         return IA_AddOldMember;
       return IA_MoveOldMember;
@@ -531,12 +550,11 @@ computeNewArchiveMembers(ArchiveOperation Operation,
   int InsertPos = -1;
   StringRef PosName = sys::path::filename(RelPos);
   if (OldArchive) {
-    for (auto &ChildOrErr : OldArchive->children()) {
-      failIfError(ChildOrErr.getError());
-      auto &Child = ChildOrErr.get();
+    Error Err;
+    for (auto &Child : OldArchive->children(Err)) {
       int Pos = Ret.size();
-      ErrorOr<StringRef> NameOrErr = Child.getName();
-      failIfError(NameOrErr.getError());
+      Expected<StringRef> NameOrErr = Child.getName();
+      failIfError(NameOrErr.takeError());
       StringRef Name = NameOrErr.get();
       if (Name == PosName) {
         assert(AddAfter || AddBefore);
@@ -568,6 +586,7 @@ computeNewArchiveMembers(ArchiveOperation Operation,
       if (MemberI != Members.end())
         Members.erase(MemberI);
     }
+    failIfError(std::move(Err));
   }
 
   if (Operation == Delete)
@@ -764,9 +783,11 @@ static void runMRIScript() {
                   "Could not parse library");
       Archives.push_back(std::move(*LibOrErr));
       object::Archive &Lib = *Archives.back();
-      for (auto &MemberOrErr : Lib.children()) {
-        failIfError(MemberOrErr.getError());
-        addMember(NewMembers, *MemberOrErr);
+      {
+        Error Err;
+        for (auto &Member : Lib.children(Err))
+          addMember(NewMembers, Member);
+        failIfError(std::move(Err));
       }
       break;
     }

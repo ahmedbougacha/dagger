@@ -21,6 +21,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/ilist.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/Support/Allocator.h"
@@ -48,23 +49,12 @@ struct MachinePointerInfo;
 struct WinEHFuncInfo;
 
 template <>
+struct ilist_sentinel_traits<MachineBasicBlock>
+    : public ilist_half_embedded_sentinel_traits<MachineBasicBlock> {};
+
+template <>
 struct ilist_traits<MachineBasicBlock>
     : public ilist_default_traits<MachineBasicBlock> {
-  mutable ilist_half_node<MachineBasicBlock> Sentinel;
-public:
-  // FIXME: This downcast is UB. See llvm.org/PR26753.
-  LLVM_NO_SANITIZE("object-size")
-  MachineBasicBlock *createSentinel() const {
-    return static_cast<MachineBasicBlock*>(&Sentinel);
-  }
-  void destroySentinel(MachineBasicBlock *) const {}
-
-  MachineBasicBlock *provideInitialHead() const { return createSentinel(); }
-  MachineBasicBlock *ensureHead(MachineBasicBlock*) const {
-    return createSentinel();
-  }
-  static void noteHead(MachineBasicBlock*, MachineBasicBlock*) {}
-
   void addNodeToList(MachineBasicBlock* MBB);
   void removeNodeFromList(MachineBasicBlock* MBB);
   void deleteNode(MachineBasicBlock *MBB);
@@ -116,10 +106,27 @@ public:
   //  When this property is clear, liveness is no longer reliable.
   // AllVRegsAllocated: All virtual registers have been allocated; i.e. all
   //  register operands are physical registers.
+  // Legalized: In GlobalISel: the MachineLegalizer ran and all pre-isel generic
+  //  instructions have been legalized; i.e., all instructions are now one of:
+  //   - generic and always legal (e.g., COPY)
+  //   - target-specific
+  //   - legal pre-isel generic instructions.
+  // RegBankSelected: In GlobalISel: the RegBankSelect pass ran and all generic
+  //  virtual registers have been assigned to a register bank.
+  // Selected: In GlobalISel: the InstructionSelect pass ran and all pre-isel
+  //  generic instructions have been eliminated; i.e., all instructions are now
+  //  target-specific or non-pre-isel generic instructions (e.g., COPY).
+  //  Since only pre-isel generic instructions can have generic virtual register
+  //  operands, this also means that all generic virtual registers have been
+  //  constrained to virtual registers (assigned to register classes) and that
+  //  all sizes attached to them have been eliminated.
   enum class Property : unsigned {
     IsSSA,
     TracksLiveness,
     AllVRegsAllocated,
+    Legalized,
+    RegBankSelected,
+    Selected,
     LastProperty,
   };
 
@@ -282,8 +289,8 @@ public:
   /// This object contains information about objects allocated on the stack
   /// frame of the current function in an abstract way.
   ///
-  MachineFrameInfo *getFrameInfo() { return FrameInfo; }
-  const MachineFrameInfo *getFrameInfo() const { return FrameInfo; }
+  MachineFrameInfo &getFrameInfo() { return *FrameInfo; }
+  const MachineFrameInfo &getFrameInfo() const { return *FrameInfo; }
 
   /// getJumpTableInfo - Return the jump table info object for the current
   /// function.  This object contains information about jump tables in the
@@ -530,8 +537,8 @@ public:
   /// MachineMemOperands are owned by the MachineFunction and need not be
   /// explicitly deallocated.
   MachineMemOperand *getMachineMemOperand(MachinePointerInfo PtrInfo,
-                                          unsigned f, uint64_t s,
-                                          unsigned base_alignment,
+                                          MachineMemOperand::Flags f,
+                                          uint64_t s, unsigned base_alignment,
                                           const AAMDNodes &AAInfo = AAMDNodes(),
                                           const MDNode *Ranges = nullptr);
 

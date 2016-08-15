@@ -129,6 +129,12 @@ BlockFrequencyInfo &BlockFrequencyInfo::operator=(BlockFrequencyInfo &&RHS) {
   return *this;
 }
 
+// Explicitly define the default constructor otherwise it would be implicitly
+// defined at the first ODR-use which is the BFI member in the
+// LazyBlockFrequencyInfo header.  The dtor needs the BlockFrequencyInfoImpl
+// template instantiated which is not available in the header.
+BlockFrequencyInfo::~BlockFrequencyInfo() {}
+
 void BlockFrequencyInfo::calculate(const Function &F,
                                    const BranchProbabilityInfo &BPI,
                                    const LoopInfo &LI) {
@@ -154,6 +160,13 @@ BlockFrequencyInfo::getBlockProfileCount(const BasicBlock *BB) const {
     return None;
 
   return BFI->getBlockProfileCount(*getFunction(), BB);
+}
+
+Optional<uint64_t>
+BlockFrequencyInfo::getProfileCountFromFreq(uint64_t Freq) const {
+  if (!BFI)
+    return None;
+  return BFI->getProfileCountFromFreq(*getFunction(), Freq);
 }
 
 void BlockFrequencyInfo::setBlockFreq(const BasicBlock *BB, uint64_t Freq) {
@@ -244,7 +257,7 @@ bool BlockFrequencyInfoWrapperPass::runOnFunction(Function &F) {
 
 char BlockFrequencyAnalysis::PassID;
 BlockFrequencyInfo BlockFrequencyAnalysis::run(Function &F,
-                                               AnalysisManager<Function> &AM) {
+                                               FunctionAnalysisManager &AM) {
   BlockFrequencyInfo BFI;
   BFI.calculate(F, AM.getResult<BranchProbabilityAnalysis>(F),
                 AM.getResult<LoopAnalysis>(F));
@@ -252,7 +265,7 @@ BlockFrequencyInfo BlockFrequencyAnalysis::run(Function &F,
 }
 
 PreservedAnalyses
-BlockFrequencyPrinterPass::run(Function &F, AnalysisManager<Function> &AM) {
+BlockFrequencyPrinterPass::run(Function &F, FunctionAnalysisManager &AM) {
   OS << "Printing analysis results of BFI for function "
      << "'" << F.getName() << "':"
      << "\n";

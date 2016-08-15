@@ -1780,7 +1780,7 @@ bool CodeGenPrepare::optimizeCallInst(CallInst *CI, bool& ModifiedDT) {
       // forbidden.
       GlobalVariable *GV;
       if ((GV = dyn_cast<GlobalVariable>(Val)) && GV->canIncreaseAlignment() &&
-          GV->getAlignment() < PrefAlign &&
+          GV->getPointerAlignment(*DL) < PrefAlign &&
           DL->getTypeAllocSize(GV->getValueType()) >=
               MinSize + Offset2)
         GV->setAlignment(PrefAlign);
@@ -3665,8 +3665,7 @@ isProfitableToFoldIntoAddressingMode(Instruction *I, ExtAddrMode &AMBefore,
     TPT.rollback(LastKnownGood);
 
     // If the match didn't cover I, then it won't be shared by it.
-    if (std::find(MatchedAddrModeInsts.begin(), MatchedAddrModeInsts.end(),
-                  I) == MatchedAddrModeInsts.end())
+    if (!is_contained(MatchedAddrModeInsts, I))
       return false;
 
     MatchedAddrModeInsts.clear();

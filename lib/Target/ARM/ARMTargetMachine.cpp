@@ -54,6 +54,10 @@ extern "C" void LLVMInitializeARMTarget() {
   RegisterTargetMachine<ARMBETargetMachine> Y(TheARMBETarget);
   RegisterTargetMachine<ThumbLETargetMachine> A(TheThumbLETarget);
   RegisterTargetMachine<ThumbBETargetMachine> B(TheThumbBETarget);
+
+  PassRegistry &Registry = *PassRegistry::getPassRegistry();
+  initializeARMLoadStoreOptPass(Registry);
+  initializeARMPreAllocLoadStoreOptPass(Registry);
 }
 
 static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
@@ -179,6 +183,10 @@ static Reloc::Model getEffectiveRelocModel(const Triple &TT,
   if (!RM.hasValue())
     // Default relocation model on Darwin is PIC.
     return TT.isOSBinFormatMachO() ? Reloc::PIC_ : Reloc::Static;
+
+  if (*RM == Reloc::ROPI || *RM == Reloc::RWPI || *RM == Reloc::ROPI_RWPI)
+    assert(TT.isOSBinFormatELF() &&
+           "ROPI/RWPI currently only supported for ELF");
 
   // DynamicNoPIC is only used on darwin.
   if (*RM == Reloc::DynamicNoPIC && !TT.isOSDarwin())

@@ -31,8 +31,8 @@ namespace llvm {
 
 class MipsDAGToDAGISel : public SelectionDAGISel {
 public:
-  explicit MipsDAGToDAGISel(MipsTargetMachine &TM)
-      : SelectionDAGISel(TM), Subtarget(nullptr) {}
+  explicit MipsDAGToDAGISel(MipsTargetMachine &TM, CodeGenOpt::Level OL)
+      : SelectionDAGISel(TM, OL), Subtarget(nullptr) {}
 
   // Pass Name
   const char *getPassName() const override {
@@ -78,8 +78,17 @@ private:
                                    SDValue &Offset) const;
 
   /// Match addr+simm10 and addr
-  virtual bool selectIntAddrMSA(SDValue Addr, SDValue &Base,
-                                SDValue &Offset) const;
+  virtual bool selectIntAddrSImm10(SDValue Addr, SDValue &Base,
+                                   SDValue &Offset) const;
+
+  virtual bool selectIntAddrSImm10Lsl1(SDValue Addr, SDValue &Base,
+                                       SDValue &Offset) const;
+
+  virtual bool selectIntAddrSImm10Lsl2(SDValue Addr, SDValue &Base,
+                                       SDValue &Offset) const;
+
+  virtual bool selectIntAddrSImm10Lsl3(SDValue Addr, SDValue &Base,
+                                       SDValue &Offset) const;
 
   virtual bool selectAddr16(SDValue Addr, SDValue &Base, SDValue &Offset);
   virtual bool selectAddr16SP(SDValue Addr, SDValue &Base, SDValue &Offset);

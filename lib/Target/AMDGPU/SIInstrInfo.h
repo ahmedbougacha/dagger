@@ -91,6 +91,12 @@ protected:
                                        unsigned OpIdx1) const override;
 
 public:
+
+  enum TargetOperandFlags {
+    MO_NONE = 0,
+    MO_GOTPCREL = 1
+  };
+
   explicit SIInstrInfo(const SISubtarget &);
 
   const SIRegisterInfo &getRegisterInfo() const {
@@ -143,7 +149,7 @@ public:
   bool findCommutedOpIndices(MachineInstr &MI, unsigned &SrcOpIdx1,
                              unsigned &SrcOpIdx2) const override;
 
-  bool AnalyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
+  bool analyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
                      MachineBasicBlock *&FBB,
                      SmallVectorImpl<MachineOperand> &Cond,
                      bool AllowModify) const override;
@@ -334,6 +340,14 @@ public:
     return get(Opcode).TSFlags & SIInstrFlags::WQM;
   }
 
+  static bool isDisableWQM(const MachineInstr &MI) {
+    return MI.getDesc().TSFlags & SIInstrFlags::DisableWQM;
+  }
+
+  bool isDisableWQM(uint16_t Opcode) const {
+    return get(Opcode).TSFlags & SIInstrFlags::DisableWQM;
+  }
+
   static bool isVGPRSpill(const MachineInstr &MI) {
     return MI.getDesc().TSFlags & SIInstrFlags::VGPRSpill;
   }
@@ -350,6 +364,14 @@ public:
     return get(Opcode).TSFlags & SIInstrFlags::DPP;
   }
 
+  static bool isScalarUnit(const MachineInstr &MI) {
+    return MI.getDesc().TSFlags & (SIInstrFlags::SALU | SIInstrFlags::SMRD);
+  }
+
+  static bool usesVM_CNT(const MachineInstr &MI) {
+    return MI.getDesc().TSFlags & SIInstrFlags::VM_CNT;
+  }
+
   bool isVGPRCopy(const MachineInstr &MI) const {
     assert(MI.isCopy());
     unsigned Dest = MI.getOperand(0).getReg();
@@ -361,6 +383,12 @@ public:
   bool isInlineConstant(const APInt &Imm) const;
   bool isInlineConstant(const MachineOperand &MO, unsigned OpSize) const;
   bool isLiteralConstant(const MachineOperand &MO, unsigned OpSize) const;
+
+  // Returns true if this operand could potentially require a 32-bit literal
+  // operand, but not necessarily. A FrameIndex for example could resolve to an
+  // inline immediate value that will not require an additional 4-bytes; this
+  // assumes that it will.
+  bool isLiteralConstantLike(const MachineOperand &MO, unsigned OpSize) const;
 
   bool isImmOperandLegal(const MachineInstr &MI, unsigned OpNo,
                          const MachineOperand &MO) const;
@@ -513,7 +541,7 @@ public:
     return get(pseudoToMCOpcode(Opcode));
   }
 
-  unsigned getInstSizeInBytes(const MachineInstr &MI) const;
+  unsigned getInstSizeInBytes(const MachineInstr &MI) const override;
 
   ArrayRef<std::pair<int, const char *>>
   getSerializableTargetIndices() const override;

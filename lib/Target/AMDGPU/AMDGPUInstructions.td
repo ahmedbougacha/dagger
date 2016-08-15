@@ -12,7 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-class AMDGPUInst <dag outs, dag ins, string asm, list<dag> pattern> : Instruction {
+class AMDGPUInst <dag outs, dag ins, string asm = "",
+  list<dag> pattern = []> : Instruction {
   field bit isRegisterLoad = 0;
   field bit isRegisterStore = 0;
 
@@ -35,11 +36,10 @@ class AMDGPUInst <dag outs, dag ins, string asm, list<dag> pattern> : Instructio
   let TSFlags{62} = isRegisterStore;
 }
 
-class AMDGPUShaderInst <dag outs, dag ins, string asm, list<dag> pattern>
-    : AMDGPUInst<outs, ins, asm, pattern> {
+class AMDGPUShaderInst <dag outs, dag ins, string asm = "",
+  list<dag> pattern = []> : AMDGPUInst<outs, ins, asm, pattern> {
 
   field bits<32> Inst = 0xffffffff;
-
 }
 
 def FP32Denormals : Predicate<"Subtarget.hasFP32Denormals()">;
@@ -420,9 +420,10 @@ int TWO_PI = 0x40c90fdb;
 int PI = 0x40490fdb;
 int TWO_PI_INV = 0x3e22f983;
 int FP_UINT_MAX_PLUS_1 = 0x4f800000;    // 1 << 32 in floating point encoding
-int FP32_NEG_ONE = 0xbf800000;
 int FP32_ONE = 0x3f800000;
+int FP32_NEG_ONE = 0xbf800000;
 int FP64_ONE = 0x3ff0000000000000;
+int FP64_NEG_ONE = 0xbff0000000000000;
 }
 def CONST : Constants;
 

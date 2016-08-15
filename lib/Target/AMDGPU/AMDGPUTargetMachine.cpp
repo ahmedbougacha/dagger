@@ -23,19 +23,11 @@
 #include "R600MachineScheduler.h"
 #include "SIISelLowering.h"
 #include "SIInstrInfo.h"
-
-#include "llvm/Analysis/Passes.h"
+#include "SIMachineScheduler.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
-#include "llvm/CodeGen/MachineFunctionAnalysis.h"
-#include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/Passes.h"
-#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
-#include "llvm/IR/Verifier.h"
-#include "llvm/MC/MCAsmInfo.h"
-#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/TargetRegistry.h"
-#include "llvm/Support/raw_os_ostream.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -99,6 +91,10 @@ static ScheduleDAGInstrs *createR600MachineScheduler(MachineSchedContext *C) {
   return new ScheduleDAGMILive(C, make_unique<R600SchedStrategy>());
 }
 
+static ScheduleDAGInstrs *createSIMachineScheduler(MachineSchedContext *C) {
+  return new SIScheduleDAGMI(C);
+}
+
 static MachineSchedRegistry
 R600SchedRegistry("r600", "Run R600's custom scheduler",
                    createR600MachineScheduler);
@@ -134,9 +130,9 @@ static StringRef getGPUOrDefault(const Triple &TT, StringRef GPU) {
 }
 
 static Reloc::Model getEffectiveRelocModel(Optional<Reloc::Model> RM) {
-  if (!RM.hasValue())
-    return Reloc::PIC_;
-  return *RM;
+  // The AMDGPU toolchain only supports generating shared objects, so we
+  // must always use PIC.
+  return Reloc::PIC_;
 }
 
 AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, const Triple &TT,
@@ -309,12 +305,15 @@ public:
   ScheduleDAGInstrs *
   createMachineScheduler(MachineSchedContext *C) const override;
 
+  void addIRPasses() override;
   bool addPreISel() override;
   void addMachineSSAOptimization() override;
   bool addInstSelector() override;
 #ifdef LLVM_BUILD_GLOBAL_ISEL
   bool addIRTranslator() override;
+  bool addLegalizeMachineIR() override;
   bool addRegBankSelect() override;
+  bool addGlobalInstructionSelect() override;
 #endif
   void addFastRegAlloc(FunctionPass *RegAllocPass) override;
   void addOptimizedRegAlloc(FunctionPass *RegAllocPass) override;
@@ -432,7 +431,6 @@ bool R600PassConfig::addPreISel() {
 
   if (EnableR600StructurizeCFG)
     addPass(createStructurizeCFGPass());
-  addPass(createR600TextureIntrinsicsReplacer());
   return false;
 }
 
@@ -500,6 +498,13 @@ void GCNPassConfig::addMachineSSAOptimization() {
   addPass(&DeadMachineInstructionElimID);
 }
 
+void GCNPassConfig::addIRPasses() {
+  // TODO: May want to move later or split into an early and late one.
+  addPass(createAMDGPUCodeGenPreparePass(&getGCNTargetMachine()));
+
+  AMDGPUPassConfig::addIRPasses();
+}
+
 bool GCNPassConfig::addInstSelector() {
   AMDGPUPassConfig::addInstSelector();
   addPass(createSILowerI1CopiesPass());
@@ -513,7 +518,15 @@ bool GCNPassConfig::addIRTranslator() {
   return false;
 }
 
+bool GCNPassConfig::addLegalizeMachineIR() {
+  return false;
+}
+
 bool GCNPassConfig::addRegBankSelect() {
+  return false;
+}
+
+bool GCNPassConfig::addGlobalInstructionSelect() {
   return false;
 }
 #endif

@@ -495,10 +495,29 @@ namespace llvm {
 
     /// The typedef for ExprValueMap.
     ///
-    typedef DenseMap<const SCEV *, SetVector<Value *>> ExprValueMapType;
+    typedef std::pair<Value *, ConstantInt *> ValueOffsetPair;
+    typedef DenseMap<const SCEV *, SetVector<ValueOffsetPair>> ExprValueMapType;
 
     /// ExprValueMap -- This map records the original values from which
     /// the SCEV expr is generated from.
+    ///
+    /// We want to represent the mapping as SCEV -> ValueOffsetPair instead
+    /// of SCEV -> Value:
+    /// Suppose we know S1 expands to V1, and
+    ///  S1 = S2 + C_a
+    ///  S3 = S2 + C_b
+    /// where C_a and C_b are different SCEVConstants. Then we'd like to
+    /// expand S3 as V1 - C_a + C_b instead of expanding S2 literally.
+    /// It is helpful when S2 is a complex SCEV expr.
+    ///
+    /// In order to do that, we represent ExprValueMap as a mapping from
+    /// SCEV to ValueOffsetPair. We will save both S1->{V1, 0} and
+    /// S2->{V1, C_a} into the map when we create SCEV for V1. When S3
+    /// is expanded, it will first expand S2 to V1 - C_a because of
+    /// S2->{V1, C_a} in the map, then expand S3 to V1 - C_a + C_b.
+    ///
+    /// Note: S->{V, Offset} in the ExprValueMap means S can be expanded
+    /// to V - Offset.
     ExprValueMapType ExprValueMap;
 
     /// The typedef for ValueExprMap.
@@ -1080,10 +1099,14 @@ namespace llvm {
     bool splitBinaryAdd(const SCEV *Expr, const SCEV *&L, const SCEV *&R,
                         SCEV::NoWrapFlags &Flags);
 
-    /// Return true if More == (Less + C), where C is a constant.  This is
-    /// intended to be used as a cheaper substitute for full SCEV subtraction.
-    bool computeConstantDifference(const SCEV *Less, const SCEV *More,
-                                   APInt &C);
+    /// Compute \p LHS - \p RHS and returns the result as an APInt if it is a
+    /// constant, and None if it isn't.
+    ///
+    /// This is intended to be a cheaper version of getMinusSCEV.  We can be
+    /// frugal here since we just bail out of actually constructing and
+    /// canonicalizing an expression in the cases where the result isn't going
+    /// to be a constant.
+    Optional<APInt> computeConstantDifference(const SCEV *LHS, const SCEV *RHS);
 
     /// Drop memoized information computed for S.
     void forgetMemoizedResults(const SCEV *S);
@@ -1181,7 +1204,7 @@ namespace llvm {
     bool containsAddRecurrence(const SCEV *S);
 
     /// Return the Value set from which the SCEV expr is generated.
-    SetVector<Value *> *getSCEVValues(const SCEV *S);
+    SetVector<ValueOffsetPair> *getSCEVValues(const SCEV *S);
 
     /// Erase Value from ValueExprMap and ExprValueMap.
     void eraseValueFromMap(Value *V);
@@ -1677,7 +1700,7 @@ namespace llvm {
   public:
     typedef ScalarEvolution Result;
 
-    ScalarEvolution run(Function &F, AnalysisManager<Function> &AM);
+    ScalarEvolution run(Function &F, FunctionAnalysisManager &AM);
   };
 
   /// Printer pass for the \c ScalarEvolutionAnalysis results.
@@ -1687,7 +1710,7 @@ namespace llvm {
 
   public:
     explicit ScalarEvolutionPrinterPass(raw_ostream &OS) : OS(OS) {}
-    PreservedAnalyses run(Function &F, AnalysisManager<Function> &AM);
+    PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
   };
 
   class ScalarEvolutionWrapperPass : public FunctionPass {

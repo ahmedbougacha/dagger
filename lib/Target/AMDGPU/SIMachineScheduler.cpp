@@ -464,6 +464,9 @@ void SIScheduleBlock::releaseSuccessors(SUnit *SU, bool InOrOutBlock) {
   for (SDep& Succ : SU->Succs) {
     SUnit *SuccSU = Succ.getSUnit();
 
+    if (SuccSU->NodeNum >= DAG->SUnits.size())
+        continue;
+
     if (BC->isSUInBlock(SuccSU, ID) != InOrOutBlock)
       continue;
 
@@ -476,8 +479,7 @@ void SIScheduleBlock::releaseSuccessors(SUnit *SU, bool InOrOutBlock) {
 void SIScheduleBlock::nodeScheduled(SUnit *SU) {
   // Is in TopReadySUs
   assert (!SU->NumPredsLeft);
-  std::vector<SUnit*>::iterator I =
-    std::find(TopReadySUs.begin(), TopReadySUs.end(), SU);
+  std::vector<SUnit *>::iterator I = find(TopReadySUs, SU);
   if (I == TopReadySUs.end()) {
     dbgs() << "Data Structure Bug in SI Scheduler\n";
     llvm_unreachable(nullptr);
@@ -1660,10 +1662,6 @@ SIScheduleDAGMI::SIScheduleDAGMI(MachineSchedContext *C) :
 }
 
 SIScheduleDAGMI::~SIScheduleDAGMI() {
-}
-
-ScheduleDAGInstrs *llvm::createSIMachineScheduler(MachineSchedContext *C) {
-  return new SIScheduleDAGMI(C);
 }
 
 // Code adapted from scheduleDAG.cpp

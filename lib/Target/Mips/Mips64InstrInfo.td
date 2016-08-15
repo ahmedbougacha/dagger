@@ -228,21 +228,23 @@ def LL64 : LLBase<"ll", GPR32Opnd>, LW_FM<0x30>, PTR_64,
            ISA_MIPS2_NOT_32R6_64R6;
 def SC64 : SCBase<"sc", GPR32Opnd>, LW_FM<0x38>, PTR_64,
            ISA_MIPS2_NOT_32R6_64R6;
+def JR64   : IndirectBranch<"jr", GPR64Opnd>, MTLO_FM<8>, PTR_64;
 }
+
+def JALR64 : JumpLinkReg<"jalr", GPR64Opnd>, JALR_FM;
 
 /// Jump and Branch Instructions
 let isCodeGenOnly = 1 in {
-  def JR64   : IndirectBranch<"jr", GPR64Opnd>, MTLO_FM<8>;
   def BEQ64  : CBranch<"beq", brtarget, seteq, GPR64Opnd>, BEQ_FM<4>;
   def BNE64  : CBranch<"bne", brtarget, setne, GPR64Opnd>, BEQ_FM<5>;
   def BGEZ64 : CBranchZero<"bgez", brtarget, setge, GPR64Opnd>, BGEZ_FM<1, 1>;
   def BGTZ64 : CBranchZero<"bgtz", brtarget, setgt, GPR64Opnd>, BGEZ_FM<7, 0>;
   def BLEZ64 : CBranchZero<"blez", brtarget, setle, GPR64Opnd>, BGEZ_FM<6, 0>;
   def BLTZ64 : CBranchZero<"bltz", brtarget, setlt, GPR64Opnd>, BGEZ_FM<1, 0>;
-  def JALR64 : JumpLinkReg<"jalr", GPR64Opnd>, JALR_FM;
   def JALR64Pseudo : JumpLinkRegPseudo<GPR64Opnd, JALR, RA, GPR32Opnd>;
-  def TAILCALL64_R : TailCallReg<GPR64Opnd, JR, GPR32Opnd>;
+  def TAILCALLREG64 : TailCallReg<GPR64Opnd, JR64>, GPR_64, ISA_MIPS1_NOT_32R6_64R6;
 }
+
 
 def PseudoReturn64 : PseudoReturnBase<GPR64Opnd>;
 def PseudoIndirectBranch64 : PseudoIndirectBranchBase<GPR64Opnd>;
@@ -494,6 +496,16 @@ def DMTC2 : MTC3OP<"dmtc2", COP2Opnd, GPR64Opnd, II_DMTC2>, MFC3OP_FM<0x12, 5>,
 //  Arbitrary patterns that map to one or more instructions
 //===----------------------------------------------------------------------===//
 
+// Materialize i64 constants.
+defm : MaterializeImms<i64, ZERO_64, DADDiu, LUi64, ORi64>;
+
+def : MipsPat<(i64 immZExt32Low16Zero:$imm),
+              (DSLL (ORi64 ZERO_64, (HI16 imm:$imm)), 16)>;
+
+def : MipsPat<(i64 immZExt32:$imm),
+              (ORi64 (DSLL (ORi64 ZERO_64, (HI16 imm:$imm)), 16),
+                     (LO16 imm:$imm))>;
+
 // extended loads
 def : MipsPat<(i64 (extloadi1  addr:$src)), (LB64 addr:$src)>;
 def : MipsPat<(i64 (extloadi8  addr:$src)), (LB64 addr:$src)>;
@@ -537,21 +549,21 @@ let AdditionalPredicates = [NotInMicroMips] in {
   def : WrapperPat<tglobaltlsaddr, DADDiu, GPR64>;
 }
 
-defm : BrcondPats<GPR64, BEQ64, BNE64, SLT64, SLTu64, SLTi64, SLTiu64,
+defm : BrcondPats<GPR64, BEQ64, BEQ, BNE64, SLT64, SLTu64, SLTi64, SLTiu64,
                   ZERO_64>;
-
 def : MipsPat<(brcond (i32 (setlt i64:$lhs, 1)), bb:$dst),
               (BLEZ64 i64:$lhs, bb:$dst)>;
 def : MipsPat<(brcond (i32 (setgt i64:$lhs, -1)), bb:$dst),
               (BGEZ64 i64:$lhs, bb:$dst)>;
 
 // setcc patterns
-defm : SeteqPats<GPR64, SLTiu64, XOR64, SLTu64, ZERO_64>;
-defm : SetlePats<GPR64, SLT64, SLTu64>;
-defm : SetgtPats<GPR64, SLT64, SLTu64>;
-defm : SetgePats<GPR64, SLT64, SLTu64>;
-defm : SetgeImmPats<GPR64, SLTi64, SLTiu64>;
-
+let AdditionalPredicates = [NotInMicroMips] in {
+  defm : SeteqPats<GPR64, SLTiu64, XOR64, SLTu64, ZERO_64>;
+  defm : SetlePats<GPR64, XORi, SLT64, SLTu64>;
+  defm : SetgtPats<GPR64, SLT64, SLTu64>;
+  defm : SetgePats<GPR64, XORi, SLT64, SLTu64>;
+  defm : SetgeImmPats<GPR64, XORi, SLTi64, SLTiu64>;
+}
 // truncate
 def : MipsPat<(trunc (assertsext GPR64:$src)),
               (EXTRACT_SUBREG GPR64:$src, sub_32)>;
@@ -658,10 +670,13 @@ let AdditionalPredicates = [NotInMicroMips] in {
                       (DSUB GPR64Opnd:$rt, ZERO_64, GPR64Opnd:$rs), 1>,
                       ISA_MIPS3;
   def : MipsInstAlias<"dneg $rt",
-                      (DSUB GPR64Opnd:$rt, ZERO_64, GPR64Opnd:$rt), 0>,
+                      (DSUB GPR64Opnd:$rt, ZERO_64, GPR64Opnd:$rt), 1>,
                       ISA_MIPS3;
   def : MipsInstAlias<"dnegu $rt, $rs",
                       (DSUBu GPR64Opnd:$rt, ZERO_64, GPR64Opnd:$rs), 1>,
+                      ISA_MIPS3;
+  def : MipsInstAlias<"dnegu $rt",
+                      (DSUBu GPR64Opnd:$rt, ZERO_64, GPR64Opnd:$rt), 1>,
                       ISA_MIPS3;
 }
 def : MipsInstAlias<"dsubi $rs, $rt, $imm",

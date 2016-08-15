@@ -74,7 +74,7 @@ NoIntegratedAssembler("no-integrated-as", cl::Hidden,
                       cl::desc("Disable integrated assembler"));
 
 static cl::opt<bool>
-    PreserveComments("fpreserve-as-comments", cl::Hidden,
+    PreserveComments("preserve-as-comments", cl::Hidden,
                      cl::desc("Preserve Comments in outputted assembly"),
                      cl::init(true));
 
@@ -117,6 +117,14 @@ static cl::opt<bool> DiscardValueNames(
     "discard-value-names",
     cl::desc("Discard names from Value (other than GlobalValue)."),
     cl::init(false), cl::Hidden);
+
+static cl::opt<std::string> StopAfter("stop-after",
+    cl::desc("Stop compilation after a specific pass"),
+    cl::value_desc("pass-name"), cl::init(""));
+
+static cl::opt<std::string> StartAfter("start-after",
+    cl::desc("Resume compilation after a specific pass"),
+    cl::value_desc("pass-name"), cl::init(""));
 
 namespace {
 static ManagedStatic<std::vector<std::string>> RunPassNames;
@@ -267,6 +275,34 @@ int main(int argc, char **argv) {
   return 0;
 }
 
+static bool addPass(PassManagerBase &PM, const char *argv0,
+                    StringRef PassName, TargetPassConfig &TPC) {
+  if (PassName == "none")
+    return false;
+
+  const PassRegistry *PR = PassRegistry::getPassRegistry();
+  const PassInfo *PI = PR->getPassInfo(PassName);
+  if (!PI) {
+    errs() << argv0 << ": run-pass " << PassName << " is not registered.\n";
+    return true;
+  }
+
+  Pass *P;
+  if (PI->getTargetMachineCtor())
+    P = PI->getTargetMachineCtor()(&TPC.getTM<TargetMachine>());
+  else if (PI->getNormalCtor())
+    P = PI->getNormalCtor()();
+  else {
+    errs() << argv0 << ": cannot create pass: " << PI->getPassName() << "\n";
+    return true;
+  }
+  std::string Banner = std::string("After ") + std::string(P->getPassName());
+  PM.add(P);
+  TPC.printAndVerify(Banner);
+
+  return false;
+}
+
 static int compileModule(char **argv, LLVMContext &Context) {
   // Load the module to be compiled...
   SMDiagnostic Err;
@@ -412,35 +448,17 @@ static int compileModule(char **argv, LLVMContext &Context) {
         return 1;
       }
       LLVMTargetMachine &LLVMTM = static_cast<LLVMTargetMachine&>(*Target);
-      TargetPassConfig *TPC = LLVMTM.createPassConfig(PM);
-      PM.add(TPC);
+      TargetPassConfig &TPC = *LLVMTM.createPassConfig(PM);
+      PM.add(&TPC);
       LLVMTM.addMachineModuleInfo(PM);
       LLVMTM.addMachineFunctionAnalysis(PM, MIR.get());
-      TPC->printAndVerify("");
+      TPC.printAndVerify("");
 
-      for (std::string &RunPassName : *RunPassNames) {
-        const PassInfo *PI = PR->getPassInfo(RunPassName);
-        if (!PI) {
-          errs() << argv[0] << ": run-pass " << RunPassName << " is not registered.\n";
+      for (const std::string &RunPassName : *RunPassNames) {
+        if (addPass(PM, argv[0], RunPassName, TPC))
           return 1;
-        }
-
-        Pass *P;
-        if (PI->getTargetMachineCtor())
-          P = PI->getTargetMachineCtor()(Target.get());
-        else if (PI->getNormalCtor())
-          P = PI->getNormalCtor()();
-        else {
-          errs() << argv[0] << ": cannot create pass: "
-                 << PI->getPassName() << "\n";
-          return 1;
-        }
-        std::string Banner
-          = std::string("After ") + std::string(P->getPassName());
-        PM.add(P);
-        TPC->printAndVerify(Banner);
       }
-      PM.add(createPrintMIRPass(errs()));
+      PM.add(createPrintMIRPass(*OS));
     } else {
       if (!StartAfter.empty()) {
         const PassInfo *PI = PR->getPassInfo(StartAfter);

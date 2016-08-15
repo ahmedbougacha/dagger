@@ -928,7 +928,7 @@ template <> struct MDNodeKeyImpl<DIMacroFile> {
 
   bool isKeyOf(const DIMacroFile *RHS) const {
     return MIType == RHS->getMacinfoType() && Line == RHS->getLine() &&
-           File == RHS->getRawFile() && File == RHS->getRawElements();
+           File == RHS->getRawFile() && Elements == RHS->getRawElements();
   }
   unsigned getHashValue() const {
     return hash_combine(MIType, Line, File, Elements);
@@ -998,9 +998,8 @@ public:
   ///
   /// Erases all attachments matching the \c shouldRemove predicate.
   template <class PredTy> void remove_if(PredTy shouldRemove) {
-    Attachments.erase(
-        std::remove_if(Attachments.begin(), Attachments.end(), shouldRemove),
-        Attachments.end());
+    Attachments.erase(llvm::remove_if(Attachments, shouldRemove),
+                      Attachments.end());
   }
 };
 
@@ -1043,6 +1042,7 @@ public:
   LLVMContext::DiagnosticHandlerTy DiagnosticHandler;
   void *DiagnosticContext;
   bool RespectDiagnosticFilters;
+  bool DiagnosticHotnessRequested;
 
   LLVMContext::YieldCallbackTy YieldCallback;
   void *YieldOpaqueHandle;

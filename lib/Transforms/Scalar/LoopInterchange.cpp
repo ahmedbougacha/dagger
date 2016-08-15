@@ -599,8 +599,8 @@ struct LoopInterchange : public FunctionPass {
 
 } // end of namespace
 bool LoopInterchangeLegality::areAllUsesReductions(Instruction *Ins, Loop *L) {
-  return !std::any_of(Ins->user_begin(), Ins->user_end(), [=](User *U) -> bool {
-    PHINode *UserIns = dyn_cast<PHINode>(U);
+  return none_of(Ins->users(), [=](User *U) -> bool {
+    auto *UserIns = dyn_cast<PHINode>(U);
     RecurrenceDescriptor RD;
     return !UserIns || !RecurrenceDescriptor::isReductionPHI(UserIns, L, RD);
   });
@@ -703,7 +703,7 @@ bool LoopInterchangeLegality::findInductionAndReductions(
     RecurrenceDescriptor RD;
     InductionDescriptor ID;
     PHINode *PHI = cast<PHINode>(I);
-    if (InductionDescriptor::isInductionPHI(PHI, SE, ID))
+    if (InductionDescriptor::isInductionPHI(PHI, L, SE, ID))
       Inductions.push_back(PHI);
     else if (RecurrenceDescriptor::isReductionPHI(PHI, L, RD))
       Reductions.push_back(PHI);

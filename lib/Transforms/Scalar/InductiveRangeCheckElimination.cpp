@@ -43,21 +43,16 @@
 
 #include "llvm/ADT/Optional.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
-#include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
-#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/PatternMatch.h"
-#include "llvm/IR/ValueHandle.h"
-#include "llvm/IR/Verifier.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -65,8 +60,7 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
-#include "llvm/Transforms/Utils/SimplifyIndVar.h"
-#include "llvm/Transforms/Utils/UnrollLoop.h"
+#include "llvm/Transforms/Utils/LoopSimplify.h"
 
 using namespace llvm;
 
@@ -81,6 +75,11 @@ static cl::opt<bool> PrintRangeChecks("irce-print-range-checks", cl::Hidden,
 
 static cl::opt<int> MaxExitProbReciprocal("irce-max-exit-prob-reciprocal",
                                           cl::Hidden, cl::init(10));
+
+static cl::opt<bool> SkipProfitabilityChecks("irce-skip-profitability-checks",
+                                             cl::Hidden, cl::init(false));
+
+static const char *ClonedLoopTag = "irce.loop.clone";
 
 #define DEBUG_TYPE "irce"
 
@@ -392,7 +391,8 @@ void InductiveRangeCheck::extractRangeChecksFromBranch(
 
   BranchProbability LikelyTaken(15, 16);
 
-  if (BPI.getEdgeProbability(BI->getParent(), (unsigned)0) < LikelyTaken)
+  if (!SkipProfitabilityChecks &&
+      BPI.getEdgeProbability(BI->getParent(), (unsigned)0) < LikelyTaken)
     return;
 
   SmallPtrSet<Value *, 8> Visited;
@@ -515,6 +515,11 @@ class LoopConstrainer {
   //
   void cloneLoop(ClonedLoop &CLResult, const char *Tag) const;
 
+  // Create the appropriate loop structure needed to describe a cloned copy of
+  // `Original`.  The clone is described by `VM`.
+  Loop *createClonedLoopStructure(Loop *Original, Loop *Parent,
+                                  ValueToValueMapTy &VM);
+
   // Rewrite the iteration space of the loop denoted by (LS, Preheader). The
   // iteration space of the rewritten loop ends at ExitLoopAt.  The start of the
   // iteration space is not changed.  `ExitLoopAt' is assumed to be slt
@@ -566,10 +571,12 @@ class LoopConstrainer {
   Function &F;
   LLVMContext &Ctx;
   ScalarEvolution &SE;
+  DominatorTree &DT;
+  LPPassManager &LPM;
+  LoopInfo &LI;
 
   // Information about the original loop we started out with.
   Loop &OriginalLoop;
-  LoopInfo &OriginalLoopInfo;
   const SCEV *LatchTakenCount;
   BasicBlock *OriginalPreheader;
 
@@ -585,12 +592,13 @@ class LoopConstrainer {
   LoopStructure MainLoopStructure;
 
 public:
-  LoopConstrainer(Loop &L, LoopInfo &LI, const LoopStructure &LS,
-                  ScalarEvolution &SE, InductiveRangeCheck::Range R)
+  LoopConstrainer(Loop &L, LoopInfo &LI, LPPassManager &LPM,
+                  const LoopStructure &LS, ScalarEvolution &SE,
+                  DominatorTree &DT, InductiveRangeCheck::Range R)
       : F(*L.getHeader()->getParent()), Ctx(L.getHeader()->getContext()),
-        SE(SE), OriginalLoop(L), OriginalLoopInfo(LI), LatchTakenCount(nullptr),
-        OriginalPreheader(nullptr), MainLoopPreheader(nullptr), Range(R),
-        MainLoopStructure(LS) {}
+        SE(SE), DT(DT), LPM(LPM), LI(LI), OriginalLoop(L),
+        LatchTakenCount(nullptr), OriginalPreheader(nullptr),
+        MainLoopPreheader(nullptr), Range(R), MainLoopStructure(LS) {}
 
   // Entry point for the algorithm.  Returns true on success.
   bool run();
@@ -622,9 +630,19 @@ static bool CanBeSMin(ScalarEvolution &SE, const SCEV *S) {
 Optional<LoopStructure>
 LoopStructure::parseLoopStructure(ScalarEvolution &SE, BranchProbabilityInfo &BPI,
                                   Loop &L, const char *&FailureReason) {
-  assert(L.isLoopSimplifyForm() && "should follow from addRequired<>");
+  if (!L.isLoopSimplifyForm()) {
+    FailureReason = "loop not in LoopSimplify form";
+    return None;
+  }
 
   BasicBlock *Latch = L.getLoopLatch();
+  assert(Latch && "Simplified loops only have one latch!");
+
+  if (Latch->getTerminator()->getMetadata(ClonedLoopTag)) {
+    FailureReason = "loop has already been cloned";
+    return None;
+  }
+
   if (!L.isLoopExiting(Latch)) {
     FailureReason = "no loop latch";
     return None;
@@ -648,7 +666,8 @@ LoopStructure::parseLoopStructure(ScalarEvolution &SE, BranchProbabilityInfo &BP
   BranchProbability ExitProbability =
     BPI.getEdgeProbability(LatchBr->getParent(), LatchBrExitIdx);
 
-  if (ExitProbability > BranchProbability(1, MaxExitProbReciprocal)) {
+  if (!SkipProfitabilityChecks &&
+      ExitProbability > BranchProbability(1, MaxExitProbReciprocal)) {
     FailureReason = "short running loop, not profitable";
     return None;
   }
@@ -907,6 +926,11 @@ void LoopConstrainer::cloneLoop(LoopConstrainer::ClonedLoop &Result,
     return static_cast<Value *>(It->second);
   };
 
+  auto *ClonedLatch =
+      cast<BasicBlock>(GetClonedValue(OriginalLoop.getLoopLatch()));
+  ClonedLatch->getTerminator()->setMetadata(ClonedLoopTag,
+                                            MDNode::get(Ctx, {}));
+
   Result.Structure = MainLoopStructure.map(GetClonedValue);
   Result.Structure.Tag = Tag;
 
@@ -924,17 +948,15 @@ void LoopConstrainer::cloneLoop(LoopConstrainer::ClonedLoop &Result,
     // to be edited to reflect that.  No phi nodes need to be introduced because
     // the loop is in LCSSA.
 
-    for (auto SBBI = succ_begin(OriginalBB), SBBE = succ_end(OriginalBB);
-         SBBI != SBBE; ++SBBI) {
-
-      if (OriginalLoop.contains(*SBBI))
+    for (auto *SBB : successors(OriginalBB)) {
+      if (OriginalLoop.contains(SBB))
         continue; // not an exit block
 
-      for (Instruction &I : **SBBI) {
-        if (!isa<PHINode>(&I))
+      for (Instruction &I : *SBB) {
+        auto *PN = dyn_cast<PHINode>(&I);
+        if (!PN)
           break;
 
-        PHINode *PN = cast<PHINode>(&I);
         Value *OldIncoming = PN->getIncomingValueForBlock(OriginalBB);
         PN->addIncoming(GetClonedValue(OldIncoming), ClonedBB);
       }
@@ -1067,10 +1089,9 @@ LoopConstrainer::RewrittenRangeInfo LoopConstrainer::changeIterationSpaceEnd(
   // each of the PHI nodes in the loop header.  This feeds into the initial
   // value of the same PHI nodes if/when we continue execution.
   for (Instruction &I : *LS.Header) {
-    if (!isa<PHINode>(&I))
+    auto *PN = dyn_cast<PHINode>(&I);
+    if (!PN)
       break;
-
-    PHINode *PN = cast<PHINode>(&I);
 
     PHINode *NewPHI = PHINode::Create(PN->getType(), 2, PN->getName() + ".copy",
                                       BranchToContinuation);
@@ -1104,10 +1125,9 @@ void LoopConstrainer::rewriteIncomingValuesForPHIs(
 
   unsigned PHIIndex = 0;
   for (Instruction &I : *LS.Header) {
-    if (!isa<PHINode>(&I))
+    auto *PN = dyn_cast<PHINode>(&I);
+    if (!PN)
       break;
-
-    PHINode *PN = cast<PHINode>(&I);
 
     for (unsigned i = 0, e = PN->getNumIncomingValues(); i < e; ++i)
       if (PN->getIncomingBlock(i) == ContinuationBlock)
@@ -1125,10 +1145,10 @@ BasicBlock *LoopConstrainer::createPreheader(const LoopStructure &LS,
   BranchInst::Create(LS.Header, Preheader);
 
   for (Instruction &I : *LS.Header) {
-    if (!isa<PHINode>(&I))
+    auto *PN = dyn_cast<PHINode>(&I);
+    if (!PN)
       break;
 
-    PHINode *PN = cast<PHINode>(&I);
     for (unsigned i = 0, e = PN->getNumIncomingValues(); i < e; ++i)
       replacePHIBlock(PN, OldPreheader, Preheader);
   }
@@ -1142,7 +1162,23 @@ void LoopConstrainer::addToParentLoopIfNeeded(ArrayRef<BasicBlock *> BBs) {
     return;
 
   for (BasicBlock *BB : BBs)
-    ParentLoop->addBasicBlockToLoop(BB, OriginalLoopInfo);
+    ParentLoop->addBasicBlockToLoop(BB, LI);
+}
+
+Loop *LoopConstrainer::createClonedLoopStructure(Loop *Original, Loop *Parent,
+                                                 ValueToValueMapTy &VM) {
+  Loop &New = LPM.addLoop(Parent);
+
+  // Add all of the blocks in Original to the new loop.
+  for (auto *BB : Original->blocks())
+    if (LI.getLoopFor(BB) == Original)
+      New.addBasicBlockToLoop(cast<BasicBlock>(VM[BB]), LI);
+
+  // Add all of the subloops to the new loop.
+  for (Loop *SubLoop : *Original)
+    createClonedLoopStructure(SubLoop, &New, VM);
+
+  return &New;
 }
 
 bool LoopConstrainer::run() {
@@ -1266,8 +1302,25 @@ bool LoopConstrainer::run() {
       std::remove(std::begin(NewBlocks), std::end(NewBlocks), nullptr);
 
   addToParentLoopIfNeeded(makeArrayRef(std::begin(NewBlocks), NewBlocksEnd));
-  addToParentLoopIfNeeded(PreLoop.Blocks);
-  addToParentLoopIfNeeded(PostLoop.Blocks);
+
+  DT.recalculate(F);
+
+  if (!PreLoop.Blocks.empty()) {
+    auto *L = createClonedLoopStructure(
+        &OriginalLoop, OriginalLoop.getParentLoop(), PreLoop.Map);
+    formLCSSARecursively(*L, DT, &LI, &SE);
+    simplifyLoop(L, &DT, &LI, &SE, nullptr, true);
+  }
+
+  if (!PostLoop.Blocks.empty()) {
+    auto *L = createClonedLoopStructure(
+        &OriginalLoop, OriginalLoop.getParentLoop(), PostLoop.Map);
+    formLCSSARecursively(*L, DT, &LI, &SE);
+    simplifyLoop(L, &DT, &LI, &SE, nullptr, true);
+  }
+
+  formLCSSARecursively(OriginalLoop, DT, &LI, &SE);
+  simplifyLoop(&OriginalLoop, &DT, &LI, &SE, nullptr, true);
 
   return true;
 }
@@ -1439,8 +1492,9 @@ bool InductiveRangeCheckElimination::runOnLoop(Loop *L, LPPassManager &LPM) {
   if (!SafeIterRange.hasValue())
     return false;
 
-  LoopConstrainer LC(*L, getAnalysis<LoopInfoWrapperPass>().getLoopInfo(), LS,
-                     SE, SafeIterRange.getValue());
+  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  LoopConstrainer LC(*L, getAnalysis<LoopInfoWrapperPass>().getLoopInfo(), LPM,
+                     LS, SE, DT, SafeIterRange.getValue());
   bool Changed = LC.run();
 
   if (Changed) {

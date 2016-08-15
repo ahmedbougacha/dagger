@@ -70,6 +70,10 @@ namespace {
 
     unsigned foundErrors;
 
+    // Avoid querying the MachineFunctionProperties for each operand.
+    bool isFunctionRegBankSelected;
+    bool isFunctionSelected;
+
     typedef SmallVector<unsigned, 16> RegVector;
     typedef SmallVector<const uint32_t*, 4> RegMaskVector;
     typedef DenseSet<unsigned> RegSet;
@@ -213,7 +217,7 @@ namespace {
     void report(const char *msg, const MachineOperand *MO, unsigned MONum);
 
     void report_context(const LiveInterval &LI) const;
-    void report_context(const LiveRange &LR, unsigned Reg,
+    void report_context(const LiveRange &LR, unsigned VRegUnit,
                         LaneBitmask LaneMask) const;
     void report_context(const LiveRange::Segment &S) const;
     void report_context(const VNInfo &VNI) const;
@@ -329,6 +333,11 @@ unsigned MachineVerifier::verify(MachineFunction &MF) {
   TII = MF.getSubtarget().getInstrInfo();
   TRI = MF.getSubtarget().getRegisterInfo();
   MRI = &MF.getRegInfo();
+
+  isFunctionRegBankSelected = MF.getProperties().hasProperty(
+      MachineFunctionProperties::Property::RegBankSelected);
+  isFunctionSelected = MF.getProperties().hasProperty(
+      MachineFunctionProperties::Property::Selected);
 
   LiveVars = nullptr;
   LiveInts = nullptr;
@@ -474,10 +483,10 @@ void MachineVerifier::report_context(const LiveInterval &LI) const {
   errs() << "- interval:    " << LI << '\n';
 }
 
-void MachineVerifier::report_context(const LiveRange &LR, unsigned Reg,
+void MachineVerifier::report_context(const LiveRange &LR, unsigned VRegUnit,
                                      LaneBitmask LaneMask) const {
   report_context_liverange(LR);
-  errs() << "- register:    " << PrintReg(Reg, TRI) << '\n';
+  report_context_vreg_regunit(VRegUnit);
   if (LaneMask != 0)
     report_context_lanemask(LaneMask);
 }
@@ -622,8 +631,8 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
   // Call AnalyzeBranch. If it succeeds, there several more conditions to check.
   MachineBasicBlock *TBB = nullptr, *FBB = nullptr;
   SmallVector<MachineOperand, 4> Cond;
-  if (!TII->AnalyzeBranch(*const_cast<MachineBasicBlock *>(MBB),
-                          TBB, FBB, Cond)) {
+  if (!TII->analyzeBranch(*const_cast<MachineBasicBlock *>(MBB), TBB, FBB,
+                          Cond)) {
     // Ok, AnalyzeBranch thinks it knows what's going on with this block. Let's
     // check whether its answers match up with reality.
     if (!TBB && !FBB) {
@@ -757,9 +766,8 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
   }
   regsLiveInButUnused = regsLive;
 
-  const MachineFrameInfo *MFI = MF->getFrameInfo();
-  assert(MFI && "Function has no frame info");
-  BitVector PR = MFI->getPristineRegs(*MF);
+  const MachineFrameInfo &MFI = MF->getFrameInfo();
+  BitVector PR = MFI.getPristineRegs(*MF);
   for (int I = PR.find_first(); I>0; I = PR.find_next(I)) {
     for (MCSubRegIterator SubRegs(I, TRI, /*IncludeSelf=*/true);
          SubRegs.isValid(); ++SubRegs)
@@ -879,6 +887,19 @@ void MachineVerifier::visitMachineInstrBefore(const MachineInstr *MI) {
     }
   }
 
+  // Check types.
+  const unsigned NumTypes = MI->getNumTypes();
+  if (isPreISelGenericOpcode(MCID.getOpcode())) {
+    if (isFunctionSelected)
+      report("Unexpected generic instruction in a Selected function", MI);
+
+    if (NumTypes == 0)
+      report("Generic instruction must have a type", MI);
+  } else {
+    if (NumTypes != 0)
+      report("Non-generic instruction cannot have a type", MI);
+  }
+
   StringRef ErrorInfo;
   if (!TII->verifyInstruction(*MI, ErrorInfo))
     report(ErrorInfo.data(), MI);
@@ -988,14 +1009,32 @@ MachineVerifier::visitMachineOperand(const MachineOperand *MO, unsigned MONum) {
         const TargetRegisterClass *RC = MRI->getRegClassOrNull(Reg);
         if (!RC) {
           // This is a generic virtual register.
-          // It must have a size and it must not have a SubIdx.
+
+          // If we're post-Select, we can't have gvregs anymore.
+          if (isFunctionSelected) {
+            report("Generic virtual register invalid in a Selected function",
+                   MO, MONum);
+            return;
+          }
+
+          // The gvreg must have a size and it must not have a SubIdx.
           unsigned Size = MRI->getSize(Reg);
           if (!Size) {
             report("Generic virtual register must have a size", MO, MONum);
             return;
           }
-          // Make sure the register fits into its register bank if any.
+
           const RegisterBank *RegBank = MRI->getRegBankOrNull(Reg);
+
+          // If we're post-RegBankSelect, the gvreg must have a bank.
+          if (!RegBank && isFunctionRegBankSelected) {
+            report("Generic virtual register must have a bank in a "
+                   "RegBankSelected function",
+                   MO, MONum);
+            return;
+          }
+
+          // Make sure the register fits into its register bank if any.
           if (RegBank && RegBank->getSize() < Size) {
             report("Register bank is too small for virtual register", MO,
                    MONum);
@@ -1199,7 +1238,7 @@ void MachineVerifier::checkLiveness(const MachineOperand *MO, unsigned MONum) {
     if (LiveVars && TargetRegisterInfo::isVirtualRegister(Reg) &&
         MO->isKill()) {
       LiveVariables::VarInfo &VI = LiveVars->getVarInfo(Reg);
-      if (std::find(VI.Kills.begin(), VI.Kills.end(), MI) == VI.Kills.end())
+      if (!is_contained(VI.Kills, MI))
         report("Kill missing from LiveVariables", MO, MONum);
     }
 

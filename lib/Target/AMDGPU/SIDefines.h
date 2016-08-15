@@ -41,7 +41,8 @@ enum {
   WQM = 1 << 22,
   VGPRSpill = 1 << 23,
   VOPAsmPrefer32Bit = 1 << 24,
-  Gather4 = 1 << 25
+  Gather4 = 1 << 25,
+  DisableWQM = 1 << 26
 };
 }
 
@@ -308,5 +309,7 @@ enum WidthMinusOne { // WidthMinusOne, (5) [15:11]
 #define R_0286E8_SPI_TMPRING_SIZE                                       0x0286E8
 #define   S_0286E8_WAVESIZE(x)                                        (((x) & 0x1FFF) << 12)
 
+#define R_SPILLED_SGPRS         0x4
+#define R_SPILLED_VGPRS         0x8
 
 #endif

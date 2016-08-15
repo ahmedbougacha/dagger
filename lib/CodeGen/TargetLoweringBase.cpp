@@ -807,7 +807,6 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm) : TM(tm) {
   SelectIsExpensive = false;
   HasMultipleConditionRegisters = false;
   HasExtractBitsInsn = false;
-  FsqrtIsCheap = false;
   JumpIsExpensive = JumpIsExpensiveOverride;
   PredictableSelectIsExpensive = false;
   MaskAndBranchFoldingIsLegal = false;
@@ -1177,7 +1176,7 @@ TargetLoweringBase::emitPatchPoint(MachineInstr &InitialMI,
                                    MachineBasicBlock *MBB) const {
   MachineInstr *MI = &InitialMI;
   MachineFunction &MF = *MI->getParent()->getParent();
-  MachineFrameInfo &MFI = *MF.getFrameInfo();
+  MachineFrameInfo &MFI = MF.getFrameInfo();
 
   // We're handling multiple types of operands here:
   // PATCHPOINT MetaArgs - live-in, read only, direct
@@ -1234,7 +1233,7 @@ TargetLoweringBase::emitPatchPoint(MachineInstr &InitialMI,
     // Add a new memory operand for this FI.
     assert(MFI.getObjectOffset(FI) != -1);
 
-    unsigned Flags = MachineMemOperand::MOLoad;
+    auto Flags = MachineMemOperand::MOLoad;
     if (MI->getOpcode() == TargetOpcode::STATEPOINT) {
       Flags |= MachineMemOperand::MOStore;
       Flags |= MachineMemOperand::MOVolatile;

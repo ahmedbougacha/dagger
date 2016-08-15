@@ -442,12 +442,12 @@ bool llvm::EmitAnyX86InstComments(const MCInst *MI, raw_ostream &OS,
 
   case X86::INSERTPSrr:
   case X86::VINSERTPSrr:
-  case X86::VINSERTPSzrr:
+  case X86::VINSERTPSZrr:
     Src2Name = getRegName(MI->getOperand(2).getReg());
     // FALL THROUGH.
   case X86::INSERTPSrm:
   case X86::VINSERTPSrm:
-  case X86::VINSERTPSzrm:
+  case X86::VINSERTPSZrm:
     DestName = getRegName(MI->getOperand(0).getReg());
     Src1Name = getRegName(MI->getOperand(1).getReg());
     if (MI->getOperand(NumOperands - 1).isImm())
@@ -942,6 +942,12 @@ bool llvm::EmitAnyX86InstComments(const MCInst *MI, raw_ostream &OS,
     DestName = getRegName(MI->getOperand(0).getReg());
     Src1Name = getRegName(MI->getOperand(1).getReg());
     Src2Name = getRegName(MI->getOperand(2).getReg());
+    break;
+
+  case X86::VBROADCASTF128:
+  case X86::VBROADCASTI128:
+    DecodeSubVectorBroadcast(MVT::v4f64, MVT::v2f64, ShuffleMask);
+    DestName = getRegName(MI->getOperand(0).getReg());
     break;
 
   CASE_PMOVZX(PMOVZXBW, r)

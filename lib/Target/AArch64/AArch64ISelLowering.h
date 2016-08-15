@@ -230,6 +230,9 @@ public:
   /// Selects the correct CCAssignFn for a given CallingConvention value.
   CCAssignFn *CCAssignFnForCall(CallingConv::ID CC, bool IsVarArg) const;
 
+  /// Selects the correct CCAssignFn for a given CallingConvention value.
+  CCAssignFn *CCAssignFnForReturn(CallingConv::ID CC) const;
+
   /// Determine which of the bits specified in Mask are known to be either zero
   /// or one and return them in the KnownZero/KnownOne bitsets.
   void computeKnownBitsForTargetNode(const SDValue Op, APInt &KnownZero,
@@ -453,7 +456,7 @@ private:
   /// object and incorporates their load into the current chain. This prevents
   /// an upcoming store from clobbering the stack argument before it's used.
   SDValue addTokenForArgument(SDValue Chain, SelectionDAG &DAG,
-                              MachineFrameInfo *MFI, int ClobberedFI) const;
+                              MachineFrameInfo &MFI, int ClobberedFI) const;
 
   bool DoesCalleeRestoreStack(CallingConv::ID CallCC, bool TailCallOpt) const;
 

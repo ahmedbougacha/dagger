@@ -263,6 +263,10 @@ namespace llvm {
   /// \brief This pass lays out funclets contiguously.
   extern char &FuncletLayoutID;
 
+  /// This pass inserts the XRay instrumentation sleds if they are supported by
+  /// the target platform.
+  extern char &XRayInstrumentationID;
+
   /// \brief This pass implements the "patchable-function" attribute.
   extern char &PatchableFunctionID;
 
@@ -370,6 +374,9 @@ namespace llvm {
   /// and propagates register usage information of callee to caller
   /// if available with PysicalRegisterUsageInfo pass.
   FunctionPass *createRegUsageInfoPropPass();
+
+  /// This pass performs software pipelining on machine instructions.
+  extern char &MachinePipelinerID;
 } // End llvm namespace
 
 /// Target machine pass initializer for passes with dependencies. Use with

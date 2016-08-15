@@ -51,6 +51,7 @@
 #include "llvm/Transforms/PGOInstrumentation.h"
 #include "CFGMST.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
@@ -59,6 +60,7 @@
 #include "llvm/Analysis/IndirectCallSiteVisitor.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -75,6 +77,7 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <algorithm>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -112,10 +115,18 @@ static cl::opt<unsigned> MaxNumAnnotations(
     cl::desc("Max number of annotations for a single indirect "
              "call callsite"));
 
+// Command line option to control appending FunctionHash to the name of a COMDAT
+// function. This is to avoid the hash mismatch caused by the preinliner.
+static cl::opt<bool> DoComdatRenaming(
+    "do-comdat-renaming", cl::init(true), cl::Hidden,
+    cl::desc("Append function hash to the name of COMDAT function to avoid "
+             "function hash mismatch due to the preinliner"));
+
 // Command line option to enable/disable the warning about missing profile
 // information.
-static cl::opt<bool> NoPGOWarnMissing("no-pgo-warn-missing", cl::init(false),
-                                      cl::Hidden);
+static cl::opt<bool> PGOWarnMissing("pgo-warn-missing-function",
+                                     cl::init(false),
+                                     cl::Hidden);
 
 // Command line option to enable/disable the warning about a hash mismatch in
 // the profile data.
@@ -238,6 +249,9 @@ template <class Edge, class BBInfo> class FuncPGOInstrumentation {
 private:
   Function &F;
   void computeCFGHash();
+  void renameComdatFunction();
+  // A map that stores the Comdat group in function F.
+  std::unordered_multimap<Comdat *, GlobalValue *> &ComdatMembers;
 
 public:
   std::string FuncName;
@@ -261,12 +275,17 @@ public:
                               Twine(FunctionHash) + "\t" + Str);
   }
 
-  FuncPGOInstrumentation(Function &Func, bool CreateGlobalVar = false,
-                         BranchProbabilityInfo *BPI = nullptr,
-                         BlockFrequencyInfo *BFI = nullptr)
-      : F(Func), FunctionHash(0), MST(F, BPI, BFI) {
+  FuncPGOInstrumentation(
+      Function &Func,
+      std::unordered_multimap<Comdat *, GlobalValue *> &ComdatMembers,
+      bool CreateGlobalVar = false, BranchProbabilityInfo *BPI = nullptr,
+      BlockFrequencyInfo *BFI = nullptr)
+      : F(Func), ComdatMembers(ComdatMembers), FunctionHash(0),
+        MST(F, BPI, BFI) {
     FuncName = getPGOFuncName(F);
     computeCFGHash();
+    if (ComdatMembers.size())
+      renameComdatFunction();
     DEBUG(dumpInfo("after CFGMST"));
 
     NumOfPGOBB += MST.BBInfos.size();
@@ -280,6 +299,16 @@ public:
 
     if (CreateGlobalVar)
       FuncNameVar = createPGOFuncNameVar(F, FuncName);
+  }
+
+  // Return the number of profile counters needed for the function.
+  unsigned getNumCounters() {
+    unsigned NumCounters = 0;
+    for (auto &E : this->MST.AllEdges) {
+      if (!E->InMST && !E->Removed)
+        NumCounters++;
+    }
+    return NumCounters;
   }
 };
 
@@ -299,7 +328,88 @@ void FuncPGOInstrumentation<Edge, BBInfo>::computeCFGHash() {
     }
   }
   JC.update(Indexes);
-  FunctionHash = (uint64_t)MST.AllEdges.size() << 32 | JC.getCRC();
+  FunctionHash = (uint64_t)findIndirectCallSites(F).size() << 48 |
+                 (uint64_t)MST.AllEdges.size() << 32 | JC.getCRC();
+}
+
+// Check if we can safely rename this Comdat function.
+static bool canRenameComdat(
+    Function &F,
+    std::unordered_multimap<Comdat *, GlobalValue *> &ComdatMembers) {
+  if (F.getName().empty())
+    return false;
+  if (!needsComdatForCounter(F, *(F.getParent())))
+    return false;
+  // Only safe to do if this function may be discarded if it is not used
+  // in the compilation unit.
+  if (!GlobalValue::isDiscardableIfUnused(F.getLinkage()))
+    return false;
+
+  // For AvailableExternallyLinkage functions.
+  if (!F.hasComdat()) {
+    assert(F.getLinkage() == GlobalValue::AvailableExternallyLinkage);
+    return true;
+  }
+
+  // FIXME: Current only handle those Comdat groups that only containing one
+  // function and function aliases.
+  // (1) For a Comdat group containing multiple functions, we need to have a
+  // unique postfix based on the hashes for each function. There is a
+  // non-trivial code refactoring to do this efficiently.
+  // (2) Variables can not be renamed, so we can not rename Comdat function in a
+  // group including global vars.
+  Comdat *C = F.getComdat();
+  for (auto &&CM : make_range(ComdatMembers.equal_range(C))) {
+    if (dyn_cast<GlobalAlias>(CM.second))
+      continue;
+    Function *FM = dyn_cast<Function>(CM.second);
+    if (FM != &F)
+      return false;
+  }
+  return true;
+}
+
+// Append the CFGHash to the Comdat function name.
+template <class Edge, class BBInfo>
+void FuncPGOInstrumentation<Edge, BBInfo>::renameComdatFunction() {
+  if (!canRenameComdat(F, ComdatMembers))
+    return;
+  std::string NewFuncName =
+      Twine(F.getName() + "." + Twine(FunctionHash)).str();
+  F.setName(Twine(NewFuncName));
+  FuncName = Twine(FuncName + "." + Twine(FunctionHash)).str();
+  Comdat *NewComdat;
+  Module *M = F.getParent();
+  // For AvailableExternallyLinkage functions, change the linkage to
+  // LinkOnceODR and put them into comdat. This is because after renaming, there
+  // is no backup external copy available for the function.
+  if (!F.hasComdat()) {
+    assert(F.getLinkage() == GlobalValue::AvailableExternallyLinkage);
+    NewComdat = M->getOrInsertComdat(StringRef(NewFuncName));
+    F.setLinkage(GlobalValue::LinkOnceODRLinkage);
+    F.setComdat(NewComdat);
+    return;
+  }
+
+  // This function belongs to a single function Comdat group.
+  Comdat *OrigComdat = F.getComdat();
+  std::string NewComdatName =
+      Twine(OrigComdat->getName() + "." + Twine(FunctionHash)).str();
+  NewComdat = M->getOrInsertComdat(StringRef(NewComdatName));
+  NewComdat->setSelectionKind(OrigComdat->getSelectionKind());
+
+  for (auto &&CM : make_range(ComdatMembers.equal_range(OrigComdat))) {
+    if (GlobalAlias *GA = dyn_cast<GlobalAlias>(CM.second)) {
+      // For aliases, change the name directly.
+      assert(dyn_cast<Function>(GA->getAliasee()->stripPointerCasts()) == &F);
+      GA->setName(Twine(GA->getName() + "." + Twine(FunctionHash)));
+      continue;
+    }
+    // Must be a function.
+    Function *CF = dyn_cast<Function>(CM.second);
+    assert(CF);
+    CF->setComdat(NewComdat);
+  }
 }
 
 // Given a CFG E to be instrumented, find which BB to place the instrumented
@@ -340,15 +450,12 @@ BasicBlock *FuncPGOInstrumentation<Edge, BBInfo>::getInstrBB(Edge *E) {
 
 // Visit all edge and instrument the edges not in MST, and do value profiling.
 // Critical edges will be split.
-static void instrumentOneFunc(Function &F, Module *M,
-                              BranchProbabilityInfo *BPI,
-                              BlockFrequencyInfo *BFI) {
-  unsigned NumCounters = 0;
-  FuncPGOInstrumentation<PGOEdge, BBInfo> FuncInfo(F, true, BPI, BFI);
-  for (auto &E : FuncInfo.MST.AllEdges) {
-    if (!E->InMST && !E->Removed)
-      NumCounters++;
-  }
+static void instrumentOneFunc(
+    Function &F, Module *M, BranchProbabilityInfo *BPI, BlockFrequencyInfo *BFI,
+    std::unordered_multimap<Comdat *, GlobalValue *> &ComdatMembers) {
+  FuncPGOInstrumentation<PGOEdge, BBInfo> FuncInfo(F, ComdatMembers, true, BPI,
+                                                   BFI);
+  unsigned NumCounters = FuncInfo.getNumCounters();
 
   uint32_t I = 0;
   Type *I8PtrTy = Type::getInt8PtrTy(M->getContext());
@@ -366,6 +473,7 @@ static void instrumentOneFunc(Function &F, Module *M,
          Builder.getInt64(FuncInfo.FunctionHash), Builder.getInt32(NumCounters),
          Builder.getInt32(I++)});
   }
+  assert(I == NumCounters);
 
   if (DisableValueProfiling)
     return;
@@ -456,9 +564,11 @@ static uint64_t sumEdgeCount(const ArrayRef<PGOUseEdge *> Edges) {
 
 class PGOUseFunc {
 public:
-  PGOUseFunc(Function &Func, Module *Modu, BranchProbabilityInfo *BPI = nullptr,
+  PGOUseFunc(Function &Func, Module *Modu,
+             std::unordered_multimap<Comdat *, GlobalValue *> &ComdatMembers,
+             BranchProbabilityInfo *BPI = nullptr,
              BlockFrequencyInfo *BFI = nullptr)
-      : F(Func), M(Modu), FuncInfo(Func, false, BPI, BFI),
+      : F(Func), M(Modu), FuncInfo(Func, ComdatMembers, false, BPI, BFI),
         FreqAttr(FFA_Normal) {}
 
   // Read counts for the instrumented BB from profile.
@@ -479,6 +589,8 @@ public:
   // Return the function hotness from the profile.
   FuncFreqAttr getFuncFreqAttr() const { return FreqAttr; }
 
+  // Return the function hash.
+  uint64_t getFuncHash() const { return FuncInfo.FunctionHash; }
   // Return the profile record for this function;
   InstrProfRecord &getProfileRecord() { return ProfileRecord; }
 
@@ -535,6 +647,7 @@ private:
 void PGOUseFunc::setInstrumentedCounts(
     const std::vector<uint64_t> &CountFromProfile) {
 
+  assert(FuncInfo.getNumCounters() == CountFromProfile.size());
   // Use a worklist as we will update the vector during the iteration.
   std::vector<PGOUseEdge *> WorkList;
   for (auto &E : FuncInfo.MST.AllEdges)
@@ -564,6 +677,7 @@ void PGOUseFunc::setInstrumentedCounts(
     NewEdge1.InMST = true;
     getBBInfo(InstrBB).setBBInfoCount(CountValue);
   }
+  assert(I == CountFromProfile.size());
 }
 
 // Set the count value for the unknown edge. There should be one and only one
@@ -594,7 +708,7 @@ bool PGOUseFunc::readCounters(IndexedInstrProfReader *PGOReader) {
       bool SkipWarning = false;
       if (Err == instrprof_error::unknown_function) {
         NumOfPGOMissing++;
-        SkipWarning = NoPGOWarnMissing;
+        SkipWarning = !PGOWarnMissing;
       } else if (Err == instrprof_error::hash_mismatch ||
                  Err == instrprof_error::malformed) {
         NumOfPGOMismatch++;
@@ -784,7 +898,7 @@ void PGOUseFunc::annotateIndirectCallSites() {
 }
 } // end anonymous namespace
 
-// Create a COMDAT variable IR_LEVEL_PROF_VARNAME to make the runtime
+// Create a COMDAT variable INSTR_PROF_RAW_VERSION_VAR to make the runtime
 // aware this is an ir_level profile so it can set the version flag.
 static void createIRLevelProfileFlagVariable(Module &M) {
   Type *IntTy64 = Type::getInt64Ty(M.getContext());
@@ -792,26 +906,47 @@ static void createIRLevelProfileFlagVariable(Module &M) {
   auto IRLevelVersionVariable = new GlobalVariable(
       M, IntTy64, true, GlobalVariable::ExternalLinkage,
       Constant::getIntegerValue(IntTy64, APInt(64, ProfileVersion)),
-      INSTR_PROF_QUOTE(IR_LEVEL_PROF_VERSION_VAR));
+      INSTR_PROF_QUOTE(INSTR_PROF_RAW_VERSION_VAR));
   IRLevelVersionVariable->setVisibility(GlobalValue::DefaultVisibility);
   Triple TT(M.getTargetTriple());
   if (!TT.supportsCOMDAT())
     IRLevelVersionVariable->setLinkage(GlobalValue::WeakAnyLinkage);
   else
     IRLevelVersionVariable->setComdat(M.getOrInsertComdat(
-        StringRef(INSTR_PROF_QUOTE(IR_LEVEL_PROF_VERSION_VAR))));
+        StringRef(INSTR_PROF_QUOTE(INSTR_PROF_RAW_VERSION_VAR))));
+}
+
+// Collect the set of members for each Comdat in module M and store
+// in ComdatMembers.
+static void collectComdatMembers(
+    Module &M,
+    std::unordered_multimap<Comdat *, GlobalValue *> &ComdatMembers) {
+  if (!DoComdatRenaming)
+    return;
+  for (Function &F : M)
+    if (Comdat *C = F.getComdat())
+      ComdatMembers.insert(std::make_pair(C, &F));
+  for (GlobalVariable &GV : M.globals())
+    if (Comdat *C = GV.getComdat())
+      ComdatMembers.insert(std::make_pair(C, &GV));
+  for (GlobalAlias &GA : M.aliases())
+    if (Comdat *C = GA.getComdat())
+      ComdatMembers.insert(std::make_pair(C, &GA));
 }
 
 static bool InstrumentAllFunctions(
     Module &M, function_ref<BranchProbabilityInfo *(Function &)> LookupBPI,
     function_ref<BlockFrequencyInfo *(Function &)> LookupBFI) {
   createIRLevelProfileFlagVariable(M);
+  std::unordered_multimap<Comdat *, GlobalValue *> ComdatMembers;
+  collectComdatMembers(M, ComdatMembers);
+
   for (auto &F : M) {
     if (F.isDeclaration())
       continue;
     auto *BPI = LookupBPI(F);
     auto *BFI = LookupBFI(F);
-    instrumentOneFunc(F, &M, BPI, BFI);
+    instrumentOneFunc(F, &M, BPI, BFI, ComdatMembers);
   }
   return true;
 }
@@ -830,7 +965,7 @@ bool PGOInstrumentationGenLegacyPass::runOnModule(Module &M) {
 }
 
 PreservedAnalyses PGOInstrumentationGen::run(Module &M,
-                                             AnalysisManager<Module> &AM) {
+                                             ModuleAnalysisManager &AM) {
 
   auto &FAM = AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
   auto LookupBPI = [&FAM](Function &F) {
@@ -877,6 +1012,8 @@ static bool annotateAllFunctions(
     return false;
   }
 
+  std::unordered_multimap<Comdat *, GlobalValue *> ComdatMembers;
+  collectComdatMembers(M, ComdatMembers);
   std::vector<Function *> HotFunctions;
   std::vector<Function *> ColdFunctions;
   for (auto &F : M) {
@@ -884,7 +1021,7 @@ static bool annotateAllFunctions(
       continue;
     auto *BPI = LookupBPI(F);
     auto *BFI = LookupBFI(F);
-    PGOUseFunc Func(F, &M, BPI, BFI);
+    PGOUseFunc Func(F, &M, ComdatMembers, BPI, BFI);
     if (!Func.readCounters(PGOReader.get()))
       continue;
     Func.populateCounters();
@@ -910,7 +1047,6 @@ static bool annotateAllFunctions(
     F->addFnAttr(llvm::Attribute::Cold);
     DEBUG(dbgs() << "Set cold attribute to function: " << F->getName() << "\n");
   }
-
   return true;
 }
 
@@ -921,7 +1057,7 @@ PGOInstrumentationUse::PGOInstrumentationUse(std::string Filename)
 }
 
 PreservedAnalyses PGOInstrumentationUse::run(Module &M,
-                                             AnalysisManager<Module> &AM) {
+                                             ModuleAnalysisManager &AM) {
 
   auto &FAM = AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
   auto LookupBPI = [&FAM](Function &F) {

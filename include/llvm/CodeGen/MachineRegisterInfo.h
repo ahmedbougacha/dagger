@@ -590,9 +590,7 @@ public:
   /// the select pass, using getRegClass is safe.
   const TargetRegisterClass *getRegClassOrNull(unsigned Reg) const {
     const RegClassOrRegBank &Val = VRegInfo[Reg].first;
-    if (Val.is<const TargetRegisterClass *>())
-      return Val.get<const TargetRegisterClass *>();
-    return nullptr;
+    return Val.dyn_cast<const TargetRegisterClass *>();
   }
 
   /// Return the register bank of \p Reg, or null if Reg has not been assigned
@@ -602,9 +600,7 @@ public:
   ///
   const RegisterBank *getRegBankOrNull(unsigned Reg) const {
     const RegClassOrRegBank &Val = VRegInfo[Reg].first;
-    if (Val.is<const RegisterBank *>())
-      return Val.get<const RegisterBank *>();
-    return nullptr;
+    return Val.dyn_cast<const RegisterBank *>();
   }
 
   /// Return the register bank or register class of \p Reg.
@@ -661,6 +657,10 @@ public:
   /// Create and return a new generic virtual register with a size of \p Size.
   /// \pre Size > 0.
   unsigned createGenericVirtualRegister(unsigned Size);
+
+  /// Remove all sizes associated to virtual registers (after instruction
+  /// selection and constraining of all generic virtual registers).
+  void clearVirtRegSizes();
 
   /// getNumVirtRegs - Return the number of virtual registers created.
   ///

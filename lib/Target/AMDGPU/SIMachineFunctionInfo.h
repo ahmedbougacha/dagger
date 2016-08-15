@@ -28,7 +28,6 @@ class MachineRegisterInfo;
 class SIMachineFunctionInfo final : public AMDGPUMachineFunction {
   // FIXME: This should be removed and getPreloadedValue moved here.
   friend struct SIRegisterInfo;
-  void anchor() override;
 
   unsigned TIDReg;
 
@@ -83,14 +82,16 @@ private:
   bool HasSpilledSGPRs;
   bool HasSpilledVGPRs;
   bool HasNonSpillStackObjects;
-  bool HasFlatInstructions;
+
+  unsigned NumSpilledSGPRs;
+  unsigned NumSpilledVGPRs;
 
   // Feature bits required for inputs passed in user SGPRs.
   bool PrivateSegmentBuffer : 1;
   bool DispatchPtr : 1;
   bool QueuePtr : 1;
-  bool DispatchID : 1;
   bool KernargSegmentPtr : 1;
+  bool DispatchID : 1;
   bool FlatScratchInit : 1;
   bool GridWorkgroupCountX : 1;
   bool GridWorkgroupCountY : 1;
@@ -140,6 +141,7 @@ public:
   unsigned addDispatchPtr(const SIRegisterInfo &TRI);
   unsigned addQueuePtr(const SIRegisterInfo &TRI);
   unsigned addKernargSegmentPtr(const SIRegisterInfo &TRI);
+  unsigned addDispatchID(const SIRegisterInfo &TRI);
   unsigned addFlatScratchInit(const SIRegisterInfo &TRI);
 
   // Add system SGPRs.
@@ -189,12 +191,12 @@ public:
     return QueuePtr;
   }
 
-  bool hasDispatchID() const {
-    return DispatchID;
-  }
-
   bool hasKernargSegmentPtr() const {
     return KernargSegmentPtr;
+  }
+
+  bool hasDispatchID() const {
+    return DispatchID;
   }
 
   bool hasFlatScratchInit() const {
@@ -305,12 +307,20 @@ public:
     HasNonSpillStackObjects = StackObject;
   }
 
-  bool hasFlatInstructions() const {
-    return HasFlatInstructions;
+  unsigned getNumSpilledSGPRs() const {
+    return NumSpilledSGPRs;
   }
 
-  void setHasFlatInstructions(bool UseFlat = true) {
-    HasFlatInstructions = UseFlat;
+  unsigned getNumSpilledVGPRs() const {
+    return NumSpilledVGPRs;
+  }
+
+  void addToSpilledSGPRs(unsigned num) {
+    NumSpilledSGPRs += num;
+  }
+
+  void addToSpilledVGPRs(unsigned num) {
+    NumSpilledVGPRs += num;
   }
 
   unsigned getPSInputAddr() const {

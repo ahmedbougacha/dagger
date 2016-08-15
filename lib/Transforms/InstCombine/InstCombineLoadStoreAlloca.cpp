@@ -59,14 +59,14 @@ isOnlyCopiedFromConstantGlobal(Value *V, MemTransferInst *&TheCopy,
   // eliminate the markers.
 
   SmallVector<std::pair<Value *, bool>, 35> ValuesToInspect;
-  ValuesToInspect.push_back(std::make_pair(V, false));
+  ValuesToInspect.emplace_back(V, false);
   while (!ValuesToInspect.empty()) {
     auto ValuePair = ValuesToInspect.pop_back_val();
     const bool IsOffset = ValuePair.second;
     for (auto &U : ValuePair.first->uses()) {
-      Instruction *I = cast<Instruction>(U.getUser());
+      auto *I = cast<Instruction>(U.getUser());
 
-      if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
+      if (auto *LI = dyn_cast<LoadInst>(I)) {
         // Ignore non-volatile loads, they are always ok.
         if (!LI->isSimple()) return false;
         continue;
@@ -74,14 +74,13 @@ isOnlyCopiedFromConstantGlobal(Value *V, MemTransferInst *&TheCopy,
 
       if (isa<BitCastInst>(I) || isa<AddrSpaceCastInst>(I)) {
         // If uses of the bitcast are ok, we are ok.
-        ValuesToInspect.push_back(std::make_pair(I, IsOffset));
+        ValuesToInspect.emplace_back(I, IsOffset);
         continue;
       }
-      if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(I)) {
+      if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
         // If the GEP has all zero indices, it doesn't offset the pointer. If it
         // doesn't, it does.
-        ValuesToInspect.push_back(
-            std::make_pair(I, IsOffset || !GEP->hasAllZeroIndices()));
+        ValuesToInspect.emplace_back(I, IsOffset || !GEP->hasAllZeroIndices());
         continue;
       }
 
@@ -286,7 +285,7 @@ Instruction *InstCombiner::visitAllocaInst(AllocaInst &AI) {
     SmallVector<Instruction *, 4> ToDelete;
     if (MemTransferInst *Copy = isOnlyCopiedFromConstantGlobal(&AI, ToDelete)) {
       unsigned SourceAlign = getOrEnforceKnownAlignment(
-          Copy->getSource(), AI.getAlignment(), DL, &AI, AC, DT);
+          Copy->getSource(), AI.getAlignment(), DL, &AI, &AC, &DT);
       if (AI.getAlignment() <= SourceAlign) {
         DEBUG(dbgs() << "Found alloca equal to global: " << AI << '\n');
         DEBUG(dbgs() << "  memcpy = " << *Copy << '\n');
@@ -475,8 +474,9 @@ static Instruction *combineLoadToOperationType(InstCombiner &IC, LoadInst &LI) {
   // size is a legal integer type.
   if (!Ty->isIntegerTy() && Ty->isSized() &&
       DL.isLegalInteger(DL.getTypeStoreSizeInBits(Ty)) &&
-      DL.getTypeStoreSizeInBits(Ty) == DL.getTypeSizeInBits(Ty)) {
-    if (std::all_of(LI.user_begin(), LI.user_end(), [&LI](User *U) {
+      DL.getTypeStoreSizeInBits(Ty) == DL.getTypeSizeInBits(Ty) &&
+      !DL.isNonIntegralPointerType(Ty)) {
+    if (all_of(LI.users(), [&LI](User *U) {
           auto *SI = dyn_cast<StoreInst>(U);
           return SI && SI->getPointerOperand() != &LI;
         })) {
@@ -795,7 +795,7 @@ Instruction *InstCombiner::visitLoadInst(LoadInst &LI) {
 
   // Attempt to improve the alignment.
   unsigned KnownAlign = getOrEnforceKnownAlignment(
-      Op, DL.getPrefTypeAlignment(LI.getType()), DL, &LI, AC, DT);
+      Op, DL.getPrefTypeAlignment(LI.getType()), DL, &LI, &AC, &DT);
   unsigned LoadAlign = LI.getAlignment();
   unsigned EffectiveLoadAlign =
       LoadAlign != 0 ? LoadAlign : DL.getABITypeAlignment(LI.getType());
@@ -818,11 +818,10 @@ Instruction *InstCombiner::visitLoadInst(LoadInst &LI) {
   // where there are several consecutive memory accesses to the same location,
   // separated by a few arithmetic operations.
   BasicBlock::iterator BBI(LI);
-  AAMDNodes AATags;
   bool IsLoadCSE = false;
   if (Value *AvailableVal =
       FindAvailableLoadedValue(&LI, LI.getParent(), BBI,
-                               DefMaxInstsToScan, AA, &AATags, &IsLoadCSE)) {
+                               DefMaxInstsToScan, AA, &IsLoadCSE)) {
     if (IsLoadCSE) {
       LoadInst *NLI = cast<LoadInst>(AvailableVal);
       unsigned KnownIDs[] = {
@@ -1155,7 +1154,7 @@ Instruction *InstCombiner::visitStoreInst(StoreInst &SI) {
 
   // Attempt to improve the alignment.
   unsigned KnownAlign = getOrEnforceKnownAlignment(
-      Ptr, DL.getPrefTypeAlignment(Val->getType()), DL, &SI, AC, DT);
+      Ptr, DL.getPrefTypeAlignment(Val->getType()), DL, &SI, &AC, &DT);
   unsigned StoreAlign = SI.getAlignment();
   unsigned EffectiveStoreAlign =
       StoreAlign != 0 ? StoreAlign : DL.getABITypeAlignment(Val->getType());
@@ -1279,7 +1278,7 @@ Instruction *InstCombiner::visitStoreInst(StoreInst &SI) {
 bool InstCombiner::SimplifyStoreAtEndOfBlock(StoreInst &SI) {
   assert(SI.isUnordered() &&
          "this code has not been auditted for volatile or ordered store case");
-  
+
   BasicBlock *StoreBB = SI.getParent();
 
   // Check to see if the successor block has exactly two incoming edges.  If

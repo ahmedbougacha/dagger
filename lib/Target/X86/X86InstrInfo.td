@@ -1300,28 +1300,28 @@ def BSR64rm  : RI<0xBD, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
 let SchedRW = [WriteMicrocoded] in {
 // These uses the DF flag in the EFLAGS register to inc or dec EDI and ESI
 let Defs = [EDI,ESI], Uses = [EDI,ESI,EFLAGS] in {
-def MOVSB : I<0xA4, RawFrmDstSrc, (outs dstidx8:$dst), (ins srcidx8:$src),
+def MOVSB : I<0xA4, RawFrmDstSrc, (outs), (ins dstidx8:$dst, srcidx8:$src),
               "movsb\t{$src, $dst|$dst, $src}", [], IIC_MOVS>;
-def MOVSW : I<0xA5, RawFrmDstSrc, (outs dstidx16:$dst), (ins srcidx16:$src),
+def MOVSW : I<0xA5, RawFrmDstSrc, (outs), (ins dstidx16:$dst, srcidx16:$src),
               "movsw\t{$src, $dst|$dst, $src}", [], IIC_MOVS>, OpSize16;
-def MOVSL : I<0xA5, RawFrmDstSrc, (outs dstidx32:$dst), (ins srcidx32:$src),
+def MOVSL : I<0xA5, RawFrmDstSrc, (outs), (ins dstidx32:$dst, srcidx32:$src),
               "movs{l|d}\t{$src, $dst|$dst, $src}", [], IIC_MOVS>, OpSize32;
-def MOVSQ : RI<0xA5, RawFrmDstSrc, (outs dstidx64:$dst), (ins srcidx64:$src),
+def MOVSQ : RI<0xA5, RawFrmDstSrc, (outs), (ins dstidx64:$dst, srcidx64:$src),
                "movsq\t{$src, $dst|$dst, $src}", [], IIC_MOVS>;
 }
 
 // These uses the DF flag in the EFLAGS register to inc or dec EDI and ESI
 let Defs = [EDI], Uses = [AL,EDI,EFLAGS] in
-def STOSB : I<0xAA, RawFrmDst, (outs dstidx8:$dst), (ins),
+def STOSB : I<0xAA, RawFrmDst, (outs), (ins dstidx8:$dst),
               "stosb\t{%al, $dst|$dst, al}", [], IIC_STOS>;
 let Defs = [EDI], Uses = [AX,EDI,EFLAGS] in
-def STOSW : I<0xAB, RawFrmDst, (outs dstidx16:$dst), (ins),
+def STOSW : I<0xAB, RawFrmDst, (outs), (ins dstidx16:$dst),
               "stosw\t{%ax, $dst|$dst, ax}", [], IIC_STOS>, OpSize16;
 let Defs = [EDI], Uses = [EAX,EDI,EFLAGS] in
-def STOSL : I<0xAB, RawFrmDst, (outs dstidx32:$dst), (ins),
+def STOSL : I<0xAB, RawFrmDst, (outs), (ins dstidx32:$dst),
               "stos{l|d}\t{%eax, $dst|$dst, eax}", [], IIC_STOS>, OpSize32;
 let Defs = [RDI], Uses = [RAX,RDI,EFLAGS] in
-def STOSQ : RI<0xAB, RawFrmDst, (outs dstidx64:$dst), (ins),
+def STOSQ : RI<0xAB, RawFrmDst, (outs), (ins dstidx64:$dst),
                "stosq\t{%rax, $dst|$dst, rax}", [], IIC_STOS>;
 
 // These uses the DF flag in the EFLAGS register to inc or dec EDI and ESI

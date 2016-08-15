@@ -80,6 +80,7 @@ struct ValueInfo {
     assert(Kind == VI_Value && "Not a Value type");
     return TheValue.V;
   }
+  bool isGUID() const { return Kind == VI_GUID; }
 };
 
 /// \brief Function and variable summary information to aid decisions and
@@ -103,11 +104,23 @@ public:
     /// Indicate if the global value is located in a specific section.
     unsigned HasSection : 1;
 
+    /// Indicate if the function is not viable to inline.
+    unsigned IsNotViableToInline : 1;
+
     /// Convenience Constructors
-    explicit GVFlags(GlobalValue::LinkageTypes Linkage, bool HasSection)
-        : Linkage(Linkage), HasSection(HasSection) {}
+    explicit GVFlags(GlobalValue::LinkageTypes Linkage, bool HasSection,
+                     bool IsNotViableToInline)
+        : Linkage(Linkage), HasSection(HasSection),
+          IsNotViableToInline(IsNotViableToInline) {}
+
     GVFlags(const GlobalValue &GV)
-        : Linkage(GV.getLinkage()), HasSection(GV.hasSection()) {}
+        : Linkage(GV.getLinkage()), HasSection(GV.hasSection()) {
+      IsNotViableToInline = false;
+      if (const auto *F = dyn_cast<Function>(&GV))
+        // Inliner doesn't handle variadic functions.
+        // FIXME: refactor this to use the same code that inliner is using.
+        IsNotViableToInline = F->isVarArg();
+    }
   };
 
 private:
@@ -173,6 +186,8 @@ public:
   void setLinkage(GlobalValue::LinkageTypes Linkage) {
     Flags.Linkage = Linkage;
   }
+
+  bool isNotViableToInline() const { return Flags.IsNotViableToInline; }
 
   /// Return true if this summary is for a GlobalValue that needs promotion
   /// to be referenced from another module.
@@ -259,6 +274,14 @@ public:
   /// count (across all calls from this function) or 0 if no PGO.
   void addCallGraphEdge(GlobalValue::GUID CalleeGUID, CalleeInfo Info) {
     CallGraphEdgeList.push_back(std::make_pair(CalleeGUID, Info));
+  }
+
+  /// Record a call graph edge from this function to each function GUID recorded
+  /// in \p CallGraphEdges.
+  void
+  addCallGraphEdges(DenseMap<GlobalValue::GUID, CalleeInfo> &CallGraphEdges) {
+    for (auto &EI : CallGraphEdges)
+      addCallGraphEdge(EI.first, EI.second);
   }
 
   /// Record a call graph edge from this function to the function identified

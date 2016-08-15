@@ -18,6 +18,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/MachineCombinerPattern.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/Support/BranchProbability.h"
 #include "llvm/Target/TargetRegisterInfo.h"
@@ -55,10 +56,11 @@ class TargetInstrInfo : public MCInstrInfo {
   void operator=(const TargetInstrInfo &) = delete;
 public:
   TargetInstrInfo(unsigned CFSetupOpcode = ~0u, unsigned CFDestroyOpcode = ~0u,
-                  unsigned CatchRetOpcode = ~0u)
+                  unsigned CatchRetOpcode = ~0u, unsigned ReturnOpcode = ~0u)
       : CallFrameSetupOpcode(CFSetupOpcode),
         CallFrameDestroyOpcode(CFDestroyOpcode),
-        CatchRetOpcode(CatchRetOpcode) {}
+        CatchRetOpcode(CatchRetOpcode),
+        ReturnOpcode(ReturnOpcode) {}
 
   virtual ~TargetInstrInfo();
 
@@ -151,6 +153,7 @@ public:
   unsigned getCallFrameDestroyOpcode() const { return CallFrameDestroyOpcode; }
 
   unsigned getCatchReturnOpcode() const { return CatchRetOpcode; }
+  unsigned getReturnOpcode() const { return ReturnOpcode; }
 
   /// Returns the actual stack pointer adjustment made by an instruction
   /// as part of a call sequence. By default, only call frame setup/destroy
@@ -248,6 +251,12 @@ public:
                                  unsigned &Size, unsigned &Offset,
                                  const MachineFunction &MF) const;
 
+  /// Returns the size in bytes of the specified MachineInstr, or ~0U
+  /// when this function is not implemented by a target.
+  virtual unsigned getInstSizeInBytes(const MachineInstr &MI) const {
+    return ~0U;
+  }
+
   /// Return true if the instruction is as cheap as a move instruction.
   ///
   /// Targets for different archs need to override this, and different
@@ -261,11 +270,8 @@ public:
   /// MachineSink determines on its own whether the instruction is safe to sink;
   /// this gives the target a hook to override the default behavior with regards
   /// to which instructions should be sunk.
-  /// The default behavior is to not sink insert_subreg, subreg_to_reg, and
-  /// reg_sequence. These are meant to be close to the source to make it easier
-  /// to coalesce.
   virtual bool shouldSink(const MachineInstr &MI) const {
-    return !MI.isInsertSubreg() && !MI.isSubregToReg() && !MI.isRegSequence();
+    return true;
   }
 
   /// Re-issue the specified 'original' instruction at the
@@ -464,7 +470,7 @@ public:
   ///
   /// The CFG information in MBB.Predecessors and MBB.Successors must be valid
   /// before calling this function.
-  virtual bool AnalyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
+  virtual bool analyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
                              MachineBasicBlock *&FBB,
                              SmallVectorImpl<MachineOperand> &Cond,
                              bool AllowModify = false) const {
@@ -510,7 +516,7 @@ public:
   /// If AllowModify is true, then this routine is allowed to modify the basic
   /// block (e.g. delete instructions after the unconditional branch).
   ///
-  virtual bool AnalyzeBranchPredicate(MachineBasicBlock &MBB,
+  virtual bool analyzeBranchPredicate(MachineBasicBlock &MBB,
                                       MachineBranchPredicate &MBP,
                                       bool AllowModify = false) const {
     return true;
@@ -541,6 +547,26 @@ public:
                                 ArrayRef<MachineOperand> Cond,
                                 const DebugLoc &DL) const {
     llvm_unreachable("Target didn't implement TargetInstrInfo::InsertBranch!");
+  }
+
+  /// Analyze the loop code, return true if it cannot be understoo. Upon
+  /// success, this function returns false and returns information about the
+  /// induction variable and compare instruction used at the end.
+  virtual bool analyzeLoop(MachineLoop &L, MachineInstr *&IndVarInst,
+                           MachineInstr *&CmpInst) const {
+    return true;
+  }
+
+  /// Generate code to reduce the loop iteration by one and check if the loop is
+  /// finished.  Return the value/register of the the new loop count.  We need
+  /// this function when peeling off one or more iterations of a loop. This
+  /// function assumes the nth iteration is peeled first.
+  virtual unsigned reduceLoopCount(MachineBasicBlock &MBB,
+                                   MachineInstr *IndVar, MachineInstr &Cmp,
+                                   SmallVectorImpl<MachineOperand> &Cond,
+                                   SmallVectorImpl<MachineInstr *> &PrevInsts,
+                                   unsigned Iter, unsigned MaxIter) const {
+    llvm_unreachable("Target didn't implement ReduceLoopCount");
   }
 
   /// Delete the instruction OldInst and everything after it, replacing it with
@@ -1001,6 +1027,20 @@ public:
     return false;
   }
 
+  /// Return true if the instruction contains a base register and offset. If
+  /// true, the function also sets the operand position in the instruction
+  /// for the base register and offset.
+  virtual bool getBaseAndOffsetPosition(const MachineInstr &MI,
+                                        unsigned &BasePos,
+                                        unsigned &OffsetPos) const {
+    return false;
+  }
+
+  /// If the instruction is an increment of a constant value, return the amount.
+  virtual bool getIncrementValue(const MachineInstr &MI, int &Value) const {
+    return false;
+  }
+
   virtual bool enableClusterLoads() const { return false; }
 
   virtual bool enableClusterStores() const { return false; }
@@ -1033,6 +1073,10 @@ public:
   /// Return the noop instruction to use for a noop.
   virtual void getNoopForMachoTarget(MCInst &NopInst) const;
 
+  /// Return true for post-incremented instructions.
+  virtual bool isPostIncrement(const MachineInstr &MI) const {
+    return false;
+  }
 
   /// Returns true if the instruction is already predicated.
   virtual bool isPredicated(const MachineInstr &MI) const {
@@ -1440,6 +1484,7 @@ public:
 private:
   unsigned CallFrameSetupOpcode, CallFrameDestroyOpcode;
   unsigned CatchRetOpcode;
+  unsigned ReturnOpcode;
 };
 
 /// \brief Provide DenseMapInfo for TargetInstrInfo::RegSubRegPair.

@@ -322,6 +322,78 @@ static int AsLexInput(SourceMgr &SrcMgr, MCAsmInfo &MAI,
     case AsmToken::Slash:          OS << "Slash"; break;
     case AsmToken::Star:           OS << "Star"; break;
     case AsmToken::Tilde:          OS << "Tilde"; break;
+    case AsmToken::PercentCall16:
+      OS << "PercentCall16";
+      break;
+    case AsmToken::PercentCall_Hi:
+      OS << "PercentCall_Hi";
+      break;
+    case AsmToken::PercentCall_Lo:
+      OS << "PercentCall_Lo";
+      break;
+    case AsmToken::PercentDtprel_Hi:
+      OS << "PercentDtprel_Hi";
+      break;
+    case AsmToken::PercentDtprel_Lo:
+      OS << "PercentDtprel_Lo";
+      break;
+    case AsmToken::PercentGot:
+      OS << "PercentGot";
+      break;
+    case AsmToken::PercentGot_Disp:
+      OS << "PercentGot_Disp";
+      break;
+    case AsmToken::PercentGot_Hi:
+      OS << "PercentGot_Hi";
+      break;
+    case AsmToken::PercentGot_Lo:
+      OS << "PercentGot_Lo";
+      break;
+    case AsmToken::PercentGot_Ofst:
+      OS << "PercentGot_Ofst";
+      break;
+    case AsmToken::PercentGot_Page:
+      OS << "PercentGot_Page";
+      break;
+    case AsmToken::PercentGottprel:
+      OS << "PercentGottprel";
+      break;
+    case AsmToken::PercentGp_Rel:
+      OS << "PercentGp_Rel";
+      break;
+    case AsmToken::PercentHi:
+      OS << "PercentHi";
+      break;
+    case AsmToken::PercentHigher:
+      OS << "PercentHigher";
+      break;
+    case AsmToken::PercentHighest:
+      OS << "PercentHighest";
+      break;
+    case AsmToken::PercentLo:
+      OS << "PercentLo";
+      break;
+    case AsmToken::PercentNeg:
+      OS << "PercentNeg";
+      break;
+    case AsmToken::PercentPcrel_Hi:
+      OS << "PercentPcrel_Hi";
+      break;
+    case AsmToken::PercentPcrel_Lo:
+      OS << "PercentPcrel_Lo";
+      break;
+    case AsmToken::PercentTlsgd:
+      OS << "PercentTlsgd";
+      break;
+    case AsmToken::PercentTlsldm:
+      OS << "PercentTlsldm";
+      break;
+    case AsmToken::PercentTprel_Hi:
+      OS << "PercentTprel_Hi";
+      break;
+    case AsmToken::PercentTprel_Lo:
+      OS << "PercentTprel_Lo";
+      break;
     }
 
     // Print the token string.
@@ -511,7 +583,7 @@ int main(int argc, char **argv) {
     MCAsmBackend *MAB = nullptr;
     if (ShowEncoding) {
       CE = TheTarget->createMCCodeEmitter(*MCII, *MRI, Ctx);
-      MAB = TheTarget->createMCAsmBackend(*MRI, TripleName, MCPU);
+      MAB = TheTarget->createMCAsmBackend(*MRI, TripleName, MCPU, MCOptions);
     }
     auto FOut = llvm::make_unique<formatted_raw_ostream>(*OS);
     Str.reset(TheTarget->createAsmStreamer(
@@ -532,7 +604,8 @@ int main(int argc, char **argv) {
     }
 
     MCCodeEmitter *CE = TheTarget->createMCCodeEmitter(*MCII, *MRI, Ctx);
-    MCAsmBackend *MAB = TheTarget->createMCAsmBackend(*MRI, TripleName, MCPU);
+    MCAsmBackend *MAB = TheTarget->createMCAsmBackend(*MRI, TripleName, MCPU,
+                                                      MCOptions);
     Str.reset(TheTarget->createMCObjectStreamer(
         TheTriple, Ctx, *MAB, *OS, CE, *STI, MCOptions.MCRelaxAll,
         MCOptions.MCIncrementalLinkerCompatible,

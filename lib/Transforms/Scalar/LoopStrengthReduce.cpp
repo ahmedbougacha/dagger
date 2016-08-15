@@ -53,7 +53,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/LoopStrengthReduce.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
@@ -61,6 +61,7 @@
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/Analysis/IVUsers.h"
 #include "llvm/Analysis/LoopPass.h"
+#include "llvm/Analysis/LoopPassManager.h"
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/Constants.h"
@@ -73,6 +74,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
@@ -446,8 +448,7 @@ void Formula::deleteBaseReg(const SCEV *&S) {
 
 /// Test if this formula references the given register.
 bool Formula::referencesReg(const SCEV *S) const {
-  return S == ScaledReg ||
-         std::find(BaseRegs.begin(), BaseRegs.end(), S) != BaseRegs.end();
+  return S == ScaledReg || is_contained(BaseRegs, S);
 }
 
 /// Test whether this formula uses registers which are used by uses other than
@@ -2798,8 +2799,7 @@ void LSRInstance::FinalizeChain(IVChain &Chain) {
 
   for (const IVInc &Inc : Chain) {
     DEBUG(dbgs() << "        Inc: " << Inc.UserInst << "\n");
-    auto UseI = std::find(Inc.UserInst->op_begin(), Inc.UserInst->op_end(),
-                          Inc.IVOperand);
+    auto UseI = find(Inc.UserInst->operands(), Inc.IVOperand);
     assert(UseI != Inc.UserInst->op_end() && "cannot find IV operand");
     IVIncSet.insert(UseI);
   }
@@ -2932,8 +2932,8 @@ void LSRInstance::CollectFixupsAndInitialFormulae() {
   for (const IVStrideUse &U : IU) {
     Instruction *UserInst = U.getUser();
     // Skip IV users that are part of profitable IV Chains.
-    User::op_iterator UseI = std::find(UserInst->op_begin(), UserInst->op_end(),
-                                       U.getOperandValToReplace());
+    User::op_iterator UseI =
+        find(UserInst->operands(), U.getOperandValToReplace());
     assert(UseI != UserInst->op_end() && "cannot find IV operand");
     if (IVIncSet.count(UseI))
       continue;
@@ -4229,8 +4229,7 @@ void LSRInstance::SolveRecurse(SmallVectorImpl<const Formula *> &Solution,
     int NumReqRegsToFind = std::min(F.getNumRegs(), ReqRegs.size());
     for (const SCEV *Reg : ReqRegs) {
       if ((F.ScaledReg && F.ScaledReg == Reg) ||
-          std::find(F.BaseRegs.begin(), F.BaseRegs.end(), Reg) !=
-          F.BaseRegs.end()) {
+          is_contained(F.BaseRegs, Reg)) {
         --NumReqRegsToFind;
         if (NumReqRegsToFind == 0)
           break;
@@ -4442,6 +4441,7 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
   // Determine an input position which will be dominated by the operands and
   // which will dominate the result.
   IP = AdjustInsertPositionForExpand(IP, LF, LU, Rewriter);
+  Rewriter.setInsertPoint(&*IP);
 
   // Inform the Rewriter if we have a post-increment use, so that it can
   // perform an advantageous expansion.
@@ -4473,7 +4473,7 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
                                  LF.UserInst, LF.OperandValToReplace,
                                  Loops, SE, DT);
 
-    Ops.push_back(SE.getUnknown(Rewriter.expandCodeFor(Reg, nullptr, &*IP)));
+    Ops.push_back(SE.getUnknown(Rewriter.expandCodeFor(Reg, nullptr)));
   }
 
   // Expand the ScaledReg portion.
@@ -4491,14 +4491,14 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
       // Expand ScaleReg as if it was part of the base regs.
       if (F.Scale == 1)
         Ops.push_back(
-            SE.getUnknown(Rewriter.expandCodeFor(ScaledS, nullptr, &*IP)));
+            SE.getUnknown(Rewriter.expandCodeFor(ScaledS, nullptr)));
       else {
         // An interesting way of "folding" with an icmp is to use a negated
         // scale, which we'll implement by inserting it into the other operand
         // of the icmp.
         assert(F.Scale == -1 &&
                "The only scale supported by ICmpZero uses is -1!");
-        ICmpScaledV = Rewriter.expandCodeFor(ScaledS, nullptr, &*IP);
+        ICmpScaledV = Rewriter.expandCodeFor(ScaledS, nullptr);
       }
     } else {
       // Otherwise just expand the scaled register and an explicit scale,
@@ -4508,11 +4508,11 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
       // Unless the addressing mode will not be folded.
       if (!Ops.empty() && LU.Kind == LSRUse::Address &&
           isAMCompletelyFolded(TTI, LU, F)) {
-        Value *FullV = Rewriter.expandCodeFor(SE.getAddExpr(Ops), Ty, &*IP);
+        Value *FullV = Rewriter.expandCodeFor(SE.getAddExpr(Ops), Ty);
         Ops.clear();
         Ops.push_back(SE.getUnknown(FullV));
       }
-      ScaledS = SE.getUnknown(Rewriter.expandCodeFor(ScaledS, nullptr, &*IP));
+      ScaledS = SE.getUnknown(Rewriter.expandCodeFor(ScaledS, nullptr));
       if (F.Scale != 1)
         ScaledS =
             SE.getMulExpr(ScaledS, SE.getConstant(ScaledS->getType(), F.Scale));
@@ -4524,7 +4524,7 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
   if (F.BaseGV) {
     // Flush the operand list to suppress SCEVExpander hoisting.
     if (!Ops.empty()) {
-      Value *FullV = Rewriter.expandCodeFor(SE.getAddExpr(Ops), Ty, &*IP);
+      Value *FullV = Rewriter.expandCodeFor(SE.getAddExpr(Ops), Ty);
       Ops.clear();
       Ops.push_back(SE.getUnknown(FullV));
     }
@@ -4534,7 +4534,7 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
   // Flush the operand list to suppress SCEVExpander hoisting of both folded and
   // unfolded offsets. LSR assumes they both live next to their uses.
   if (!Ops.empty()) {
-    Value *FullV = Rewriter.expandCodeFor(SE.getAddExpr(Ops), Ty, &*IP);
+    Value *FullV = Rewriter.expandCodeFor(SE.getAddExpr(Ops), Ty);
     Ops.clear();
     Ops.push_back(SE.getUnknown(FullV));
   }
@@ -4570,7 +4570,7 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
   const SCEV *FullS = Ops.empty() ?
                       SE.getConstant(IntTy, 0) :
                       SE.getAddExpr(Ops);
-  Value *FullV = Rewriter.expandCodeFor(FullS, Ty, &*IP);
+  Value *FullV = Rewriter.expandCodeFor(FullS, Ty);
 
   // We're done expanding now, so reset the rewriter.
   Rewriter.clearPostInc();
@@ -4940,25 +4940,21 @@ private:
   bool runOnLoop(Loop *L, LPPassManager &LPM) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
-
 }
 
 char LoopStrengthReduce::ID = 0;
 INITIALIZE_PASS_BEGIN(LoopStrengthReduce, "loop-reduce",
-                "Loop Strength Reduction", false, false)
+                      "Loop Strength Reduction", false, false)
 INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(IVUsers)
+INITIALIZE_PASS_DEPENDENCY(IVUsersWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
 INITIALIZE_PASS_END(LoopStrengthReduce, "loop-reduce",
-                "Loop Strength Reduction", false, false)
+                    "Loop Strength Reduction", false, false)
 
-
-Pass *llvm::createLoopStrengthReducePass() {
-  return new LoopStrengthReduce();
-}
+Pass *llvm::createLoopStrengthReducePass() { return new LoopStrengthReduce(); }
 
 LoopStrengthReduce::LoopStrengthReduce() : LoopPass(ID) {
   initializeLoopStrengthReducePass(*PassRegistry::getPassRegistry());
@@ -4979,21 +4975,14 @@ void LoopStrengthReduce::getAnalysisUsage(AnalysisUsage &AU) const {
   // Requiring LoopSimplify a second time here prevents IVUsers from running
   // twice, since LoopSimplify was invalidated by running ScalarEvolution.
   AU.addRequiredID(LoopSimplifyID);
-  AU.addRequired<IVUsers>();
-  AU.addPreserved<IVUsers>();
+  AU.addRequired<IVUsersWrapperPass>();
+  AU.addPreserved<IVUsersWrapperPass>();
   AU.addRequired<TargetTransformInfoWrapperPass>();
 }
 
-bool LoopStrengthReduce::runOnLoop(Loop *L, LPPassManager & /*LPM*/) {
-  if (skipLoop(L))
-    return false;
-
-  auto &IU = getAnalysis<IVUsers>();
-  auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  const auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(
-      *L->getHeader()->getParent());
+static bool ReduceLoopStrength(Loop *L, IVUsers &IU, ScalarEvolution &SE,
+                               DominatorTree &DT, LoopInfo &LI,
+                               const TargetTransformInfo &TTI) {
   bool Changed = false;
 
   // Run the main LSR transformation.
@@ -5004,15 +4993,11 @@ bool LoopStrengthReduce::runOnLoop(Loop *L, LPPassManager & /*LPM*/) {
   if (EnablePhiElim && L->isLoopSimplifyForm()) {
     SmallVector<WeakVH, 16> DeadInsts;
     const DataLayout &DL = L->getHeader()->getModule()->getDataLayout();
-    SCEVExpander Rewriter(getAnalysis<ScalarEvolutionWrapperPass>().getSE(), DL,
-                          "lsr");
+    SCEVExpander Rewriter(SE, DL, "lsr");
 #ifndef NDEBUG
     Rewriter.setDebugType(DEBUG_TYPE);
 #endif
-    unsigned numFolded = Rewriter.replaceCongruentIVs(
-        L, &getAnalysis<DominatorTreeWrapperPass>().getDomTree(), DeadInsts,
-        &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(
-            *L->getHeader()->getParent()));
+    unsigned numFolded = Rewriter.replaceCongruentIVs(L, &DT, DeadInsts, &TTI);
     if (numFolded) {
       Changed = true;
       DeleteTriviallyDeadInstructions(DeadInsts);
@@ -5020,4 +5005,37 @@ bool LoopStrengthReduce::runOnLoop(Loop *L, LPPassManager & /*LPM*/) {
     }
   }
   return Changed;
+}
+
+bool LoopStrengthReduce::runOnLoop(Loop *L, LPPassManager & /*LPM*/) {
+  if (skipLoop(L))
+    return false;
+
+  auto &IU = getAnalysis<IVUsersWrapperPass>().getIU();
+  auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  const auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(
+      *L->getHeader()->getParent());
+  return ReduceLoopStrength(L, IU, SE, DT, LI, TTI);
+}
+
+PreservedAnalyses LoopStrengthReducePass::run(Loop &L,
+                                              LoopAnalysisManager &AM) {
+  const auto &FAM =
+      AM.getResult<FunctionAnalysisManagerLoopProxy>(L).getManager();
+  Function *F = L.getHeader()->getParent();
+
+  auto &IU = AM.getResult<IVUsersAnalysis>(L);
+  auto *SE = FAM.getCachedResult<ScalarEvolutionAnalysis>(*F);
+  auto *DT = FAM.getCachedResult<DominatorTreeAnalysis>(*F);
+  auto *LI = FAM.getCachedResult<LoopAnalysis>(*F);
+  auto *TTI = FAM.getCachedResult<TargetIRAnalysis>(*F);
+  assert((SE && DT && LI && TTI) &&
+         "Analyses for Loop Strength Reduce not available");
+
+  if (!ReduceLoopStrength(&L, IU, *SE, *DT, *LI, *TTI))
+    return PreservedAnalyses::all();
+
+  return getLoopPassPreservedAnalyses();
 }

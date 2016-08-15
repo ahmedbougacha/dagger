@@ -196,6 +196,13 @@ public:
     return Match_InvalidOperand;
   }
 
+  /// Validate the instruction match against any complex target predicates
+  /// before rendering any operands to it.
+  virtual unsigned
+  checkEarlyTargetMatchPredicate(MCInst &Inst, const OperandVector &Operands) {
+    return Match_Success;
+  }
+
   /// checkTargetMatchPredicate - Validate the instruction match against
   /// any complex target predicates not expressible via match classes.
   virtual unsigned checkTargetMatchPredicate(MCInst &Inst) {
@@ -217,6 +224,16 @@ public:
   }
 
   virtual void onLabelParsed(MCSymbol *Symbol) { }
+
+  /// Ensure that all previously parsed instructions have been emitted to the
+  /// output streamer, if the target does not emit them immediately.
+  virtual void flushPendingInstructions(MCStreamer &Out) { }
+
+  virtual const MCExpr *createTargetUnaryExpr(const MCExpr *E,
+                                              AsmToken::TokenKind OperatorToken,
+                                              MCContext &Ctx) {
+    return nullptr;
+  }
 };
 
 } // End llvm namespace

@@ -23,10 +23,10 @@
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/LoopIterator.h"
 #include "llvm/Analysis/LoopPass.h"
+#include "llvm/Analysis/OptimizationDiagnosticInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DataLayout.h"
-#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Debug.h"
@@ -46,7 +46,7 @@ STATISTIC(NumCompletelyUnrolled, "Number of loops completely unrolled");
 STATISTIC(NumUnrolled, "Number of loops unrolled (completely or otherwise)");
 
 static cl::opt<bool>
-UnrollRuntimeEpilog("unroll-runtime-epilog", cl::init(true), cl::Hidden,
+UnrollRuntimeEpilog("unroll-runtime-epilog", cl::init(false), cl::Hidden,
                     cl::desc("Allow runtime unrolled loops to be unrolled "
                              "with epilog instead of prolog."));
 
@@ -204,7 +204,7 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
                       bool AllowRuntime, bool AllowExpensiveTripCount,
                       unsigned TripMultiple, LoopInfo *LI, ScalarEvolution *SE,
                       DominatorTree *DT, AssumptionCache *AC,
-                      bool PreserveLCSSA) {
+                      OptimizationRemarkEmitter *ORE, bool PreserveLCSSA) {
   BasicBlock *Preheader = L->getLoopPreheader();
   if (!Preheader) {
     DEBUG(dbgs() << "  Can't unroll; loop preheader-insertion failed.\n");
@@ -272,8 +272,9 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
   // now we just recompute LCSSA for the outer loop, but it should be possible
   // to fix it in-place.
   bool NeedToFixLCSSA = PreserveLCSSA && CompletelyUnroll &&
-      std::any_of(ExitBlocks.begin(), ExitBlocks.end(),
-                  [&](BasicBlock *BB) { return isa<PHINode>(BB->begin()); });
+                        any_of(ExitBlocks, [](const BasicBlock *BB) {
+                          return isa<PHINode>(BB->begin());
+                        });
 
   // We assume a run-time trip count if the compiler cannot
   // figure out the loop trip count and the unroll-runtime
@@ -323,21 +324,16 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
   }
 
   // Report the unrolling decision.
-  DebugLoc LoopLoc = L->getStartLoc();
-  Function *F = Header->getParent();
-  LLVMContext &Ctx = F->getContext();
-
   if (CompletelyUnroll) {
     DEBUG(dbgs() << "COMPLETELY UNROLLING loop %" << Header->getName()
           << " with trip count " << TripCount << "!\n");
-    emitOptimizationRemark(Ctx, DEBUG_TYPE, *F, LoopLoc,
-                           Twine("completely unrolled loop with ") +
-                               Twine(TripCount) + " iterations");
+    ORE->emitOptimizationRemark(DEBUG_TYPE, L,
+                                Twine("completely unrolled loop with ") +
+                                    Twine(TripCount) + " iterations");
   } else {
     auto EmitDiag = [&](const Twine &T) {
-      emitOptimizationRemark(Ctx, DEBUG_TYPE, *F, LoopLoc,
-                             "unrolled loop by a factor of " + Twine(Count) +
-                                 T);
+      ORE->emitOptimizationRemark(
+          DEBUG_TYPE, L, "unrolled loop by a factor of " + Twine(Count) + T);
     };
 
     DEBUG(dbgs() << "UNROLLING loop %" << Header->getName()
@@ -382,6 +378,15 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
   LoopBlocksDFS::RPOIterator BlockEnd = DFS.endRPO();
 
   std::vector<BasicBlock*> UnrolledLoopBlocks = L->getBlocks();
+
+  // Loop Unrolling might create new loops. While we do preserve LoopInfo, we
+  // might break loop-simplified form for these loops (as they, e.g., would
+  // share the same exit blocks). We'll keep track of loops for which we can
+  // break this so that later we can re-simplify them.
+  SmallSetVector<Loop *, 4> LoopsToSimplify;
+  for (Loop *SubLoop : *L)
+    LoopsToSimplify.insert(SubLoop);
+
   for (unsigned It = 1; It != Count; ++It) {
     std::vector<BasicBlock*> NewBlocks;
     SmallDenseMap<const Loop *, Loop *, 4> NewLoops;
@@ -412,6 +417,7 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
                  "Expected parent loop before sub-loop in RPO");
           NewLoop = new Loop;
           NewLoopParent->addChildLoop(NewLoop);
+          LoopsToSimplify.insert(NewLoop);
 
           // Forget the old loop, since its inputs may have changed.
           if (SE)
@@ -663,6 +669,11 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
     if (!OuterL && !CompletelyUnroll)
       OuterL = L;
     if (OuterL) {
+      // OuterL includes all loops for which we can break loop-simplify, so
+      // it's sufficient to simplify only it (it'll recursively simplify inner
+      // loops too).
+      // TODO: That potentially might be compile-time expensive. We should try
+      // to fix the loop-simplified form incrementally.
       simplifyLoop(OuterL, DT, LI, SE, AC, PreserveLCSSA);
 
       // LCSSA must be performed on the outermost affected loop. The unrolled
@@ -678,6 +689,10 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
       else
         assert(OuterL->isLCSSAForm(*DT) &&
                "Loops should be in LCSSA form after loop-unroll.");
+    } else {
+      // Simplify loops for which we might've broken loop-simplify form.
+      for (Loop *SubLoop : LoopsToSimplify)
+        simplifyLoop(SubLoop, DT, LI, SE, AC, PreserveLCSSA);
     }
   }
 

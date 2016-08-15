@@ -817,7 +817,7 @@ lltok::Kind LLLexer::LexIdentifier() {
     int len = CurPtr-TokStart-3;
     uint32_t bits = len * 4;
     StringRef HexStr(TokStart + 3, len);
-    if (!std::all_of(HexStr.begin(), HexStr.end(), isxdigit)) {
+    if (!all_of(HexStr, isxdigit)) {
       // Bad token, return it as an error.
       CurPtr = TokStart+3;
       return lltok::Error;
@@ -871,7 +871,8 @@ lltok::Kind LLLexer::Lex0x() {
     // HexFPConstant - Floating point constant represented in IEEE format as a
     // hexadecimal number for when exponential notation is not precise enough.
     // Half, Float, and double only.
-    APFloatVal = APFloat(BitsToDouble(HexIntToVal(TokStart+2, CurPtr)));
+    APFloatVal = APFloat(APFloat::IEEEdouble,
+                         APInt(64, HexIntToVal(TokStart + 2, CurPtr)));
     return lltok::APFloat;
   }
 
