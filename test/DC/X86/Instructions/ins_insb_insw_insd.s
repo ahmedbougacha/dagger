@@ -4,7 +4,7 @@
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
-insb	%dx, %es:(%rdi)
+insb	%dx, %es:(%r11)
 
 ## INSERTQ
 # CHECK-LABEL: call void @llvm.dc.startinst
@@ -31,12 +31,12 @@ insertq	$2, $2, %xmm10, %xmm8
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
-insl	%dx, %es:(%rdi)
+insl	%dx, %es:(%r11)
 
 ## INSW
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
-insw	%dx, %es:(%rdi)
+insw	%dx, %es:(%r11)
 
 retq

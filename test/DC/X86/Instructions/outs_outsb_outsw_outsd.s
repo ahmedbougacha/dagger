@@ -4,18 +4,18 @@
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
-outsb	(%rsi), %dx
+outsb	(%r11), %dx
 
 ## OUTSL
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
-outsl	(%rsi), %dx
+outsl	(%r11), %dx
 
 ## OUTSW
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
-outsw	(%rsi), %dx
+outsw	(%r11), %dx
 
 retq
