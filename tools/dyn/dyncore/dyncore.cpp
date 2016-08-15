@@ -165,11 +165,11 @@ public:
     auto Resolver = createLambdaResolver(
         [&](const std::string &Name) {
           if (auto Sym = findSymbol(Name))
-            return RuntimeDyld::SymbolInfo(Sym.getAddress(), Sym.getFlags());
+            return JITSymbol(Sym.getAddress(), Sym.getFlags());
           else if (auto Addr =
                        RTDyldMemoryManager::getSymbolAddressInProcess(Name))
-            return RuntimeDyld::SymbolInfo(Addr, JITSymbolFlags::Exported);
-          return RuntimeDyld::SymbolInfo(nullptr);
+            return JITSymbol(Addr, JITSymbolFlags::Exported);
+          return JITSymbol(nullptr);
         },
         [](const std::string &S) { return nullptr; });
 
