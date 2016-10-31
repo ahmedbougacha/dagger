@@ -36,7 +36,7 @@ pabsw	2(%rbx,%r14,2), %mm4
 # CHECK-NEXT: unreachable
 pabsw	%mm5, %mm4
 
-## PABSBrm128
+## PABSBrm
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
@@ -53,7 +53,7 @@ pabsw	%mm5, %mm4
 # CHECK-NEXT: unreachable
 pabsb	2(%rbx,%r14,2), %xmm8
 
-## PABSBrr128
+## PABSBrr
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
@@ -65,7 +65,7 @@ pabsb	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: unreachable
 pabsb	%xmm9, %xmm8
 
-## PABSDrm128
+## PABSDrm
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
@@ -82,7 +82,7 @@ pabsb	%xmm9, %xmm8
 # CHECK-NEXT: unreachable
 pabsd	2(%rbx,%r14,2), %xmm8
 
-## PABSDrr128
+## PABSDrr
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
@@ -94,7 +94,7 @@ pabsd	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: unreachable
 pabsd	%xmm9, %xmm8
 
-## PABSWrm128
+## PABSWrm
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
@@ -111,7 +111,7 @@ pabsd	%xmm9, %xmm8
 # CHECK-NEXT: unreachable
 pabsw	2(%rbx,%r14,2), %xmm8
 
-## PABSWrr128
+## PABSWrr
 # CHECK-LABEL: call void @llvm.dc.startinst
 # CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
