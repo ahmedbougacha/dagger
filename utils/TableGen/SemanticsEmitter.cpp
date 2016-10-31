@@ -253,10 +253,10 @@ private:
   /// of SDNodeEquiv definitions.
   ///
   void flattenSet(const TreePatternNode &TPN) {
-    unsigned NumNodeDefs = TPN.getNumChildren() - 1;
+    const unsigned NumDefs = TPN.getNumChildren() - 1;
     const TreePatternNode &LastChild = *TPN.getChild(TPN.getNumChildren() - 1);
 
-    assert(NumNodeDefs == LastChild.getNumTypes() &&
+    assert(NumDefs == LastChild.getNumTypes() &&
            "Invalid 'set': last child needs to define all the others.");
 
     // Visit the last (non-register) child, that defined the values for all
@@ -264,7 +264,6 @@ private:
     LSResults ChildResults = flattenSubtree(LastChild);
     // Count what the child defined, because equivalent SDNodes might not
     // define all the children.
-    const unsigned NumDefs = TPN.getNumChildren() - 1;
     const unsigned NumOps = ChildResults.size();
 
     for (unsigned i = 0, e = NumDefs; i != e; ++i) {
