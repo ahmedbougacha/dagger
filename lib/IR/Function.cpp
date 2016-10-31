@@ -258,7 +258,10 @@ Function::Function(FunctionType *Ty, LinkageTypes Linkage, const Twine &name,
   assert(FunctionType::isValidReturnType(getReturnType()) &&
          "invalid return type");
   setGlobalObjectSubClassData(0);
-  SymTab = new ValueSymbolTable();
+
+  // We only need a symbol table for a function if the context keeps value names
+  if (!getContext().shouldDiscardValueNames())
+    SymTab = make_unique<ValueSymbolTable>();
 
   // If the function has arguments, mark them as lazily built.
   if (Ty->getNumParams())
@@ -279,7 +282,6 @@ Function::~Function() {
 
   // Delete all of the method arguments and unlink from symbol table...
   ArgumentList.clear();
-  delete SymTab;
 
   // Remove the function from the on-the-side GC table.
   clearGC();
@@ -326,10 +328,6 @@ size_t Function::arg_size() const {
 }
 bool Function::arg_empty() const {
   return getFunctionType()->getNumParams() == 0;
-}
-
-void Function::setParent(Module *parent) {
-  Parent = parent;
 }
 
 // dropAllReferences() - This function causes all the subinstructions to "let
@@ -551,6 +549,13 @@ static std::string getMangledTypeStr(Type* Ty) {
   return Result;
 }
 
+StringRef Intrinsic::getName(ID id) {
+  assert(id < num_intrinsics && "Invalid intrinsic ID!");
+  assert(!isOverloaded(id) &&
+         "This version of getName does not support overloading");
+  return IntrinsicNameTable[id];
+}
+
 std::string Intrinsic::getName(ID id, ArrayRef<Type*> Tys) {
   assert(id < num_intrinsics && "Invalid intrinsic ID!");
   std::string Result(IntrinsicNameTable[id]);
@@ -748,9 +753,9 @@ static void DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
   case IIT_EMPTYSTRUCT:
     OutputTable.push_back(IITDescriptor::get(IITDescriptor::Struct, 0));
     return;
-  case IIT_STRUCT5: ++StructElts; // FALL THROUGH.
-  case IIT_STRUCT4: ++StructElts; // FALL THROUGH.
-  case IIT_STRUCT3: ++StructElts; // FALL THROUGH.
+  case IIT_STRUCT5: ++StructElts; LLVM_FALLTHROUGH;
+  case IIT_STRUCT4: ++StructElts; LLVM_FALLTHROUGH;
+  case IIT_STRUCT3: ++StructElts; LLVM_FALLTHROUGH;
   case IIT_STRUCT2: {
     OutputTable.push_back(IITDescriptor::get(IITDescriptor::Struct,StructElts));
 
@@ -1263,5 +1268,22 @@ Optional<uint64_t> Function::getEntryCount() const {
           return None;
         return Count;
       }
+  return None;
+}
+
+void Function::setSectionPrefix(StringRef Prefix) {
+  MDBuilder MDB(getContext());
+  setMetadata(LLVMContext::MD_section_prefix,
+              MDB.createFunctionSectionPrefix(Prefix));
+}
+
+Optional<StringRef> Function::getSectionPrefix() const {
+  if (MDNode *MD = getMetadata(LLVMContext::MD_section_prefix)) {
+    assert(dyn_cast<MDString>(MD->getOperand(0))
+               ->getString()
+               .equals("function_section_prefix") &&
+           "Metadata not match");
+    return dyn_cast<MDString>(MD->getOperand(1))->getString();
+  }
   return None;
 }

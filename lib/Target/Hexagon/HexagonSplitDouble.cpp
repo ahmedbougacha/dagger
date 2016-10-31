@@ -47,7 +47,7 @@ namespace {
         TII(nullptr) {
       initializeHexagonSplitDoubleRegsPass(*PassRegistry::getPassRegistry());
     }
-    const char *getPassName() const override {
+    StringRef getPassName() const override {
       return "Hexagon Split Double Registers";
     }
     void getAnalysisUsage(AnalysisUsage &AU) const override {
@@ -337,6 +337,7 @@ int32_t HexagonSplitDoubleRegs::profit(const MachineInstr *MI) const {
       if (V == 0 || V == -1)
         return 10;
       // Fall through into A2_combinew.
+      LLVM_FALLTHROUGH;
     }
     case Hexagon::A2_combinew:
       return 2;

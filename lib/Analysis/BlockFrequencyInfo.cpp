@@ -39,8 +39,7 @@ static cl::opt<GVDAGType> ViewBlockFreqPropagationDAG(
                           "display a graph using the raw "
                           "integer fractional block frequency representation."),
                clEnumValN(GVDT_Count, "count", "display a graph using the real "
-                                               "profile count if available."),
-               clEnumValEnd));
+                                               "profile count if available.")));
 
 cl::opt<std::string>
     ViewBlockFreqFuncName("view-bfi-func-name", cl::Hidden,
@@ -60,24 +59,22 @@ namespace llvm {
 
 template <>
 struct GraphTraits<BlockFrequencyInfo *> {
-  typedef const BasicBlock NodeType;
+  typedef const BasicBlock *NodeRef;
   typedef succ_const_iterator ChildIteratorType;
-  typedef Function::const_iterator nodes_iterator;
+  typedef pointer_iterator<Function::const_iterator> nodes_iterator;
 
-  static inline const NodeType *getEntryNode(const BlockFrequencyInfo *G) {
+  static NodeRef getEntryNode(const BlockFrequencyInfo *G) {
     return &G->getFunction()->front();
   }
-  static ChildIteratorType child_begin(const NodeType *N) {
+  static ChildIteratorType child_begin(const NodeRef N) {
     return succ_begin(N);
   }
-  static ChildIteratorType child_end(const NodeType *N) {
-    return succ_end(N);
-  }
+  static ChildIteratorType child_end(const NodeRef N) { return succ_end(N); }
   static nodes_iterator nodes_begin(const BlockFrequencyInfo *G) {
-    return G->getFunction()->begin();
+    return nodes_iterator(G->getFunction()->begin());
   }
   static nodes_iterator nodes_end(const BlockFrequencyInfo *G) {
-    return G->getFunction()->end();
+    return nodes_iterator(G->getFunction()->end());
   }
 };
 

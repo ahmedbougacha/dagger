@@ -58,21 +58,23 @@ define <4 x float> @vselect(<4 x float>*%p, <4 x i32> %q) {
 ; X32-NEXT:    je .LBB1_1
 ; X32-NEXT:  # BB#2: # %entry
 ; X32-NEXT:    xorps %xmm1, %xmm1
-; X32-NEXT:    jmp .LBB1_3
+; X32-NEXT:    cmpl $0, {{[0-9]+}}(%esp)
+; X32-NEXT:    jne .LBB1_5
+; X32-NEXT:    jmp .LBB1_4
 ; X32-NEXT:  .LBB1_1:
 ; X32-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
-; X32-NEXT:  .LBB1_3: # %entry
 ; X32-NEXT:    cmpl $0, {{[0-9]+}}(%esp)
 ; X32-NEXT:    je .LBB1_4
-; X32-NEXT:  # BB#5: # %entry
+; X32-NEXT:  .LBB1_5: # %entry
 ; X32-NEXT:    xorps %xmm2, %xmm2
-; X32-NEXT:    jmp .LBB1_6
+; X32-NEXT:    cmpl $0, {{[0-9]+}}(%esp)
+; X32-NEXT:    jne .LBB1_8
+; X32-NEXT:    jmp .LBB1_7
 ; X32-NEXT:  .LBB1_4:
 ; X32-NEXT:    movss {{.*#+}} xmm2 = mem[0],zero,zero,zero
-; X32-NEXT:  .LBB1_6: # %entry
 ; X32-NEXT:    cmpl $0, {{[0-9]+}}(%esp)
 ; X32-NEXT:    je .LBB1_7
-; X32-NEXT:  # BB#8: # %entry
+; X32-NEXT:  .LBB1_8: # %entry
 ; X32-NEXT:    xorps %xmm3, %xmm3
 ; X32-NEXT:    jmp .LBB1_9
 ; X32-NEXT:  .LBB1_7:
@@ -95,21 +97,23 @@ define <4 x float> @vselect(<4 x float>*%p, <4 x i32> %q) {
 ; X64-NEXT:    je .LBB1_1
 ; X64-NEXT:  # BB#2: # %entry
 ; X64-NEXT:    xorps %xmm1, %xmm1
-; X64-NEXT:    jmp .LBB1_3
+; X64-NEXT:    testl %edx, %edx
+; X64-NEXT:    jne .LBB1_5
+; X64-NEXT:    jmp .LBB1_4
 ; X64-NEXT:  .LBB1_1:
 ; X64-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
-; X64-NEXT:  .LBB1_3: # %entry
 ; X64-NEXT:    testl %edx, %edx
 ; X64-NEXT:    je .LBB1_4
-; X64-NEXT:  # BB#5: # %entry
+; X64-NEXT:  .LBB1_5: # %entry
 ; X64-NEXT:    xorps %xmm2, %xmm2
-; X64-NEXT:    jmp .LBB1_6
+; X64-NEXT:    testl %r8d, %r8d
+; X64-NEXT:    jne .LBB1_8
+; X64-NEXT:    jmp .LBB1_7
 ; X64-NEXT:  .LBB1_4:
 ; X64-NEXT:    movss {{.*#+}} xmm2 = mem[0],zero,zero,zero
-; X64-NEXT:  .LBB1_6: # %entry
 ; X64-NEXT:    testl %r8d, %r8d
 ; X64-NEXT:    je .LBB1_7
-; X64-NEXT:  # BB#8: # %entry
+; X64-NEXT:  .LBB1_8: # %entry
 ; X64-NEXT:    xorps %xmm3, %xmm3
 ; X64-NEXT:    jmp .LBB1_9
 ; X64-NEXT:  .LBB1_7:
@@ -146,5 +150,68 @@ define <4 x float> @PR28044(<4 x float> %a0, <4 x float> %a1) nounwind {
   %sext = sext <4 x i1> %cmp to <4 x i32>
   %res = bitcast <4 x i32> %sext to <4 x float>
   ret <4 x float> %res
+}
+
+; Don't crash trying to do the impossible: an integer vector comparison doesn't exist, so we must scalarize.
+; https://llvm.org/bugs/show_bug.cgi?id=30512
+
+define <4 x i32> @PR30512(<4 x i32> %x, <4 x i32> %y) nounwind {
+; X32-LABEL: PR30512:
+; X32:       # BB#0:
+; X32-NEXT:    pushl %ebp
+; X32-NEXT:    pushl %ebx
+; X32-NEXT:    pushl %edi
+; X32-NEXT:    pushl %esi
+; X32-NEXT:    movl {{[0-9]+}}(%esp), %ebp
+; X32-NEXT:    movl {{[0-9]+}}(%esp), %esi
+; X32-NEXT:    movl {{[0-9]+}}(%esp), %edi
+; X32-NEXT:    movl {{[0-9]+}}(%esp), %ebx
+; X32-NEXT:    movl {{[0-9]+}}(%esp), %edx
+; X32-NEXT:    xorl %ecx, %ecx
+; X32-NEXT:    cmpl {{[0-9]+}}(%esp), %edx
+; X32-NEXT:    sete %cl
+; X32-NEXT:    xorl %edx, %edx
+; X32-NEXT:    cmpl {{[0-9]+}}(%esp), %ebx
+; X32-NEXT:    sete %dl
+; X32-NEXT:    xorl %ebx, %ebx
+; X32-NEXT:    cmpl {{[0-9]+}}(%esp), %edi
+; X32-NEXT:    sete %bl
+; X32-NEXT:    xorl %eax, %eax
+; X32-NEXT:    cmpl {{[0-9]+}}(%esp), %esi
+; X32-NEXT:    sete %al
+; X32-NEXT:    movl %eax, 12(%ebp)
+; X32-NEXT:    movl %ebx, 8(%ebp)
+; X32-NEXT:    movl %edx, 4(%ebp)
+; X32-NEXT:    movl %ecx, (%ebp)
+; X32-NEXT:    movl %ebp, %eax
+; X32-NEXT:    popl %esi
+; X32-NEXT:    popl %edi
+; X32-NEXT:    popl %ebx
+; X32-NEXT:    popl %ebp
+; X32-NEXT:    retl $4
+;
+; X64-LABEL: PR30512:
+; X64:       # BB#0:
+; X64-NEXT:    xorl %eax, %eax
+; X64-NEXT:    cmpl %r9d, %esi
+; X64-NEXT:    sete %al
+; X64-NEXT:    xorl %esi, %esi
+; X64-NEXT:    cmpl {{[0-9]+}}(%rsp), %edx
+; X64-NEXT:    sete %sil
+; X64-NEXT:    xorl %edx, %edx
+; X64-NEXT:    cmpl {{[0-9]+}}(%rsp), %ecx
+; X64-NEXT:    sete %dl
+; X64-NEXT:    xorl %ecx, %ecx
+; X64-NEXT:    cmpl {{[0-9]+}}(%rsp), %r8d
+; X64-NEXT:    sete %cl
+; X64-NEXT:    movl %ecx, 12(%rdi)
+; X64-NEXT:    movl %edx, 8(%rdi)
+; X64-NEXT:    movl %esi, 4(%rdi)
+; X64-NEXT:    movl %eax, (%rdi)
+; X64-NEXT:    movq %rdi, %rax
+; X64-NEXT:    retq
+  %cmp = icmp eq <4 x i32> %x, %y
+  %zext = zext <4 x i1> %cmp to <4 x i32>
+  ret <4 x i32> %zext
 }
 

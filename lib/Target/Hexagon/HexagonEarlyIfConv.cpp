@@ -137,7 +137,7 @@ namespace {
         HII(0), TRI(0), MFN(0), MRI(0), MDT(0), MLI(0) {
       initializeHexagonEarlyIfConversionPass(*PassRegistry::getPassRegistry());
     }
-    const char *getPassName() const override {
+    StringRef getPassName() const override {
       return "Hexagon early if conversion";
     }
     void getAnalysisUsage(AnalysisUsage &AU) const override {
@@ -357,10 +357,10 @@ bool HexagonEarlyIfConversion::isValidCandidate(const MachineBasicBlock *B)
     // update the use of it after predication). PHI uses will be updated
     // to use a result of a MUX, and a MUX cannot be created for predicate
     // registers.
-    for (ConstMIOperands MO(MI); MO.isValid(); ++MO) {
-      if (!MO->isReg() || !MO->isDef())
+    for (const MachineOperand &MO : MI.operands()) {
+      if (!MO.isReg() || !MO.isDef())
         continue;
-      unsigned R = MO->getReg();
+      unsigned R = MO.getReg();
       if (!TargetRegisterInfo::isVirtualRegister(R))
         continue;
       if (MRI->getRegClass(R) != &Hexagon::PredRegsRegClass)
@@ -375,10 +375,10 @@ bool HexagonEarlyIfConversion::isValidCandidate(const MachineBasicBlock *B)
 
 
 bool HexagonEarlyIfConversion::usesUndefVReg(const MachineInstr *MI) const {
-  for (ConstMIOperands MO(*MI); MO.isValid(); ++MO) {
-    if (!MO->isReg() || !MO->isUse())
+  for (const MachineOperand &MO : MI->operands()) {
+    if (!MO.isReg() || !MO.isUse())
       continue;
-    unsigned R = MO->getReg();
+    unsigned R = MO.getReg();
     if (!TargetRegisterInfo::isVirtualRegister(R))
       continue;
     const MachineInstr *DefI = MRI->getVRegDef(R);
@@ -454,10 +454,10 @@ unsigned HexagonEarlyIfConversion::countPredicateDefs(
       const MachineBasicBlock *B) const {
   unsigned PredDefs = 0;
   for (auto &MI : *B) {
-    for (ConstMIOperands MO(MI); MO.isValid(); ++MO) {
-      if (!MO->isReg() || !MO->isDef())
+    for (const MachineOperand &MO : MI.operands()) {
+      if (!MO.isReg() || !MO.isDef())
         continue;
-      unsigned R = MO->getReg();
+      unsigned R = MO.getReg();
       if (!TargetRegisterInfo::isVirtualRegister(R))
         continue;
       if (MRI->getRegClass(R) == &Hexagon::PredRegsRegClass)
@@ -669,14 +669,14 @@ void HexagonEarlyIfConversion::predicateInstr(MachineBasicBlock *ToB,
     unsigned COpc = getCondStoreOpcode(Opc, IfTrue);
     assert(COpc);
     MachineInstrBuilder MIB = BuildMI(*ToB, At, DL, HII->get(COpc));
-    MIOperands MO(*MI);
+    MachineInstr::mop_iterator MOI = MI->operands_begin();
     if (HII->isPostIncrement(*MI)) {
-      MIB.addOperand(*MO);
-      ++MO;
+      MIB.addOperand(*MOI);
+      ++MOI;
     }
     MIB.addReg(PredR);
-    for (; MO.isValid(); ++MO)
-      MIB.addOperand(*MO);
+    for (const MachineOperand &MO : make_range(MOI, MI->operands_end()))
+      MIB.addOperand(MO);
 
     // Set memory references.
     MachineInstr::mmo_iterator MMOBegin = MI->memoperands_begin();
@@ -949,9 +949,9 @@ void HexagonEarlyIfConversion::replacePhiEdges(MachineBasicBlock *OldB,
     MachineBasicBlock::iterator P, N = SB->getFirstNonPHI();
     for (P = SB->begin(); P != N; ++P) {
       MachineInstr &PN = *P;
-      for (MIOperands MO(PN); MO.isValid(); ++MO)
-        if (MO->isMBB() && MO->getMBB() == OldB)
-          MO->setMBB(NewB);
+      for (MachineOperand &MO : PN.operands())
+        if (MO.isMBB() && MO.getMBB() == OldB)
+          MO.setMBB(NewB);
     }
   }
 }
@@ -963,7 +963,7 @@ void HexagonEarlyIfConversion::mergeBlocks(MachineBasicBlock *PredB,
                << PrintMB(SuccB) << "\n");
   bool TermOk = hasUncondBranch(SuccB);
   eliminatePhis(SuccB);
-  HII->RemoveBranch(*PredB);
+  HII->removeBranch(*PredB);
   PredB->removeSuccessor(SuccB);
   PredB->splice(PredB->end(), SuccB, SuccB->begin(), SuccB->end());
   MachineBasicBlock::succ_iterator I, E = SuccB->succ_end();

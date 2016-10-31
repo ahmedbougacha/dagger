@@ -18,7 +18,7 @@ using namespace llvm;
 
 namespace {
 
-  enum class DumpKind { NoDump, DumpFuncsToStdOut, DumpModsToStdErr,
+  enum class DumpKind { NoDump, DumpFuncsToStdOut, DumpModsToStdOut,
                         DumpModsToDisk };
 
   cl::opt<DumpKind> OrcDumpKind("orc-lazy-debug",
@@ -30,15 +30,14 @@ namespace {
                                   clEnumValN(DumpKind::DumpFuncsToStdOut,
                                              "funcs-to-stdout",
                                              "Dump function names to stdout."),
-                                  clEnumValN(DumpKind::DumpModsToStdErr,
-                                             "mods-to-stderr",
-                                             "Dump modules to stderr."),
+                                  clEnumValN(DumpKind::DumpModsToStdOut,
+                                             "mods-to-stdout",
+                                             "Dump modules to stdout."),
                                   clEnumValN(DumpKind::DumpModsToDisk,
                                              "mods-to-disk",
                                              "Dump modules to the current "
                                              "working directory. (WARNING: "
-                                             "will overwrite existing files)."),
-                                  clEnumValEnd),
+                                             "will overwrite existing files).")),
                                 cl::Hidden);
 
   cl::opt<bool> OrcInlineStubs("orc-lazy-inline-stubs",
@@ -71,9 +70,9 @@ OrcLazyJIT::TransformFtor OrcLazyJIT::createDebugDumper() {
       return M;
     };
 
-  case DumpKind::DumpModsToStdErr:
+  case DumpKind::DumpModsToStdOut:
     return [](std::unique_ptr<Module> M) {
-             dbgs() << "----- Module Start -----\n" << *M
+             outs() << "----- Module Start -----\n" << *M
                     << "----- Module End -----\n";
 
              return M;
@@ -105,8 +104,8 @@ static PtrTy fromTargetAddress(JITTargetAddress Addr) {
   return reinterpret_cast<PtrTy>(static_cast<uintptr_t>(Addr));
 }
 
-int llvm::runOrcLazyJIT(std::vector<std::unique_ptr<Module>> Ms, int ArgC,
-                        char* ArgV[]) {
+int llvm::runOrcLazyJIT(std::vector<std::unique_ptr<Module>> Ms,
+                        const std::vector<std::string> &Args) {
   // Add the program's symbols into the JIT's search space.
   if (sys::DynamicLibrary::LoadLibraryPermanently(nullptr)) {
     errs() << "Error loading program symbols.\n";
@@ -153,7 +152,10 @@ int llvm::runOrcLazyJIT(std::vector<std::unique_ptr<Module>> Ms, int ArgC,
   }
 
   typedef int (*MainFnPtr)(int, char*[]);
+  std::vector<const char *> ArgV;
+  for (auto &Arg : Args)
+    ArgV.push_back(Arg.c_str());
   auto Main = fromTargetAddress<MainFnPtr>(MainSym.getAddress());
-  return Main(ArgC, ArgV);
+  return Main(ArgV.size(), (char**)ArgV.data());
 }
 

@@ -36,7 +36,7 @@ public:
 
   AMDGPUAnnotateKernelFeatures() : ModulePass(ID) { }
   bool runOnModule(Module &M) override;
-  const char *getPassName() const override {
+  StringRef getPassName() const override {
     return "AMDGPU Annotate Kernel Features";
   }
 
@@ -202,7 +202,7 @@ bool AMDGPUAnnotateKernelFeatures::runOnModule(Module &M) {
   // always initialized.
 
   bool Changed = addAttrsForIntrinsics(M, IntrinsicToAttr);
-  if (TT.getOS() == Triple::AMDHSA) {
+  if (TT.getOS() == Triple::AMDHSA || TT.getOS() == Triple::Mesa3D) {
     Changed |= addAttrsForIntrinsics(M, HSAIntrinsicToAttr);
 
     for (Function &F : M) {

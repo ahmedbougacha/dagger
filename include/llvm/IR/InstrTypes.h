@@ -957,6 +957,8 @@ public:
     return P >= FIRST_ICMP_PREDICATE && P <= LAST_ICMP_PREDICATE;
   }
 
+  static StringRef getPredicateName(Predicate P);
+
   bool isFPPredicate() const { return isFPPredicate(getPredicate()); }
   bool isIntPredicate() const { return isIntPredicate(getPredicate()); }
 
@@ -1333,6 +1335,12 @@ public:
   unsigned getBundleOperandsEndIndex() const {
     assert(hasOperandBundles() && "Don't call otherwise!");
     return bundle_op_info_end()[-1].End;
+  }
+
+  /// Return true if the operand at index \p Idx is a bundle operand.
+  bool isBundleOperand(unsigned Idx) const {
+    return hasOperandBundles() && Idx >= getBundleOperandsStartIndex() &&
+           Idx < getBundleOperandsEndIndex();
   }
 
   /// \brief Return the total number operands (not operand bundles) used by

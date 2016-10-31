@@ -19,12 +19,12 @@
 // 2. geps when corresponding load/store cannot be hoisted.
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Transforms/Scalar.h"
-#include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/MemorySSA.h"
 
@@ -55,10 +55,10 @@ static cl::opt<int> MaxDepthInBB(
     cl::desc("Hoist instructions from the beginning of the BB up to the "
              "maximum specified depth (default = 100, unlimited = -1)"));
 
-static cl::opt<int> MaxChainLength(
-    "gvn-hoist-max-chain-length", cl::Hidden, cl::init(10),
-    cl::desc("Maximum length of dependent chains to hoist "
-             "(default = 10, unlimited = -1)"));
+static cl::opt<int>
+    MaxChainLength("gvn-hoist-max-chain-length", cl::Hidden, cl::init(10),
+                   cl::desc("Maximum length of dependent chains to hoist "
+                            "(default = 10, unlimited = -1)"));
 
 namespace {
 
@@ -89,7 +89,7 @@ public:
       ADFS = DFSNumber.lookup(BA);
       BDFS = DFSNumber.lookup(BB);
     }
-    assert (ADFS && BDFS);
+    assert(ADFS && BDFS);
     return ADFS < BDFS;
   }
 };
@@ -199,23 +199,21 @@ static void combineKnownMetadata(Instruction *ReplInst, Instruction *I) {
 // cases reduce critical path (by exposing more ILP).
 class GVNHoist {
 public:
-  GVNHoist(DominatorTree *Dt, AliasAnalysis *Aa, MemoryDependenceResults *Md,
-           bool OptForMinSize)
-      : DT(Dt), AA(Aa), MD(Md), OptForMinSize(OptForMinSize),
+  GVNHoist(DominatorTree *DT, AliasAnalysis *AA, MemoryDependenceResults *MD,
+           MemorySSA *MSSA, bool OptForMinSize)
+      : DT(DT), AA(AA), MD(MD), MSSA(MSSA), OptForMinSize(OptForMinSize),
         HoistingGeps(OptForMinSize), HoistedCtr(0) {}
   bool run(Function &F) {
     VN.setDomTree(DT);
     VN.setAliasAnalysis(AA);
     VN.setMemDep(MD);
     bool Res = false;
-    MemorySSA M(F, AA, DT);
-    MSSA = &M;
     // Perform DFS Numbering of instructions.
     unsigned BBI = 0;
     for (const BasicBlock *BB : depth_first(&F.getEntryBlock())) {
       DFSNumber[BB] = ++BBI;
       unsigned I = 0;
-      for (auto &Inst: *BB)
+      for (auto &Inst : *BB)
         DFSNumber[&Inst] = ++I;
     }
 
@@ -241,16 +239,17 @@ public:
 
     return Res;
   }
+
 private:
   GVN::ValueTable VN;
   DominatorTree *DT;
   AliasAnalysis *AA;
   MemoryDependenceResults *MD;
+  MemorySSA *MSSA;
   const bool OptForMinSize;
   const bool HoistingGeps;
   DenseMap<const Value *, unsigned> DFSNumber;
   BBSideEffectsSet BBSideEffects;
-  MemorySSA *MSSA;
   int HoistedCtr;
 
   enum InsKind { Unknown, Scalar, Load, Store };
@@ -275,24 +274,32 @@ private:
     return false;
   }
 
-  // Return true when all paths from A to the end of the function pass through
-  // either B or C.
-  bool hoistingFromAllPaths(const BasicBlock *A, const BasicBlock *B,
-                            const BasicBlock *C) {
-    // We fully copy the WL in order to be able to remove items from it.
-    SmallPtrSet<const BasicBlock *, 2> WL;
-    WL.insert(B);
-    WL.insert(C);
+  // Return true when a successor of BB dominates A.
+  bool successorDominate(const BasicBlock *BB, const BasicBlock *A) {
+    for (const BasicBlock *Succ : BB->getTerminator()->successors())
+      if (DT->dominates(Succ, A))
+        return true;
 
-    for (auto It = df_begin(A), E = df_end(A); It != E;) {
-      // There exists a path from A to the exit of the function if we are still
-      // iterating in DF traversal and we removed all instructions from the work
-      // list.
-      if (WL.empty())
+    return false;
+  }
+
+  // Return true when all paths from HoistBB to the end of the function pass
+  // through one of the blocks in WL.
+  bool hoistingFromAllPaths(const BasicBlock *HoistBB,
+                            SmallPtrSetImpl<const BasicBlock *> &WL) {
+
+    // Copy WL as the loop will remove elements from it.
+    SmallPtrSet<const BasicBlock *, 2> WorkList(WL.begin(), WL.end());
+
+    for (auto It = df_begin(HoistBB), E = df_end(HoistBB); It != E;) {
+      // There exists a path from HoistBB to the exit of the function if we are
+      // still iterating in DF traversal and we removed all instructions from
+      // the work list.
+      if (WorkList.empty())
         return false;
 
       const BasicBlock *BB = *It;
-      if (WL.erase(BB)) {
+      if (WorkList.erase(BB)) {
         // Stop DFS traversal when BB is in the work list.
         It.skipChildren();
         continue;
@@ -300,6 +307,11 @@ private:
 
       // Check for end of function, calls that do not return, etc.
       if (!isGuaranteedToTransferExecutionToSuccessor(BB->getTerminator()))
+        return false;
+
+      // When reaching the back-edge of a loop, there may be a path through the
+      // loop that does not pass through B or C before exiting the loop.
+      if (successorDominate(BB, HoistBB))
         return false;
 
       // Increment DFS traversal when not skipping children.
@@ -311,38 +323,42 @@ private:
 
   /* Return true when I1 appears before I2 in the instructions of BB.  */
   bool firstInBB(const Instruction *I1, const Instruction *I2) {
-    assert (I1->getParent() == I2->getParent());
+    assert(I1->getParent() == I2->getParent());
     unsigned I1DFS = DFSNumber.lookup(I1);
     unsigned I2DFS = DFSNumber.lookup(I2);
-    assert (I1DFS && I2DFS);
+    assert(I1DFS && I2DFS);
     return I1DFS < I2DFS;
   }
 
-  // Return true when there are users of Def in BB.
-  bool hasMemoryUseOnPath(MemoryAccess *Def, const BasicBlock *BB,
-                          const Instruction *OldPt) {
-    const BasicBlock *DefBB = Def->getBlock();
+  // Return true when there are memory uses of Def in BB.
+  bool hasMemoryUse(const Instruction *NewPt, MemoryDef *Def,
+                    const BasicBlock *BB) {
+    const MemorySSA::AccessList *Acc = MSSA->getBlockAccesses(BB);
+    if (!Acc)
+      return false;
+
+    Instruction *OldPt = Def->getMemoryInst();
     const BasicBlock *OldBB = OldPt->getParent();
+    const BasicBlock *NewBB = NewPt->getParent();
+    bool ReachedNewPt = false;
 
-    for (User *U : Def->users())
-      if (auto *MU = dyn_cast<MemoryUse>(U)) {
-        // FIXME: MU->getBlock() does not get updated when we move the instruction.
-        BasicBlock *UBB = MU->getMemoryInst()->getParent();
-        // Only analyze uses in BB.
-        if (BB != UBB)
-          continue;
+    for (const MemoryAccess &MA : *Acc)
+      if (const MemoryUse *MU = dyn_cast<MemoryUse>(&MA)) {
+        Instruction *Insn = MU->getMemoryInst();
 
-        // A use in the same block as the Def is on the path.
-        if (UBB == DefBB) {
-          assert(MSSA->locallyDominates(Def, MU) && "def not dominating use");
-          return true;
+        // Do not check whether MU aliases Def when MU occurs after OldPt.
+        if (BB == OldBB && firstInBB(OldPt, Insn))
+          break;
+
+        // Do not check whether MU aliases Def when MU occurs before NewPt.
+        if (BB == NewBB) {
+          if (!ReachedNewPt) {
+            if (firstInBB(Insn, NewPt))
+              continue;
+            ReachedNewPt = true;
+          }
         }
-
-        if (UBB != OldBB)
-          return true;
-
-        // It is only harmful to hoist when the use is before OldPt.
-        if (firstInBB(MU->getMemoryInst(), OldPt))
+        if (defClobbersUseOrDef(Def, MU, *AA))
           return true;
       }
 
@@ -350,17 +366,18 @@ private:
   }
 
   // Return true when there are exception handling or loads of memory Def
-  // between OldPt and NewPt.
+  // between Def and NewPt.  This function is only called for stores: Def is
+  // the MemoryDef of the store to be hoisted.
 
   // Decrement by 1 NBBsOnAllPaths for each block between HoistPt and BB, and
   // return true when the counter NBBsOnAllPaths reaces 0, except when it is
   // initialized to -1 which is unlimited.
-  bool hasEHOrLoadsOnPath(const Instruction *NewPt, const Instruction *OldPt,
-                          MemoryAccess *Def, int &NBBsOnAllPaths) {
+  bool hasEHOrLoadsOnPath(const Instruction *NewPt, MemoryDef *Def,
+                          int &NBBsOnAllPaths) {
     const BasicBlock *NewBB = NewPt->getParent();
-    const BasicBlock *OldBB = OldPt->getParent();
+    const BasicBlock *OldBB = Def->getBlock();
     assert(DT->dominates(NewBB, OldBB) && "invalid path");
-    assert(DT->dominates(Def->getBlock(), NewBB) &&
+    assert(DT->dominates(Def->getDefiningAccess()->getBlock(), NewBB) &&
            "def does not dominate new hoisting point");
 
     // Walk all basic blocks reachable in depth-first iteration on the inverse
@@ -379,7 +396,7 @@ private:
         return true;
 
       // Check that we do not move a store past loads.
-      if (hasMemoryUseOnPath(Def, *I, OldPt))
+      if (hasMemoryUse(NewPt, Def, *I))
         return true;
 
       // Stop walk once the limit is reached.
@@ -462,7 +479,7 @@ private:
 
     // Check for unsafe hoistings due to side effects.
     if (K == InsKind::Store) {
-      if (hasEHOrLoadsOnPath(NewPt, OldPt, D, NBBsOnAllPaths))
+      if (hasEHOrLoadsOnPath(NewPt, dyn_cast<MemoryDef>(U), NBBsOnAllPaths))
         return false;
     } else if (hasEHOnPath(NewBB, OldBB, NBBsOnAllPaths))
       return false;
@@ -478,23 +495,21 @@ private:
     return true;
   }
 
-  // Return true when it is safe to hoist scalar instructions from BB1 and BB2
-  // to HoistBB.
-  bool safeToHoistScalar(const BasicBlock *HoistBB, const BasicBlock *BB1,
-                         const BasicBlock *BB2, int &NBBsOnAllPaths) {
-    // Check that the hoisted expression is needed on all paths.  When HoistBB
-    // already contains an instruction to be hoisted, the expression is needed
-    // on all paths.  Enable scalar hoisting at -Oz as it is safe to hoist
-    // scalars to a place where they are partially needed.
-    if (!OptForMinSize && BB1 != HoistBB &&
-        !hoistingFromAllPaths(HoistBB, BB1, BB2))
+  // Return true when it is safe to hoist scalar instructions from all blocks in
+  // WL to HoistBB.
+  bool safeToHoistScalar(const BasicBlock *HoistBB,
+                         SmallPtrSetImpl<const BasicBlock *> &WL,
+                         int &NBBsOnAllPaths) {
+    // Check that the hoisted expression is needed on all paths.  Enable scalar
+    // hoisting at -Oz as it is safe to hoist scalars to a place where they are
+    // partially needed.
+    if (!OptForMinSize && !hoistingFromAllPaths(HoistBB, WL))
       return false;
 
-    if (hasEHOnPath(HoistBB, BB1, NBBsOnAllPaths) ||
-        hasEHOnPath(HoistBB, BB2, NBBsOnAllPaths))
-      return false;
+    for (const BasicBlock *BB : WL)
+      if (hasEHOnPath(HoistBB, BB, NBBsOnAllPaths))
+        return false;
 
-    // Safe to hoist scalars from BB1 and BB2 to HoistBB.
     return true;
   }
 
@@ -544,8 +559,12 @@ private:
           NewHoistPt = NewHoistBB->getTerminator();
       }
 
+      SmallPtrSet<const BasicBlock *, 2> WL;
+      WL.insert(HoistBB);
+      WL.insert(BB);
+
       if (K == InsKind::Scalar) {
-        if (safeToHoistScalar(NewHoistBB, HoistBB, BB, NBBsOnAllPaths)) {
+        if (safeToHoistScalar(NewHoistBB, WL, NBBsOnAllPaths)) {
           // Extend HoistPt to NewHoistPt.
           HoistPt = NewHoistPt;
           HoistBB = NewHoistBB;
@@ -559,7 +578,7 @@ private:
         // loading from the same address: for instance there may be a branch on
         // which the address of the load may not be initialized.
         if ((HoistBB == NewHoistBB || BB == NewHoistBB ||
-             hoistingFromAllPaths(NewHoistBB, HoistBB, BB)) &&
+             hoistingFromAllPaths(NewHoistBB, WL)) &&
             // Also check that it is safe to move the load or store from HoistPt
             // to NewHoistPt, and from Insn to NewHoistPt.
             safeToHoistLdSt(NewHoistPt, HoistPt, UD, K, NBBsOnAllPaths) &&
@@ -634,7 +653,8 @@ private:
     for (const Use &Op : I->operands())
       if (const auto *Inst = dyn_cast<Instruction>(&Op))
         if (!DT->dominates(Inst->getParent(), HoistPt)) {
-          if (const GetElementPtrInst *GepOp = dyn_cast<GetElementPtrInst>(Inst)) {
+          if (const GetElementPtrInst *GepOp =
+                  dyn_cast<GetElementPtrInst>(Inst)) {
             if (!allGepOperandsAvailable(GepOp, HoistPt))
               return false;
             // Gep is available if all operands of GepOp are available.
@@ -651,7 +671,8 @@ private:
   void makeGepsAvailable(Instruction *Repl, BasicBlock *HoistPt,
                          const SmallVecInsn &InstructionsToHoist,
                          Instruction *Gep) const {
-    assert(allGepOperandsAvailable(Gep, HoistPt) && "GEP operands not available");
+    assert(allGepOperandsAvailable(Gep, HoistPt) &&
+           "GEP operands not available");
 
     Instruction *ClonedGep = Gep->clone();
     for (unsigned i = 0, e = Gep->getNumOperands(); i != e; ++i)
@@ -683,7 +704,7 @@ private:
       else
         OtherGep = cast<GetElementPtrInst>(
             cast<StoreInst>(OtherInst)->getPointerOperand());
-      ClonedGep->intersectOptionalDataWith(OtherGep);
+      ClonedGep->andIRFlags(OtherGep);
     }
 
     // Replace uses of Gep with ClonedGep in Repl.
@@ -830,9 +851,11 @@ private:
             MSSA->removeMemoryAccess(OldMA);
           }
 
-          Repl->intersectOptionalDataWith(I);
+          Repl->andIRFlags(I);
           combineKnownMetadata(Repl, I);
           I->replaceAllUsesWith(Repl);
+          // Also invalidate the Alias Analysis cache.
+          MD->removeInstruction(I);
           I->eraseFromParent();
         }
 
@@ -874,6 +897,10 @@ private:
         // Only hoist the first instructions in BB up to MaxDepthInBB. Hoisting
         // deeper may increase the register pressure and compilation time.
         if (MaxDepthInBB != -1 && InstructionNb++ >= MaxDepthInBB)
+          break;
+
+        // Do not value number terminator instructions.
+        if (isa<TerminatorInst>(&I1))
           break;
 
         if (auto *Load = dyn_cast<LoadInst>(&I1))
@@ -932,8 +959,9 @@ public:
     auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
     auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
     auto &MD = getAnalysis<MemoryDependenceWrapperPass>().getMemDep();
+    auto &MSSA = getAnalysis<MemorySSAWrapperPass>().getMSSA();
 
-    GVNHoist G(&DT, &AA, &MD, F.optForMinSize());
+    GVNHoist G(&DT, &AA, &MD, &MSSA, F.optForMinSize());
     return G.run(F);
   }
 
@@ -941,23 +969,25 @@ public:
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<AAResultsWrapperPass>();
     AU.addRequired<MemoryDependenceWrapperPass>();
+    AU.addRequired<MemorySSAWrapperPass>();
     AU.addPreserved<DominatorTreeWrapperPass>();
+    AU.addPreserved<MemorySSAWrapperPass>();
   }
 };
 } // namespace
 
-PreservedAnalyses GVNHoistPass::run(Function &F,
-                                    FunctionAnalysisManager &AM) {
+PreservedAnalyses GVNHoistPass::run(Function &F, FunctionAnalysisManager &AM) {
   DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
   AliasAnalysis &AA = AM.getResult<AAManager>(F);
   MemoryDependenceResults &MD = AM.getResult<MemoryDependenceAnalysis>(F);
-
-  GVNHoist G(&DT, &AA, &MD, F.optForMinSize());
+  MemorySSA &MSSA = AM.getResult<MemorySSAAnalysis>(F).getMSSA();
+  GVNHoist G(&DT, &AA, &MD, &MSSA, F.optForMinSize());
   if (!G.run(F))
     return PreservedAnalyses::all();
 
   PreservedAnalyses PA;
   PA.preserve<DominatorTreeAnalysis>();
+  PA.preserve<MemorySSAAnalysis>();
   return PA;
 }
 
@@ -965,6 +995,7 @@ char GVNHoistLegacyPass::ID = 0;
 INITIALIZE_PASS_BEGIN(GVNHoistLegacyPass, "gvn-hoist",
                       "Early GVN Hoisting of Expressions", false, false)
 INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(MemorySSAWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_END(GVNHoistLegacyPass, "gvn-hoist",

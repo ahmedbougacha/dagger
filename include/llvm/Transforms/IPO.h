@@ -43,6 +43,10 @@ ModulePass *createStripSymbolsPass(bool OnlyDebugInfo = false);
 //
 ModulePass *createStripNonDebugSymbolsPass();
 
+/// This function returns a new pass that downgrades the debug info in the
+/// module to line tables only.
+ModulePass *createStripNonLineTableDebugInfoPass();
+
 //===----------------------------------------------------------------------===//
 //
 // These pass removes llvm.dbg.declare intrinsics.
@@ -105,12 +109,6 @@ Pass *createFunctionInliningPass();
 Pass *createFunctionInliningPass(int Threshold);
 Pass *createFunctionInliningPass(unsigned OptLevel, unsigned SizeOptLevel);
 Pass *createFunctionInliningPass(InlineParams &Params);
-
-//===----------------------------------------------------------------------===//
-/// createAlwaysInlinerPass - Return a new pass object that inlines only
-/// functions that are marked as "always_inline".
-Pass *createAlwaysInlinerPass();
-Pass *createAlwaysInlinerPass(bool InsertLifetime);
 
 //===----------------------------------------------------------------------===//
 /// createPruneEHPass - Return a new pass object which transforms invoke

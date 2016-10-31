@@ -447,20 +447,19 @@ void X86FrameLowering::emitCalleeSavedFrameMoves(
   }
 }
 
-MachineInstr *X86FrameLowering::emitStackProbe(MachineFunction &MF,
-                                               MachineBasicBlock &MBB,
-                                               MachineBasicBlock::iterator MBBI,
-                                               const DebugLoc &DL,
-                                               bool InProlog) const {
+void X86FrameLowering::emitStackProbe(MachineFunction &MF,
+                                      MachineBasicBlock &MBB,
+                                      MachineBasicBlock::iterator MBBI,
+                                      const DebugLoc &DL, bool InProlog) const {
   const X86Subtarget &STI = MF.getSubtarget<X86Subtarget>();
   if (STI.isTargetWindowsCoreCLR()) {
     if (InProlog) {
-      return emitStackProbeInlineStub(MF, MBB, MBBI, DL, true);
+      emitStackProbeInlineStub(MF, MBB, MBBI, DL, true);
     } else {
-      return emitStackProbeInline(MF, MBB, MBBI, DL, false);
+      emitStackProbeInline(MF, MBB, MBBI, DL, false);
     }
   } else {
-    return emitStackProbeCall(MF, MBB, MBBI, DL, InProlog);
+    emitStackProbeCall(MF, MBB, MBBI, DL, InProlog);
   }
 }
 
@@ -489,9 +488,11 @@ void X86FrameLowering::inlineStackProbe(MachineFunction &MF,
   }
 }
 
-MachineInstr *X86FrameLowering::emitStackProbeInline(
-    MachineFunction &MF, MachineBasicBlock &MBB,
-    MachineBasicBlock::iterator MBBI, const DebugLoc &DL, bool InProlog) const {
+void X86FrameLowering::emitStackProbeInline(MachineFunction &MF,
+                                            MachineBasicBlock &MBB,
+                                            MachineBasicBlock::iterator MBBI,
+                                            const DebugLoc &DL,
+                                            bool InProlog) const {
   const X86Subtarget &STI = MF.getSubtarget<X86Subtarget>();
   assert(STI.is64Bit() && "different expansion needed for 32 bit");
   assert(STI.isTargetWindowsCoreCLR() && "custom expansion expects CoreCLR");
@@ -701,13 +702,13 @@ MachineInstr *X86FrameLowering::emitStackProbeInline(
   }
 
   // Possible TODO: physreg liveness for InProlog case.
-
-  return &*ContinueMBBI;
 }
 
-MachineInstr *X86FrameLowering::emitStackProbeCall(
-    MachineFunction &MF, MachineBasicBlock &MBB,
-    MachineBasicBlock::iterator MBBI, const DebugLoc &DL, bool InProlog) const {
+void X86FrameLowering::emitStackProbeCall(MachineFunction &MF,
+                                          MachineBasicBlock &MBB,
+                                          MachineBasicBlock::iterator MBBI,
+                                          const DebugLoc &DL,
+                                          bool InProlog) const {
   bool IsLargeCodeModel = MF.getTarget().getCodeModel() == CodeModel::Large;
 
   unsigned CallOp;
@@ -765,11 +766,9 @@ MachineInstr *X86FrameLowering::emitStackProbeCall(
     for (++ExpansionMBBI; ExpansionMBBI != MBBI; ++ExpansionMBBI)
       ExpansionMBBI->setFlag(MachineInstr::FrameSetup);
   }
-
-  return &*MBBI;
 }
 
-MachineInstr *X86FrameLowering::emitStackProbeInlineStub(
+void X86FrameLowering::emitStackProbeInlineStub(
     MachineFunction &MF, MachineBasicBlock &MBB,
     MachineBasicBlock::iterator MBBI, const DebugLoc &DL, bool InProlog) const {
 
@@ -777,8 +776,6 @@ MachineInstr *X86FrameLowering::emitStackProbeInlineStub(
 
   BuildMI(MBB, MBBI, DL, TII.get(X86::CALLpcrel32))
       .addExternalSymbol("__chkstk_stub");
-
-  return &*MBBI;
 }
 
 static unsigned calculateSetFPREG(uint64_t SPAdjust) {
@@ -935,6 +932,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       STI.isTarget64BitILP32()
           ? getX86SubSuperRegister(FramePtr, 64) : FramePtr;
   unsigned BasePtr = TRI->getBaseRegister();
+  bool HasWinCFI = false;
   
   // Debug location must be unknown since the first debug location is used
   // to determine the end of the prologue.
@@ -1063,6 +1061,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
 
     if (NeedsWinCFI) {
+      HasWinCFI = true;
       BuildMI(MBB, MBBI, DL, TII.get(X86::SEH_PushReg))
           .addImm(FramePtr)
           .setMIFlag(MachineInstr::FrameSetup);
@@ -1124,6 +1123,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
 
     if (NeedsWinCFI) {
+      HasWinCFI = true;
       BuildMI(MBB, MBBI, DL, TII.get(X86::SEH_PushReg)).addImm(Reg).setMIFlag(
           MachineInstr::FrameSetup);
     }
@@ -1209,10 +1209,12 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     emitSPUpdate(MBB, MBBI, -(int64_t)NumBytes, /*InEpilogue=*/false);
   }
 
-  if (NeedsWinCFI && NumBytes)
+  if (NeedsWinCFI && NumBytes) {
+    HasWinCFI = true;
     BuildMI(MBB, MBBI, DL, TII.get(X86::SEH_StackAlloc))
         .addImm(NumBytes)
         .setMIFlag(MachineInstr::FrameSetup);
+  }
 
   int SEHFrameOffset = 0;
   unsigned SPOrEstablisher;
@@ -1259,6 +1261,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
 
     // If this is not a funclet, emit the CFI describing our frame pointer.
     if (NeedsWinCFI && !IsFunclet) {
+      HasWinCFI = true;
       BuildMI(MBB, MBBI, DL, TII.get(X86::SEH_SetFrame))
           .addImm(FramePtr)
           .addImm(SEHFrameOffset)
@@ -1295,6 +1298,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
           int Offset = getFrameIndexReference(MF, FI, IgnoredFrameReg);
           Offset += SEHFrameOffset;
 
+          HasWinCFI = true;
           BuildMI(MBB, MBBI, DL, TII.get(X86::SEH_SaveXMM))
               .addImm(Reg)
               .addImm(Offset)
@@ -1304,7 +1308,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
   }
 
-  if (NeedsWinCFI)
+  if (NeedsWinCFI && HasWinCFI)
     BuildMI(MBB, MBBI, DL, TII.get(X86::SEH_EndPrologue))
         .setMIFlag(MachineInstr::FrameSetup);
 
@@ -1396,13 +1400,16 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   if (Fn->getCallingConv() == CallingConv::X86_INTR)
     BuildMI(MBB, MBBI, DL, TII.get(X86::CLD))
         .setMIFlag(MachineInstr::FrameSetup);
+
+  // At this point we know if the function has WinCFI or not.
+  MF.setHasWinCFI(HasWinCFI);
 }
 
 bool X86FrameLowering::canUseLEAForSPInEpilogue(
     const MachineFunction &MF) const {
-  // We can't use LEA instructions for adjusting the stack pointer if this is a
-  // leaf function in the Win64 ABI.  Only ADD instructions may be used to
-  // deallocate the stack.
+  // We can't use LEA instructions for adjusting the stack pointer if we don't
+  // have a frame pointer in the Win64 ABI.  Only ADD instructions may be used
+  // to deallocate the stack.
   // This means that we can use LEA for SP in two situations:
   // 1. We *aren't* using the Win64 ABI which means we are free to use LEA.
   // 2. We *have* a frame pointer which means we are permitted to use LEA.
@@ -1630,7 +1637,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   // into the epilogue.  To cope with that, we insert an epilogue marker here,
   // then replace it with a 'nop' if it ends up immediately after a CALL in the
   // final emitted code.
-  if (NeedsWinCFI)
+  if (NeedsWinCFI && MF.hasWinCFI())
     BuildMI(MBB, MBBI, DL, TII.get(X86::SEH_Epilogue));
 
   if (!RetOpcode || !isTailCallOpcode(*RetOpcode)) {

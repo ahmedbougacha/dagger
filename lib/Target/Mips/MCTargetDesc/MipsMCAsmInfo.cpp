@@ -45,6 +45,10 @@ MipsMCAsmInfo::MipsMCAsmInfo(const Triple &TheTriple) {
   ZeroDirective               = "\t.space\t";
   GPRel32Directive            = "\t.gpword\t";
   GPRel64Directive            = "\t.gpdword\t";
+  DTPRel32Directive           = "\t.dtprelword\t";
+  DTPRel64Directive           = "\t.dtpreldword\t";
+  TPRel32Directive            = "\t.tprelword\t";
+  TPRel64Directive            = "\t.tpreldword\t";
   UseAssignmentForEHBegin = true;
   SupportsDebugInformation = true;
   ExceptionsType = ExceptionHandling::DwarfCFI;
@@ -54,5 +58,9 @@ MipsMCAsmInfo::MipsMCAsmInfo(const Triple &TheTriple) {
   // Enable IAS by default for O32.
   if (TheTriple.getArch() == Triple::mips ||
       TheTriple.getArch() == Triple::mipsel)
+    UseIntegratedAssembler = true;
+
+  // Enable IAS by default for Debian mips64/mips64el.
+  if (TheTriple.getEnvironment() == Triple::GNUABI64)
     UseIntegratedAssembler = true;
 }

@@ -23,9 +23,9 @@
 ; CHECK-CGSCC-PASS-NEXT: Running analysis: InnerAnalysisManagerProxy<{{.*}}>
 ; CHECK-CGSCC-PASS-NEXT: Running analysis: LazyCallGraphAnalysis
 ; CHECK-CGSCC-PASS-NEXT: Running an SCC pass across the RefSCC: [(foo)]
-; CHECK-CGSCC-PASS-NEXT: Starting llvm::LazyCallGraph::SCC pass manager run
+; CHECK-CGSCC-PASS-NEXT: Starting CGSCC pass manager run
 ; CHECK-CGSCC-PASS-NEXT: Running pass: NoOpCGSCCPass
-; CHECK-CGSCC-PASS-NEXT: Finished llvm::LazyCallGraph::SCC pass manager run
+; CHECK-CGSCC-PASS-NEXT: Finished CGSCC pass manager run
 ; CHECK-CGSCC-PASS-NEXT: Finished llvm::Module pass manager run
 
 ; RUN: opt -disable-output -disable-verify -debug-pass-manager \
@@ -134,7 +134,7 @@
 ; CHECK-ANALYSES: Starting llvm::Module pass manager run
 ; CHECK-ANALYSES: Running pass: RequireAnalysisPass
 ; CHECK-ANALYSES: Running analysis: NoOpModuleAnalysis
-; CHECK-ANALYSES: Starting llvm::LazyCallGraph::SCC pass manager run
+; CHECK-ANALYSES: Starting CGSCC pass manager run
 ; CHECK-ANALYSES: Running pass: RequireAnalysisPass
 ; CHECK-ANALYSES: Running analysis: NoOpCGSCCAnalysis
 ; CHECK-ANALYSES: Starting llvm::Function pass manager run
@@ -213,19 +213,14 @@
 ; CHECK-INVALIDATE-ALL: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL: Running analysis: NoOpFunctionAnalysis
 ; CHECK-INVALIDATE-ALL: Running pass: InvalidateAllAnalysesPass
-; CHECK-INVALIDATE-ALL: Invalidating all non-preserved analyses
 ; CHECK-INVALIDATE-ALL: Invalidating analysis: NoOpFunctionAnalysis
 ; CHECK-INVALIDATE-ALL: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL: Running analysis: NoOpFunctionAnalysis
 ; CHECK-INVALIDATE-ALL: Finished llvm::Function pass manager run
-; CHECK-INVALIDATE-ALL: Invalidating all non-preserved analyses
-; CHECK-INVALIDATE-ALL-NOT: Running analysis: NoOpFunctionAnalysis
-; CHECK-INVALIDATE-ALL: Invalidating all non-preserved analyses
 ; CHECK-INVALIDATE-ALL: Invalidating analysis: NoOpModuleAnalysis
 ; CHECK-INVALIDATE-ALL: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL: Running analysis: NoOpModuleAnalysis
 ; CHECK-INVALIDATE-ALL: Finished llvm::Module pass manager run
-; CHECK-INVALIDATE-ALL: Invalidating all non-preserved analyses
 ; CHECK-INVALIDATE-ALL-NOT: Invalidating analysis: NoOpModuleAnalysis
 ; CHECK-INVALIDATE-ALL: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL-NOT: Running analysis: NoOpModuleAnalysis
@@ -240,33 +235,27 @@
 ; CHECK-INVALIDATE-ALL-CG: Starting llvm::Module pass manager run
 ; CHECK-INVALIDATE-ALL-CG: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL-CG-NOT: Running analysis: NoOpModuleAnalysis
-; CHECK-INVALIDATE-ALL-CG: Starting llvm::LazyCallGraph::SCC pass manager run
+; CHECK-INVALIDATE-ALL-CG: Starting CGSCC pass manager run
 ; CHECK-INVALIDATE-ALL-CG: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL-CG: Running analysis: NoOpCGSCCAnalysis
 ; CHECK-INVALIDATE-ALL-CG: Starting llvm::Function pass manager run
 ; CHECK-INVALIDATE-ALL-CG: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL-CG: Running analysis: NoOpFunctionAnalysis
 ; CHECK-INVALIDATE-ALL-CG: Running pass: InvalidateAllAnalysesPass
-; CHECK-INVALIDATE-ALL-CG: Invalidating all non-preserved analyses
 ; CHECK-INVALIDATE-ALL-CG: Invalidating analysis: NoOpFunctionAnalysis
 ; CHECK-INVALIDATE-ALL-CG: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL-CG: Running analysis: NoOpFunctionAnalysis
 ; CHECK-INVALIDATE-ALL-CG: Finished llvm::Function pass manager run
-; CHECK-INVALIDATE-ALL-CG: Invalidating all non-preserved analyses
 ; CHECK-INVALIDATE-ALL-CG-NOT: Running analysis: NoOpFunctionAnalysis
-; CHECK-INVALIDATE-ALL-CG: Invalidating all non-preserved analyses
 ; CHECK-INVALIDATE-ALL-CG: Invalidating analysis: NoOpCGSCCAnalysis
 ; CHECK-INVALIDATE-ALL-CG: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL-CG: Running analysis: NoOpCGSCCAnalysis
-; CHECK-INVALIDATE-ALL-CG: Finished llvm::LazyCallGraph::SCC pass manager run
-; CHECK-INVALIDATE-ALL-CG: Invalidating all non-preserved analyses
+; CHECK-INVALIDATE-ALL-CG: Finished CGSCC pass manager run
 ; CHECK-INVALIDATE-ALL-CG-NOT: Invalidating analysis: NoOpCGSCCAnalysis
-; CHECK-INVALIDATE-ALL-CG: Invalidating all non-preserved analyses
 ; CHECK-INVALIDATE-ALL-CG: Invalidating analysis: NoOpModuleAnalysis
 ; CHECK-INVALIDATE-ALL-CG: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL-CG: Running analysis: NoOpModuleAnalysis
 ; CHECK-INVALIDATE-ALL-CG: Finished llvm::Module pass manager run
-; CHECK-INVALIDATE-ALL-CG: Invalidating all non-preserved analyses
 ; CHECK-INVALIDATE-ALL-CG-NOT: Invalidating analysis: NoOpModuleAnalysis
 ; CHECK-INVALIDATE-ALL-CG: Running pass: RequireAnalysisPass
 ; CHECK-INVALIDATE-ALL-CG-NOT: Running analysis: NoOpModuleAnalysis
@@ -392,18 +381,18 @@
 ; CHECK-REPEAT-CGSCC-PASS-NEXT: Running analysis: InnerAnalysisManagerProxy<{{.*}}>
 ; CHECK-REPEAT-CGSCC-PASS-NEXT: Running analysis: LazyCallGraphAnalysis
 ; CHECK-REPEAT-CGSCC-PASS-NEXT: Running an SCC pass across the RefSCC: [(foo)]
-; CHECK-REPEAT-CGSCC-PASS-NEXT: Starting llvm::LazyCallGraph::SCC pass manager run
+; CHECK-REPEAT-CGSCC-PASS-NEXT: Starting CGSCC pass manager run
 ; CHECK-REPEAT-CGSCC-PASS-NEXT: Running pass: RepeatedPass
-; CHECK-REPEAT-CGSCC-PASS-NEXT: Starting llvm::LazyCallGraph::SCC pass manager run
+; CHECK-REPEAT-CGSCC-PASS-NEXT: Starting CGSCC pass manager run
 ; CHECK-REPEAT-CGSCC-PASS-NEXT: Running pass: NoOpCGSCCPass
-; CHECK-REPEAT-CGSCC-PASS-NEXT: Finished llvm::LazyCallGraph::SCC pass manager run
-; CHECK-REPEAT-CGSCC-PASS-NEXT: Starting llvm::LazyCallGraph::SCC pass manager run
+; CHECK-REPEAT-CGSCC-PASS-NEXT: Finished CGSCC pass manager run
+; CHECK-REPEAT-CGSCC-PASS-NEXT: Starting CGSCC pass manager run
 ; CHECK-REPEAT-CGSCC-PASS-NEXT: Running pass: NoOpCGSCCPass
-; CHECK-REPEAT-CGSCC-PASS-NEXT: Finished llvm::LazyCallGraph::SCC pass manager run
-; CHECK-REPEAT-CGSCC-PASS-NEXT: Starting llvm::LazyCallGraph::SCC pass manager run
+; CHECK-REPEAT-CGSCC-PASS-NEXT: Finished CGSCC pass manager run
+; CHECK-REPEAT-CGSCC-PASS-NEXT: Starting CGSCC pass manager run
 ; CHECK-REPEAT-CGSCC-PASS-NEXT: Running pass: NoOpCGSCCPass
-; CHECK-REPEAT-CGSCC-PASS-NEXT: Finished llvm::LazyCallGraph::SCC pass manager run
-; CHECK-REPEAT-CGSCC-PASS-NEXT: Finished llvm::LazyCallGraph::SCC pass manager run
+; CHECK-REPEAT-CGSCC-PASS-NEXT: Finished CGSCC pass manager run
+; CHECK-REPEAT-CGSCC-PASS-NEXT: Finished CGSCC pass manager run
 ; CHECK-REPEAT-CGSCC-PASS-NEXT: Finished llvm::Module pass manager run
 
 ; RUN: opt -disable-output -disable-verify -debug-pass-manager \

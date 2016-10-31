@@ -72,8 +72,7 @@ CompressDebugSections("compress-debug-sections", cl::ValueOptional,
     clEnumValN(DebugCompressionType::DCT_Zlib, "zlib",
       "Use zlib compression"),
     clEnumValN(DebugCompressionType::DCT_ZlibGnu, "zlib-gnu",
-      "Use zlib-gnu compression (depricated)"),
-    clEnumValEnd));
+      "Use zlib-gnu compression (deprecated)")));
 
 static cl::opt<bool>
 ShowInst("show-inst", cl::desc("Show internal instruction representation"));
@@ -111,8 +110,7 @@ FileType("filetype", cl::init(OFT_AssemblyFile),
        clEnumValN(OFT_Null, "null",
                   "Don't emit anything (for timing purposes)"),
        clEnumValN(OFT_ObjectFile, "obj",
-                  "Emit a native object ('.o') file"),
-       clEnumValEnd));
+                  "Emit a native object ('.o') file")));
 
 static cl::list<std::string>
 IncludeDirs("I", cl::desc("Directory of include files"),
@@ -154,8 +152,7 @@ CMModel("code-model",
                    clEnumValN(CodeModel::Medium, "medium",
                               "Medium code model"),
                    clEnumValN(CodeModel::Large, "large",
-                              "Large code model"),
-                   clEnumValEnd));
+                              "Large code model")));
 
 static cl::opt<bool>
 NoInitialTextSection("n", cl::desc("Don't assume assembly file starts "
@@ -196,10 +193,9 @@ Action(cl::desc("Action to perform:"),
                              "Assemble a .s file (default)"),
                   clEnumValN(AC_Disassemble, "disassemble",
                              "Disassemble strings of hex bytes"),
-                  clEnumValN(AC_MDisassemble, "mdis",
-                             "Marked up disassembly of strings of hex bytes"),
                   clEnumValN(AC_ListInsts, "list-insts", ""),
-                  clEnumValEnd));
+                  clEnumValN(AC_MDisassemble, "mdis",
+                             "Marked up disassembly of strings of hex bytes")));
 
 static const Target *GetTarget(const char *ProgName) {
   // Figure out the target triple.

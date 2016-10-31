@@ -251,7 +251,7 @@ static void EncodeFixedValueType(MVT::SimpleValueType VT,
 }
 
 #if defined(_MSC_VER) && !defined(__clang__)
-#pragma optimize("",off) // MSVC 2010 optimizer can't deal with this function.
+#pragma optimize("",off) // MSVC 2015 optimizer can't deal with this function.
 #endif
 
 static void EncodeFixedType(Record *R, std::vector<unsigned char> &ArgCodes,
@@ -287,10 +287,10 @@ static void EncodeFixedType(Record *R, std::vector<unsigned char> &ArgCodes,
   unsigned Tmp = 0;
   switch (VT) {
   default: break;
-  case MVT::iPTRAny: ++Tmp; // FALL THROUGH.
-  case MVT::vAny: ++Tmp; // FALL THROUGH.
-  case MVT::fAny: ++Tmp; // FALL THROUGH.
-  case MVT::iAny: ++Tmp; // FALL THROUGH.
+  case MVT::iPTRAny: ++Tmp; LLVM_FALLTHROUGH;
+  case MVT::vAny: ++Tmp;    LLVM_FALLTHROUGH;
+  case MVT::fAny: ++Tmp;    LLVM_FALLTHROUGH;
+  case MVT::iAny: ++Tmp;    LLVM_FALLTHROUGH;
   case MVT::Any: {
     // If this is an "any" valuetype, then the type is the type of the next
     // type in the list specified to getIntrinsic().
@@ -714,11 +714,11 @@ void IntrinsicEmitter::EmitIntrinsicToBuiltinMap(
   if (TargetOnly) {
     OS << "static " << TargetPrefix << "Intrinsic::ID "
        << "getIntrinsicFor" << CompilerName << "Builtin(const char "
-       << "*TargetPrefixStr, const char *BuiltinNameStr) {\n";
+       << "*TargetPrefixStr, StringRef BuiltinNameStr) {\n";
   } else {
     OS << "Intrinsic::ID Intrinsic::getIntrinsicFor" << CompilerName
        << "Builtin(const char "
-       << "*TargetPrefixStr, const char *BuiltinNameStr) {\n";
+       << "*TargetPrefixStr, StringRef BuiltinNameStr) {\n";
   }
   OS << "  static const char BuiltinNames[] = {\n";
   Table.EmitCharArray(OS);
@@ -730,13 +730,11 @@ void IntrinsicEmitter::EmitIntrinsicToBuiltinMap(
   OS << "    const char *getName() const {\n";
   OS << "      return &BuiltinNames[StrTabOffset];\n";
   OS << "    }\n";
-  OS << "    bool operator<(const char *RHS) const {\n";
-  OS << "      return strcmp(getName(), RHS) < 0;\n";
+  OS << "    bool operator<(StringRef RHS) const {\n";
+  OS << "      return strncmp(getName(), RHS.data(), RHS.size()) < 0;\n";
   OS << "    }\n";
   OS << "  };\n";
 
-
-  OS << "  StringRef BuiltinName(BuiltinNameStr);\n";
   OS << "  StringRef TargetPrefix(TargetPrefixStr);\n\n";
 
   // Note: this could emit significantly better code if we cared.
@@ -759,7 +757,7 @@ void IntrinsicEmitter::EmitIntrinsicToBuiltinMap(
     OS << "                              std::end(" << I->first << "Names),\n";
     OS << "                              BuiltinNameStr);\n";
     OS << "    if (I != std::end(" << I->first << "Names) &&\n";
-    OS << "        strcmp(I->getName(), BuiltinNameStr) == 0)\n";
+    OS << "        I->getName() == BuiltinNameStr)\n";
     OS << "      return I->IntrinID;\n";
     OS << "  }\n";
   }

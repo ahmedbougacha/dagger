@@ -212,7 +212,7 @@ public:
     vector_.pop_back();
   }
 
-  T LLVM_ATTRIBUTE_UNUSED_RESULT pop_back_val() {
+  LLVM_NODISCARD T pop_back_val() {
     T Ret = back();
     pop_back();
     return Ret;
@@ -282,7 +282,8 @@ private:
 /// \brief A SetVector that performs no allocations if smaller than
 /// a certain size.
 template <typename T, unsigned N>
-class SmallSetVector : public SetVector<T, SmallVector<T, N>, SmallSet<T, N> > {
+class SmallSetVector
+    : public SetVector<T, SmallVector<T, N>, SmallDenseSet<T, N>> {
 public:
   SmallSetVector() {}
 

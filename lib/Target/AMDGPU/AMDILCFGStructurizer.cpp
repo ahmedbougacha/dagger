@@ -18,7 +18,6 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/CodeGen/MachineFunctionAnalysis.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
@@ -139,16 +138,15 @@ public:
     initializeAMDGPUCFGStructurizerPass(*PassRegistry::getPassRegistry());
   }
 
-   const char *getPassName() const override {
+  StringRef getPassName() const override {
     return "AMDGPU Control Flow Graph structurizer Pass";
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addPreserved<MachineFunctionAnalysis>();
-    AU.addRequired<MachineFunctionAnalysis>();
     AU.addRequired<MachineDominatorTree>();
     AU.addRequired<MachinePostDominatorTree>();
     AU.addRequired<MachineLoopInfo>();
+    MachineFunctionPass::getAnalysisUsage(AU);
   }
 
   /// Perform the CFG structurization
@@ -840,7 +838,7 @@ bool AMDGPUCFGStructurizer::run() {
     } //while, "one iteration" over the function.
 
     MachineBasicBlock *EntryMBB =
-        &*GraphTraits<MachineFunction *>::nodes_begin(FuncRep);
+        *GraphTraits<MachineFunction *>::nodes_begin(FuncRep);
     if (EntryMBB->succ_size() == 0) {
       Finish = true;
       DEBUG(
@@ -863,7 +861,7 @@ bool AMDGPUCFGStructurizer::run() {
   } while (!Finish && MakeProgress);
 
   // Misc wrap up to maintain the consistency of the Function representation.
-  wrapup(&*GraphTraits<MachineFunction *>::nodes_begin(FuncRep));
+  wrapup(*GraphTraits<MachineFunction *>::nodes_begin(FuncRep));
 
   // Detach retired Block, release memory.
   for (MBBInfoMap::iterator It = BlockInfoMap.begin(), E = BlockInfoMap.end();
@@ -907,9 +905,9 @@ void AMDGPUCFGStructurizer::orderBlocks(MachineFunction *MF) {
 
   //walk through all the block in func to check for unreachable
   typedef GraphTraits<MachineFunction *> GTM;
-  MachineFunction::iterator It = GTM::nodes_begin(MF), E = GTM::nodes_end(MF);
+  auto It = GTM::nodes_begin(MF), E = GTM::nodes_end(MF);
   for (; It != E; ++It) {
-    MachineBasicBlock *MBB = &(*It);
+    MachineBasicBlock *MBB = *It;
     SccNum = getSCCNum(MBB);
     if (SccNum == INVALIDSCCNUM)
       dbgs() << "unreachable block BB" << MBB->getNumber() << "\n";

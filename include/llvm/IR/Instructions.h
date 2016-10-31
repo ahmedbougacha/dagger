@@ -961,8 +961,8 @@ public:
   /// instruction, which may be a vector of pointers.
   static Type *getGEPReturnType(Value *Ptr, ArrayRef<Value *> IdxList) {
     return getGEPReturnType(
-        cast<PointerType>(Ptr->getType()->getScalarType())->getElementType(),
-        Ptr, IdxList);
+      cast<PointerType>(Ptr->getType()->getScalarType())->getElementType(),
+      Ptr, IdxList);
   }
   static Type *getGEPReturnType(Type *ElTy, Value *Ptr,
                                 ArrayRef<Value *> IdxList) {
@@ -1184,10 +1184,6 @@ public:
   static bool isRelational(Predicate P) {
     return !isEquality(P);
   }
-
-  /// Initialize a set of values that all satisfy the predicate with C.
-  /// Make a ConstantRange for a relation with a constant value.
-  static ConstantRange makeConstantRange(Predicate pred, const APInt &C);
 
   /// Exchange the two operands to this instruction in such a way that it does
   /// not modify the semantics of the instruction. The predicate value may be
@@ -1594,17 +1590,14 @@ public:
 
   /// Return the parameter attributes for this call.
   ///
-  const AttributeSet &getAttributes() const { return AttributeList; }
+  AttributeSet getAttributes() const { return AttributeList; }
 
   /// Set the parameter attributes for this call.
   ///
-  void setAttributes(const AttributeSet &Attrs) { AttributeList = Attrs; }
+  void setAttributes(AttributeSet Attrs) { AttributeList = Attrs; }
 
   /// adds the attribute to the list of attributes.
   void addAttribute(unsigned i, Attribute::AttrKind Kind);
-
-  /// adds the attribute to the list of attributes.
-  void addAttribute(unsigned i, StringRef Kind, StringRef Value);
 
   /// adds the attribute to the list of attributes.
   void addAttribute(unsigned i, Attribute Attr);
@@ -1614,9 +1607,6 @@ public:
 
   /// removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, StringRef Kind);
-
-  /// removes the attribute from the list of attributes.
-  void removeAttribute(unsigned i, Attribute Attr);
 
   /// adds the dereferenceable attribute to the list of attributes.
   void addDereferenceableAttr(unsigned i, uint64_t Bytes);
@@ -1641,10 +1631,14 @@ public:
   bool paramHasAttr(unsigned i, Attribute::AttrKind Kind) const;
 
   /// Get the attribute of a given kind at a position.
-  Attribute getAttribute(unsigned i, Attribute::AttrKind Kind) const;
+  Attribute getAttribute(unsigned i, Attribute::AttrKind Kind) const {
+    return getAttributes().getAttribute(i, Kind);
+  }
 
   /// Get the attribute of a given kind at a position.
-  Attribute getAttribute(unsigned i, StringRef Kind) const;
+  Attribute getAttribute(unsigned i, StringRef Kind) const {
+    return getAttributes().getAttribute(i, Kind);
+  }
 
   /// Return true if the data operand at index \p i has the attribute \p
   /// A.
@@ -1763,8 +1757,7 @@ public:
     addAttribute(AttributeSet::FunctionIndex, Attribute::Convergent);
   }
   void setNotConvergent() {
-    removeAttribute(AttributeSet::FunctionIndex,
-                    Attribute::get(getContext(), Attribute::Convergent));
+    removeAttribute(AttributeSet::FunctionIndex, Attribute::Convergent);
   }
 
   /// Determine if the call returns a structure through first
@@ -1821,17 +1814,17 @@ public:
   }
 
 private:
-  template <typename AttrKind> bool hasFnAttrImpl(AttrKind A) const {
-    if (AttributeList.hasAttribute(AttributeSet::FunctionIndex, A))
+  template <typename AttrKind> bool hasFnAttrImpl(AttrKind Kind) const {
+    if (AttributeList.hasAttribute(AttributeSet::FunctionIndex, Kind))
       return true;
 
     // Operand bundles override attributes on the called function, but don't
     // override attributes directly present on the call instruction.
-    if (isFnAttrDisallowedByOpBundle(A))
+    if (isFnAttrDisallowedByOpBundle(Kind))
       return false;
 
     if (const Function *F = getCalledFunction())
-      return F->getAttributes().hasAttribute(AttributeSet::FunctionIndex, A);
+      return F->getAttributes().hasAttribute(AttributeSet::FunctionIndex, Kind);
     return false;
   }
 
@@ -2160,19 +2153,22 @@ public:
     return cast<Constant>(getOperand(2));
   }
 
-  /// Return the index from the shuffle mask for the specified
-  /// output result.  This is either -1 if the element is undef or a number less
-  /// than 2*numelements.
-  static int getMaskValue(Constant *Mask, unsigned i);
+  /// Return the shuffle mask value for the specified element of the mask.
+  /// Return -1 if the element is undef.
+  static int getMaskValue(Constant *Mask, unsigned Elt);
 
-  int getMaskValue(unsigned i) const {
-    return getMaskValue(getMask(), i);
+  /// Return the shuffle mask value of this instruction for the given element
+  /// index. Return -1 if the element is undef.
+  int getMaskValue(unsigned Elt) const {
+    return getMaskValue(getMask(), Elt);
   }
 
-  /// Return the full mask for this instruction, where each
-  /// element is the element number and undef's are returned as -1.
+  /// Convert the input shuffle mask operand to a vector of integers. Undefined
+  /// elements of the mask are returned as -1.
   static void getShuffleMask(Constant *Mask, SmallVectorImpl<int> &Result);
 
+  /// Return the mask for this instruction as a vector of integers. Undefined
+  /// elements of the mask are returned as -1.
   void getShuffleMask(SmallVectorImpl<int> &Result) const {
     return getShuffleMask(getMask(), Result);
   }
@@ -3270,10 +3266,8 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(SwitchInst, Value)
 class IndirectBrInst : public TerminatorInst {
   void *operator new(size_t, unsigned) = delete;
   unsigned ReservedSpace;
-  // Operand[0]    = Value to switch on
-  // Operand[1]    = Default basic block destination
-  // Operand[2n  ] = Value to match
-  // Operand[2n+1] = BasicBlock to go to on match
+  // Operand[0]   = Address to jump to
+  // Operand[n+1] = n-th destination
   IndirectBrInst(const IndirectBrInst &IBI);
   void init(Value *Address, unsigned NumDests);
   void growOperands();
@@ -3566,11 +3560,11 @@ public:
 
   /// Return the parameter attributes for this invoke.
   ///
-  const AttributeSet &getAttributes() const { return AttributeList; }
+  AttributeSet getAttributes() const { return AttributeList; }
 
   /// Set the parameter attributes for this invoke.
   ///
-  void setAttributes(const AttributeSet &Attrs) { AttributeList = Attrs; }
+  void setAttributes(AttributeSet Attrs) { AttributeList = Attrs; }
 
   /// adds the attribute to the list of attributes.
   void addAttribute(unsigned i, Attribute::AttrKind Kind);
@@ -3583,9 +3577,6 @@ public:
 
   /// removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, StringRef Kind);
-
-  /// removes the attribute from the list of attributes.
-  void removeAttribute(unsigned i, Attribute Attr);
 
   /// adds the dereferenceable attribute to the list of attributes.
   void addDereferenceableAttr(unsigned i, uint64_t Bytes);
@@ -3610,10 +3601,14 @@ public:
   bool paramHasAttr(unsigned i, Attribute::AttrKind Kind) const;
 
   /// Get the attribute of a given kind at a position.
-  Attribute getAttribute(unsigned i, Attribute::AttrKind Kind) const;
+  Attribute getAttribute(unsigned i, Attribute::AttrKind Kind) const {
+    return getAttributes().getAttribute(i, Kind);
+  }
 
   /// Get the attribute of a given kind at a position.
-  Attribute getAttribute(unsigned i, StringRef Kind) const;
+  Attribute getAttribute(unsigned i, StringRef Kind) const {
+    return getAttributes().getAttribute(i, Kind);
+  }
 
   /// Return true if the data operand at index \p i has the attribute \p
   /// A.
@@ -3727,8 +3722,7 @@ public:
     addAttribute(AttributeSet::FunctionIndex, Attribute::Convergent);
   }
   void setNotConvergent() {
-    removeAttribute(AttributeSet::FunctionIndex,
-                    Attribute::get(getContext(), Attribute::Convergent));
+    removeAttribute(AttributeSet::FunctionIndex, Attribute::Convergent);
   }
 
   /// Determine if the call returns a structure through first
@@ -3814,17 +3808,17 @@ private:
   unsigned getNumSuccessorsV() const override;
   void setSuccessorV(unsigned idx, BasicBlock *B) override;
 
-  template <typename AttrKind> bool hasFnAttrImpl(AttrKind A) const {
-    if (AttributeList.hasAttribute(AttributeSet::FunctionIndex, A))
+  template <typename AttrKind> bool hasFnAttrImpl(AttrKind Kind) const {
+    if (AttributeList.hasAttribute(AttributeSet::FunctionIndex, Kind))
       return true;
 
     // Operand bundles override attributes on the called function, but don't
     // override attributes directly present on the invoke instruction.
-    if (isFnAttrDisallowedByOpBundle(A))
+    if (isFnAttrDisallowedByOpBundle(Kind))
       return false;
 
     if (const Function *F = getCalledFunction())
-      return F->getAttributes().hasAttribute(AttributeSet::FunctionIndex, A);
+      return F->getAttributes().hasAttribute(AttributeSet::FunctionIndex, Kind);
     return false;
   }
 

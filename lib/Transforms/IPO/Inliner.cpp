@@ -48,6 +48,17 @@ STATISTIC(NumMergedAllocas, "Number of allocas merged together");
 // if those would be more profitable and blocked inline steps.
 STATISTIC(NumCallerCallersAnalyzed, "Number of caller-callers analyzed");
 
+/// Flag to disable manual alloca merging.
+///
+/// Merging of allocas was originally done as a stack-size saving technique
+/// prior to LLVM's code generator having support for stack coloring based on
+/// lifetime markers. It is now in the process of being removed. To experiment
+/// with disabling it and relying fully on lifetime marker based stack
+/// coloring, you can pass this flag to LLVM.
+static cl::opt<bool>
+    DisableInlinedAllocaMerging("disable-inlined-alloca-merging",
+                                cl::init(false), cl::Hidden);
+
 namespace {
 enum class InlinerFunctionImportStatsOpts {
   No = 0,
@@ -61,8 +72,7 @@ cl::opt<InlinerFunctionImportStatsOpts> InlinerFunctionImportStats(
     cl::values(clEnumValN(InlinerFunctionImportStatsOpts::Basic, "basic",
                           "basic statistics"),
                clEnumValN(InlinerFunctionImportStatsOpts::Verbose, "verbose",
-                          "printing of statistics for each inlined function"),
-               clEnumValEnd),
+                          "printing of statistics for each inlined function")),
     cl::Hidden, cl::desc("Enable inliner stats for imported functions"));
 } // namespace
 
@@ -84,55 +94,29 @@ void Inliner::getAnalysisUsage(AnalysisUsage &AU) const {
 
 typedef DenseMap<ArrayType *, std::vector<AllocaInst *>> InlinedArrayAllocasTy;
 
-/// If it is possible to inline the specified call site,
-/// do so and update the CallGraph for this operation.
+/// Look at all of the allocas that we inlined through this call site.  If we
+/// have already inlined other allocas through other calls into this function,
+/// then we know that they have disjoint lifetimes and that we can merge them.
 ///
-/// This function also does some basic book-keeping to update the IR.  The
-/// InlinedArrayAllocas map keeps track of any allocas that are already
-/// available from other functions inlined into the caller.  If we are able to
-/// inline this call site we attempt to reuse already available allocas or add
-/// any new allocas to the set if not possible.
-static bool InlineCallIfPossible(
-    CallSite CS, InlineFunctionInfo &IFI,
-    InlinedArrayAllocasTy &InlinedArrayAllocas, int InlineHistory,
-    bool InsertLifetime, function_ref<AAResults &(Function &)> AARGetter,
-    ImportedFunctionsInliningStatistics &ImportedFunctionsStats) {
-  Function *Callee = CS.getCalledFunction();
-  Function *Caller = CS.getCaller();
-
-  AAResults &AAR = AARGetter(*Callee);
-
-  // Try to inline the function.  Get the list of static allocas that were
-  // inlined.
-  if (!InlineFunction(CS, IFI, &AAR, InsertLifetime))
-    return false;
-
-  if (InlinerFunctionImportStats != InlinerFunctionImportStatsOpts::No)
-    ImportedFunctionsStats.recordInline(*Caller, *Callee);
-
-  AttributeFuncs::mergeAttributesForInlining(*Caller, *Callee);
-
-  // Look at all of the allocas that we inlined through this call site.  If we
-  // have already inlined other allocas through other calls into this function,
-  // then we know that they have disjoint lifetimes and that we can merge them.
-  //
-  // There are many heuristics possible for merging these allocas, and the
-  // different options have different tradeoffs.  One thing that we *really*
-  // don't want to hurt is SRoA: once inlining happens, often allocas are no
-  // longer address taken and so they can be promoted.
-  //
-  // Our "solution" for that is to only merge allocas whose outermost type is an
-  // array type.  These are usually not promoted because someone is using a
-  // variable index into them.  These are also often the most important ones to
-  // merge.
-  //
-  // A better solution would be to have real memory lifetime markers in the IR
-  // and not have the inliner do any merging of allocas at all.  This would
-  // allow the backend to do proper stack slot coloring of all allocas that
-  // *actually make it to the backend*, which is really what we want.
-  //
-  // Because we don't have this information, we do this simple and useful hack.
-  //
+/// There are many heuristics possible for merging these allocas, and the
+/// different options have different tradeoffs.  One thing that we *really*
+/// don't want to hurt is SRoA: once inlining happens, often allocas are no
+/// longer address taken and so they can be promoted.
+///
+/// Our "solution" for that is to only merge allocas whose outermost type is an
+/// array type.  These are usually not promoted because someone is using a
+/// variable index into them.  These are also often the most important ones to
+/// merge.
+///
+/// A better solution would be to have real memory lifetime markers in the IR
+/// and not have the inliner do any merging of allocas at all.  This would
+/// allow the backend to do proper stack slot coloring of all allocas that
+/// *actually make it to the backend*, which is really what we want.
+///
+/// Because we don't have this information, we do this simple and useful hack.
+static void mergeInlinedArrayAllocas(
+    Function *Caller, InlineFunctionInfo &IFI,
+    InlinedArrayAllocasTy &InlinedArrayAllocas, int InlineHistory) {
   SmallPtrSet<AllocaInst *, 16> UsedAllocas;
 
   // When processing our SCC, check to see if CS was inlined from some other
@@ -148,7 +132,7 @@ static bool InlineCallIfPossible(
   // keeping track of the inline history for each alloca in the
   // InlinedArrayAllocas but this isn't likely to be a significant win.
   if (InlineHistory != -1) // Only do merging for top-level call sites in SCC.
-    return true;
+    return;
 
   // Loop over all the allocas we have so far and see if they can be merged with
   // a previously inlined alloca.  If not, remember that we had it.
@@ -234,13 +218,40 @@ static bool InlineCallIfPossible(
     AllocasForType.push_back(AI);
     UsedAllocas.insert(AI);
   }
-
-  return true;
 }
 
-static void emitAnalysis(CallSite CS, OptimizationRemarkEmitter &ORE,
-                         const Twine &Msg) {
-  ORE.emitOptimizationRemarkAnalysis(DEBUG_TYPE, CS.getInstruction(), Msg);
+/// If it is possible to inline the specified call site,
+/// do so and update the CallGraph for this operation.
+///
+/// This function also does some basic book-keeping to update the IR.  The
+/// InlinedArrayAllocas map keeps track of any allocas that are already
+/// available from other functions inlined into the caller.  If we are able to
+/// inline this call site we attempt to reuse already available allocas or add
+/// any new allocas to the set if not possible.
+static bool InlineCallIfPossible(
+    CallSite CS, InlineFunctionInfo &IFI,
+    InlinedArrayAllocasTy &InlinedArrayAllocas, int InlineHistory,
+    bool InsertLifetime, function_ref<AAResults &(Function &)> &AARGetter,
+    ImportedFunctionsInliningStatistics &ImportedFunctionsStats) {
+  Function *Callee = CS.getCalledFunction();
+  Function *Caller = CS.getCaller();
+
+  AAResults &AAR = AARGetter(*Callee);
+
+  // Try to inline the function.  Get the list of static allocas that were
+  // inlined.
+  if (!InlineFunction(CS, IFI, &AAR, InsertLifetime))
+    return false;
+
+  if (InlinerFunctionImportStats != InlinerFunctionImportStatsOpts::No)
+    ImportedFunctionsStats.recordInline(*Caller, *Callee);
+
+  AttributeFuncs::mergeAttributesForInlining(*Caller, *Callee);
+
+  if (!DisableInlinedAllocaMerging)
+    mergeInlinedArrayAllocas(Caller, IFI, InlinedArrayAllocas, InlineHistory);
+
+  return true;
 }
 
 /// Return true if inlining of CS can block the caller from being
@@ -324,21 +335,26 @@ shouldBeDeferred(Function *Caller, CallSite CS, InlineCost IC,
 static bool shouldInline(CallSite CS,
                          function_ref<InlineCost(CallSite CS)> GetInlineCost,
                          OptimizationRemarkEmitter &ORE) {
+  using namespace ore;
   InlineCost IC = GetInlineCost(CS);
+  Instruction *Call = CS.getInstruction();
+  Function *Callee = CS.getCalledFunction();
 
   if (IC.isAlways()) {
     DEBUG(dbgs() << "    Inlining: cost=always"
                  << ", Call: " << *CS.getInstruction() << "\n");
-    emitAnalysis(CS, ORE, Twine(CS.getCalledFunction()->getName()) +
-                              " should always be inlined (cost=always)");
+    ORE.emit(OptimizationRemarkAnalysis(DEBUG_TYPE, "AlwaysInline", Call)
+             << NV("Callee", Callee)
+             << " should always be inlined (cost=always)");
     return true;
   }
 
   if (IC.isNever()) {
     DEBUG(dbgs() << "    NOT Inlining: cost=never"
                  << ", Call: " << *CS.getInstruction() << "\n");
-    emitAnalysis(CS, ORE, Twine(CS.getCalledFunction()->getName() +
-                                " should never be inlined (cost=never)"));
+    ORE.emit(OptimizationRemarkAnalysis(DEBUG_TYPE, "NeverInline", Call)
+             << NV("Callee", Callee)
+             << " should never be inlined (cost=never)");
     return false;
   }
 
@@ -347,10 +363,10 @@ static bool shouldInline(CallSite CS,
     DEBUG(dbgs() << "    NOT Inlining: cost=" << IC.getCost()
                  << ", thres=" << (IC.getCostDelta() + IC.getCost())
                  << ", Call: " << *CS.getInstruction() << "\n");
-    emitAnalysis(CS, ORE, Twine(CS.getCalledFunction()->getName() +
-                                " too costly to inline (cost=") +
-                              Twine(IC.getCost()) + ", threshold=" +
-                              Twine(IC.getCostDelta() + IC.getCost()) + ")");
+    ORE.emit(OptimizationRemarkAnalysis(DEBUG_TYPE, "TooCostly", Call)
+             << NV("Callee", Callee) << " too costly to inline (cost="
+             << NV("Cost", IC.getCost()) << ", threshold="
+             << NV("Threshold", IC.getCostDelta() + IC.getCost()) << ")");
     return false;
   }
 
@@ -359,22 +375,22 @@ static bool shouldInline(CallSite CS,
     DEBUG(dbgs() << "    NOT Inlining: " << *CS.getInstruction()
                  << " Cost = " << IC.getCost()
                  << ", outer Cost = " << TotalSecondaryCost << '\n');
-    emitAnalysis(CS, ORE,
-                 Twine("Not inlining. Cost of inlining " +
-                       CS.getCalledFunction()->getName() +
-                       " increases the cost of inlining " +
-                       CS.getCaller()->getName() + " in other contexts"));
+    ORE.emit(OptimizationRemarkAnalysis(DEBUG_TYPE,
+                                        "IncreaseCostInOtherContexts", Call)
+             << "Not inlining. Cost of inlining " << NV("Callee", Callee)
+             << " increases the cost of inlining " << NV("Caller", Caller)
+             << " in other contexts");
     return false;
   }
 
   DEBUG(dbgs() << "    Inlining: cost=" << IC.getCost()
                << ", thres=" << (IC.getCostDelta() + IC.getCost())
                << ", Call: " << *CS.getInstruction() << '\n');
-  emitAnalysis(CS, ORE, CS.getCalledFunction()->getName() +
-                            Twine(" can be inlined into ") +
-                            CS.getCaller()->getName() + " with cost=" +
-                            Twine(IC.getCost()) + " (threshold=" +
-                            Twine(IC.getCostDelta() + IC.getCost()) + ")");
+  ORE.emit(OptimizationRemarkAnalysis(DEBUG_TYPE, "CanBeInlined", Call)
+           << NV("Callee", Callee) << " can be inlined into "
+           << NV("Caller", Caller) << " with cost=" << NV("Cost", IC.getCost())
+           << " (threshold="
+           << NV("Threshold", IC.getCostDelta() + IC.getCost()) << ")");
   return true;
 }
 
@@ -435,9 +451,10 @@ inlineCallsImpl(CallGraphSCC &SCC, CallGraph &CG,
 
   for (CallGraphNode *Node : SCC) {
     Function *F = Node->getFunction();
-    if (!F)
+    if (!F || F->isDeclaration())
       continue;
 
+    OptimizationRemarkEmitter ORE(F);
     for (BasicBlock &BB : *F)
       for (Instruction &I : BB) {
         CallSite CS(cast<Value>(&I));
@@ -450,8 +467,15 @@ inlineCallsImpl(CallGraphSCC &SCC, CallGraph &CG,
         // it.  If it is an indirect call, inlining may resolve it to be a
         // direct call, so we keep it.
         if (Function *Callee = CS.getCalledFunction())
-          if (Callee->isDeclaration())
+          if (Callee->isDeclaration()) {
+            using namespace ore;
+            ORE.emit(OptimizationRemarkMissed(DEBUG_TYPE, "NoDefinition", &I)
+                     << NV("Callee", Callee) << " will not be inlined into "
+                     << NV("Caller", CS.getCaller())
+                     << " because its definition is unavailable"
+                     << setIsVerbose());
             continue;
+          }
 
         CallSites.push_back(std::make_pair(CS, -1));
       }
@@ -525,11 +549,12 @@ inlineCallsImpl(CallGraphSCC &SCC, CallGraph &CG,
 
         // If the policy determines that we should inline this function,
         // try to do so.
+        using namespace ore;
         if (!shouldInline(CS, GetInlineCost, ORE)) {
-          ORE.emitOptimizationRemarkMissed(DEBUG_TYPE, DLoc, Block,
-                                           Twine(Callee->getName() +
-                                                 " will not be inlined into " +
-                                                 Caller->getName()));
+          ORE.emit(
+              OptimizationRemarkMissed(DEBUG_TYPE, "NotInlined", DLoc, Block)
+              << NV("Callee", Callee) << " will not be inlined into "
+              << NV("Caller", Caller));
           continue;
         }
 
@@ -537,18 +562,18 @@ inlineCallsImpl(CallGraphSCC &SCC, CallGraph &CG,
         if (!InlineCallIfPossible(CS, InlineInfo, InlinedArrayAllocas,
                                   InlineHistoryID, InsertLifetime, AARGetter,
                                   ImportedFunctionsStats)) {
-          ORE.emitOptimizationRemarkMissed(DEBUG_TYPE, DLoc, Block,
-                                           Twine(Callee->getName() +
-                                                 " will not be inlined into " +
-                                                 Caller->getName()));
+          ORE.emit(
+              OptimizationRemarkMissed(DEBUG_TYPE, "NotInlined", DLoc, Block)
+              << NV("Callee", Callee) << " will not be inlined into "
+              << NV("Caller", Caller));
           continue;
         }
         ++NumInlined;
 
         // Report the inline decision.
-        ORE.emitOptimizationRemark(
-            DEBUG_TYPE, DLoc, Block,
-            Twine(Callee->getName() + " inlined into " + Caller->getName()));
+        ORE.emit(OptimizationRemark(DEBUG_TYPE, "Inlined", DLoc, Block)
+                 << NV("Callee", Callee) << " inlined into "
+                 << NV("Caller", Caller));
 
         // If inlining this function gave us any new call sites, throw them
         // onto our worklist to process.  They are useful inline candidates.
@@ -608,7 +633,7 @@ inlineCallsImpl(CallGraphSCC &SCC, CallGraph &CG,
 bool Inliner::inlineCalls(CallGraphSCC &SCC) {
   CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   ACT = &getAnalysis<AssumptionCacheTracker>();
-  PSI = getAnalysis<ProfileSummaryInfoWrapperPass>().getPSI(CG.getModule());
+  PSI = getAnalysis<ProfileSummaryInfoWrapperPass>().getPSI();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   // We compute dedicated AA results for each function in the SCC as needed. We
   // use a lambda referencing external objects so that they live long enough to

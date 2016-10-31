@@ -26,14 +26,6 @@ struct PostDominatorTree : public DominatorTreeBase<BasicBlock> {
   typedef DominatorTreeBase<BasicBlock> Base;
 
   PostDominatorTree() : DominatorTreeBase<BasicBlock>(true) {}
-
-  PostDominatorTree(PostDominatorTree &&Arg)
-    : Base(std::move(static_cast<Base &>(Arg))) {}
-
-  PostDominatorTree &operator=(PostDominatorTree &&RHS) {
-    Base::operator=(std::move(static_cast<Base &>(RHS)));
-    return *this;
-  }
 };
 
 /// \brief Analysis pass which computes a \c PostDominatorTree.
@@ -89,7 +81,7 @@ FunctionPass* createPostDomTree();
 
 template <> struct GraphTraits<PostDominatorTree*>
   : public GraphTraits<DomTreeNode*> {
-  static NodeType *getEntryNode(PostDominatorTree *DT) {
+  static NodeRef getEntryNode(PostDominatorTree *DT) {
     return DT->getRootNode();
   }
 

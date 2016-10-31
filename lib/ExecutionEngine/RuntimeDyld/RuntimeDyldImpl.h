@@ -149,26 +149,41 @@ public:
   /// The size of this relocation (MachO specific).
   unsigned Size;
 
+  // COFF specific.
+  bool IsTargetThumbFunc;
+
   RelocationEntry(unsigned id, uint64_t offset, uint32_t type, int64_t addend)
       : SectionID(id), Offset(offset), RelType(type), Addend(addend),
-        SymOffset(0), IsPCRel(false), Size(0) {}
+        SymOffset(0), IsPCRel(false), Size(0), IsTargetThumbFunc(false) {}
 
   RelocationEntry(unsigned id, uint64_t offset, uint32_t type, int64_t addend,
                   uint64_t symoffset)
       : SectionID(id), Offset(offset), RelType(type), Addend(addend),
-        SymOffset(symoffset), IsPCRel(false), Size(0) {}
+        SymOffset(symoffset), IsPCRel(false), Size(0),
+        IsTargetThumbFunc(false) {}
 
   RelocationEntry(unsigned id, uint64_t offset, uint32_t type, int64_t addend,
                   bool IsPCRel, unsigned Size)
       : SectionID(id), Offset(offset), RelType(type), Addend(addend),
-        SymOffset(0), IsPCRel(IsPCRel), Size(Size) {}
+        SymOffset(0), IsPCRel(IsPCRel), Size(Size), IsTargetThumbFunc(false) {}
 
   RelocationEntry(unsigned id, uint64_t offset, uint32_t type, int64_t addend,
                   unsigned SectionA, uint64_t SectionAOffset, unsigned SectionB,
                   uint64_t SectionBOffset, bool IsPCRel, unsigned Size)
       : SectionID(id), Offset(offset), RelType(type),
         Addend(SectionAOffset - SectionBOffset + addend), IsPCRel(IsPCRel),
-        Size(Size) {
+        Size(Size), IsTargetThumbFunc(false) {
+    Sections.SectionA = SectionA;
+    Sections.SectionB = SectionB;
+  }
+
+  RelocationEntry(unsigned id, uint64_t offset, uint32_t type, int64_t addend,
+                  unsigned SectionA, uint64_t SectionAOffset, unsigned SectionB,
+                  uint64_t SectionBOffset, bool IsPCRel, unsigned Size,
+                  bool IsTargetThumbFunc)
+      : SectionID(id), Offset(offset), RelType(type),
+        Addend(SectionAOffset - SectionBOffset + addend), IsPCRel(IsPCRel),
+        Size(Size), IsTargetThumbFunc(IsTargetThumbFunc) {
     Sections.SectionA = SectionA;
     Sections.SectionB = SectionB;
   }
@@ -275,6 +290,7 @@ protected:
   Triple::ArchType Arch;
   bool IsTargetLittleEndian;
   bool IsMipsO32ABI;
+  bool IsMipsN32ABI;
   bool IsMipsN64ABI;
 
   // True if all sections should be passed to the memory manager, false if only
@@ -338,6 +354,7 @@ protected:
 
   virtual void setMipsABI(const ObjectFile &Obj) {
     IsMipsO32ABI = false;
+    IsMipsN32ABI = false;
     IsMipsN64ABI = false;
   }
 

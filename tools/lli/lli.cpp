@@ -91,8 +91,7 @@ namespace {
                                            "Orc-based MCJIT replacement"),
                                 clEnumValN(JITKind::OrcLazy,
                                            "orc-lazy",
-                                           "Orc-based lazy JIT."),
-                                clEnumValEnd));
+                                           "Orc-based lazy JIT.")));
 
   // The MCJIT supports building for a target address space separate from
   // the JIT compilation process. Use a forked process and a copying
@@ -194,8 +193,7 @@ namespace {
           clEnumValN(Reloc::PIC_, "pic",
                      "Fully relocatable, position independent code"),
           clEnumValN(Reloc::DynamicNoPIC, "dynamic-no-pic",
-                     "Relocatable external references, non-relocatable code"),
-          clEnumValEnd));
+                     "Relocatable external references, non-relocatable code")));
 
   cl::opt<llvm::CodeModel::Model>
   CMModel("code-model",
@@ -210,8 +208,7 @@ namespace {
                      clEnumValN(CodeModel::Medium, "medium",
                                 "Medium code model"),
                      clEnumValN(CodeModel::Large, "large",
-                                "Large code model"),
-                     clEnumValEnd));
+                                "Large code model")));
 
   cl::opt<bool>
   GenerateSoftFloatCalls("soft-float",
@@ -228,8 +225,7 @@ namespace {
                      clEnumValN(FloatABI::Soft, "soft",
                                 "Soft float ABI (implied by -soft-float)"),
                      clEnumValN(FloatABI::Hard, "hard",
-                                "Hard float ABI (uses FP registers)"),
-                     clEnumValEnd));
+                                "Hard float ABI (uses FP registers)")));
 
   ExitOnError ExitOnErr;
 }
@@ -407,7 +403,11 @@ int main(int argc, char **argv, char * const *envp) {
         return 1;
       }
     }
-    return runOrcLazyJIT(std::move(Ms), argc, argv);
+    std::vector<std::string> Args;
+    Args.push_back(InputFile);
+    for (auto &Arg : InputArgv)
+      Args.push_back(Arg);
+    return runOrcLazyJIT(std::move(Ms), Args);
   }
 
   if (EnableCacheManager) {
@@ -662,7 +662,8 @@ int main(int argc, char **argv, char * const *envp) {
     }
 
     // Create a remote target client running over the channel.
-    typedef orc::remote::OrcRemoteTargetClient<orc::remote::RPCChannel> MyRemote;
+    typedef orc::remote::OrcRemoteTargetClient<orc::remote::RPCByteChannel>
+      MyRemote;
     MyRemote R = ExitOnErr(MyRemote::Create(*C));
 
     // Create a remote memory manager.

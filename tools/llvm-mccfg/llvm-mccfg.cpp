@@ -140,9 +140,9 @@ namespace llvm {
 
 template<>
 struct GraphTraits<DOTMCFunction> {
-  typedef const MCBasicBlock NodeType;
+  typedef const MCBasicBlock* NodeRef;
   typedef MCBasicBlock::succ_const_iterator ChildIteratorType;
-  static NodeType *getEntryNode(const DOTMCFunction &MCFN) {
+  static NodeRef getEntryNode(const DOTMCFunction &MCFN) {
     return MCFN.Fn.getEntryBlock();
   }
   //    Return iterators that point to the beginning and ending of the child
@@ -339,7 +339,10 @@ static void DumpObject(const ObjectFile *Obj) {
       ++filenum;
     }
   }
-  mcmodule2yaml(outs(), *Mod, *MII, *MRI);
+
+  StringRef ErrMsg = mcmodule2yaml(outs(), *Mod, *MII, *MRI);
+  if (!ErrMsg.empty())
+    errs() << "error: " << ErrMsg << '\n';
 }
 
 /// @brief Open file and figure out how to dump it.

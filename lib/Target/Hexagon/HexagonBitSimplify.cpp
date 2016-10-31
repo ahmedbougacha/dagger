@@ -16,12 +16,16 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
+
+static cl::opt<bool> PreserveTiedOps("hexbit-keep-tied", cl::Hidden,
+  cl::init(true), cl::desc("Preserve subregisters in tied operands"));
 
 namespace llvm {
   void initializeHexagonBitSimplifyPass(PassRegistry& Registry);
@@ -144,7 +148,7 @@ namespace {
     HexagonBitSimplify() : MachineFunctionPass(ID), MDT(0) {
       initializeHexagonBitSimplifyPass(*PassRegistry::getPassRegistry());
     }
-    virtual const char *getPassName() const {
+    virtual StringRef getPassName() const {
       return "Hexagon bit simplification";
     }
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
@@ -187,6 +191,8 @@ namespace {
     MachineDominatorTree *MDT;
 
     bool visitBlock(MachineBasicBlock &B, Transformation &T, RegisterSet &AVs);
+    static bool hasTiedUse(unsigned Reg, MachineRegisterInfo &MRI,
+        unsigned NewSub = Hexagon::NoSubRegister);
   };
 
   char HexagonBitSimplify::ID = 0;
@@ -328,6 +334,8 @@ bool HexagonBitSimplify::replaceRegWithSub(unsigned OldR, unsigned NewR,
   if (!TargetRegisterInfo::isVirtualRegister(OldR) ||
       !TargetRegisterInfo::isVirtualRegister(NewR))
     return false;
+  if (hasTiedUse(OldR, MRI, NewSR))
+    return false;
   auto Begin = MRI.use_begin(OldR), End = MRI.use_end();
   decltype(End) NextI;
   for (auto I = Begin; I != End; I = NextI) {
@@ -343,6 +351,8 @@ bool HexagonBitSimplify::replaceSubWithSub(unsigned OldR, unsigned OldSR,
       unsigned NewR, unsigned NewSR, MachineRegisterInfo &MRI) {
   if (!TargetRegisterInfo::isVirtualRegister(OldR) ||
       !TargetRegisterInfo::isVirtualRegister(NewR))
+    return false;
+  if (OldSR != NewSR && hasTiedUse(OldR, MRI, NewSR))
     return false;
   auto Begin = MRI.use_begin(OldR), End = MRI.use_end();
   decltype(End) NextI;
@@ -895,6 +905,16 @@ bool HexagonBitSimplify::isTransparentCopy(const BitTracker::RegisterRef &RD,
 }
 
 
+bool HexagonBitSimplify::hasTiedUse(unsigned Reg, MachineRegisterInfo &MRI,
+      unsigned NewSub) {
+  if (!PreserveTiedOps)
+    return false;
+  return any_of(MRI.use_operands(Reg),
+                [NewSub] (const MachineOperand &Op) -> bool {
+                  return Op.getSubReg() != NewSub && Op.isTied();
+                });
+}
+
 //
 // Dead code elimination
 //
@@ -1351,8 +1371,8 @@ bool ConstGeneration::isTfrConst(const MachineInstr &MI) {
     case Hexagon::A4_combineii:
     case Hexagon::A2_tfrsi:
     case Hexagon::A2_tfrpi:
-    case Hexagon::TFR_PdTrue:
-    case Hexagon::TFR_PdFalse:
+    case Hexagon::PS_true:
+    case Hexagon::PS_false:
     case Hexagon::CONST32:
     case Hexagon::CONST64:
       return true;
@@ -1397,9 +1417,9 @@ unsigned ConstGeneration::genTfrConst(const TargetRegisterClass *RC, int64_t C,
   if (RC == &Hexagon::PredRegsRegClass) {
     unsigned Opc;
     if (C == 0)
-      Opc = Hexagon::TFR_PdFalse;
+      Opc = Hexagon::PS_false;
     else if ((C & 0xFF) == 0xFF)
-      Opc = Hexagon::TFR_PdTrue;
+      Opc = Hexagon::PS_true;
     else
       return 0;
     BuildMI(B, At, DL, HII.get(Opc), Reg);
@@ -2173,7 +2193,7 @@ bool BitSimplification::simplifyTstbit(MachineInstr *MI,
     }
   } else if (V.is(0) || V.is(1)) {
     unsigned NewR = MRI.createVirtualRegister(&Hexagon::PredRegsRegClass);
-    unsigned NewOpc = V.is(0) ? Hexagon::TFR_PdFalse : Hexagon::TFR_PdTrue;
+    unsigned NewOpc = V.is(0) ? Hexagon::PS_false : Hexagon::PS_true;
     BuildMI(B, At, DL, HII.get(NewOpc), NewR);
     HBS::replaceReg(RD.Reg, NewR, MRI);
     return true;

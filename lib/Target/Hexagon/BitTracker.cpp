@@ -1050,10 +1050,15 @@ bool BT::reached(const MachineBasicBlock *B) const {
 
 // Visit an individual instruction. This could be a newly added instruction,
 // or one that has been modified by an optimization.
-void BT::visit(const llvm::MachineInstr &MI) {
+void BT::visit(const MachineInstr &MI) {
   assert(!MI.isBranch() && "Only non-branches are allowed");
   InstrExec.insert(&MI);
   visitNonBranch(MI);
+  // The call to visitNonBranch could propagate the changes until a branch
+  // is actually visited. This could result in adding CFG edges to the flow
+  // queue. Since the queue won't be processed, clear it.
+  while (!FlowQ.empty())
+    FlowQ.pop();
 }
 
 

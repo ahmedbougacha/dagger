@@ -26,8 +26,8 @@ class ModulePass;
 class FunctionPass;
 
 // LLVM IR passes.
-ModulePass *createWebAssemblyLowerEmscriptenExceptions();
-void initializeWebAssemblyLowerEmscriptenExceptionsPass(PassRegistry &);
+ModulePass *createWebAssemblyLowerEmscriptenEHSjLj(bool DoEH, bool DoSjLj);
+void initializeWebAssemblyLowerEmscriptenEHSjLjPass(PassRegistry &);
 FunctionPass *createWebAssemblyOptimizeReturned();
 
 // ISel and immediate followup passes.
@@ -43,11 +43,13 @@ FunctionPass *createWebAssemblyOptimizeLiveIntervals();
 FunctionPass *createWebAssemblyStoreResults();
 FunctionPass *createWebAssemblyRegStackify();
 FunctionPass *createWebAssemblyRegColoring();
+FunctionPass *createWebAssemblyExplicitLocals();
 FunctionPass *createWebAssemblyFixIrreducibleControlFlow();
 FunctionPass *createWebAssemblyCFGStackify();
 FunctionPass *createWebAssemblyLowerBrUnless();
 FunctionPass *createWebAssemblyRegNumbering();
 FunctionPass *createWebAssemblyPeephole();
+FunctionPass *createWebAssemblyCallIndirectFixup();
 
 } // end namespace llvm
 

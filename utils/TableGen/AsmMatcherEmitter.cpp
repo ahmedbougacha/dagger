@@ -97,6 +97,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CodeGenTarget.h"
+#include "llvm/ADT/CachedHashString.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -353,6 +354,7 @@ public:
   std::string TokenizingCharacters;
   std::string SeparatorCharacters;
   std::string BreakCharacters;
+  std::string Name;
   int AsmVariantNo;
 };
 
@@ -1468,6 +1470,7 @@ void AsmMatcherInfo::buildInfo() {
         AsmVariant->getValueAsString("SeparatorCharacters");
     Variant.BreakCharacters =
         AsmVariant->getValueAsString("BreakCharacters");
+    Variant.Name = AsmVariant->getValueAsString("Name");
     Variant.AsmVariantNo = AsmVariant->getValueAsInt("Variant");
 
     for (const CodeGenInstruction *CGI : Target.getInstructionsByEnumValue()) {
@@ -1479,6 +1482,11 @@ void AsmMatcherInfo::buildInfo() {
 
       // Ignore "codegen only" instructions.
       if (CGI->TheDef->getValueAsBit("isCodeGenOnly"))
+        continue;
+
+      // Ignore instructions for different instructions
+      const std::string V = CGI->TheDef->getValueAsString("AsmVariantName");
+      if (!V.empty() && V != Variant.Name)
         continue;
 
       auto II = llvm::make_unique<MatchableInfo>(*CGI);
@@ -1507,6 +1515,10 @@ void AsmMatcherInfo::buildInfo() {
       // instruction.
       if (!StringRef(Alias->ResultInst->TheDef->getName())
             .startswith( MatchPrefix))
+        continue;
+
+      const std::string V = Alias->TheDef->getValueAsString("AsmVariantName");
+      if (!V.empty() && V != Variant.Name)
         continue;
 
       auto II = llvm::make_unique<MatchableInfo>(std::move(Alias));
@@ -1811,10 +1823,11 @@ void MatchableInfo::buildAliasResultOperands() {
   }
 }
 
-static unsigned getConverterOperandID(const std::string &Name,
-                                      SmallSetVector<std::string, 16> &Table,
-                                      bool &IsNew) {
-  IsNew = Table.insert(Name);
+static unsigned
+getConverterOperandID(const std::string &Name,
+                      SmallSetVector<CachedHashString, 16> &Table,
+                      bool &IsNew) {
+  IsNew = Table.insert(CachedHashString(Name));
 
   unsigned ID = IsNew ? Table.size() - 1 : find(Table, Name) - Table.begin();
 
@@ -1827,8 +1840,8 @@ static void emitConvertFuncs(CodeGenTarget &Target, StringRef ClassName,
                              std::vector<std::unique_ptr<MatchableInfo>> &Infos,
                              bool HasMnemonicFirst, bool HasOptionalOperands,
                              raw_ostream &OS) {
-  SmallSetVector<std::string, 16> OperandConversionKinds;
-  SmallSetVector<std::string, 16> InstructionConversionKinds;
+  SmallSetVector<CachedHashString, 16> OperandConversionKinds;
+  SmallSetVector<CachedHashString, 16> InstructionConversionKinds;
   std::vector<std::vector<uint8_t> > ConversionTable;
   size_t MaxRowLength = 2; // minimum is custom converter plus terminator.
 
@@ -1900,9 +1913,9 @@ static void emitConvertFuncs(CodeGenTarget &Target, StringRef ClassName,
 
   // Pre-populate the operand conversion kinds with the standard always
   // available entries.
-  OperandConversionKinds.insert("CVT_Done");
-  OperandConversionKinds.insert("CVT_Reg");
-  OperandConversionKinds.insert("CVT_Tied");
+  OperandConversionKinds.insert(CachedHashString("CVT_Done"));
+  OperandConversionKinds.insert(CachedHashString("CVT_Reg"));
+  OperandConversionKinds.insert(CachedHashString("CVT_Tied"));
   enum { CVT_Done, CVT_Reg, CVT_Tied };
 
   for (auto &II : Infos) {
@@ -1914,13 +1927,13 @@ static void emitConvertFuncs(CodeGenTarget &Target, StringRef ClassName,
       II->ConversionFnKind = Signature;
 
       // Check if we have already generated this signature.
-      if (!InstructionConversionKinds.insert(Signature))
+      if (!InstructionConversionKinds.insert(CachedHashString(Signature)))
         continue;
 
       // Remember this converter for the kind enum.
       unsigned KindID = OperandConversionKinds.size();
-      OperandConversionKinds.insert("CVT_" +
-                                    getEnumNameForToken(AsmMatchConverter));
+      OperandConversionKinds.insert(
+          CachedHashString("CVT_" + getEnumNameForToken(AsmMatchConverter)));
 
       // Add the converter row for this instruction.
       ConversionTable.emplace_back();
@@ -2102,7 +2115,7 @@ static void emitConvertFuncs(CodeGenTarget &Target, StringRef ClassName,
 
     // Save the signature. If we already have it, don't add a new row
     // to the table.
-    if (!InstructionConversionKinds.insert(Signature))
+    if (!InstructionConversionKinds.insert(CachedHashString(Signature)))
       continue;
 
     // Add the row to the table.
@@ -2119,14 +2132,14 @@ static void emitConvertFuncs(CodeGenTarget &Target, StringRef ClassName,
 
   // Output the operand conversion kind enum.
   OS << "enum OperatorConversionKind {\n";
-  for (const std::string &Converter : OperandConversionKinds)
+  for (const auto &Converter : OperandConversionKinds)
     OS << "  " << Converter << ",\n";
   OS << "  CVT_NUM_CONVERTERS\n";
   OS << "};\n\n";
 
   // Output the instruction conversion kind enum.
   OS << "enum InstructionConversionKind {\n";
-  for (const std::string &Signature : InstructionConversionKinds)
+  for (const auto &Signature : InstructionConversionKinds)
     OS << "  " << Signature << ",\n";
   OS << "  CVT_NUM_SIGNATURES\n";
   OS << "};\n\n";

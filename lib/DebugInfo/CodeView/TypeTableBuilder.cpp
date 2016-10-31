@@ -89,6 +89,19 @@ TypeIndex TypeTableBuilder::writeKnownType(const PointerRecord &Record) {
   return writeRecord(Builder);
 }
 
+static void writeNameAndUniqueName(TypeRecordBuilder &Builder, ClassOptions CO,
+                                   StringRef Name, StringRef UniqueName) {
+  // Truncate the names to half the remaining record length.
+  unsigned MaxNameLength = Builder.maxBytesRemaining() / 2;
+  Name = Name.take_front(MaxNameLength - 1);
+  UniqueName = UniqueName.take_front(MaxNameLength - 1);
+
+  Builder.writeNullTerminatedString(Name);
+  if ((CO & ClassOptions::HasUniqueName) != ClassOptions::None) {
+    Builder.writeNullTerminatedString(UniqueName);
+  }
+}
+
 TypeIndex TypeTableBuilder::writeKnownType(const ArrayRecord &Record) {
   TypeRecordBuilder Builder(Record.getKind());
 
@@ -118,11 +131,8 @@ TypeIndex TypeTableBuilder::writeKnownType(const ClassRecord &Record) {
   Builder.writeTypeIndex(Record.getDerivationList());
   Builder.writeTypeIndex(Record.getVTableShape());
   Builder.writeEncodedUnsignedInteger(Record.getSize());
-  Builder.writeNullTerminatedString(Record.getName());
-  if ((Record.getOptions() & ClassOptions::HasUniqueName) !=
-      ClassOptions::None) {
-    Builder.writeNullTerminatedString(Record.getUniqueName());
-  }
+  writeNameAndUniqueName(Builder, Record.getOptions(), Record.getName(),
+                         Record.getUniqueName());
 
   return writeRecord(Builder);
 }
@@ -136,11 +146,8 @@ TypeIndex TypeTableBuilder::writeKnownType(const UnionRecord &Record) {
   Builder.writeUInt16(Flags);
   Builder.writeTypeIndex(Record.getFieldList());
   Builder.writeEncodedUnsignedInteger(Record.getSize());
-  Builder.writeNullTerminatedString(Record.getName());
-  if ((Record.getOptions() & ClassOptions::HasUniqueName) !=
-      ClassOptions::None) {
-    Builder.writeNullTerminatedString(Record.getUniqueName());
-  }
+  writeNameAndUniqueName(Builder, Record.getOptions(), Record.getName(),
+                         Record.getUniqueName());
   return writeRecord(Builder);
 }
 
@@ -151,11 +158,8 @@ TypeIndex TypeTableBuilder::writeKnownType(const EnumRecord &Record) {
   Builder.writeUInt16(static_cast<uint16_t>(Record.getOptions()));
   Builder.writeTypeIndex(Record.getUnderlyingType());
   Builder.writeTypeIndex(Record.getFieldList());
-  Builder.writeNullTerminatedString(Record.getName());
-  if ((Record.getOptions() & ClassOptions::HasUniqueName) !=
-      ClassOptions::None) {
-    Builder.writeNullTerminatedString(Record.getUniqueName());
-  }
+  writeNameAndUniqueName(Builder, Record.getOptions(), Record.getName(),
+                         Record.getUniqueName());
 
   return writeRecord(Builder);
 }
@@ -198,6 +202,7 @@ TypeIndex TypeTableBuilder::writeKnownType(const VFTableRecord &Record) {
   for (StringRef MethodName : Record.getMethodNames())
     NamesLen += MethodName.size() + 1;
 
+  // FIXME: Avoid creating a record longer than MaxRecordLength.
   Builder.writeUInt32(NamesLen);
   Builder.writeNullTerminatedString(Record.getName());
   for (StringRef MethodName : Record.getMethodNames())
@@ -257,11 +262,15 @@ TypeIndex TypeTableBuilder::writeKnownType(const BuildInfoRecord &Record) {
 }
 
 TypeIndex TypeTableBuilder::writeRecord(TypeRecordBuilder &Builder) {
-  return writeRecord(Builder.str());
+  TypeIndex I = writeRecord(Builder.str());
+  RecordKinds.push_back(Builder.kind());
+  return I;
 }
 
 TypeIndex TypeTableBuilder::writeFieldList(FieldListRecordBuilder &FieldList) {
-  return FieldList.writeListRecord(*this);
+  TypeIndex I = FieldList.writeListRecord(*this);
+  RecordKinds.push_back(TypeRecordKind::FieldList);
+  return I;
 }
 
 TypeIndex

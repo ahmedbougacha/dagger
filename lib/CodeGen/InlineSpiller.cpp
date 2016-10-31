@@ -377,7 +377,7 @@ bool InlineSpiller::hoistSpillInsideBB(LiveInterval &SpillLI,
   MachineBasicBlock *MBB = LIS.getMBBFromIndex(SrcVNI->def);
   MachineBasicBlock::iterator MII;
   if (SrcVNI->isPHIDef())
-    MII = MBB->SkipPHIsAndLabels(MBB->begin());
+    MII = MBB->SkipPHIsLabelsAndDebug(MBB->begin());
   else {
     MachineInstr *DefMI = LIS.getInstructionFromIndex(SrcVNI->def);
     assert(DefMI && "Defining instruction disappeared");
@@ -550,12 +550,18 @@ bool InlineSpiller::reMaterializeFor(LiveInterval &VirtReg, MachineInstr &MI) {
     return true;
   }
 
-  // Alocate a new register for the remat.
+  // Allocate a new register for the remat.
   unsigned NewVReg = Edit->createFrom(Original);
 
   // Finally we can rematerialize OrigMI before MI.
   SlotIndex DefIdx =
       Edit->rematerializeAt(*MI.getParent(), MI, NewVReg, RM, TRI);
+
+  // We take the DebugLoc from MI, since OrigMI may be attributed to a
+  // different source location. 
+  auto *NewMI = LIS.getInstructionFromIndex(DefIdx);
+  NewMI->setDebugLoc(MI.getDebugLoc());
+
   (void)DefIdx;
   DEBUG(dbgs() << "\tremat:  " << DefIdx << '\t'
                << *LIS.getInstructionFromIndex(DefIdx));

@@ -11,23 +11,29 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/MC/MCParser/AsmLexer.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/MC/MCAsmInfo.h"
-#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/Support/SMLoc.h"
+#include "llvm/Support/SaveAndRestore.h"
+#include <cassert>
 #include <cctype>
-#include <cerrno>
 #include <cstdio>
-#include <cstdlib>
+#include <cstring>
+#include <string>
 #include <tuple>
+#include <utility>
 
 using namespace llvm;
 
-AsmLexer::AsmLexer(const MCAsmInfo &MAI) : MAI(MAI) {
-  CurPtr = nullptr;
-  IsAtStartOfLine = true;
-  IsAtStartOfStatement = true;
+AsmLexer::AsmLexer(const MCAsmInfo &MAI)
+    : MAI(MAI), CurPtr(nullptr), IsAtStartOfLine(true),
+      IsAtStartOfStatement(true), IsParsingMSInlineAsm(false),
+      IsPeeking(false) {
   AllowAtInIdentifier = !StringRef(MAI.getCommentString()).startswith("@");
 }
 
@@ -136,6 +142,7 @@ static bool IsIdentifierChar(char c, bool AllowAt) {
   return isalnum(c) || c == '_' || c == '$' || c == '.' ||
          (c == '@' && AllowAt) || c == '?';
 }
+
 AsmToken AsmLexer::LexIdentifier() {
   // Check for floating point literals.
   if (CurPtr[-1] == '.' && isdigit(*CurPtr)) {
@@ -225,7 +232,7 @@ static void SkipIgnoredIntegerSuffix(const char *&CurPtr) {
 static unsigned doLookAhead(const char *&CurPtr, unsigned DefaultRadix) {
   const char *FirstHex = nullptr;
   const char *LookAhead = CurPtr;
-  while (1) {
+  while (true) {
     if (isdigit(*LookAhead)) {
       ++LookAhead;
     } else if (isxdigit(*LookAhead)) {
@@ -258,6 +265,45 @@ static AsmToken intToken(StringRef Ref, APInt &Value)
 ///   Hex integer: 0x[0-9a-fA-F]+ or [0x]?[0-9][0-9a-fA-F]*[hH]
 ///   Decimal integer: [1-9][0-9]*
 AsmToken AsmLexer::LexDigit() {
+  // MASM-flavor binary integer: [01]+[bB]
+  // MASM-flavor hexadecimal integer: [0-9][0-9a-fA-F]*[hH]
+  if (IsParsingMSInlineAsm && isdigit(CurPtr[-1])) {
+    const char *FirstNonBinary = (CurPtr[-1] != '0' && CurPtr[-1] != '1') ?
+                                   CurPtr - 1 : nullptr;
+    const char *OldCurPtr = CurPtr;
+    while (isxdigit(*CurPtr)) {
+      if (*CurPtr != '0' && *CurPtr != '1' && !FirstNonBinary)
+        FirstNonBinary = CurPtr;
+      ++CurPtr;
+    }
+
+    unsigned Radix = 0;
+    if (*CurPtr == 'h' || *CurPtr == 'H') {
+      // hexadecimal number
+      ++CurPtr;
+      Radix = 16;
+    } else if (FirstNonBinary && FirstNonBinary + 1 == CurPtr &&
+               (*FirstNonBinary == 'b' || *FirstNonBinary == 'B'))
+      Radix = 2;
+
+    if (Radix == 2 || Radix == 16) {
+      StringRef Result(TokStart, CurPtr - TokStart);
+      APInt Value(128, 0, true);
+
+      if (Result.drop_back().getAsInteger(Radix, Value))
+        return ReturnError(TokStart, Radix == 2 ? "invalid binary number" :
+                             "invalid hexdecimal number");
+
+      // MSVC accepts and ignores type suffices on integer literals.
+      SkipIgnoredIntegerSuffix(CurPtr);
+
+      return intToken(Result, Value);
+   }
+
+    // octal/decimal integers, or floating point numbers, fall through
+    CurPtr = OldCurPtr;
+  }
+
   // Decimal integer: [1-9][0-9]*
   if (CurPtr[-1] != '0' || CurPtr[0] == '.') {
     unsigned Radix = doLookAhead(CurPtr, 10);
@@ -286,7 +332,7 @@ AsmToken AsmLexer::LexDigit() {
     return intToken(Result, Value);
   }
 
-  if ((*CurPtr == 'b') || (*CurPtr == 'B')) {
+  if (!IsParsingMSInlineAsm && ((*CurPtr == 'b') || (*CurPtr == 'B'))) {
     ++CurPtr;
     // See if we actually have "0b" as part of something like "jmp 0b\n"
     if (!isdigit(CurPtr[0])) {
@@ -335,7 +381,7 @@ AsmToken AsmLexer::LexDigit() {
       return ReturnError(TokStart, "invalid hexadecimal number");
 
     // Consume the optional [hH].
-    if (*CurPtr == 'h' || *CurPtr == 'H')
+    if (!IsParsingMSInlineAsm && (*CurPtr == 'h' || *CurPtr == 'H'))
       ++CurPtr;
 
     // The darwin/x86 (and x86-64) assembler accepts and ignores ULL and LL
@@ -400,7 +446,6 @@ AsmToken AsmLexer::LexSingleQuote() {
   return AsmToken(AsmToken::Integer, Res, Value);
 }
 
-
 /// LexQuote: String: "..."
 AsmToken AsmLexer::LexQuote() {
   int CurChar = getNextChar();
@@ -442,16 +487,14 @@ StringRef AsmLexer::LexUntilEndOfLine() {
 
 size_t AsmLexer::peekTokens(MutableArrayRef<AsmToken> Buf,
                             bool ShouldSkipSpace) {
-  const char *SavedTokStart = TokStart;
-  const char *SavedCurPtr = CurPtr;
-  bool SavedAtStartOfLine = IsAtStartOfLine;
-  bool SavedAtStartOfStatement = IsAtStartOfStatement;
-  bool SavedSkipSpace = SkipSpace;
-
+  SaveAndRestore<const char *> SavedTokenStart(TokStart);
+  SaveAndRestore<const char *> SavedCurPtr(CurPtr);
+  SaveAndRestore<bool> SavedAtStartOfLine(IsAtStartOfLine);
+  SaveAndRestore<bool> SavedAtStartOfStatement(IsAtStartOfStatement);
+  SaveAndRestore<bool> SavedSkipSpace(SkipSpace, ShouldSkipSpace);
+  SaveAndRestore<bool> SavedIsPeeking(IsPeeking, true);
   std::string SavedErr = getErr();
   SMLoc SavedErrLoc = getErrLoc();
-
-  SkipSpace = ShouldSkipSpace;
 
   size_t ReadCount;
   for (ReadCount = 0; ReadCount < Buf.size(); ++ReadCount) {
@@ -464,27 +507,20 @@ size_t AsmLexer::peekTokens(MutableArrayRef<AsmToken> Buf,
   }
 
   SetError(SavedErrLoc, SavedErr);
-
-  SkipSpace = SavedSkipSpace;
-  IsAtStartOfLine = SavedAtStartOfLine;
-  IsAtStartOfStatement = SavedAtStartOfStatement;
-  CurPtr = SavedCurPtr;
-  TokStart = SavedTokStart;
-
   return ReadCount;
 }
 
 bool AsmLexer::isAtStartOfComment(const char *Ptr) {
-  const char *CommentString = MAI.getCommentString();
+  StringRef CommentString = MAI.getCommentString();
 
-  if (CommentString[1] == '\0')
+  if (CommentString.size() == 1)
     return CommentString[0] == Ptr[0];
 
-  // FIXME: special case for the bogus "##" comment string in X86MCAsmInfoDarwin
+  // Allow # preprocessor commments also be counted as comments for "##" cases
   if (CommentString[1] == '#')
     return CommentString[0] == Ptr[0];
 
-  return strncmp(Ptr, CommentString, strlen(CommentString)) == 0;
+  return strncmp(Ptr, CommentString.data(), CommentString.size()) == 0;
 }
 
 bool AsmLexer::isAtStatementSeparator(const char *Ptr) {
@@ -497,7 +533,7 @@ AsmToken AsmLexer::LexToken() {
   // This always consumes at least one character.
   int CurChar = getNextChar();
 
-  if (CurChar == '#' && IsAtStartOfStatement) {
+  if (!IsPeeking && CurChar == '#' && IsAtStartOfStatement) {
     // If this starts with a '#', this may be a cpp
     // hash directive and otherwise a line comment.
     AsmToken TokenBuf[2];

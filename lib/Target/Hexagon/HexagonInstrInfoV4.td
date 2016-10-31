@@ -157,8 +157,10 @@ def: T_cmp32_rr_pat<A4_rcmpeq,  CmpInReg<seteq>, i32>;
 def: T_cmp32_rr_pat<A4_rcmpneq, CmpInReg<setne>, i32>;
 
 def: T_cmp32_rr_pat<C4_cmpneq,  setne,  i1>;
+def: T_cmp32_rr_pat<C4_cmplte,  setle,  i1>;
 def: T_cmp32_rr_pat<C4_cmplteu, setule, i1>;
 
+def: T_cmp32_rr_pat<C4_cmplte,  RevCmp<setge>,  i1>;
 def: T_cmp32_rr_pat<C4_cmplteu, RevCmp<setuge>, i1>;
 
 class T_CMP_rrbh<string mnemonic, bits<3> MinOp, bit IsComm>
@@ -2679,13 +2681,11 @@ def A4_vcmpwgtui : T_vcmpImm <"vcmpw.gtu", 0b10, 0b10, u7Imm>;
 // Rx=or(#u8,asl(Rx,#U5))   Rx=or(#u8,lsr(Rx,#U5))
 let isExtendable = 1, opExtendable = 1, isExtentSigned = 0, opExtentBits = 8,
     hasNewValue = 1, opNewValue = 0 in
-class T_S4_ShiftOperate<string MnOp, string MnSh, SDNode Op, SDNode Sh,
-                        bit asl_lsr, bits<2> MajOp, InstrItinClass Itin>
+class T_S4_ShiftOperate<string MnOp, string MnSh, bit asl_lsr,
+                        bits<2> MajOp, InstrItinClass Itin>
   : MInst_acc<(outs IntRegs:$Rd), (ins u8Ext:$u8, IntRegs:$Rx, u5Imm:$U5),
       "$Rd = "#MnOp#"(#$u8, "#MnSh#"($Rx, #$U5))",
-      [(set (i32 IntRegs:$Rd),
-            (Op (Sh I32:$Rx, u5ImmPred:$U5), u32ImmPred:$u8))],
-      "$Rd = $Rx", Itin> {
+      [], "$Rd = $Rx", Itin> {
 
   bits<5> Rd;
   bits<8> u8;
@@ -2704,21 +2704,38 @@ class T_S4_ShiftOperate<string MnOp, string MnSh, SDNode Op, SDNode Sh,
   let Inst{2-1} = MajOp;
 }
 
-multiclass T_ShiftOperate<string mnemonic, SDNode Op, bits<2> MajOp,
-                          InstrItinClass Itin> {
-  def _asl_ri : T_S4_ShiftOperate<mnemonic, "asl", Op, shl, 0, MajOp, Itin>;
-  def _lsr_ri : T_S4_ShiftOperate<mnemonic, "lsr", Op, srl, 1, MajOp, Itin>;
+multiclass T_ShiftOperate<string mnemonic, bits<2> MajOp, InstrItinClass Itin> {
+  def _asl_ri : T_S4_ShiftOperate<mnemonic, "asl", 0, MajOp, Itin>;
+  def _lsr_ri : T_S4_ShiftOperate<mnemonic, "lsr", 1, MajOp, Itin>;
 }
+
+defm S4_addi : T_ShiftOperate<"add", 0b10, ALU64_tc_2_SLOT23>;
+defm S4_andi : T_ShiftOperate<"and", 0b00, ALU64_tc_2_SLOT23>;
+defm S4_ori  : T_ShiftOperate<"or",  0b01, ALU64_tc_1_SLOT23>;
+defm S4_subi : T_ShiftOperate<"sub", 0b11, ALU64_tc_1_SLOT23>;
+
+class T_Shift_CommOp_pat<InstHexagon MI, SDNode Op, SDNode ShOp>
+  : Pat<(Op (ShOp IntRegs:$Rx, u5ImmPred:$U5), u32ImmPred:$u8),
+        (MI u32ImmPred:$u8, IntRegs:$Rx, u5ImmPred:$U5)>;
 
 let AddedComplexity = 200 in {
-  defm S4_addi : T_ShiftOperate<"add", add, 0b10, ALU64_tc_2_SLOT23>;
-  defm S4_andi : T_ShiftOperate<"and", and, 0b00, ALU64_tc_2_SLOT23>;
+  def : T_Shift_CommOp_pat <S4_addi_asl_ri, add, shl>;
+  def : T_Shift_CommOp_pat <S4_addi_lsr_ri, add, srl>;
+  def : T_Shift_CommOp_pat <S4_andi_asl_ri, and, shl>;
+  def : T_Shift_CommOp_pat <S4_andi_lsr_ri, and, srl>;
 }
 
-let AddedComplexity = 30 in
-defm S4_ori  : T_ShiftOperate<"or",  or,  0b01, ALU64_tc_1_SLOT23>;
+let AddedComplexity = 30 in {
+  def : T_Shift_CommOp_pat <S4_ori_asl_ri,  or,  shl>;
+  def : T_Shift_CommOp_pat <S4_ori_lsr_ri,  or,  srl>;
+}
 
-defm S4_subi : T_ShiftOperate<"sub", sub, 0b11, ALU64_tc_1_SLOT23>;
+class T_Shift_Op_pat<InstHexagon MI, SDNode Op, SDNode ShOp>
+  : Pat<(Op u32ImmPred:$u8, (ShOp IntRegs:$Rx, u5ImmPred:$U5)),
+        (MI u32ImmPred:$u8, IntRegs:$Rx, u5ImmPred:$U5)>;
+
+def : T_Shift_Op_pat <S4_subi_asl_ri, sub, shl>;
+def : T_Shift_Op_pat <S4_subi_lsr_ri, sub, srl>;
 
 let AddedComplexity = 200 in {
   def: Pat<(add addrga:$addr, (shl I32:$src2, u5ImmPred:$src3)),
@@ -3517,7 +3534,7 @@ multiclass ST_Abs<string mnemonic, string CextOp, RegisterClass RC,
                   Operand ImmOp, bits<2> MajOp, bit isHalf = 0> {
   let CextOpcode = CextOp, BaseOpcode = CextOp#_abs in {
     let opExtendable = 0, isPredicable = 1 in
-    def S2_#NAME#abs : T_StoreAbs <mnemonic, RC, ImmOp, MajOp, isHalf>;
+    def PS_#NAME#abs : T_StoreAbs <mnemonic, RC, ImmOp, MajOp, isHalf>;
 
     // Predicated
     def S4_p#NAME#t_abs : T_StoreAbs_Pred<mnemonic, RC, MajOp, isHalf, 0, 0>;
@@ -3619,7 +3636,7 @@ multiclass ST_Abs_NV <string mnemonic, string CextOp, Operand ImmOp,
                    bits<2> MajOp> {
   let CextOpcode = CextOp, BaseOpcode = CextOp#_abs in {
     let opExtendable = 0, isPredicable = 1 in
-    def S2_#NAME#newabs : T_StoreAbs_NV <mnemonic, ImmOp, MajOp>;
+    def PS_#NAME#newabs : T_StoreAbs_NV <mnemonic, ImmOp, MajOp>;
 
     // Predicated
     def S4_p#NAME#newt_abs  : T_StoreAbs_NV_Pred <mnemonic, MajOp, 0, 0>;
@@ -3716,14 +3733,14 @@ class Stoream_pat<PatFrag Store, PatFrag Value, PatFrag Addr, PatFrag ValueMod,
         (MI Addr:$addr, (ValueMod Value:$val))>;
 
 let AddedComplexity = 30 in {
-  def: Storea_pat<truncstorei8,  I32, addrga, S2_storerbabs>;
-  def: Storea_pat<truncstorei16, I32, addrga, S2_storerhabs>;
-  def: Storea_pat<store,         I32, addrga, S2_storeriabs>;
-  def: Storea_pat<store,         I64, addrga, S2_storerdabs>;
+  def: Storea_pat<truncstorei8,  I32, addrga, PS_storerbabs>;
+  def: Storea_pat<truncstorei16, I32, addrga, PS_storerhabs>;
+  def: Storea_pat<store,         I32, addrga, PS_storeriabs>;
+  def: Storea_pat<store,         I64, addrga, PS_storerdabs>;
 
-  def: Stoream_pat<truncstorei8,  I64, addrga, LoReg, S2_storerbabs>;
-  def: Stoream_pat<truncstorei16, I64, addrga, LoReg, S2_storerhabs>;
-  def: Stoream_pat<truncstorei32, I64, addrga, LoReg, S2_storeriabs>;
+  def: Stoream_pat<truncstorei8,  I64, addrga, LoReg, PS_storerbabs>;
+  def: Stoream_pat<truncstorei16, I64, addrga, LoReg, PS_storerhabs>;
+  def: Stoream_pat<truncstorei32, I64, addrga, LoReg, PS_storeriabs>;
 }
 
 def: Storea_pat<SwapSt<atomic_store_8>,  I32, addrgp, S2_storerbgp>;
@@ -3839,7 +3856,7 @@ multiclass LD_Abs<string mnemonic, string CextOp, RegisterClass RC,
                   Operand ImmOp, bits<3> MajOp> {
   let CextOpcode = CextOp, BaseOpcode = CextOp#_abs in {
     let opExtendable = 1, isPredicable = 1 in
-    def L4_#NAME#_abs: T_LoadAbs <mnemonic, RC, ImmOp, MajOp>;
+    def PS_#NAME#abs: T_LoadAbs <mnemonic, RC, ImmOp, MajOp>;
 
     // Predicated
     defm L4_p#NAME#t : LD_Abs_Pred<mnemonic, RC, MajOp, 0>;
@@ -3868,20 +3885,20 @@ class LoadAbs_pats <PatFrag ldOp, InstHexagon MI, ValueType VT = i32>
          (VT (MI tglobaladdr:$absaddr))>;
 
 let AddedComplexity  = 30 in {
-  def: LoadAbs_pats <load,        L4_loadri_abs>;
-  def: LoadAbs_pats <zextloadi1,  L4_loadrub_abs>;
-  def: LoadAbs_pats <sextloadi8,  L4_loadrb_abs>;
-  def: LoadAbs_pats <extloadi8,   L4_loadrub_abs>;
-  def: LoadAbs_pats <zextloadi8,  L4_loadrub_abs>;
-  def: LoadAbs_pats <sextloadi16, L4_loadrh_abs>;
-  def: LoadAbs_pats <extloadi16,  L4_loadruh_abs>;
-  def: LoadAbs_pats <zextloadi16, L4_loadruh_abs>;
-  def: LoadAbs_pats <load,        L4_loadrd_abs, i64>;
+  def: LoadAbs_pats <load,        PS_loadriabs>;
+  def: LoadAbs_pats <zextloadi1,  PS_loadrubabs>;
+  def: LoadAbs_pats <sextloadi8,  PS_loadrbabs>;
+  def: LoadAbs_pats <extloadi8,   PS_loadrubabs>;
+  def: LoadAbs_pats <zextloadi8,  PS_loadrubabs>;
+  def: LoadAbs_pats <sextloadi16, PS_loadrhabs>;
+  def: LoadAbs_pats <extloadi16,  PS_loadruhabs>;
+  def: LoadAbs_pats <zextloadi16, PS_loadruhabs>;
+  def: LoadAbs_pats <load,        PS_loadrdabs, i64>;
 }
 
 let AddedComplexity  = 30 in
 def: Pat<(i64 (zextloadi1 (HexagonCONST32 tglobaladdr:$absaddr))),
-         (Zext64 (L4_loadrub_abs tglobaladdr:$absaddr))>;
+         (Zext64 (PS_loadrubabs tglobaladdr:$absaddr))>;
 
 //===----------------------------------------------------------------------===//
 // multiclass for load instructions with GP-relative addressing mode.
@@ -3919,10 +3936,10 @@ def: Loada_pat<atomic_load_32, i32, addrgp, L2_loadrigp>;
 def: Loada_pat<atomic_load_64, i64, addrgp, L2_loadrdgp>;
 
 // Map from Pd = load(globaladdress) -> Rd = memb(globaladdress), Pd = Rd
-def: Loadam_pat<load, i1, addrga, I32toI1, L4_loadrub_abs>;
+def: Loadam_pat<load, i1, addrga, I32toI1, PS_loadrubabs>;
 def: Loadam_pat<load, i1, addrgp, I32toI1, L2_loadrubgp>;
 
-def: Stoream_pat<store, I1, addrga, I1toI32, S2_storerbabs>;
+def: Stoream_pat<store, I1, addrga, I1toI32, PS_storerbabs>;
 def: Stoream_pat<store, I1, addrgp, I1toI32, S2_storerbgp>;
 
 // Map from load(globaladdress) -> mem[u][bhwd](#foo)
@@ -3955,17 +3972,17 @@ def: Pat<(HexagonCONST32_GP tblockaddress:$Rs), (A2_tfrsi s16Ext:$Rs)>;
 def: Pat<(HexagonCONST32_GP tglobaladdr:$Rs),   (A2_tfrsi s16Ext:$Rs)>;
 
 let AddedComplexity  = 30 in {
-  def: Storea_pat<truncstorei8,  I32, u32ImmPred, S2_storerbabs>;
-  def: Storea_pat<truncstorei16, I32, u32ImmPred, S2_storerhabs>;
-  def: Storea_pat<store,         I32, u32ImmPred, S2_storeriabs>;
+  def: Storea_pat<truncstorei8,  I32, u32ImmPred, PS_storerbabs>;
+  def: Storea_pat<truncstorei16, I32, u32ImmPred, PS_storerhabs>;
+  def: Storea_pat<store,         I32, u32ImmPred, PS_storeriabs>;
 }
 
 let AddedComplexity  = 30 in {
-  def: Loada_pat<load,        i32, u32ImmPred, L4_loadri_abs>;
-  def: Loada_pat<sextloadi8,  i32, u32ImmPred, L4_loadrb_abs>;
-  def: Loada_pat<zextloadi8,  i32, u32ImmPred, L4_loadrub_abs>;
-  def: Loada_pat<sextloadi16, i32, u32ImmPred, L4_loadrh_abs>;
-  def: Loada_pat<zextloadi16, i32, u32ImmPred, L4_loadruh_abs>;
+  def: Loada_pat<load,        i32, u32ImmPred, PS_loadriabs>;
+  def: Loada_pat<sextloadi8,  i32, u32ImmPred, PS_loadrbabs>;
+  def: Loada_pat<zextloadi8,  i32, u32ImmPred, PS_loadrubabs>;
+  def: Loada_pat<sextloadi16, i32, u32ImmPred, PS_loadrhabs>;
+  def: Loada_pat<zextloadi16, i32, u32ImmPred, PS_loadruhabs>;
 }
 
 // Indexed store word - global address.
@@ -3975,74 +3992,74 @@ defm: Storex_add_pat<store, addrga, u6_2ImmPred, S4_storeiri_io>;
 
 // Load from a global address that has only one use in the current basic block.
 let AddedComplexity = 100 in {
-  def: Loada_pat<extloadi8,   i32, addrga, L4_loadrub_abs>;
-  def: Loada_pat<sextloadi8,  i32, addrga, L4_loadrb_abs>;
-  def: Loada_pat<zextloadi8,  i32, addrga, L4_loadrub_abs>;
+  def: Loada_pat<extloadi8,   i32, addrga, PS_loadrubabs>;
+  def: Loada_pat<sextloadi8,  i32, addrga, PS_loadrbabs>;
+  def: Loada_pat<zextloadi8,  i32, addrga, PS_loadrubabs>;
 
-  def: Loada_pat<extloadi16,  i32, addrga, L4_loadruh_abs>;
-  def: Loada_pat<sextloadi16, i32, addrga, L4_loadrh_abs>;
-  def: Loada_pat<zextloadi16, i32, addrga, L4_loadruh_abs>;
+  def: Loada_pat<extloadi16,  i32, addrga, PS_loadruhabs>;
+  def: Loada_pat<sextloadi16, i32, addrga, PS_loadrhabs>;
+  def: Loada_pat<zextloadi16, i32, addrga, PS_loadruhabs>;
 
-  def: Loada_pat<load,        i32, addrga, L4_loadri_abs>;
-  def: Loada_pat<load,        i64, addrga, L4_loadrd_abs>;
+  def: Loada_pat<load,        i32, addrga, PS_loadriabs>;
+  def: Loada_pat<load,        i64, addrga, PS_loadrdabs>;
 }
 
 // Store to a global address that has only one use in the current basic block.
 let AddedComplexity = 100 in {
-  def: Storea_pat<truncstorei8,  I32, addrga, S2_storerbabs>;
-  def: Storea_pat<truncstorei16, I32, addrga, S2_storerhabs>;
-  def: Storea_pat<store,         I32, addrga, S2_storeriabs>;
-  def: Storea_pat<store,         I64, addrga, S2_storerdabs>;
+  def: Storea_pat<truncstorei8,  I32, addrga, PS_storerbabs>;
+  def: Storea_pat<truncstorei16, I32, addrga, PS_storerhabs>;
+  def: Storea_pat<store,         I32, addrga, PS_storeriabs>;
+  def: Storea_pat<store,         I64, addrga, PS_storerdabs>;
 
-  def: Stoream_pat<truncstorei32, I64, addrga, LoReg, S2_storeriabs>;
+  def: Stoream_pat<truncstorei32, I64, addrga, LoReg, PS_storeriabs>;
 }
 
 // i8/i16/i32 -> i64 loads
 // We need a complexity of 120 here to override preceding handling of
 // zextload.
 let AddedComplexity = 120 in {
-  def: Loadam_pat<extloadi8,   i64, addrga, Zext64, L4_loadrub_abs>;
-  def: Loadam_pat<sextloadi8,  i64, addrga, Sext64, L4_loadrb_abs>;
-  def: Loadam_pat<zextloadi8,  i64, addrga, Zext64, L4_loadrub_abs>;
+  def: Loadam_pat<extloadi8,   i64, addrga, Zext64, PS_loadrubabs>;
+  def: Loadam_pat<sextloadi8,  i64, addrga, Sext64, PS_loadrbabs>;
+  def: Loadam_pat<zextloadi8,  i64, addrga, Zext64, PS_loadrubabs>;
 
-  def: Loadam_pat<extloadi16,  i64, addrga, Zext64, L4_loadruh_abs>;
-  def: Loadam_pat<sextloadi16, i64, addrga, Sext64, L4_loadrh_abs>;
-  def: Loadam_pat<zextloadi16, i64, addrga, Zext64, L4_loadruh_abs>;
+  def: Loadam_pat<extloadi16,  i64, addrga, Zext64, PS_loadruhabs>;
+  def: Loadam_pat<sextloadi16, i64, addrga, Sext64, PS_loadrhabs>;
+  def: Loadam_pat<zextloadi16, i64, addrga, Zext64, PS_loadruhabs>;
 
-  def: Loadam_pat<extloadi32,  i64, addrga, Zext64, L4_loadri_abs>;
-  def: Loadam_pat<sextloadi32, i64, addrga, Sext64, L4_loadri_abs>;
-  def: Loadam_pat<zextloadi32, i64, addrga, Zext64, L4_loadri_abs>;
+  def: Loadam_pat<extloadi32,  i64, addrga, Zext64, PS_loadriabs>;
+  def: Loadam_pat<sextloadi32, i64, addrga, Sext64, PS_loadriabs>;
+  def: Loadam_pat<zextloadi32, i64, addrga, Zext64, PS_loadriabs>;
 }
 
 let AddedComplexity = 100 in {
-  def: Loada_pat<extloadi8,   i32, addrgp, L4_loadrub_abs>;
-  def: Loada_pat<sextloadi8,  i32, addrgp, L4_loadrb_abs>;
-  def: Loada_pat<zextloadi8,  i32, addrgp, L4_loadrub_abs>;
+  def: Loada_pat<extloadi8,   i32, addrgp, PS_loadrubabs>;
+  def: Loada_pat<sextloadi8,  i32, addrgp, PS_loadrbabs>;
+  def: Loada_pat<zextloadi8,  i32, addrgp, PS_loadrubabs>;
 
-  def: Loada_pat<extloadi16,  i32, addrgp, L4_loadruh_abs>;
-  def: Loada_pat<sextloadi16, i32, addrgp, L4_loadrh_abs>;
-  def: Loada_pat<zextloadi16, i32, addrgp, L4_loadruh_abs>;
+  def: Loada_pat<extloadi16,  i32, addrgp, PS_loadruhabs>;
+  def: Loada_pat<sextloadi16, i32, addrgp, PS_loadrhabs>;
+  def: Loada_pat<zextloadi16, i32, addrgp, PS_loadruhabs>;
 
-  def: Loada_pat<load,        i32, addrgp, L4_loadri_abs>;
-  def: Loada_pat<load,        i64, addrgp, L4_loadrd_abs>;
+  def: Loada_pat<load,        i32, addrgp, PS_loadriabs>;
+  def: Loada_pat<load,        i64, addrgp, PS_loadrdabs>;
 }
 
 let AddedComplexity = 100 in {
-  def: Storea_pat<truncstorei8,  I32, addrgp, S2_storerbabs>;
-  def: Storea_pat<truncstorei16, I32, addrgp, S2_storerhabs>;
-  def: Storea_pat<store,         I32, addrgp, S2_storeriabs>;
-  def: Storea_pat<store,         I64, addrgp, S2_storerdabs>;
+  def: Storea_pat<truncstorei8,  I32, addrgp, PS_storerbabs>;
+  def: Storea_pat<truncstorei16, I32, addrgp, PS_storerhabs>;
+  def: Storea_pat<store,         I32, addrgp, PS_storeriabs>;
+  def: Storea_pat<store,         I64, addrgp, PS_storerdabs>;
 }
 
-def: Loada_pat<atomic_load_8,  i32, addrgp, L4_loadrub_abs>;
-def: Loada_pat<atomic_load_16, i32, addrgp, L4_loadruh_abs>;
-def: Loada_pat<atomic_load_32, i32, addrgp, L4_loadri_abs>;
-def: Loada_pat<atomic_load_64, i64, addrgp, L4_loadrd_abs>;
+def: Loada_pat<atomic_load_8,  i32, addrgp, PS_loadrubabs>;
+def: Loada_pat<atomic_load_16, i32, addrgp, PS_loadruhabs>;
+def: Loada_pat<atomic_load_32, i32, addrgp, PS_loadriabs>;
+def: Loada_pat<atomic_load_64, i64, addrgp, PS_loadrdabs>;
 
-def: Storea_pat<SwapSt<atomic_store_8>,  I32, addrgp, S2_storerbabs>;
-def: Storea_pat<SwapSt<atomic_store_16>, I32, addrgp, S2_storerhabs>;
-def: Storea_pat<SwapSt<atomic_store_32>, I32, addrgp, S2_storeriabs>;
-def: Storea_pat<SwapSt<atomic_store_64>, I64, addrgp, S2_storerdabs>;
+def: Storea_pat<SwapSt<atomic_store_8>,  I32, addrgp, PS_storerbabs>;
+def: Storea_pat<SwapSt<atomic_store_16>, I32, addrgp, PS_storerhabs>;
+def: Storea_pat<SwapSt<atomic_store_32>, I32, addrgp, PS_storeriabs>;
+def: Storea_pat<SwapSt<atomic_store_64>, I64, addrgp, PS_storerdabs>;
 
 let Constraints = "@earlyclobber $dst" in
 def Insert4 : PseudoM<(outs DoubleRegs:$dst), (ins IntRegs:$a, IntRegs:$b,

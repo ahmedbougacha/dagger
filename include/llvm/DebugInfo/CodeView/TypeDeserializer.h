@@ -11,42 +11,34 @@
 #define LLVM_DEBUGINFO_CODEVIEW_TYPEDESERIALIZER_H
 
 #include "llvm/DebugInfo/CodeView/TypeVisitorCallbacks.h"
+#include "llvm/DebugInfo/MSF/ByteStream.h"
+#include "llvm/DebugInfo/MSF/StreamReader.h"
 #include "llvm/Support/Error.h"
 
 namespace llvm {
 namespace codeview {
-class TypeDeserializerBase : public TypeVisitorCallbacks {
+class TypeDeserializer : public TypeVisitorCallbacks {
 public:
-  explicit TypeDeserializerBase(TypeVisitorCallbacks &Recipient)
-      : Recipient(Recipient) {}
-
-  Error visitTypeBegin(const CVRecord<TypeLeafKind> &Record) override {
-    return Recipient.visitTypeBegin(Record);
-  }
-
-  Error visitTypeEnd(const CVRecord<TypeLeafKind> &Record) override {
-    return Recipient.visitTypeEnd(Record);
-  }
+  TypeDeserializer() {}
 
 #define TYPE_RECORD(EnumName, EnumVal, Name)                                   \
-  Error visitKnownRecord(const CVRecord<TypeLeafKind> &CVR,                    \
-                         Name##Record &Record) override {                      \
+  Error visitKnownRecord(CVType &CVR, Name##Record &Record) override {         \
     return defaultVisitKnownRecord(CVR, Record);                               \
   }
 #define MEMBER_RECORD(EnumName, EnumVal, Name)                                 \
-  TYPE_RECORD(EnumName, EnumVal, Name)
+  Error visitKnownMember(CVMemberRecord &CVR, Name##Record &Record) override { \
+    return defaultVisitKnownMember(CVR, Record);                               \
+  }
 #define TYPE_RECORD_ALIAS(EnumName, EnumVal, Name, AliasName)
 #define MEMBER_RECORD_ALIAS(EnumName, EnumVal, Name, AliasName)
 #include "TypeRecords.def"
 
 protected:
-  TypeVisitorCallbacks &Recipient;
-
   template <typename T>
-  Error deserializeRecord(ArrayRef<uint8_t> &Data, TypeLeafKind Kind,
+  Error deserializeRecord(msf::StreamReader &Reader, TypeLeafKind Kind,
                           T &Record) const {
     TypeRecordKind RK = static_cast<TypeRecordKind>(Kind);
-    auto ExpectedRecord = T::deserialize(RK, Data);
+    auto ExpectedRecord = T::deserialize(RK, Reader);
     if (!ExpectedRecord)
       return ExpectedRecord.takeError();
     Record = std::move(*ExpectedRecord);
@@ -54,46 +46,21 @@ protected:
   }
 
 private:
-  template <typename T>
-  Error defaultVisitKnownRecord(const CVRecord<TypeLeafKind> &CVR, T &Record) {
-    ArrayRef<uint8_t> RD = CVR.Data;
-    if (auto EC = deserializeRecord(RD, CVR.Type, Record))
+  template <typename T> Error defaultVisitKnownRecord(CVType &CVR, T &Record) {
+    msf::ByteStream S(CVR.content());
+    msf::StreamReader SR(S);
+    if (auto EC = deserializeRecord(SR, CVR.Type, Record))
       return EC;
-    return Recipient.visitKnownRecord(CVR, Record);
+    return Error::success();
   }
-};
-
-class TypeDeserializer : public TypeDeserializerBase {
-public:
-  explicit TypeDeserializer(TypeVisitorCallbacks &Recipient)
-      : TypeDeserializerBase(Recipient) {}
-
-  /// FieldList records need special handling.  For starters, they do not
-  /// describe their own length, so a different extraction algorithm is
-  /// necessary.  Secondly, a single FieldList record will result in the
-  /// deserialization of many records.  So even though the top level visitor
-  /// calls visitFieldBegin() on a single record, multiple records get visited
-  /// through the callback interface.
-  Error visitKnownRecord(const CVRecord<TypeLeafKind> &CVR,
-                         FieldListRecord &Record) override;
-
-private:
   template <typename T>
-  Error visitKnownMember(ArrayRef<uint8_t> &Data, TypeLeafKind Kind,
-                         T &Record) {
-    ArrayRef<uint8_t> OldData = Data;
-    if (auto EC = deserializeRecord(Data, Kind, Record))
+  Error defaultVisitKnownMember(CVMemberRecord &CVMR, T &Record) {
+    msf::ByteStream S(CVMR.Data);
+    msf::StreamReader SR(S);
+    if (auto EC = deserializeRecord(SR, CVMR.Kind, Record))
       return EC;
-    assert(Data.size() < OldData.size());
-
-    CVRecord<TypeLeafKind> CVR;
-    CVR.Length = OldData.size() - Data.size();
-    CVR.Data = OldData.slice(0, CVR.Length);
-    CVR.RawData = CVR.Data;
-    return Recipient.visitKnownRecord(CVR, Record);
+    return Error::success();
   }
-
-  Error skipPadding(ArrayRef<uint8_t> &Data);
 };
 }
 }

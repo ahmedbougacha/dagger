@@ -42,6 +42,11 @@ static cl::opt<char>
                            "(default = '-O2')"),
              cl::Prefix, cl::ZeroOrMore, cl::init('2'));
 
+static cl::opt<bool>
+    IndexStats("thinlto-index-stats",
+               cl::desc("Print statistic for the index in every input files"),
+               cl::init(false));
+
 static cl::opt<bool> DisableVerify(
     "disable-verify", cl::init(false),
     cl::desc("Do not run the verifier during the optimization pipeline"));
@@ -97,8 +102,7 @@ cl::opt<ThinLTOModes> ThinLTOMode(
                    "(requires -thinlto-index)."),
         clEnumValN(THINOPT, "optimize", "Perform ThinLTO optimizations."),
         clEnumValN(THINCODEGEN, "codegen", "CodeGen (expected to match llc)"),
-        clEnumValN(THINALL, "run", "Perform ThinLTO end-to-end"),
-        clEnumValEnd));
+        clEnumValN(THINALL, "run", "Perform ThinLTO end-to-end")));
 
 static cl::opt<std::string>
     ThinLTOIndex("thinlto-index",
@@ -119,6 +123,11 @@ static cl::opt<std::string> ThinLTOModuleId(
 
 static cl::opt<std::string>
     ThinLTOCacheDir("thinlto-cache-dir", cl::desc("Enable ThinLTO caching."));
+
+static cl::opt<std::string> ThinLTOSaveTempsPrefix(
+    "thinlto-save-temps",
+    cl::desc("Save ThinLTO temp files using filenames created by adding "
+             "suffixes to the given file path prefix."));
 
 static cl::opt<bool>
     SaveModuleFile("save-merged-module", cl::init(false),
@@ -257,6 +266,40 @@ getLocalLTOModule(StringRef Path, std::unique_ptr<MemoryBuffer> &Buffer,
   CurrentActivity = "";
   maybeVerifyModule((*Ret)->getModule());
   return std::move(*Ret);
+}
+
+/// Print some statistics on the index for each input files.
+void printIndexStats() {
+  for (auto &Filename : InputFilenames) {
+    CurrentActivity = "loading file '" + Filename + "'";
+    ErrorOr<std::unique_ptr<ModuleSummaryIndex>> IndexOrErr =
+        llvm::getModuleSummaryIndexForFile(Filename, diagnosticHandler);
+    error(IndexOrErr, "error " + CurrentActivity);
+    std::unique_ptr<ModuleSummaryIndex> Index = std::move(IndexOrErr.get());
+    CurrentActivity = "";
+    // Skip files without a module summary.
+    if (!Index)
+      report_fatal_error(Filename + " does not contain an index");
+
+    unsigned Calls = 0, Refs = 0, Functions = 0, Alias = 0, Globals = 0;
+    for (auto &Summaries : *Index) {
+      for (auto &Summary : Summaries.second) {
+        Refs += Summary->refs().size();
+        if (auto *FuncSummary = dyn_cast<FunctionSummary>(Summary.get())) {
+          Functions++;
+          Calls += FuncSummary->calls().size();
+        } else if (isa<AliasSummary>(Summary.get()))
+          Alias++;
+        else
+          Globals++;
+      }
+    }
+    outs() << "Index " << Filename << " contains "
+           << (Alias + Globals + Functions) << " nodes (" << Functions
+           << " functions, " << Alias << " alias, " << Globals
+           << " globals) and " << (Calls + Refs) << " edges (" << Refs
+           << " refs and " << Calls << " calls)\n";
+  }
 }
 
 /// \brief List symbols in each IR file.
@@ -446,6 +489,8 @@ private:
     }
 
     auto CombinedIndex = ThinGenerator.linkCombinedIndex();
+    if (!CombinedIndex)
+      report_fatal_error("ThinLink didn't create an index");
     std::error_code EC;
     raw_fd_ostream OS(OutputFilename, EC, sys::fs::OpenFlags::F_None);
     error(EC, "error opening the file '" + OutputFilename + "'");
@@ -672,6 +717,8 @@ private:
       ThinGenerator.addModule(Filename, InputBuffers.back()->getBuffer());
     }
 
+    if (!ThinLTOSaveTempsPrefix.empty())
+      ThinGenerator.setSaveTempsDir(ThinLTOSaveTempsPrefix);
     ThinGenerator.run();
 
     auto &Binaries = ThinGenerator.getProducedBinaries();
@@ -715,6 +762,11 @@ int main(int argc, char **argv) {
 
   if (ListSymbolsOnly) {
     listSymbols(Options);
+    return 0;
+  }
+
+  if (IndexStats) {
+    printIndexStats();
     return 0;
   }
 

@@ -162,12 +162,10 @@ struct AArch64LoadStoreOpt : public MachineFunctionPass {
 
   MachineFunctionProperties getRequiredProperties() const override {
     return MachineFunctionProperties().set(
-        MachineFunctionProperties::Property::AllVRegsAllocated);
+        MachineFunctionProperties::Property::NoVRegs);
   }
 
-  const char *getPassName() const override {
-    return AARCH64_LOAD_STORE_OPT_NAME;
-  }
+  StringRef getPassName() const override { return AARCH64_LOAD_STORE_OPT_NAME; }
 };
 char AArch64LoadStoreOpt::ID = 0;
 } // namespace

@@ -5,11 +5,14 @@ set(LLVM_LINK_COMPONENTS
   AllTargetsInfos
   CodeGen
   DebugInfoDWARF
+  DebugInfoPDB
+  Demangle
   MC
   MCAnalysis
   MCDisassembler
   Object
   Support
+  Symbolize
   )
 
 add_llvm_tool(llvm-objdump

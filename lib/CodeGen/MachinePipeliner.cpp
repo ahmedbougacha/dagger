@@ -997,7 +997,7 @@ static bool isSuccOrder(SUnit *SUa, SUnit *SUb) {
 static bool isDependenceBarrier(MachineInstr &MI, AliasAnalysis *AA) {
   return MI.isCall() || MI.hasUnmodeledSideEffects() ||
          (MI.hasOrderedMemoryRef() &&
-          (!MI.mayLoad() || !MI.isInvariantLoad(AA)));
+          (!MI.mayLoad() || !MI.isDereferenceableInvariantLoad(AA)));
 }
 
 /// Return the underlying objects for the memory references of an instruction.
@@ -1726,9 +1726,9 @@ static void computeLiveOuts(MachineFunction &MF, RegPressureTracker &RPTracker,
     const MachineInstr *MI = SU->getInstr();
     if (MI->isPHI())
       continue;
-    for (ConstMIOperands MO(*MI); MO.isValid(); ++MO)
-      if (MO->isReg() && MO->isUse()) {
-        unsigned Reg = MO->getReg();
+    for (const MachineOperand &MO : MI->operands())
+      if (MO.isReg() && MO.isUse()) {
+        unsigned Reg = MO.getReg();
         if (TargetRegisterInfo::isVirtualRegister(Reg))
           Uses.insert(Reg);
         else if (MRI.isAllocatable(Reg))
@@ -1737,9 +1737,9 @@ static void computeLiveOuts(MachineFunction &MF, RegPressureTracker &RPTracker,
       }
   }
   for (SUnit *SU : NS)
-    for (ConstMIOperands MO(*SU->getInstr()); MO.isValid(); ++MO)
-      if (MO->isReg() && MO->isDef() && !MO->isDead()) {
-        unsigned Reg = MO->getReg();
+    for (const MachineOperand &MO : SU->getInstr()->operands())
+      if (MO.isReg() && MO.isDef() && !MO.isDead()) {
+        unsigned Reg = MO.getReg();
         if (TargetRegisterInfo::isVirtualRegister(Reg)) {
           if (!Uses.count(Reg))
             LiveOutRegs.push_back(RegisterMaskPair(Reg, 0));
@@ -2363,10 +2363,10 @@ void SwingSchedulerDAG::generateProlog(SMSchedule &Schedule, unsigned LastStage,
 
   // Check if we need to remove the branch from the preheader to the original
   // loop, and replace it with a branch to the new loop.
-  unsigned numBranches = TII->RemoveBranch(*PreheaderBB);
+  unsigned numBranches = TII->removeBranch(*PreheaderBB);
   if (numBranches) {
     SmallVector<MachineOperand, 0> Cond;
-    TII->InsertBranch(*PreheaderBB, PrologBBs[0], nullptr, Cond, DebugLoc());
+    TII->insertBranch(*PreheaderBB, PrologBBs[0], nullptr, Cond, DebugLoc());
   }
 }
 
@@ -2452,13 +2452,13 @@ void SwingSchedulerDAG::generateEpilog(SMSchedule &Schedule, unsigned LastStage,
 
   // Create a branch to the new epilog from the kernel.
   // Remove the original branch and add a new branch to the epilog.
-  TII->RemoveBranch(*KernelBB);
-  TII->InsertBranch(*KernelBB, KernelBB, EpilogStart, Cond, DebugLoc());
+  TII->removeBranch(*KernelBB);
+  TII->insertBranch(*KernelBB, KernelBB, EpilogStart, Cond, DebugLoc());
   // Add a branch to the loop exit.
   if (EpilogBBs.size() > 0) {
     MachineBasicBlock *LastEpilogBB = EpilogBBs.back();
     SmallVector<MachineOperand, 4> Cond1;
-    TII->InsertBranch(*LastEpilogBB, LoopExitBB, nullptr, Cond1, DebugLoc());
+    TII->insertBranch(*LastEpilogBB, LoopExitBB, nullptr, Cond1, DebugLoc());
   }
 }
 
@@ -2648,8 +2648,7 @@ void SwingSchedulerDAG::generateExistingPhis(
       // references another Phi, and the other Phi is scheduled in an
       // earlier stage. We can try to reuse an existing Phi up until the last
       // stage of the current Phi.
-      if (LoopDefIsPhi && VRMap[CurStageNum].count(LoopVal) &&
-          LoopValStage >= (int)(CurStageNum - LastStageNum)) {
+      if (LoopDefIsPhi && (int)PrologStage >= StageScheduled) {
         int LVNumStages = Schedule.getStagesForPhi(LoopVal);
         int StageDiff = (StageScheduled - LoopValStage);
         LVNumStages -= StageDiff;
@@ -2881,8 +2880,7 @@ void SwingSchedulerDAG::removeDeadInstructions(MachineBasicBlock *KernelBB,
         used = false;
       }
       if (!used) {
-        MI->eraseFromParent();
-        ME = (*MBB)->instr_rend();
+        MI++->eraseFromParent();
         continue;
       }
       ++MI;
@@ -3015,12 +3013,12 @@ void SwingSchedulerDAG::addBranches(MBBVectorTy &PrologBBs,
     unsigned numAdded = 0;
     if (TargetRegisterInfo::isVirtualRegister(LC)) {
       Prolog->addSuccessor(Epilog);
-      numAdded = TII->InsertBranch(*Prolog, Epilog, LastPro, Cond, DebugLoc());
+      numAdded = TII->insertBranch(*Prolog, Epilog, LastPro, Cond, DebugLoc());
     } else if (j >= LCMin) {
       Prolog->addSuccessor(Epilog);
       Prolog->removeSuccessor(LastPro);
       LastEpi->removeSuccessor(Epilog);
-      numAdded = TII->InsertBranch(*Prolog, Epilog, nullptr, Cond, DebugLoc());
+      numAdded = TII->insertBranch(*Prolog, Epilog, nullptr, Cond, DebugLoc());
       removePhis(Epilog, LastEpi);
       // Remove the blocks that are no longer referenced.
       if (LastPro != LastEpi) {
@@ -3030,7 +3028,7 @@ void SwingSchedulerDAG::addBranches(MBBVectorTy &PrologBBs,
       LastPro->clear();
       LastPro->eraseFromParent();
     } else {
-      numAdded = TII->InsertBranch(*Prolog, LastPro, nullptr, Cond, DebugLoc());
+      numAdded = TII->insertBranch(*Prolog, LastPro, nullptr, Cond, DebugLoc());
       removePhis(Epilog, Prolog);
     }
     LastPro = Prolog;
@@ -3083,20 +3081,19 @@ void SwingSchedulerDAG::updateMemOperands(MachineInstr &NewMI,
     return;
   MachineInstr::mmo_iterator NewMemRefs = MF.allocateMemRefsArray(NumRefs);
   unsigned Refs = 0;
-  for (MachineInstr::mmo_iterator I = NewMI.memoperands_begin(),
-                                  E = NewMI.memoperands_end();
-       I != E; ++I) {
-    if ((*I)->isVolatile() || (*I)->isInvariant() || (!(*I)->getValue())) {
-      NewMemRefs[Refs++] = *I;
+  for (MachineMemOperand *MMO : NewMI.memoperands()) {
+    if (MMO->isVolatile() || (MMO->isInvariant() && MMO->isDereferenceable()) ||
+        (!MMO->getValue())) {
+      NewMemRefs[Refs++] = MMO;
       continue;
     }
     unsigned Delta;
     if (computeDelta(OldMI, Delta)) {
       int64_t AdjOffset = Delta * Num;
       NewMemRefs[Refs++] =
-          MF.getMachineMemOperand(*I, AdjOffset, (*I)->getSize());
+          MF.getMachineMemOperand(MMO, AdjOffset, MMO->getSize());
     } else
-      NewMemRefs[Refs++] = MF.getMachineMemOperand(*I, 0, UINT64_MAX);
+      NewMemRefs[Refs++] = MF.getMachineMemOperand(MMO, 0, UINT64_MAX);
   }
   NewMI.setMemRefs(NewMemRefs, NewMemRefs + NumRefs);
 }

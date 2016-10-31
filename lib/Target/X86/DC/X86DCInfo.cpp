@@ -25,11 +25,11 @@ DCRegisterSema *createX86DCRegisterSema(StringRef TT,
 extern "C" void LLVMInitializeX86TargetDC() {
   // These are only available for x86_64:
   // Register the DC instruction semantic info.
-  TargetRegistry::RegisterDCInstrSema(TheX86_64Target,
+  TargetRegistry::RegisterDCInstrSema(getTheX86_64Target(),
                                       createX86DCInstrSema);
 
   // Register the DC register semantic info.
-  TargetRegistry::RegisterDCRegisterSema(TheX86_64Target,
+  TargetRegistry::RegisterDCRegisterSema(getTheX86_64Target(),
                                          createX86DCRegisterSema);
 
 }

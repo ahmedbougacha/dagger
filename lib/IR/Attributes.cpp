@@ -38,7 +38,7 @@ using namespace llvm;
 //
 // In order to do this, we need to reserve one value of the second (optional)
 // allocsize argument to signify "not present."
-LLVM_CONSTEXPR static unsigned AllocSizeNumElemsNotPresent = -1;
+static const unsigned AllocSizeNumElemsNotPresent = -1;
 
 static uint64_t packAllocSizeArgs(unsigned ElemSizeArg,
                                   const Optional<unsigned> &NumElemsArg) {
@@ -381,10 +381,18 @@ std::string Attribute::getAsString(bool InAttrGrp) const {
     std::string Result;
     Result += (Twine('"') + getKindAsString() + Twine('"')).str();
 
-    StringRef Val = pImpl->getValueAsString();
-    if (Val.empty()) return Result;
+    std::string AttrVal = pImpl->getValueAsString();
+    if (AttrVal.empty()) return Result;
 
-    Result += ("=\"" + Val + Twine('"')).str();
+    // Since some attribute strings contain special characters that cannot be
+    // printable, those have to be escaped to make the attribute value printable
+    // as is.  e.g. "\01__gnu_mcount_nc"
+    {
+      raw_string_ostream OS(Result);
+      OS << "=\"";
+      PrintEscapedString(AttrVal, OS);
+      OS << "\"";
+    }
     return Result;
   }
 
@@ -1105,6 +1113,10 @@ bool AttributeSet::hasAttributes(unsigned Index) const {
 
 bool AttributeSet::hasFnAttribute(Attribute::AttrKind Kind) const {
   return pImpl && pImpl->hasFnAttribute(Kind);
+}
+
+bool AttributeSet::hasFnAttribute(StringRef Kind) const {
+  return hasAttribute(AttributeSet::FunctionIndex, Kind);
 }
 
 bool AttributeSet::hasAttrSomewhere(Attribute::AttrKind Attr,

@@ -55,6 +55,7 @@ define i32 @mask8_zext(i8 %x) {
 ; KNL-NEXT:    kmovw %edi, %k0
 ; KNL-NEXT:    knotw %k0, %k0
 ; KNL-NEXT:    kmovw %k0, %eax
+; KNL-NEXT:    movzbl %al, %eax
 ; KNL-NEXT:    retq
 ;
 ; SKX-LABEL: mask8_zext:
@@ -173,6 +174,7 @@ define i32 @zext_test1(<16 x i32> %a, <16 x i32> %b) {
 ; CHECK-NEXT:    kshiftlw $10, %k0, %k0
 ; CHECK-NEXT:    kshiftrw $15, %k0, %k0
 ; CHECK-NEXT:    kmovw %k0, %eax
+; CHECK-NEXT:    andl $1, %eax
 ; CHECK-NEXT:    retq
   %cmp_res = icmp ugt <16 x i32> %a, %b
   %cmp_res.i1 = extractelement <16 x i1> %cmp_res, i32 5
@@ -187,6 +189,8 @@ define i16 @zext_test2(<16 x i32> %a, <16 x i32> %b) {
 ; CHECK-NEXT:    kshiftlw $10, %k0, %k0
 ; CHECK-NEXT:    kshiftrw $15, %k0, %k0
 ; CHECK-NEXT:    kmovw %k0, %eax
+; CHECK-NEXT:    andl $1, %eax
+; CHECK-NEXT:    ## kill: %AX<def> %AX<kill> %EAX<kill>
 ; CHECK-NEXT:    retq
   %cmp_res = icmp ugt <16 x i32> %a, %b
   %cmp_res.i1 = extractelement <16 x i1> %cmp_res, i32 5
@@ -201,7 +205,8 @@ define i8 @zext_test3(<16 x i32> %a, <16 x i32> %b) {
 ; CHECK-NEXT:    kshiftlw $10, %k0, %k0
 ; CHECK-NEXT:    kshiftrw $15, %k0, %k0
 ; CHECK-NEXT:    kmovw %k0, %eax
-; CHECK-NEXT:    ## kill: %AL<def> %AL<kill> %AX<kill>
+; CHECK-NEXT:    andl $1, %eax
+; CHECK-NEXT:    ## kill: %AL<def> %AL<kill> %EAX<kill>
 ; CHECK-NEXT:    retq
   %cmp_res = icmp ugt <16 x i32> %a, %b
   %cmp_res.i1 = extractelement <16 x i1> %cmp_res, i32 5
@@ -414,7 +419,7 @@ define <4 x i1> @test11(<4 x i1>%a, <4 x i1>%b, i32 %a1, i32 %b1) {
 ; KNL-NEXT:    cmpl %esi, %edi
 ; KNL-NEXT:    jg LBB20_2
 ; KNL-NEXT:  ## BB#1:
-; KNL-NEXT:    vmovaps %zmm1, %zmm0
+; KNL-NEXT:    vmovaps %xmm1, %xmm0
 ; KNL-NEXT:  LBB20_2:
 ; KNL-NEXT:    retq
 ;
@@ -606,6 +611,7 @@ define <64 x i8> @test17(i64 %x, i32 %y, i32 %z) {
 ; SKX-NEXT:    kmovq %rdi, %k0
 ; SKX-NEXT:    cmpl %edx, %esi
 ; SKX-NEXT:    setg %al
+; SKX-NEXT:    andl $1, %eax
 ; SKX-NEXT:    kmovw %eax, %k1
 ; SKX-NEXT:    vpmovm2b %k1, %zmm0
 ; SKX-NEXT:    vpsllq $40, %xmm0, %xmm0
@@ -1760,7 +1766,7 @@ define void @store_64i1(<64 x i1>* %a, <64 x i1> %v) {
 ; KNL-NEXT:    kmovw %k0, %r13d
 ; KNL-NEXT:    kshiftlw $7, %k2, %k0
 ; KNL-NEXT:    kshiftrw $15, %k0, %k0
-; KNL-NEXT:    kmovw %k0, %edx
+; KNL-NEXT:    kmovw %k0, %ecx
 ; KNL-NEXT:    kshiftlw $6, %k2, %k0
 ; KNL-NEXT:    kshiftrw $15, %k0, %k0
 ; KNL-NEXT:    kmovw %k0, %esi
@@ -1775,7 +1781,7 @@ define void @store_64i1(<64 x i1>* %a, <64 x i1> %v) {
 ; KNL-NEXT:    kmovw %k0, %eax
 ; KNL-NEXT:    kshiftlw $2, %k2, %k0
 ; KNL-NEXT:    kshiftrw $15, %k0, %k0
-; KNL-NEXT:    kmovw %k0, %ecx
+; KNL-NEXT:    kmovw %k0, %edx
 ; KNL-NEXT:    kshiftlw $1, %k2, %k0
 ; KNL-NEXT:    kshiftrw $15, %k0, %k0
 ; KNL-NEXT:    vmovd %r10d, %xmm2
@@ -1789,12 +1795,12 @@ define void @store_64i1(<64 x i1>* %a, <64 x i1> %v) {
 ; KNL-NEXT:    vpinsrb $5, %r15d, %xmm1, %xmm1
 ; KNL-NEXT:    vpinsrb $6, %r12d, %xmm1, %xmm1
 ; KNL-NEXT:    vpinsrb $7, %r13d, %xmm1, %xmm1
-; KNL-NEXT:    vpinsrb $8, %edx, %xmm1, %xmm1
+; KNL-NEXT:    vpinsrb $8, %ecx, %xmm1, %xmm1
 ; KNL-NEXT:    vpinsrb $9, %esi, %xmm1, %xmm1
 ; KNL-NEXT:    vpinsrb $10, %ebp, %xmm1, %xmm1
 ; KNL-NEXT:    vpinsrb $11, %ebx, %xmm1, %xmm1
 ; KNL-NEXT:    vpinsrb $12, %eax, %xmm1, %xmm1
-; KNL-NEXT:    vpinsrb $13, %ecx, %xmm1, %xmm1
+; KNL-NEXT:    vpinsrb $13, %edx, %xmm1, %xmm1
 ; KNL-NEXT:    vpinsrb $14, %r10d, %xmm1, %xmm1
 ; KNL-NEXT:    kmovw %k0, %eax
 ; KNL-NEXT:    vpinsrb $15, %eax, %xmm1, %xmm1
@@ -1828,7 +1834,7 @@ define void @store_64i1(<64 x i1>* %a, <64 x i1> %v) {
 ; KNL-NEXT:    kmovw %k0, %r13d
 ; KNL-NEXT:    kshiftlw $7, %k1, %k0
 ; KNL-NEXT:    kshiftrw $15, %k0, %k0
-; KNL-NEXT:    kmovw %k0, %edx
+; KNL-NEXT:    kmovw %k0, %ecx
 ; KNL-NEXT:    kshiftlw $6, %k1, %k0
 ; KNL-NEXT:    kshiftrw $15, %k0, %k0
 ; KNL-NEXT:    kmovw %k0, %esi
@@ -1843,7 +1849,7 @@ define void @store_64i1(<64 x i1>* %a, <64 x i1> %v) {
 ; KNL-NEXT:    kmovw %k0, %eax
 ; KNL-NEXT:    kshiftlw $2, %k1, %k0
 ; KNL-NEXT:    kshiftrw $15, %k0, %k0
-; KNL-NEXT:    kmovw %k0, %ecx
+; KNL-NEXT:    kmovw %k0, %edx
 ; KNL-NEXT:    kshiftlw $1, %k1, %k0
 ; KNL-NEXT:    kshiftrw $15, %k0, %k0
 ; KNL-NEXT:    vmovd %r10d, %xmm1
@@ -1857,12 +1863,12 @@ define void @store_64i1(<64 x i1>* %a, <64 x i1> %v) {
 ; KNL-NEXT:    vpinsrb $5, %r15d, %xmm0, %xmm0
 ; KNL-NEXT:    vpinsrb $6, %r12d, %xmm0, %xmm0
 ; KNL-NEXT:    vpinsrb $7, %r13d, %xmm0, %xmm0
-; KNL-NEXT:    vpinsrb $8, %edx, %xmm0, %xmm0
+; KNL-NEXT:    vpinsrb $8, %ecx, %xmm0, %xmm0
 ; KNL-NEXT:    vpinsrb $9, %esi, %xmm0, %xmm0
 ; KNL-NEXT:    vpinsrb $10, %ebp, %xmm0, %xmm0
 ; KNL-NEXT:    vpinsrb $11, %ebx, %xmm0, %xmm0
 ; KNL-NEXT:    vpinsrb $12, %eax, %xmm0, %xmm0
-; KNL-NEXT:    vpinsrb $13, %ecx, %xmm0, %xmm0
+; KNL-NEXT:    vpinsrb $13, %edx, %xmm0, %xmm0
 ; KNL-NEXT:    vpinsrb $14, %r10d, %xmm0, %xmm0
 ; KNL-NEXT:    kmovw %k1, %eax
 ; KNL-NEXT:    vpinsrb $15, %eax, %xmm0, %xmm0
@@ -1953,4 +1959,44 @@ define void @store_64i1(<64 x i1>* %a, <64 x i1> %v) {
 ; SKX-NEXT:    retq
   store <64 x i1> %v, <64 x i1>* %a
   ret void
+}
+
+define i32 @test_bitcast_v8i1_zext(<16 x i32> %a) {
+; KNL-LABEL: test_bitcast_v8i1_zext:
+; KNL:       ## BB#0:
+; KNL-NEXT:    vpxord %zmm1, %zmm1, %zmm1
+; KNL-NEXT:    vpcmpeqd %zmm1, %zmm0, %k0
+; KNL-NEXT:    kmovw %k0, %eax
+; KNL-NEXT:    movzbl %al, %eax
+; KNL-NEXT:    addl %eax, %eax
+; KNL-NEXT:    retq
+;
+; SKX-LABEL: test_bitcast_v8i1_zext:
+; SKX:       ## BB#0:
+; SKX-NEXT:    vpxord %zmm1, %zmm1, %zmm1
+; SKX-NEXT:    vpcmpeqd %zmm1, %zmm0, %k0
+; SKX-NEXT:    kmovb %k0, %eax
+; SKX-NEXT:    addl %eax, %eax
+; SKX-NEXT:    retq
+   %v1 = icmp eq <16 x i32> %a, zeroinitializer
+   %mask = shufflevector <16 x i1> %v1, <16 x i1> undef, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
+   %mask1 = bitcast <8 x i1> %mask to i8
+   %val = zext i8 %mask1 to i32
+   %val1 = add i32 %val, %val
+   ret i32 %val1
+}
+
+define i32 @test_bitcast_v16i1_zext(<16 x i32> %a) {
+; CHECK-LABEL: test_bitcast_v16i1_zext:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    vpxord %zmm1, %zmm1, %zmm1
+; CHECK-NEXT:    vpcmpeqd %zmm1, %zmm0, %k0
+; CHECK-NEXT:    kmovw %k0, %eax
+; CHECK-NEXT:    addl %eax, %eax
+; CHECK-NEXT:    retq
+   %v1 = icmp eq <16 x i32> %a, zeroinitializer
+   %mask1 = bitcast <16 x i1> %v1 to i16
+   %val = zext i16 %mask1 to i32
+   %val1 = add i32 %val, %val
+   ret i32 %val1
 }

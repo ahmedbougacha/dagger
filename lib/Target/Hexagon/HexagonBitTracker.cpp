@@ -260,11 +260,11 @@ bool HexagonEvaluator::evaluate(const MachineInstr &MI,
     case CONST32:
     case CONST64:
       return rr0(eIMM(im(1), W0), Outputs);
-    case TFR_PdFalse:
+    case PS_false:
       return rr0(RegisterCell(W0).fill(0, W0, BT::BitValue::Zero), Outputs);
-    case TFR_PdTrue:
+    case PS_true:
       return rr0(RegisterCell(W0).fill(0, W0, BT::BitValue::One), Outputs);
-    case TFR_FI: {
+    case PS_fi: {
       int FI = op(1).getIndex();
       int Off = op(2).getImm();
       unsigned A = MFI.getObjectAlignment(FI) + std::abs(Off);
@@ -902,10 +902,12 @@ bool HexagonEvaluator::evaluate(const MachineInstr &BI,
   bool Negated = false;
   switch (Opc) {
     case Hexagon::J2_jumpf:
+    case Hexagon::J2_jumpfpt:
     case Hexagon::J2_jumpfnew:
     case Hexagon::J2_jumpfnewpt:
       Negated = true;
     case Hexagon::J2_jumpt:
+    case Hexagon::J2_jumptpt:
     case Hexagon::J2_jumptnew:
     case Hexagon::J2_jumptnewpt:
       // Simple branch:  if([!]Pn) jump ...
@@ -997,7 +999,7 @@ bool HexagonEvaluator::evaluateLoad(const MachineInstr &MI,
     case L2_loadrb_pci:
     case L2_loadrb_pcr:
     case L2_loadrb_pi:
-    case L4_loadrb_abs:
+    case PS_loadrbabs:
     case L4_loadrb_ap:
     case L4_loadrb_rr:
     case L4_loadrb_ur:
@@ -1011,7 +1013,7 @@ bool HexagonEvaluator::evaluateLoad(const MachineInstr &MI,
     case L2_loadrub_pci:
     case L2_loadrub_pcr:
     case L2_loadrub_pi:
-    case L4_loadrub_abs:
+    case PS_loadrubabs:
     case L4_loadrub_ap:
     case L4_loadrub_rr:
     case L4_loadrub_ur:
@@ -1025,7 +1027,7 @@ bool HexagonEvaluator::evaluateLoad(const MachineInstr &MI,
     case L2_loadrh_pci:
     case L2_loadrh_pcr:
     case L2_loadrh_pi:
-    case L4_loadrh_abs:
+    case PS_loadrhabs:
     case L4_loadrh_ap:
     case L4_loadrh_rr:
     case L4_loadrh_ur:
@@ -1040,7 +1042,7 @@ bool HexagonEvaluator::evaluateLoad(const MachineInstr &MI,
     case L2_loadruh_pcr:
     case L2_loadruh_pi:
     case L4_loadruh_rr:
-    case L4_loadruh_abs:
+    case PS_loadruhabs:
     case L4_loadruh_ap:
     case L4_loadruh_ur:
       BitNum = 16;
@@ -1054,7 +1056,7 @@ bool HexagonEvaluator::evaluateLoad(const MachineInstr &MI,
     case L2_loadri_pcr:
     case L2_loadri_pi:
     case L2_loadw_locked:
-    case L4_loadri_abs:
+    case PS_loadriabs:
     case L4_loadri_ap:
     case L4_loadri_rr:
     case L4_loadri_ur:
@@ -1070,7 +1072,7 @@ bool HexagonEvaluator::evaluateLoad(const MachineInstr &MI,
     case L2_loadrd_pcr:
     case L2_loadrd_pi:
     case L4_loadd_locked:
-    case L4_loadrd_abs:
+    case PS_loadrdabs:
     case L4_loadrd_ap:
     case L4_loadrd_rr:
     case L4_loadrd_ur:

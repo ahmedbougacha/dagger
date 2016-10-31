@@ -190,9 +190,6 @@ public:
     return getPointerTy(DL);
   }
 
-  /// Return true if the select operation is expensive for this target.
-  bool isSelectExpensive() const { return SelectIsExpensive; }
-
   virtual bool isSelectSupported(SelectSupportKind /*kind*/) const {
     return true;
   }
@@ -248,6 +245,37 @@ public:
     // Default behavior is to replace SQRT(X) with X*RSQRT(X).
     return false;
   }
+
+  /// Reciprocal estimate status values used by the functions below.
+  enum ReciprocalEstimate : int {
+    Unspecified = -1,
+    Disabled = 0,
+    Enabled = 1
+  };
+
+  /// Return a ReciprocalEstimate enum value for a square root of the given type
+  /// based on the function's attributes. If the operation is not overridden by
+  /// the function's attributes, "Unspecified" is returned and target defaults
+  /// are expected to be used for instruction selection.
+  int getRecipEstimateSqrtEnabled(EVT VT, MachineFunction &MF) const;
+
+  /// Return a ReciprocalEstimate enum value for a division of the given type
+  /// based on the function's attributes. If the operation is not overridden by
+  /// the function's attributes, "Unspecified" is returned and target defaults
+  /// are expected to be used for instruction selection.
+  int getRecipEstimateDivEnabled(EVT VT, MachineFunction &MF) const;
+
+  /// Return the refinement step count for a square root of the given type based
+  /// on the function's attributes. If the operation is not overridden by
+  /// the function's attributes, "Unspecified" is returned and target defaults
+  /// are expected to be used for instruction selection.
+  int getSqrtRefinementSteps(EVT VT, MachineFunction &MF) const;
+
+  /// Return the refinement step count for a division of the given type based
+  /// on the function's attributes. If the operation is not overridden by
+  /// the function's attributes, "Unspecified" is returned and target defaults
+  /// are expected to be used for instruction selection.
+  int getDivRefinementSteps(EVT VT, MachineFunction &MF) const;
 
   /// Returns true if target has indicated at least one type should be bypassed.
   bool isSlowDivBypassed() const { return !BypassSlowDivWidths.empty(); }
@@ -322,11 +350,22 @@ public:
     return false;
   }
 
+  /// \brief Return true if ctlz instruction is fast.
+  virtual bool isCtlzFast() const {
+    return false;
+  }
+
   /// Return true if it is safe to transform an integer-domain bitwise operation
   /// into the equivalent floating-point operation. This should be set to true
   /// if the target has IEEE-754-compliant fabs/fneg operations for the input
   /// type.
   virtual bool hasBitPreservingFPLogic(EVT VT) const {
+    return false;
+  }
+
+  /// \brief Return true if it is cheaper to split the store of a merged int val
+  /// from a pair of smaller values into multiple stores.
+  virtual bool isMultiStoresCheaperThanBitsMerge(SDValue Lo, SDValue Hi) const {
     return false;
   }
 
@@ -587,7 +626,7 @@ public:
   /// Returns true if the operation can trap for the value type.
   ///
   /// VT must be a legal type. By default, we optimistically assume most
-  /// operations don't trap except for divide and remainder.
+  /// operations don't trap except for integer divide and remainder.
   virtual bool canOpTrap(unsigned Op, EVT VT) const;
 
   /// Similar to isShuffleMaskLegal. This is used by Targets can use this to
@@ -1011,11 +1050,12 @@ public:
     return UseUnderscoreLongJmp;
   }
 
-  /// Return integer threshold on number of blocks to use jump tables rather
-  /// than if sequence.
-  int getMinimumJumpTableEntries() const {
-    return MinimumJumpTableEntries;
-  }
+  /// Return lower limit for number of blocks in a jump table.
+  unsigned getMinimumJumpTableEntries() const;
+
+  /// Return upper limit for number of entries in a jump table.
+  /// Zero if no limit.
+  unsigned getMaximumJumpTableSize() const;
 
   /// If a physical register, this specifies the register that
   /// llvm.savestack/llvm.restorestack should save and restore.
@@ -1096,8 +1136,12 @@ public:
   /// Should be used only when getIRStackGuard returns nullptr.
   virtual Value *getSSPStackGuardCheck(const Module &M) const;
 
-  /// If the target has a standard location for the unsafe stack pointer,
-  /// returns the address of that location. Otherwise, returns nullptr.
+protected:
+  Value *getDefaultSafeStackPointerLocation(IRBuilder<> &IRB,
+                                            bool UseTLS) const;
+
+public:
+  /// Returns the target-specific address of the unsafe stack pointer.
   virtual Value *getSafeStackPointerLocation(IRBuilder<> &IRB) const;
 
   /// Returns true if a cast between SrcAS and DestAS is a noop.
@@ -1342,22 +1386,17 @@ protected:
     UseUnderscoreLongJmp = Val;
   }
 
-  /// Indicate the number of blocks to generate jump tables rather than if
-  /// sequence.
-  void setMinimumJumpTableEntries(int Val) {
-    MinimumJumpTableEntries = Val;
-  }
+  /// Indicate the minimum number of blocks to generate jump tables.
+  void setMinimumJumpTableEntries(unsigned Val);
+
+  /// Indicate the maximum number of entries in jump tables.
+  /// Set to zero to generate unlimited jump tables.
+  void setMaximumJumpTableSize(unsigned);
 
   /// If set to a physical register, this specifies the register that
   /// llvm.savestack/llvm.restorestack should save and restore.
   void setStackPointerRegisterToSaveRestore(unsigned R) {
     StackPointerRegisterToSaveRestore = R;
-  }
-
-  /// Tells the code generator not to expand operations into sequences that use
-  /// the select operations if possible.
-  void setSelectIsExpensive(bool isExpensive = true) {
-    SelectIsExpensive = isExpensive;
   }
 
   /// Tells the code generator that the target has multiple (allocatable)
@@ -1398,19 +1437,7 @@ protected:
   /// that class natively.
   void addRegisterClass(MVT VT, const TargetRegisterClass *RC) {
     assert((unsigned)VT.SimpleTy < array_lengthof(RegClassForVT));
-    AvailableRegClasses.push_back(std::make_pair(VT, RC));
     RegClassForVT[VT.SimpleTy] = RC;
-  }
-
-  /// Remove all register classes.
-  void clearRegisterClasses() {
-    std::fill(std::begin(RegClassForVT), std::end(RegClassForVT), nullptr);
-
-    AvailableRegClasses.clear();
-  }
-
-  /// \brief Remove all operation actions.
-  void clearOperationActions() {
   }
 
   /// Return the largest legal super-reg register class of the register class
@@ -1625,6 +1652,10 @@ public:
     return -1;
   }
 
+  virtual bool isFoldableMemAccessOffset(Instruction *I, int64_t Offset) const {
+    return true;
+  }
+
   /// Return true if the specified immediate is legal icmp immediate, that is
   /// the target has icmp instructions which can compare a register against the
   /// immediate without having to materialize the immediate into a register.
@@ -1736,11 +1767,6 @@ public:
   /// In other words, unless the target performs a post-isel load combining,
   /// this information should not be provided because it will generate more
   /// loads.
-  virtual bool hasPairedLoad(Type * /*LoadedType*/,
-                             unsigned & /*RequiredAligment*/) const {
-    return false;
-  }
-
   virtual bool hasPairedLoad(EVT /*LoadedType*/,
                              unsigned & /*RequiredAligment*/) const {
     return false;
@@ -1890,10 +1916,6 @@ public:
 private:
   const TargetMachine &TM;
 
-  /// Tells the code generator not to expand operations into sequences that use
-  /// the select operations if possible.
-  bool SelectIsExpensive;
-
   /// Tells the code generator that the target has multiple (allocatable)
   /// condition registers that can be used to store the results of comparisons
   /// for use by selects and conditional branches. With multiple condition
@@ -1931,9 +1953,6 @@ private:
   ///
   /// Defaults to false.
   bool UseUnderscoreLongJmp;
-
-  /// Number of blocks threshold to use jump tables.
-  int MinimumJumpTableEntries;
 
   /// Information about the contents of the high-bits in boolean values held in
   /// a type wider than i1. See getBooleanContents.
@@ -2049,7 +2068,6 @@ private:
   LegalizeKind getTypeConversion(LLVMContext &Context, EVT VT) const;
 
 private:
-  std::vector<std::pair<MVT, const TargetRegisterClass*> > AvailableRegClasses;
 
   /// Targets can specify ISD nodes that they would like PerformDAGCombine
   /// callbacks for by calling setTargetDAGCombine(), which sets a bit in this
@@ -2169,6 +2187,8 @@ class TargetLowering : public TargetLoweringBase {
   void operator=(const TargetLowering&) = delete;
 
 public:
+  struct DAGCombinerInfo;
+
   /// NOTE: The TargetMachine owns TLOF.
   explicit TargetLowering(const TargetMachine &TM);
 
@@ -2281,6 +2301,16 @@ public:
     /// generalized for targets with other types of implicit widening casts.
     bool ShrinkDemandedOp(SDValue Op, unsigned BitWidth, const APInt &Demanded,
                           const SDLoc &dl);
+
+    /// Helper for SimplifyDemandedBits that can simplify an operation with
+    /// multiple uses.  This function uses TLI.SimplifyDemandedBits to
+    /// simplify Operand \p OpIdx of \p User and then updated \p User with
+    /// the simplified version.  No other uses of \p OpIdx are updated.
+    /// If \p User is the only user of \p OpIdx, this function behaves exactly
+    /// like TLI.SimplifyDemandedBits except that it also updates the DAG by
+    /// calling DCI.CommitTargetLoweringOpt.
+    bool SimplifyDemandedBits(SDNode *User, unsigned OpIdx,
+                              const APInt &Demanded, DAGCombinerInfo &DCI);
   };
 
   /// Look at Op.  At this point, we know that only the DemandedMask bits of the
@@ -2290,9 +2320,17 @@ public:
   /// expression and return a mask of KnownOne and KnownZero bits for the
   /// expression (used to simplify the caller).  The KnownZero/One bits may only
   /// be accurate for those bits in the DemandedMask.
+  /// \p AssumeSingleUse When this paramater is true, this function will
+  ///    attempt to simplify \p Op even if there are multiple uses.
+  ///    Callers are responsible for correctly updating the DAG based on the
+  ///    results of this function, because simply replacing replacing TLO.Old
+  ///    with TLO.New will be incorrect when this paramater is true and TLO.Old
+  ///    has multiple uses.
   bool SimplifyDemandedBits(SDValue Op, const APInt &DemandedMask,
                             APInt &KnownZero, APInt &KnownOne,
-                            TargetLoweringOpt &TLO, unsigned Depth = 0) const;
+                            TargetLoweringOpt &TLO,
+                            unsigned Depth = 0,
+                            bool AssumeSingleUse = false) const;
 
   /// Determine which of the bits specified in Mask are known to be either zero
   /// or one and return them in the KnownZero/KnownOne bitsets.
@@ -2327,7 +2365,6 @@ public:
     bool isCalledByLegalizer() const { return CalledByLegalizer; }
 
     void AddToWorklist(SDNode *N);
-    void RemoveFromWorklist(SDNode *N);
     SDValue CombineTo(SDNode *N, ArrayRef<SDValue> To, bool AddTo = true);
     SDValue CombineTo(SDNode *N, SDValue Res, bool AddTo = true);
     SDValue CombineTo(SDNode *N, SDValue Res0, SDValue Res1, bool AddTo = true);
@@ -2950,31 +2987,35 @@ public:
   /// roots.
 
   /// Return a reciprocal square root estimate value for the input operand.
-  /// The RefinementSteps output is the number of Newton-Raphson refinement
-  /// iterations required to generate a sufficient (though not necessarily
-  /// IEEE-754 compliant) estimate for the value type.
+  /// \p Enabled is a ReciprocalEstimate enum with value either 'Unspecified' or
+  /// 'Enabled' as set by a potential default override attribute.
+  /// If \p RefinementSteps is 'Unspecified', the number of Newton-Raphson
+  /// refinement iterations required to generate a sufficient (though not
+  /// necessarily IEEE-754 compliant) estimate is returned in that parameter.
   /// The boolean UseOneConstNR output is used to select a Newton-Raphson
   /// algorithm implementation that uses one constant or two constants.
   /// A target may choose to implement its own refinement within this function.
   /// If that's true, then return '0' as the number of RefinementSteps to avoid
   /// any further refinement of the estimate.
   /// An empty SDValue return means no estimate sequence can be created.
-  virtual SDValue getRsqrtEstimate(SDValue Operand, DAGCombinerInfo &DCI,
-                                   unsigned &RefinementSteps,
+  virtual SDValue getRsqrtEstimate(SDValue Operand, SelectionDAG &DAG,
+                                   int Enabled, int &RefinementSteps,
                                    bool &UseOneConstNR) const {
     return SDValue();
   }
 
   /// Return a reciprocal estimate value for the input operand.
-  /// The RefinementSteps output is the number of Newton-Raphson refinement
-  /// iterations required to generate a sufficient (though not necessarily
-  /// IEEE-754 compliant) estimate for the value type.
+  /// \p Enabled is a ReciprocalEstimate enum with value either 'Unspecified' or
+  /// 'Enabled' as set by a potential default override attribute.
+  /// If \p RefinementSteps is 'Unspecified', the number of Newton-Raphson
+  /// refinement iterations required to generate a sufficient (though not
+  /// necessarily IEEE-754 compliant) estimate is returned in that parameter.
   /// A target may choose to implement its own refinement within this function.
   /// If that's true, then return '0' as the number of RefinementSteps to avoid
   /// any further refinement of the estimate.
   /// An empty SDValue return means no estimate sequence can be created.
-  virtual SDValue getRecipEstimate(SDValue Operand, DAGCombinerInfo &DCI,
-                                   unsigned &RefinementSteps) const {
+  virtual SDValue getRecipEstimate(SDValue Operand, SelectionDAG &DAG,
+                                   int Enabled, int &RefinementSteps) const {
     return SDValue();
   }
 
@@ -3052,6 +3093,12 @@ public:
   /// Lower TLS global address SDNode for target independent emulated TLS model.
   virtual SDValue LowerToTLSEmulatedModel(const GlobalAddressSDNode *GA,
                                           SelectionDAG &DAG) const;
+
+  // seteq(x, 0) -> truncate(srl(ctlz(zext(x)), log2(#bits)))
+  // If we're comparing for equality to zero and isCtlzFast is true, expose the
+  // fact that this can be implemented as a ctlz/srl pair, so that the dag
+  // combiner can fold the new nodes.
+  SDValue lowerCmpEqZeroToCtlzSrl(SDValue Op, SelectionDAG &DAG) const;
 
 private:
   SDValue simplifySetCCWithAnd(EVT VT, SDValue N0, SDValue N1,

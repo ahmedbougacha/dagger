@@ -51,6 +51,15 @@ using namespace llvm;
 
 STATISTIC(NumLCSSA, "Number of live out of a loop variables");
 
+#ifdef EXPENSIVE_CHECKS
+static bool VerifyLoopLCSSA = true;
+#else
+static bool VerifyLoopLCSSA = false;
+#endif
+static cl::opt<bool,true>
+VerifyLoopLCSSAFlag("verify-loop-lcssa", cl::location(VerifyLoopLCSSA),
+                    cl::desc("Verify loop lcssa form (time consuming)"));
+
 /// Return true if the specified block is in the list.
 static bool isExitBlock(BasicBlock *BB,
                         const SmallVectorImpl<BasicBlock *> &ExitBlocks) {
@@ -63,19 +72,25 @@ static bool isExitBlock(BasicBlock *BB,
 bool llvm::formLCSSAForInstructions(SmallVectorImpl<Instruction *> &Worklist,
                                     DominatorTree &DT, LoopInfo &LI) {
   SmallVector<Use *, 16> UsesToRewrite;
-  SmallVector<BasicBlock *, 8> ExitBlocks;
   SmallSetVector<PHINode *, 16> PHIsToRemove;
   PredIteratorCache PredCache;
   bool Changed = false;
 
+  // Cache the Loop ExitBlocks across this loop.  We expect to get a lot of
+  // instructions within the same loops, computing the exit blocks is
+  // expensive, and we're not mutating the loop structure.
+  SmallDenseMap<Loop*, SmallVector<BasicBlock *,1>> LoopExitBlocks;
+
   while (!Worklist.empty()) {
     UsesToRewrite.clear();
-    ExitBlocks.clear();
 
     Instruction *I = Worklist.pop_back_val();
     BasicBlock *InstBB = I->getParent();
     Loop *L = LI.getLoopFor(InstBB);
-    L->getExitBlocks(ExitBlocks);
+    if (!LoopExitBlocks.count(L))   
+      L->getExitBlocks(LoopExitBlocks[L]);
+    assert(LoopExitBlocks.count(L));
+    const SmallVectorImpl<BasicBlock *> &ExitBlocks = LoopExitBlocks[L];
 
     if (ExitBlocks.empty())
       continue;
@@ -316,9 +331,17 @@ struct LCSSAWrapperPass : public FunctionPass {
 
   bool runOnFunction(Function &F) override;
   void verifyAnalysis() const override {
-    assert(
-        all_of(*LI, [&](Loop *L) { return L->isRecursivelyLCSSAForm(*DT); }) &&
-        "LCSSA form is broken!");
+    // This check is very expensive. On the loop intensive compiles it may cause
+    // up to 10x slowdown. Currently it's disabled by default. LPPassManager
+    // always does limited form of the LCSSA verification. Similar reasoning
+    // was used for the LoopInfo verifier.
+    if (VerifyLoopLCSSA) {
+      assert(all_of(*LI,
+                    [&](Loop *L) {
+                      return L->isRecursivelyLCSSAForm(*DT, *LI);
+                    }) &&
+             "LCSSA form is broken!");
+    }
   };
 
   /// This transformation requires natural loop information & requires that
@@ -335,6 +358,10 @@ struct LCSSAWrapperPass : public FunctionPass {
     AU.addPreserved<GlobalsAAWrapperPass>();
     AU.addPreserved<ScalarEvolutionWrapperPass>();
     AU.addPreserved<SCEVAAWrapperPass>();
+
+    // This is needed to perform LCSSA verification inside LPPassManager
+    AU.addRequired<LCSSAVerificationPass>();
+    AU.addPreserved<LCSSAVerificationPass>();
   }
 };
 }
@@ -344,6 +371,7 @@ INITIALIZE_PASS_BEGIN(LCSSAWrapperPass, "lcssa", "Loop-Closed SSA Form Pass",
                       false, false)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LCSSAVerificationPass)
 INITIALIZE_PASS_END(LCSSAWrapperPass, "lcssa", "Loop-Closed SSA Form Pass",
                     false, false)
 

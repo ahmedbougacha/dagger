@@ -54,9 +54,9 @@ public:
   bool runOnMachineFunction(MachineFunction &MF) override;
   MachineFunctionProperties getRequiredProperties() const override {
     return MachineFunctionProperties().set(
-        MachineFunctionProperties::Property::AllVRegsAllocated);
+        MachineFunctionProperties::Property::NoVRegs);
   }
-  const char *getPassName() const override {
+  StringRef getPassName() const override {
     return "AArch64 Redundant Copy Elimination";
   }
 };
@@ -156,8 +156,7 @@ bool AArch64RedundantCopyElimination::optimizeCopy(MachineBasicBlock *MBB) {
     MBB->addLiveIn(TargetReg);
 
   // Clear any kills of TargetReg between CompBr and the last removed COPY.
-  for (MachineInstr &MMI :
-       make_range(MBB->begin()->getIterator(), LastChange->getIterator()))
+  for (MachineInstr &MMI : make_range(MBB->begin(), LastChange))
     MMI.clearRegisterKills(SmallestDef, TRI);
 
   return true;

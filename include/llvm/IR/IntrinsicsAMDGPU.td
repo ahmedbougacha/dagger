@@ -229,29 +229,30 @@ def int_amdgcn_atomic_dec : Intrinsic<[llvm_anyint_ty],
 >;
 
 class AMDGPUImageLoad : Intrinsic <
-  [llvm_v4f32_ty],    // vdata(VGPR)
+  [llvm_anyfloat_ty], // vdata(VGPR)
   [llvm_anyint_ty,    // vaddr(VGPR)
-   llvm_v8i32_ty,     // rsrc(SGPR)
+   llvm_anyint_ty,    // rsrc(SGPR)
    llvm_i32_ty,       // dmask(imm)
-   llvm_i1_ty,        // r128(imm)
-   llvm_i1_ty,        // da(imm)
    llvm_i1_ty,        // glc(imm)
-   llvm_i1_ty],       // slc(imm)
+   llvm_i1_ty,        // slc(imm)
+   llvm_i1_ty,        // lwe(imm)
+   llvm_i1_ty],       // da(imm)
   [IntrReadMem]>;
 
 def int_amdgcn_image_load : AMDGPUImageLoad;
 def int_amdgcn_image_load_mip : AMDGPUImageLoad;
+def int_amdgcn_image_getresinfo : AMDGPUImageLoad;
 
 class AMDGPUImageStore : Intrinsic <
   [],
-  [llvm_v4f32_ty,     // vdata(VGPR)
+  [llvm_anyfloat_ty,  // vdata(VGPR)
    llvm_anyint_ty,    // vaddr(VGPR)
-   llvm_v8i32_ty,     // rsrc(SGPR)
+   llvm_anyint_ty,    // rsrc(SGPR)
    llvm_i32_ty,       // dmask(imm)
-   llvm_i1_ty,        // r128(imm)
-   llvm_i1_ty,        // da(imm)
    llvm_i1_ty,        // glc(imm)
-   llvm_i1_ty],       // slc(imm)
+   llvm_i1_ty,        // slc(imm)
+   llvm_i1_ty,        // lwe(imm)
+   llvm_i1_ty],       // da(imm)
   []>;
 
 def int_amdgcn_image_store : AMDGPUImageStore;
@@ -457,6 +458,16 @@ def int_amdgcn_s_sleep :
   Intrinsic<[], [llvm_i32_ty], []> {
 }
 
+def int_amdgcn_s_incperflevel :
+  GCCBuiltin<"__builtin_amdgcn_s_incperflevel">,
+  Intrinsic<[], [llvm_i32_ty], []> {
+}
+
+def int_amdgcn_s_decperflevel :
+  GCCBuiltin<"__builtin_amdgcn_s_decperflevel">,
+  Intrinsic<[], [llvm_i32_ty], []> {
+}
+
 def int_amdgcn_s_getreg :
   GCCBuiltin<"__builtin_amdgcn_s_getreg">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty], [IntrReadMem]>;
@@ -520,15 +531,15 @@ def int_amdgcn_sad_u16 :
 
 def int_amdgcn_qsad_pk_u16_u8 :
   GCCBuiltin<"__builtin_amdgcn_qsad_pk_u16_u8">,
-  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+  Intrinsic<[llvm_i64_ty], [llvm_i64_ty, llvm_i32_ty, llvm_i64_ty], [IntrNoMem]>;
 
 def int_amdgcn_mqsad_pk_u16_u8 :
   GCCBuiltin<"__builtin_amdgcn_mqsad_pk_u16_u8">,
-  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+  Intrinsic<[llvm_i64_ty], [llvm_i64_ty, llvm_i32_ty, llvm_i64_ty], [IntrNoMem]>;
 
 def int_amdgcn_mqsad_u32_u8 :
   GCCBuiltin<"__builtin_amdgcn_mqsad_u32_u8">,
-  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
+  Intrinsic<[llvm_v4i32_ty], [llvm_i64_ty, llvm_i32_ty, llvm_v4i32_ty], [IntrNoMem]>;
 
 def int_amdgcn_cvt_pk_u8_f32 :
   GCCBuiltin<"__builtin_amdgcn_cvt_pk_u8_f32">,
@@ -541,6 +552,14 @@ def int_amdgcn_icmp :
 def int_amdgcn_fcmp :
   Intrinsic<[llvm_i64_ty], [llvm_anyfloat_ty, LLVMMatchType<0>, llvm_i32_ty],
             [IntrNoMem, IntrConvergent]>;
+
+def int_amdgcn_readfirstlane :
+  GCCBuiltin<"__builtin_amdgcn_readfirstlane">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
+
+def int_amdgcn_readlane :
+  GCCBuiltin<"__builtin_amdgcn_readlane">,
+  Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
 
 //===----------------------------------------------------------------------===//
 // CI+ Intrinsics

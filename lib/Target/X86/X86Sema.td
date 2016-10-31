@@ -225,7 +225,7 @@ def : Semantics<MOVDI2PDIrm,
 def : Semantics<MOVQI2PQIrm,
         [(set VR128:$dst, (insertelt (v2i64 VR128:$dst), (loadi64 addr:$src), (i32 0)))]>;
 
-def : Semantics<CVTSS2SDrm, [(set FR64:$dst, (fextend (loadf32 addr:$src)))]>;
+def : Semantics<CVTSS2SDrm, [(set FR64:$dst, (fpextend (loadf32 addr:$src)))]>;
 
 def : Semantics<MOVSDrr,
                         [(set VR128:$dst,

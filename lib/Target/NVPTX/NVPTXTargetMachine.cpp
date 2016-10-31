@@ -20,7 +20,6 @@
 #include "NVPTXTargetTransformInfo.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/CodeGen/AsmPrinter.h"
-#include "llvm/CodeGen/MachineFunctionAnalysis.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -51,7 +50,7 @@
 using namespace llvm;
 
 static cl::opt<bool> UseInferAddressSpaces(
-    "nvptx-use-infer-addrspace", cl::init(false), cl::Hidden,
+    "nvptx-use-infer-addrspace", cl::init(true), cl::Hidden,
     cl::desc("Optimize address spaces using NVPTXInferAddressSpaces instead of "
              "NVPTXFavorNonGenericAddrSpaces"));
 
@@ -77,8 +76,8 @@ void initializeNVPTXLowerAllocaPass(PassRegistry &);
 
 extern "C" void LLVMInitializeNVPTXTarget() {
   // Register the target.
-  RegisterTargetMachine<NVPTXTargetMachine32> X(TheNVPTXTarget32);
-  RegisterTargetMachine<NVPTXTargetMachine64> Y(TheNVPTXTarget64);
+  RegisterTargetMachine<NVPTXTargetMachine32> X(getTheNVPTXTarget32());
+  RegisterTargetMachine<NVPTXTargetMachine64> Y(getTheNVPTXTarget64());
 
   // FIXME: This pass is really intended to be invoked during IR optimization,
   // but it's very NVPTX-specific.

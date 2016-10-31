@@ -283,51 +283,31 @@ Instruction *InstCombiner::OptAndOp(Instruction *Op,
 }
 
 /// Emit a computation of: (V >= Lo && V < Hi) if Inside is true, otherwise
-/// (V < Lo || V >= Hi).  In practice, we emit the more efficient
-/// (V-Lo) \<u Hi-Lo.  This method expects that Lo <= Hi. isSigned indicates
-/// whether to treat the V, Lo and HI as signed or not. IB is the location to
-/// insert new instructions.
-Value *InstCombiner::InsertRangeTest(Value *V, Constant *Lo, Constant *Hi,
+/// (V < Lo || V >= Hi). This method expects that Lo <= Hi. IsSigned indicates
+/// whether to treat V, Lo, and Hi as signed or not.
+Value *InstCombiner::insertRangeTest(Value *V, const APInt &Lo, const APInt &Hi,
                                      bool isSigned, bool Inside) {
-  assert(cast<ConstantInt>(ConstantExpr::getICmp((isSigned ?
-            ICmpInst::ICMP_SLE:ICmpInst::ICMP_ULE), Lo, Hi))->getZExtValue() &&
+  assert((isSigned ? Lo.sle(Hi) : Lo.ule(Hi)) &&
          "Lo is not <= Hi in range emission code!");
 
-  if (Inside) {
-    if (Lo == Hi)  // Trivially false.
-      return Builder->getFalse();
+  Type *Ty = V->getType();
+  if (Lo == Hi)
+    return Inside ? ConstantInt::getFalse(Ty) : ConstantInt::getTrue(Ty);
 
-    // V >= Min && V < Hi --> V < Hi
-    if (cast<ConstantInt>(Lo)->isMinValue(isSigned)) {
-      ICmpInst::Predicate pred = (isSigned ?
-        ICmpInst::ICMP_SLT : ICmpInst::ICMP_ULT);
-      return Builder->CreateICmp(pred, V, Hi);
-    }
-
-    // Emit V-Lo <u Hi-Lo
-    Constant *NegLo = ConstantExpr::getNeg(Lo);
-    Value *Add = Builder->CreateAdd(V, NegLo, V->getName()+".off");
-    Constant *UpperBound = ConstantExpr::getAdd(NegLo, Hi);
-    return Builder->CreateICmpULT(Add, UpperBound);
+  // V >= Min && V <  Hi --> V <  Hi
+  // V <  Min || V >= Hi --> V >= Hi
+  ICmpInst::Predicate Pred = Inside ? ICmpInst::ICMP_ULT : ICmpInst::ICMP_UGE;
+  if (isSigned ? Lo.isMinSignedValue() : Lo.isMinValue()) {
+    Pred = isSigned ? ICmpInst::getSignedPredicate(Pred) : Pred;
+    return Builder->CreateICmp(Pred, V, ConstantInt::get(Ty, Hi));
   }
 
-  if (Lo == Hi)  // Trivially true.
-    return Builder->getTrue();
-
-  // V < Min || V >= Hi -> V > Hi-1
-  Hi = SubOne(cast<ConstantInt>(Hi));
-  if (cast<ConstantInt>(Lo)->isMinValue(isSigned)) {
-    ICmpInst::Predicate pred = (isSigned ?
-        ICmpInst::ICMP_SGT : ICmpInst::ICMP_UGT);
-    return Builder->CreateICmp(pred, V, Hi);
-  }
-
-  // Emit V-Lo >u Hi-1-Lo
-  // Note that Hi has already had one subtracted from it, above.
-  ConstantInt *NegLo = cast<ConstantInt>(ConstantExpr::getNeg(Lo));
-  Value *Add = Builder->CreateAdd(V, NegLo, V->getName()+".off");
-  Constant *LowerBound = ConstantExpr::getAdd(NegLo, Hi);
-  return Builder->CreateICmpUGT(Add, LowerBound);
+  // V >= Lo && V <  Hi --> V - Lo u<  Hi - Lo
+  // V <  Lo || V >= Hi --> V - Lo u>= Hi - Lo
+  Value *VMinusLo =
+      Builder->CreateSub(V, ConstantInt::get(Ty, Lo), V->getName() + ".off");
+  Constant *HiMinusLo = ConstantInt::get(Ty, Hi - Lo);
+  return Builder->CreateICmp(Pred, VMinusLo, HiMinusLo);
 }
 
 /// Returns true iff Val consists of one contiguous run of 1s with any number
@@ -954,7 +934,8 @@ Value *InstCombiner::FoldAndOfICmps(ICmpInst *LHS, ICmpInst *RHS) {
       if (LHSCst == SubOne(RHSCst)) // (X != 13 & X u< 14) -> X < 13
         return Builder->CreateICmpULT(Val, LHSCst);
       if (LHSCst->isNullValue())    // (X !=  0 & X u< 14) -> X-1 u< 13
-        return InsertRangeTest(Val, AddOne(LHSCst), RHSCst, false, true);
+        return insertRangeTest(Val, LHSCst->getValue() + 1, RHSCst->getValue(),
+                               false, true);
       break;                        // (X != 13 & X u< 15) -> no change
     case ICmpInst::ICMP_SLT:
       if (LHSCst == SubOne(RHSCst)) // (X != 13 & X s< 14) -> X < 13
@@ -1018,7 +999,8 @@ Value *InstCombiner::FoldAndOfICmps(ICmpInst *LHS, ICmpInst *RHS) {
         return Builder->CreateICmp(LHSCC, Val, RHSCst);
       break;                        // (X u> 13 & X != 15) -> no change
     case ICmpInst::ICMP_ULT:        // (X u> 13 & X u< 15) -> (X-14) <u 1
-      return InsertRangeTest(Val, AddOne(LHSCst), RHSCst, false, true);
+      return insertRangeTest(Val, LHSCst->getValue() + 1, RHSCst->getValue(),
+                             false, true);
     case ICmpInst::ICMP_SLT:        // (X u> 13 & X s< 15) -> no change
       break;
     }
@@ -1036,7 +1018,8 @@ Value *InstCombiner::FoldAndOfICmps(ICmpInst *LHS, ICmpInst *RHS) {
         return Builder->CreateICmp(LHSCC, Val, RHSCst);
       break;                        // (X s> 13 & X != 15) -> no change
     case ICmpInst::ICMP_SLT:        // (X s> 13 & X s< 15) -> (X-14) s< 1
-      return InsertRangeTest(Val, AddOne(LHSCst), RHSCst, true, true);
+      return insertRangeTest(Val, LHSCst->getValue() + 1, RHSCst->getValue(),
+                             true, true);
     case ICmpInst::ICMP_ULT:        // (X s> 13 & X u< 15) -> no change
       break;
     }
@@ -1148,6 +1131,45 @@ bool InstCombiner::shouldOptimizeCast(CastInst *CI) {
   return true;
 }
 
+/// Fold {and,or,xor} (cast X), C.
+static Instruction *foldLogicCastConstant(BinaryOperator &Logic, CastInst *Cast,
+                                          InstCombiner::BuilderTy *Builder) {
+  Constant *C;
+  if (!match(Logic.getOperand(1), m_Constant(C)))
+    return nullptr;
+
+  auto LogicOpc = Logic.getOpcode();
+  Type *DestTy = Logic.getType();
+  Type *SrcTy = Cast->getSrcTy();
+
+  // If the first operand is bitcast, move the logic operation ahead of the
+  // bitcast (do the logic operation in the original type). This can eliminate
+  // bitcasts and allow combines that would otherwise be impeded by the bitcast.
+  Value *X;
+  if (match(Cast, m_BitCast(m_Value(X)))) {
+    Value *NewConstant = ConstantExpr::getBitCast(C, SrcTy);
+    Value *NewOp = Builder->CreateBinOp(LogicOpc, X, NewConstant);
+    return CastInst::CreateBitOrPointerCast(NewOp, DestTy);
+  }
+
+  // Similarly, move the logic operation ahead of a zext if the constant is
+  // unchanged in the smaller source type. Performing the logic in a smaller
+  // type may provide more information to later folds, and the smaller logic
+  // instruction may be cheaper (particularly in the case of vectors).
+  if (match(Cast, m_OneUse(m_ZExt(m_Value(X))))) {
+    Constant *TruncC = ConstantExpr::getTrunc(C, SrcTy);
+    Constant *ZextTruncC = ConstantExpr::getZExt(TruncC, DestTy);
+    if (ZextTruncC == C) {
+      // LogicOpc (zext X), C --> zext (LogicOpc X, C)
+      Value *NewOp = Builder->CreateBinOp(LogicOpc, X, TruncC);
+      return new ZExtInst(NewOp, DestTy);
+    }
+  }
+
+  return nullptr;
+}
+
+/// Fold {and,or,xor} (cast X), Y.
 Instruction *InstCombiner::foldCastedBitwiseLogic(BinaryOperator &I) {
   auto LogicOpc = I.getOpcode();
   assert((LogicOpc == Instruction::And || LogicOpc == Instruction::Or ||
@@ -1166,34 +1188,8 @@ Instruction *InstCombiner::foldCastedBitwiseLogic(BinaryOperator &I) {
   if (!SrcTy->isIntOrIntVectorTy())
     return nullptr;
 
-  // If one operand is a bitcast and the other is a constant, move the logic
-  // operation ahead of the bitcast. That is, do the logic operation in the
-  // original type. This can eliminate useless bitcasts and allow normal
-  // combines that would otherwise be impeded by the bitcast. Canonicalization
-  // ensures that if there is a constant operand, it will be the second operand.
-  Value *BC = nullptr;
-  Constant *C = nullptr;
-  if ((match(Op0, m_BitCast(m_Value(BC))) && match(Op1, m_Constant(C)))) {
-    Value *NewConstant = ConstantExpr::getBitCast(C, SrcTy);
-    Value *NewOp = Builder->CreateBinOp(LogicOpc, BC, NewConstant, I.getName());
-    return CastInst::CreateBitOrPointerCast(NewOp, DestTy);
-  }
-
-  // Similarly, if one operand is zexted and the other is a constant, move the
-  // logic operation ahead of the zext if the constant is unchanged in the
-  // smaller source type. Performing the logic in a smaller type may provide
-  // more information to later folds, and the smaller logic instruction may be
-  // cheaper (particularly in the case of vectors).
-  Value *X;
-  if (match(Op0, m_OneUse(m_ZExt(m_Value(X)))) && match(Op1, m_Constant(C))) {
-    Constant *TruncC = ConstantExpr::getTrunc(C, SrcTy);
-    Constant *ZextTruncC = ConstantExpr::getZExt(TruncC, DestTy);
-    if (ZextTruncC == C) {
-      // LogicOpc (zext X), C --> zext (LogicOpc X, C)
-      Value *NewOp = Builder->CreateBinOp(LogicOpc, X, TruncC);
-      return new ZExtInst(NewOp, DestTy);
-    }
-  }
+  if (Instruction *Ret = foldLogicCastConstant(I, Cast0, Builder))
+    return Ret;
 
   CastInst *Cast1 = dyn_cast<CastInst>(Op1);
   if (!Cast1)
@@ -1910,7 +1906,8 @@ Value *InstCombiner::FoldOrOfICmps(ICmpInst *LHS, ICmpInst *RHS,
       // this can cause overflow.
       if (RHSCst->isMaxValue(false))
         return LHS;
-      return InsertRangeTest(Val, LHSCst, AddOne(RHSCst), false, false);
+      return insertRangeTest(Val, LHSCst->getValue(), RHSCst->getValue() + 1,
+                             false, false);
     case ICmpInst::ICMP_SGT:        // (X u< 13 | X s> 15) -> no change
       break;
     case ICmpInst::ICMP_NE:         // (X u< 13 | X != 15) -> X != 15
@@ -1930,7 +1927,8 @@ Value *InstCombiner::FoldOrOfICmps(ICmpInst *LHS, ICmpInst *RHS,
       // this can cause overflow.
       if (RHSCst->isMaxValue(true))
         return LHS;
-      return InsertRangeTest(Val, LHSCst, AddOne(RHSCst), true, false);
+      return insertRangeTest(Val, LHSCst->getValue(), RHSCst->getValue() + 1,
+                             true, false);
     case ICmpInst::ICMP_UGT:        // (X s< 13 | X u> 15) -> no change
       break;
     case ICmpInst::ICMP_NE:         // (X s< 13 | X != 15) -> X != 15

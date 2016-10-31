@@ -406,7 +406,7 @@ multiclass Addri_Pred<string mnemonic, bit PredNot> {
 let isExtendable = 1, isExtentSigned = 1, InputType = "imm" in
 multiclass Addri_base<string mnemonic, SDNode OpNode> {
   let CextOpcode = mnemonic, BaseOpcode = mnemonic#_ri in {
-    let opExtendable = 2, opExtentBits = 16, isPredicable = 1 in
+    let opExtendable = 2, opExtentBits = 16, isPredicable = 1, isAdd = 1 in
     def A2_#NAME : T_Addri<s16Ext>;
 
     let opExtendable = 3, opExtentBits = 8, isPredicated = 1 in {
@@ -1292,6 +1292,7 @@ class T_ALU64_arith<string mnemonic, bits<3> MajOp, bits<3> MinOp, bit IsSat,
   : T_ALU64_rr<mnemonic, !if(IsSat,":sat",""), 0b0011, MajOp, MinOp, OpsRev,
                IsComm, "">;
 
+let isAdd = 1 in
 def A2_addp : T_ALU64_arith<"add", 0b000, 0b111, 0, 0, 1>;
 def A2_subp : T_ALU64_arith<"sub", 0b001, 0b111, 0, 1, 0>;
 
@@ -1587,7 +1588,7 @@ let isTerminator = 1, hasSideEffects = 0 in {
 
   defm J2_jumpr : JMPR_base<"JMPr">, PredNewRel;
 
-  let isReturn = 1, isCodeGenOnly = 1 in
+  let isReturn = 1, isPseudo = 1, isCodeGenOnly = 1 in
   defm PS_jmpret : JMPR_base<"JMPret">, PredNewRel;
 }
 
@@ -4517,14 +4518,14 @@ def Y2_barrier : SYSInst<(outs), (ins),
 //
 let isMoveImm = 1, isAsCheapAsAMove = 1, isReMaterializable = 1,
     isPseudo = 1, isCodeGenOnly = 1, hasSideEffects = 0 in {
-  def TFR_FI  : ALU32_ri<(outs IntRegs:$Rd),
-                         (ins IntRegs:$fi, s32Imm:$off), "">;
-  def TFR_FIA : ALU32_ri<(outs IntRegs:$Rd),
-                         (ins IntRegs:$Rs, IntRegs:$fi, s32Imm:$off), "">;
+  def PS_fi  : ALU32_ri<(outs IntRegs:$Rd),
+                        (ins IntRegs:$fi, s32Imm:$off), "">;
+  def PS_fia : ALU32_ri<(outs IntRegs:$Rd),
+                        (ins IntRegs:$Rs, IntRegs:$fi, s32Imm:$off), "">;
 }
 
-def: Pat<(i32 (orisadd (i32 AddrFI:$Rs), s32ImmPred:$off)),
-         (i32 (TFR_FI (i32 AddrFI:$Rs), s32ImmPred:$off))>;
+def: Pat<(orisadd (i32 AddrFI:$Rs), s32ImmPred:$off),
+         (PS_fi (i32 AddrFI:$Rs), s32ImmPred:$off)>;
 
 //===----------------------------------------------------------------------===//
 // CRUSER - Type.
@@ -4778,13 +4779,13 @@ def: Pat<(HexagonCONST32 bbl:$label),           (A2_tfrsi s16Ext:$label)>;
 
 let hasSideEffects = 0, isReMaterializable = 1, isPseudo = 1,
     isCodeGenOnly = 1 in
-def TFR_PdTrue : SInst<(outs PredRegs:$dst), (ins), "",
-                 [(set (i1 PredRegs:$dst), 1)]>;
+def PS_true : SInst<(outs PredRegs:$dst), (ins), "",
+              [(set (i1 PredRegs:$dst), 1)]>;
 
 let hasSideEffects = 0, isReMaterializable = 1, isPseudo = 1,
     isCodeGenOnly = 1 in
-def TFR_PdFalse : SInst<(outs PredRegs:$dst), (ins), "",
-                  [(set (i1 PredRegs:$dst), 0)]>;
+def PS_false : SInst<(outs PredRegs:$dst), (ins), "",
+               [(set (i1 PredRegs:$dst), 0)]>;
 
 // Pseudo instructions.
 def SDT_SPCallSeqStart : SDCallSeqStart<[ SDTCisVT<0, i32> ]>;
@@ -5071,15 +5072,14 @@ def HexagonALLOCA : SDNode<"HexagonISD::ALLOCA", SDTHexagonALLOCA,
 
 // The reason for the custom inserter is to record all ALLOCA instructions
 // in MachineFunctionInfo.
-let Defs = [R29], isCodeGenOnly = 1, isPseudo = 1, hasSideEffects = 1,
-    usesCustomInserter = 1 in
-def ALLOCA: ALU32Inst<(outs IntRegs:$Rd),
+let Defs = [R29], isCodeGenOnly = 1, isPseudo = 1, hasSideEffects = 1 in
+def PS_alloca: ALU32Inst<(outs IntRegs:$Rd),
       (ins IntRegs:$Rs, u32Imm:$A), "",
       [(set (i32 IntRegs:$Rd),
             (HexagonALLOCA (i32 IntRegs:$Rs), (i32 imm:$A)))]>;
 
 let isCodeGenOnly = 1, isPseudo = 1, Uses = [R30], hasSideEffects = 0 in
-def ALIGNA : ALU32Inst<(outs IntRegs:$Rd), (ins u32Imm:$A), "", []>;
+def PS_aligna : ALU32Inst<(outs IntRegs:$Rd), (ins u32Imm:$A), "", []>;
 
 def HexagonJT:     SDNode<"HexagonISD::JT", SDTIntUnaryOp>;
 def HexagonCP:     SDNode<"HexagonISD::CP", SDTIntUnaryOp>;

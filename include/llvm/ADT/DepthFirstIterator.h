@@ -58,19 +58,30 @@ public:
   SetType &Visited;
 };
 
+// The visited stated for the iteration is a simple set augmented with
+// one more method, completed, which is invoked when all children of a
+// node have been processed. It is intended to distinguish of back and
+// cross edges in the spanning tree but is not used in the common case.
+template <typename NodeRef, unsigned SmallSize=8>
+struct df_iterator_default_set : public llvm::SmallPtrSet<NodeRef, SmallSize> {
+  typedef llvm::SmallPtrSet<NodeRef, SmallSize>  BaseSet;
+  typedef typename BaseSet::iterator iterator;
+  std::pair<iterator,bool> insert(NodeRef N) { return BaseSet::insert(N) ; }
+  template <typename IterT>
+  void insert(IterT Begin, IterT End) { BaseSet::insert(Begin,End); }
+
+  void completed(NodeRef) { }
+};
+
 // Generic Depth First Iterator
 template <class GraphT,
           class SetType =
-              llvm::SmallPtrSet<typename GraphTraits<GraphT>::NodeRef, 8>,
+              df_iterator_default_set<typename GraphTraits<GraphT>::NodeRef>,
           bool ExtStorage = false, class GT = GraphTraits<GraphT>>
 class df_iterator
-    : public std::iterator<std::forward_iterator_tag, typename GT::NodeRef,
-                           ptrdiff_t, typename GT::NodeRef,
-                           typename GT::NodeRef>,
+    : public std::iterator<std::forward_iterator_tag, typename GT::NodeRef>,
       public df_iterator_storage<SetType, ExtStorage> {
-  typedef std::iterator<std::forward_iterator_tag, typename GT::NodeRef,
-                        ptrdiff_t, typename GT::NodeRef, typename GT::NodeRef>
-      super;
+  typedef std::iterator<std::forward_iterator_tag, typename GT::NodeRef> super;
 
   typedef typename GT::NodeRef NodeRef;
   typedef typename GT::ChildIteratorType ChildItTy;
@@ -93,10 +104,8 @@ private:
   }
   inline df_iterator(NodeRef Node, SetType &S)
       : df_iterator_storage<SetType, ExtStorage>(S) {
-    if (!S.count(Node)) {
+    if (this->Visited.insert(Node).second)
       VisitStack.push_back(StackElement(Node, None));
-      this->Visited.insert(Node);
-    }
   }
   inline df_iterator(SetType &S)
     : df_iterator_storage<SetType, ExtStorage>(S) {
@@ -111,7 +120,11 @@ private:
       if (!Opt)
         Opt.emplace(GT::child_begin(Node));
 
-      for (NodeRef Next : make_range(*Opt, GT::child_end(Node))) {
+      // Notice that we directly mutate *Opt here, so that
+      // VisitStack.back().second actually gets updated as the iterator
+      // increases.
+      while (*Opt != GT::child_end(Node)) {
+        NodeRef Next = *(*Opt)++;
         // Has our next sibling been visited?
         if (this->Visited.insert(Next).second) {
           // No, do it now.
@@ -119,7 +132,8 @@ private:
           return;
         }
       }
-
+      this->Visited.completed(Node);
+      
       // Oops, ran out of successors... go up a level on the stack.
       VisitStack.pop_back();
     } while (!VisitStack.empty());
@@ -145,7 +159,7 @@ public:
   }
   bool operator!=(const df_iterator &x) const { return !(*this == x); }
 
-  NodeRef operator*() const { return VisitStack.back().first; }
+  const NodeRef &operator*() const { return VisitStack.back().first; }
 
   // This is a nonstandard operator-> that dereferences the pointer an extra
   // time... so that you can actually call methods ON the Node, because
@@ -235,7 +249,8 @@ iterator_range<df_ext_iterator<T, SetTy>> depth_first_ext(const T& G,
 
 // Provide global definitions of inverse depth first iterators...
 template <class T,
-          class SetTy = llvm::SmallPtrSet<typename GraphTraits<T>::NodeRef, 8>,
+          class SetTy =
+              df_iterator_default_set<typename GraphTraits<T>::NodeRef>,
           bool External = false>
 struct idf_iterator : public df_iterator<Inverse<T>, SetTy, External> {
   idf_iterator(const df_iterator<Inverse<T>, SetTy, External> &V)

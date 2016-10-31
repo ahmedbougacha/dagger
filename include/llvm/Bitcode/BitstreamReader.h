@@ -15,12 +15,21 @@
 #ifndef LLVM_BITCODE_BITSTREAMREADER_H
 #define LLVM_BITCODE_BITSTREAMREADER_H
 
+#include "llvm/ADT/IntrusiveRefCntPtr.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Bitcode/BitCodes.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/StreamingMemoryObject.h"
+#include <algorithm>
+#include <cassert>
 #include <climits>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace llvm {
@@ -37,9 +46,9 @@ public:
     unsigned BlockID;
     std::vector<IntrusiveRefCntPtr<BitCodeAbbrev>> Abbrevs;
     std::string Name;
-
     std::vector<std::pair<unsigned, std::string> > RecordNames;
   };
+
 private:
   std::unique_ptr<MemoryObject> BitcodeBytes;
 
@@ -49,8 +58,6 @@ private:
   /// information in the BlockInfo block. Only llvm-bcanalyzer uses this.
   bool IgnoreBlockInfoNames;
 
-  BitstreamReader(const BitstreamReader&) = delete;
-  void operator=(const BitstreamReader&) = delete;
 public:
   BitstreamReader() : IgnoreBlockInfoNames(true) {
   }
@@ -62,18 +69,6 @@ public:
 
   BitstreamReader(std::unique_ptr<MemoryObject> BitcodeBytes)
       : BitcodeBytes(std::move(BitcodeBytes)), IgnoreBlockInfoNames(true) {}
-
-  BitstreamReader(BitstreamReader &&Other) {
-    *this = std::move(Other);
-  }
-
-  BitstreamReader &operator=(BitstreamReader &&Other) {
-    BitcodeBytes = std::move(Other.BitcodeBytes);
-    // Explicitly swap block info, so that nothing gets destroyed twice.
-    std::swap(BlockInfoRecords, Other.BlockInfoRecords);
-    IgnoreBlockInfoNames = Other.IgnoreBlockInfoNames;
-    return *this;
-  }
 
   void init(const unsigned char *Start, const unsigned char *End) {
     assert(((End-Start) & 3) == 0 &&"Bitcode stream not a multiple of 4 bytes");
@@ -139,12 +134,12 @@ class SimpleBitstreamCursor {
   // The size of the bicode. 0 if we don't know it yet.
   size_t Size = 0;
 
+public:
   /// This is the current data we have pulled from the stream but have not
   /// returned to the client. This is specifically and intentionally defined to
   /// follow the word size of the host machine for efficiency. We use word_t in
   /// places that are aware of this to make it perfectly explicit what is going
   /// on.
-public:
   typedef size_t word_t;
 
 private:
@@ -306,7 +301,7 @@ public:
 
     uint32_t Result = 0;
     unsigned NextBit = 0;
-    while (1) {
+    while (true) {
       Result |= (Piece & ((1U << (NumBits-1))-1)) << NextBit;
 
       if ((Piece & (1U << (NumBits-1))) == 0)
@@ -326,7 +321,7 @@ public:
 
     uint64_t Result = 0;
     unsigned NextBit = 0;
-    while (1) {
+    while (true) {
       Result |= uint64_t(Piece & ((1U << (NumBits-1))-1)) << NextBit;
 
       if ((Piece & (1U << (NumBits-1))) == 0)
@@ -394,12 +389,15 @@ struct BitstreamEntry {
   static BitstreamEntry getError() {
     BitstreamEntry E; E.Kind = Error; return E;
   }
+
   static BitstreamEntry getEndBlock() {
     BitstreamEntry E; E.Kind = EndBlock; return E;
   }
+
   static BitstreamEntry getSubBlock(unsigned ID) {
     BitstreamEntry E; E.Kind = SubBlock; E.ID = ID; return E;
   }
+
   static BitstreamEntry getRecord(unsigned AbbrevID) {
     BitstreamEntry E; E.Kind = Record; E.ID = AbbrevID; return E;
   }
@@ -421,12 +419,12 @@ class BitstreamCursor : SimpleBitstreamCursor {
   struct Block {
     unsigned PrevCodeSize;
     std::vector<IntrusiveRefCntPtr<BitCodeAbbrev>> PrevAbbrevs;
+
     explicit Block(unsigned PCS) : PrevCodeSize(PCS) {}
   };
 
   /// This tracks the codesize of parent blocks.
   SmallVector<Block, 8> BlockScope;
-
 
 public:
   static const size_t MaxChunkSize = sizeof(word_t) * 8;
@@ -471,7 +469,7 @@ public:
 
   /// Advance the current bitstream, returning the next entry in the stream.
   BitstreamEntry advance(unsigned Flags = 0) {
-    while (1) {
+    while (true) {
       unsigned Code = ReadCode();
       if (Code == bitc::END_BLOCK) {
         // Pop the end of the block unless Flags tells us not to.
@@ -498,7 +496,7 @@ public:
   /// This is a convenience function for clients that don't expect any
   /// subblocks. This just skips over them automatically.
   BitstreamEntry advanceSkippingSubblocks(unsigned Flags = 0) {
-    while (1) {
+    while (true) {
       // If we found a normal entry, return it.
       BitstreamEntry Entry = advance(Flags);
       if (Entry.Kind != BitstreamEntry::SubBlock)
@@ -513,7 +511,6 @@ public:
   unsigned ReadCode() {
     return Read(CurCodeSize);
   }
-
 
   // Block header:
   //    [ENTER_SUBBLOCK, blockid, newcodelen, <align4bytes>, blocklen]
@@ -558,7 +555,6 @@ public:
   }
 
 private:
-
   void popBlockScope() {
     CurCodeSize = BlockScope.back().PrevCodeSize;
 
@@ -593,6 +589,6 @@ public:
   bool ReadBlockInfoBlock();
 };
 
-} // End llvm namespace
+} // end llvm namespace
 
-#endif
+#endif // LLVM_BITCODE_BITSTREAMREADER_H

@@ -112,7 +112,7 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
   bool runOnFunction(Function &F) override;
 
-  const char *getPassName() const override {
+  StringRef getPassName() const override {
     if (OnlyIfDivergentTarget)
       return "Speculatively execute instructions if target has divergent "
              "branches";
@@ -224,6 +224,24 @@ static unsigned ComputeSpeculationCost(const Instruction *I,
     case Instruction::Xor:
     case Instruction::ZExt:
     case Instruction::SExt:
+    case Instruction::Call:
+    case Instruction::BitCast:
+    case Instruction::PtrToInt:
+    case Instruction::IntToPtr:
+    case Instruction::AddrSpaceCast:
+    case Instruction::FPToUI:
+    case Instruction::FPToSI:
+    case Instruction::UIToFP:
+    case Instruction::SIToFP:
+    case Instruction::FPExt:
+    case Instruction::FPTrunc:
+    case Instruction::FAdd:
+    case Instruction::FSub:
+    case Instruction::FMul:
+    case Instruction::FDiv:
+    case Instruction::FRem:
+    case Instruction::ICmp:
+    case Instruction::FCmp:
       return TTI.getUserCost(I);
 
     default:

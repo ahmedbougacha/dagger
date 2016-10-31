@@ -69,17 +69,8 @@ namespace llvm {
   };
 
   template <>
-  struct ilist_sentinel_traits<IndexListEntry>
-      : public ilist_half_embedded_sentinel_traits<IndexListEntry> {};
-
-  template <>
-  struct ilist_traits<IndexListEntry>
-      : public ilist_default_traits<IndexListEntry> {
-    void deleteNode(IndexListEntry *N) {}
-
-  private:
-    void createNode(const IndexListEntry &);
-  };
+  struct ilist_alloc_traits<IndexListEntry>
+      : public ilist_noalloc_traits<IndexListEntry> {};
 
   /// SlotIndex - An opaque wrapper around machine indexes.
   class SlotIndex {
@@ -355,9 +346,8 @@ namespace llvm {
 
     IndexListEntry* createEntry(MachineInstr *mi, unsigned index) {
       IndexListEntry *entry =
-        static_cast<IndexListEntry*>(
-          ileAllocator.Allocate(sizeof(IndexListEntry),
-          alignOf<IndexListEntry>()));
+          static_cast<IndexListEntry *>(ileAllocator.Allocate(
+              sizeof(IndexListEntry), alignof(IndexListEntry)));
 
       new (entry) IndexListEntry(mi, index);
 
@@ -415,7 +405,8 @@ namespace llvm {
     /// Returns the base index for the given instruction.
     SlotIndex getInstructionIndex(const MachineInstr &MI) const {
       // Instructions inside a bundle have the same number as the bundle itself.
-      Mi2IndexMap::const_iterator itr = mi2iMap.find(&getBundleStart(MI));
+      const MachineInstr &BundleStart = *getBundleStart(MI.getIterator());
+      Mi2IndexMap::const_iterator itr = mi2iMap.find(&BundleStart);
       assert(itr != mi2iMap.end() && "Instruction not found in maps.");
       return itr->second;
     }

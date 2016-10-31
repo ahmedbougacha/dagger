@@ -356,15 +356,13 @@ namespace {
         : MachineFunctionPass(ID), STI(nullptr), MF(nullptr), MCP(nullptr),
           PrescannedForConstants(false) {}
 
-    const char *getPassName() const override {
-      return "Mips Constant Islands";
-    }
+    StringRef getPassName() const override { return "Mips Constant Islands"; }
 
     bool runOnMachineFunction(MachineFunction &F) override;
 
     MachineFunctionProperties getRequiredProperties() const override {
       return MachineFunctionProperties().set(
-          MachineFunctionProperties::Property::AllVRegsAllocated);
+          MachineFunctionProperties::Property::NoVRegs);
     }
 
     void doInitialPlacement(std::vector<MachineInstr*> &CPEMIs);

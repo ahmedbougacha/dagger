@@ -469,9 +469,9 @@ define i16@test_int_x86_avx512_mask_fpclass_ps_512(<16 x float> %x0, i16 %x1) {
 ; CHECK-LABEL: test_int_x86_avx512_mask_fpclass_ps_512:
 ; CHECK:       ## BB#0:
 ; CHECK-NEXT:    kmovw %edi, %k1
-; CHECK-NEXT:    vfpclassps $4, %zmm0, %k0 {%k1}
-; CHECK-NEXT:    kmovw %k0, %ecx
 ; CHECK-NEXT:    vfpclassps $4, %zmm0, %k0
+; CHECK-NEXT:    kmovw %k0, %ecx
+; CHECK-NEXT:    vfpclassps $4, %zmm0, %k0 {%k1}
 ; CHECK-NEXT:    kmovw %k0, %eax
 ; CHECK-NEXT:    addl %ecx, %eax
 ; CHECK-NEXT:    ## kill: %AX<def> %AX<kill> %EAX<kill>
@@ -491,10 +491,12 @@ define i8 @test_int_x86_avx512_mask_fpclass_sd(<2 x double> %x0, i8 %x1) {
 ; CHECK-NEXT:    kmovw %edi, %k1
 ; CHECK-NEXT:    vfpclasssd $2, %xmm0, %k0 {%k1}
 ; CHECK-NEXT:    kmovw %k0, %ecx
+; CHECK-NEXT:    andl $1, %ecx
 ; CHECK-NEXT:    vfpclasssd $4, %xmm0, %k0
 ; CHECK-NEXT:    kmovw %k0, %eax
+; CHECK-NEXT:    andl $1, %eax
 ; CHECK-NEXT:    addb %cl, %al
-; CHECK-NEXT:    ## kill: %AL<def> %AL<kill> %AX<kill>
+; CHECK-NEXT:    ## kill: %AL<def> %AL<kill> %EAX<kill>
 ; CHECK-NEXT:    retq
   %res = call i8 @llvm.x86.avx512.mask.fpclass.sd(<2 x double> %x0, i32 2, i8 %x1)
   %res1 = call i8 @llvm.x86.avx512.mask.fpclass.sd(<2 x double> %x0, i32 4, i8 -1)
@@ -511,10 +513,12 @@ define i8 @test_int_x86_avx512_mask_fpclass_ss(<4 x float> %x0, i8 %x1) {
 ; CHECK-NEXT:    kmovw %edi, %k1
 ; CHECK-NEXT:    vfpclassss $4, %xmm0, %k0 {%k1}
 ; CHECK-NEXT:    kmovw %k0, %ecx
+; CHECK-NEXT:    andl $1, %ecx
 ; CHECK-NEXT:    vfpclassss $4, %xmm0, %k0
 ; CHECK-NEXT:    kmovw %k0, %eax
+; CHECK-NEXT:    andl $1, %eax
 ; CHECK-NEXT:    addb %cl, %al
-; CHECK-NEXT:    ## kill: %AL<def> %AL<kill> %AX<kill>
+; CHECK-NEXT:    ## kill: %AL<def> %AL<kill> %EAX<kill>
 ; CHECK-NEXT:    retq
   %res = call i8 @llvm.x86.avx512.mask.fpclass.ss(<4 x float> %x0, i32 4, i8 %x1)
   %res1 = call i8 @llvm.x86.avx512.mask.fpclass.ss(<4 x float> %x0, i32 4, i8 -1)
@@ -528,9 +532,9 @@ define <16 x float>@test_int_x86_avx512_mask_broadcastf32x2_512(<4 x float> %x0,
 ; CHECK-LABEL: test_int_x86_avx512_mask_broadcastf32x2_512:
 ; CHECK:       ## BB#0:
 ; CHECK-NEXT:    kmovw %edi, %k1
-; CHECK-NEXT:    vbroadcastf32x2 %xmm0, %zmm1 {%k1}
-; CHECK-NEXT:    vbroadcastf32x2 %xmm0, %zmm2 {%k1} {z}
-; CHECK-NEXT:    vbroadcastf32x2 %xmm0, %zmm0
+; CHECK-NEXT:    vbroadcastf32x2 {{.*#+}} zmm1 {%k1} = xmm0[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1]
+; CHECK-NEXT:    vbroadcastf32x2 {{.*#+}} zmm2 {%k1} {z} = xmm0[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1]
+; CHECK-NEXT:    vbroadcastf32x2 {{.*#+}} zmm0 = xmm0[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1]
 ; CHECK-NEXT:    vaddps %zmm2, %zmm1, %zmm1
 ; CHECK-NEXT:    vaddps %zmm0, %zmm1, %zmm0
 ; CHECK-NEXT:    retq
@@ -548,9 +552,9 @@ define <16 x i32>@test_int_x86_avx512_mask_broadcasti32x2_512(<4 x i32> %x0, <16
 ; CHECK-LABEL: test_int_x86_avx512_mask_broadcasti32x2_512:
 ; CHECK:       ## BB#0:
 ; CHECK-NEXT:    kmovw %edi, %k1
-; CHECK-NEXT:    vbroadcasti32x2 %xmm0, %zmm1 {%k1}
-; CHECK-NEXT:    vbroadcasti32x2 %xmm0, %zmm2 {%k1} {z}
-; CHECK-NEXT:    vbroadcasti32x2 %xmm0, %zmm0
+; CHECK-NEXT:    vbroadcasti32x2 {{.*#+}} zmm1 {%k1} = xmm0[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1]
+; CHECK-NEXT:    vbroadcasti32x2 {{.*#+}} zmm2 {%k1} {z} = xmm0[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1]
+; CHECK-NEXT:    vbroadcasti32x2 {{.*#+}} zmm0 = xmm0[0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1]
 ; CHECK-NEXT:    vpaddd %zmm2, %zmm1, %zmm1
 ; CHECK-NEXT:    vpaddd %zmm0, %zmm1, %zmm0
 ; CHECK-NEXT:    retq

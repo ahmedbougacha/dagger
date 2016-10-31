@@ -366,7 +366,7 @@ static Loop *separateNestedLoop(Loop *L, BasicBlock *Preheader,
     // already be a use of an LCSSA phi node.
     formLCSSA(*L, *DT, LI, SE);
 
-    assert(NewOuter->isRecursivelyLCSSAForm(*DT) &&
+    assert(NewOuter->isRecursivelyLCSSAForm(*DT, *LI) &&
            "LCSSA is broken after separating nested loops!");
   }
 
@@ -622,8 +622,10 @@ ReprocessLoop:
        (PN = dyn_cast<PHINode>(I++)); )
     if (Value *V = SimplifyInstruction(PN, DL, nullptr, DT, AC)) {
       if (SE) SE->forgetValue(PN);
-      PN->replaceAllUsesWith(V);
-      PN->eraseFromParent();
+      if (!PreserveLCSSA || LI->replacementPreservesLCSSAForm(PN, V)) {
+        PN->replaceAllUsesWith(V);
+        PN->eraseFromParent();
+      }
     }
 
   // If this loop has multiple exits and the exits all go to the same
@@ -808,8 +810,8 @@ bool LoopSimplify::runOnFunction(Function &F) {
   if (PreserveLCSSA) {
     assert(DT && "DT not available.");
     assert(LI && "LI not available.");
-    bool InLCSSA =
-        all_of(*LI, [&](Loop *L) { return L->isRecursivelyLCSSAForm(*DT); });
+    bool InLCSSA = all_of(
+        *LI, [&](Loop *L) { return L->isRecursivelyLCSSAForm(*DT, *LI); });
     assert(InLCSSA && "Requested to preserve LCSSA, but it's already broken.");
   }
 #endif
@@ -820,8 +822,8 @@ bool LoopSimplify::runOnFunction(Function &F) {
 
 #ifndef NDEBUG
   if (PreserveLCSSA) {
-    bool InLCSSA =
-        all_of(*LI, [&](Loop *L) { return L->isRecursivelyLCSSAForm(*DT); });
+    bool InLCSSA = all_of(
+        *LI, [&](Loop *L) { return L->isRecursivelyLCSSAForm(*DT, *LI); });
     assert(InLCSSA && "LCSSA is broken after loop-simplify.");
   }
 #endif

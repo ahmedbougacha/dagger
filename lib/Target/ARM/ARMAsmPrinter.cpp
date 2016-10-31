@@ -74,8 +74,9 @@ void ARMAsmPrinter::EmitFunctionEntryLabel() {
   if (AFI->isThumbFunction()) {
     OutStreamer->EmitAssemblerFlag(MCAF_Code16);
     OutStreamer->EmitThumbFunc(CurrentFnSym);
+  } else {
+    OutStreamer->EmitAssemblerFlag(MCAF_Code32);
   }
-
   OutStreamer->EmitLabel(CurrentFnSym);
 }
 
@@ -96,6 +97,13 @@ void ARMAsmPrinter::EmitXXStructor(const DataLayout &DL, const Constant *CV) {
   OutStreamer->EmitValue(E, Size);
 }
 
+void ARMAsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
+  if (PromotedGlobals.count(GV))
+    // The global was promoted into a constant pool. It should not be emitted.
+    return;
+  AsmPrinter::EmitGlobalVariable(GV);
+}
+
 /// runOnMachineFunction - This uses the EmitInstruction()
 /// method to print assembly for each instruction.
 ///
@@ -108,6 +116,12 @@ bool ARMAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   const Function* F = MF.getFunction();
   const TargetMachine& TM = MF.getTarget();
 
+  // Collect all globals that had their storage promoted to a constant pool.
+  // Functions are emitted before variables, so this accumulates promoted
+  // globals from all functions in PromotedGlobals.
+  for (auto *GV : AFI->getGlobalsPromotedToConstantPool())
+    PromotedGlobals.insert(GV);
+  
   // Calculate this function's optimization goal.
   unsigned OptimizationGoal;
   if (F->hasFnAttribute(Attribute::OptimizeNone))
@@ -149,6 +163,9 @@ bool ARMAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
 
   // Emit the rest of the function body.
   EmitFunctionBody();
+
+  // Emit the XRay table for this function.
+  EmitXRayTable();
 
   // If we need V4T thumb mode Register Indirect Jump pads, emit them.
   // These are created per function, rather than per TU, since it's
@@ -249,7 +266,7 @@ bool ARMAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
           << "]";
         return false;
       }
-      // Fallthrough
+      LLVM_FALLTHROUGH;
     case 'c': // Don't print "#" before an immediate operand.
       if (!MI->getOperand(OpNum).isImm())
         return true;
@@ -542,11 +559,11 @@ void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
     raw_string_ostream OS(Flags);
 
     for (const auto &Function : M)
-      TLOF.emitLinkerFlagsForGlobal(OS, &Function, *Mang);
+      TLOF.emitLinkerFlagsForGlobal(OS, &Function);
     for (const auto &Global : M.globals())
-      TLOF.emitLinkerFlagsForGlobal(OS, &Global, *Mang);
+      TLOF.emitLinkerFlagsForGlobal(OS, &Global);
     for (const auto &Alias : M.aliases())
-      TLOF.emitLinkerFlagsForGlobal(OS, &Alias, *Mang);
+      TLOF.emitLinkerFlagsForGlobal(OS, &Alias);
 
     OS.flush();
 
@@ -588,9 +605,11 @@ static ARMBuildAttrs::CPUArch getArchForCPU(StringRef CPU,
   if (CPU == "xscale")
     return ARMBuildAttrs::v5TEJ;
 
-  if (Subtarget->hasV8Ops())
+  if (Subtarget->hasV8Ops()) {
+    if (Subtarget->isRClass())
+      return ARMBuildAttrs::v8_R;
     return ARMBuildAttrs::v8_A;
-  else if (Subtarget->hasV8MMainlineOps())
+  } else if (Subtarget->hasV8MMainlineOps())
     return ARMBuildAttrs::v8_M_Main;
   else if (Subtarget->hasV7Ops()) {
     if (Subtarget->isMClass() && Subtarget->hasDSP())
@@ -612,6 +631,15 @@ static ARMBuildAttrs::CPUArch getArchForCPU(StringRef CPU,
     return ARMBuildAttrs::v4T;
   else
     return ARMBuildAttrs::v4;
+}
+
+// Returns true if all functions have the same function attribute value.
+// It also returns true when the module has no functions.
+static bool checkFunctionsAttributeConsistency(const Module &M, StringRef Attr,
+                                               StringRef Value) {
+  return !any_of(M, [&](const Function &F) {
+    return F.getFnAttribute(Attr).getValueAsString() != Value;
+  });
 }
 
 void ARMAsmPrinter::emitAttributes() {
@@ -750,17 +778,23 @@ void ARMAsmPrinter::emitAttributes() {
                       ARMBuildAttrs::AddressDirect);
   }
 
-  // Signal various FP modes.
-  if (!TM.Options.UnsafeFPMath) {
+  // Set FP Denormals.
+  if (checkFunctionsAttributeConsistency(*MMI->getModule(),
+                                         "denormal-fp-math",
+                                         "preserve-sign") ||
+      TM.Options.FPDenormalMode == FPDenormal::PreserveSign)
+    ATS.emitAttribute(ARMBuildAttrs::ABI_FP_denormal,
+                      ARMBuildAttrs::PreserveFPSign);
+  else if (checkFunctionsAttributeConsistency(*MMI->getModule(),
+                                              "denormal-fp-math",
+                                              "positive-zero") ||
+           TM.Options.FPDenormalMode == FPDenormal::PositiveZero)
+    ATS.emitAttribute(ARMBuildAttrs::ABI_FP_denormal,
+                      ARMBuildAttrs::PositiveZero);
+  else if (!TM.Options.UnsafeFPMath)
     ATS.emitAttribute(ARMBuildAttrs::ABI_FP_denormal,
                       ARMBuildAttrs::IEEEDenormals);
-    ATS.emitAttribute(ARMBuildAttrs::ABI_FP_exceptions, ARMBuildAttrs::Allowed);
-
-    // If the user has permitted this code to choose the IEEE 754
-    // rounding at run-time, emit the rounding attribute.
-    if (TM.Options.HonorSignDependentRoundingFPMathOption)
-      ATS.emitAttribute(ARMBuildAttrs::ABI_FP_rounding, ARMBuildAttrs::Allowed);
-  } else {
+  else {
     if (!STI.hasVFP2()) {
       // When the target doesn't have an FPU (by design or
       // intention), the assumptions made on the software support
@@ -784,6 +818,21 @@ void ARMAsmPrinter::emitAttributes() {
     // LLVM has chosen to flush this to positive zero (most likely for
     // GCC compatibility), so that's the chosen value here (the
     // absence of its emission implies zero).
+  }
+
+  // Set FP exceptions and rounding
+  if (checkFunctionsAttributeConsistency(*MMI->getModule(),
+                                         "no-trapping-math", "true") ||
+      TM.Options.NoTrappingFPMath)
+    ATS.emitAttribute(ARMBuildAttrs::ABI_FP_exceptions,
+                      ARMBuildAttrs::Not_Allowed);
+  else if (!TM.Options.UnsafeFPMath) {
+    ATS.emitAttribute(ARMBuildAttrs::ABI_FP_exceptions, ARMBuildAttrs::Allowed);
+
+    // If the user has permitted this code to choose the IEEE 754
+    // rounding at run-time, emit the rounding attribute.
+    if (TM.Options.HonorSignDependentRoundingFPMathOption)
+      ATS.emitAttribute(ARMBuildAttrs::ABI_FP_rounding, ARMBuildAttrs::Allowed);
   }
 
   // TM.Options.NoInfsFPMath && TM.Options.NoNaNsFPMath is the
@@ -893,7 +942,7 @@ void ARMAsmPrinter::emitAttributes() {
 
 //===----------------------------------------------------------------------===//
 
-static MCSymbol *getPICLabel(const char *Prefix, unsigned FunctionNumber,
+static MCSymbol *getPICLabel(StringRef Prefix, unsigned FunctionNumber,
                              unsigned LabelId, MCContext &Ctx) {
 
   MCSymbol *Label = Ctx.getOrCreateSymbol(Twine(Prefix)
@@ -969,6 +1018,26 @@ EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
 
   ARMConstantPoolValue *ACPV = static_cast<ARMConstantPoolValue*>(MCPV);
 
+  if (ACPV->isPromotedGlobal()) {
+    // This constant pool entry is actually a global whose storage has been
+    // promoted into the constant pool. This global may be referenced still
+    // by debug information, and due to the way AsmPrinter is set up, the debug
+    // info is immutable by the time we decide to promote globals to constant
+    // pools. Because of this, we need to ensure we emit a symbol for the global
+    // with private linkage (the default) so debug info can refer to it.
+    //
+    // However, if this global is promoted into several functions we must ensure
+    // we don't try and emit duplicate symbols!
+    auto *ACPC = cast<ARMConstantPoolConstant>(ACPV);
+    auto *GV = ACPC->getPromotedGlobal();
+    if (!EmittedPromotedGlobalLabels.count(GV)) {
+      MCSymbol *GVSym = getSymbol(GV);
+      OutStreamer->EmitLabel(GVSym);
+      EmittedPromotedGlobalLabels.insert(GV);
+    }
+    return EmitGlobalConstant(DL, ACPC->getPromotedGlobalInit());
+  }
+
   MCSymbol *MCSym;
   if (ACPV->isLSDA()) {
     MCSym = getCurExceptionSym();
@@ -988,7 +1057,7 @@ EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
     MCSym = MBB->getSymbol();
   } else {
     assert(ACPV->isExtSymbol() && "unrecognized constant pool value");
-    const char *Sym = cast<ARMConstantPoolSymbol>(ACPV)->getSymbol();
+    auto Sym = cast<ARMConstantPoolSymbol>(ACPV)->getSymbol();
     MCSym = GetExternalSymbolSymbol(Sym);
   }
 
@@ -1976,6 +2045,15 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
                                      .addReg(0));
     return;
   }
+  case ARM::PATCHABLE_FUNCTION_ENTER:
+    LowerPATCHABLE_FUNCTION_ENTER(*MI);
+    return;
+  case ARM::PATCHABLE_FUNCTION_EXIT:
+    LowerPATCHABLE_FUNCTION_EXIT(*MI);
+    return;
+  case ARM::PATCHABLE_TAIL_CALL:
+    LowerPATCHABLE_TAIL_CALL(*MI);
+    return;
   }
 
   MCInst TmpInst;
@@ -1990,8 +2068,8 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
 
 // Force static initialization.
 extern "C" void LLVMInitializeARMAsmPrinter() {
-  RegisterAsmPrinter<ARMAsmPrinter> X(TheARMLETarget);
-  RegisterAsmPrinter<ARMAsmPrinter> Y(TheARMBETarget);
-  RegisterAsmPrinter<ARMAsmPrinter> A(TheThumbLETarget);
-  RegisterAsmPrinter<ARMAsmPrinter> B(TheThumbBETarget);
+  RegisterAsmPrinter<ARMAsmPrinter> X(getTheARMLETarget());
+  RegisterAsmPrinter<ARMAsmPrinter> Y(getTheARMBETarget());
+  RegisterAsmPrinter<ARMAsmPrinter> A(getTheThumbLETarget());
+  RegisterAsmPrinter<ARMAsmPrinter> B(getTheThumbBETarget());
 }

@@ -2038,6 +2038,7 @@ def : Thumb2ExtractPat<(add rGPR:$Rn, (and (srl rGPR:$Rm, imm8_or_16:$rot),
 //  Arithmetic Instructions.
 //
 
+let isAdd = 1 in
 defm t2ADD  : T2I_bin_ii12rs<0b000, "add", add, 1>;
 defm t2SUB  : T2I_bin_ii12rs<0b101, "sub", sub>;
 
@@ -4657,6 +4658,10 @@ def : t2InstAlias<"add${p} $Rd, pc, $imm",
 def t2LDRConstPool
   : t2AsmPseudo<"ldr${p} $Rt, $immediate",
                 (ins GPRnopc:$Rt, const_pool_asm_imm:$immediate, pred:$p)>;
+// Version w/ the .w suffix.
+def : t2InstAlias<"ldr${p}.w $Rt, $immediate",
+                  (t2LDRConstPool GPRnopc:$Rt,
+                  const_pool_asm_imm:$immediate, pred:$p)>;
 
 // PLD/PLDW/PLI with alternate literal form.
 def : t2InstAlias<"pld${p} $addr",

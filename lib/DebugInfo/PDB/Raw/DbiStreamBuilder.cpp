@@ -9,6 +9,8 @@
 
 #include "llvm/DebugInfo/PDB/Raw/DbiStreamBuilder.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/DebugInfo/MSF/MSFBuilder.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/MSF/StreamWriter.h"
 #include "llvm/DebugInfo/PDB/Raw/DbiStream.h"
@@ -23,9 +25,10 @@ namespace {
 class ModiSubstreamBuilder {};
 }
 
-DbiStreamBuilder::DbiStreamBuilder(BumpPtrAllocator &Allocator)
-    : Allocator(Allocator), Age(1), BuildNumber(0), PdbDllVersion(0),
-      PdbDllRbld(0), Flags(0), MachineType(PDB_Machine::x86), Header(nullptr) {}
+DbiStreamBuilder::DbiStreamBuilder(msf::MSFBuilder &Msf)
+    : Msf(Msf), Allocator(Msf.getAllocator()), Age(1), BuildNumber(0),
+      PdbDllVersion(0), PdbDllRbld(0), Flags(0), MachineType(PDB_Machine::x86),
+      Header(nullptr), DbgStreams((int)DbgHeaderType::Max) {}
 
 void DbiStreamBuilder::setVersionHeader(PdbRaw_DbiVer V) { VerHeader = V; }
 
@@ -41,10 +44,24 @@ void DbiStreamBuilder::setFlags(uint16_t F) { Flags = F; }
 
 void DbiStreamBuilder::setMachineType(PDB_Machine M) { MachineType = M; }
 
+Error DbiStreamBuilder::addDbgStream(pdb::DbgHeaderType Type,
+                                     ArrayRef<uint8_t> Data) {
+  if (DbgStreams[(int)Type].StreamNumber)
+    return make_error<RawError>(raw_error_code::duplicate_entry,
+                                "The specified stream type already exists");
+  auto ExpectedIndex = Msf.addStream(Data.size());
+  if (!ExpectedIndex)
+    return ExpectedIndex.takeError();
+  uint32_t Index = std::move(*ExpectedIndex);
+  DbgStreams[(int)Type].Data = Data;
+  DbgStreams[(int)Type].StreamNumber = Index;
+  return Error::success();
+}
+
 uint32_t DbiStreamBuilder::calculateSerializedLength() const {
   // For now we only support serializing the header.
   return sizeof(DbiStreamHeader) + calculateFileInfoSubstreamSize() +
-         calculateModiSubstreamSize();
+         calculateModiSubstreamSize() + calculateDbgStreamsSize();
 }
 
 Error DbiStreamBuilder::addModuleInfo(StringRef ObjFile, StringRef Module) {
@@ -102,6 +119,10 @@ uint32_t DbiStreamBuilder::calculateNamesBufferSize() const {
     Size += F.getKeyLength() + 1; // Names[I];
   }
   return Size;
+}
+
+uint32_t DbiStreamBuilder::calculateDbgStreamsSize() const {
+  return DbgStreams.size() * sizeof(uint16_t);
 }
 
 Error DbiStreamBuilder::generateModiSubstream() {
@@ -214,7 +235,7 @@ Error DbiStreamBuilder::finalize() {
   H->ECSubstreamSize = 0;
   H->FileInfoSize = FileInfoBuffer.getLength();
   H->ModiSubstreamSize = ModInfoBuffer.getLength();
-  H->OptionalDbgHdrSize = 0;
+  H->OptionalDbgHdrSize = DbgStreams.size() * sizeof(uint16_t);
   H->SecContrSubstreamSize = 0;
   H->SectionMapSize = 0;
   H->TypeServerSize = 0;
@@ -224,6 +245,13 @@ Error DbiStreamBuilder::finalize() {
   H->GlobalSymbolStreamIndex = kInvalidStreamIndex;
 
   Header = H;
+  return Error::success();
+}
+
+Error DbiStreamBuilder::finalizeMsfLayout() {
+  uint32_t Length = calculateSerializedLength();
+  if (auto EC = Msf.setStreamSize(StreamDBI, Length))
+    return EC;
   return Error::success();
 }
 
@@ -264,6 +292,19 @@ Error DbiStreamBuilder::commit(const msf::MSFLayout &Layout,
     return EC;
   if (auto EC = Writer.writeStreamRef(FileInfoBuffer))
     return EC;
+  for (auto &Stream : DbgStreams)
+    if (auto EC = Writer.writeInteger(Stream.StreamNumber))
+      return EC;
+
+  for (auto &Stream : DbgStreams) {
+    if (Stream.StreamNumber == kInvalidStreamIndex)
+      continue;
+    auto WritableStream = WritableMappedBlockStream::createIndexedStream(
+        Layout, Buffer, Stream.StreamNumber);
+    StreamWriter DbgStreamWriter(*WritableStream);
+    if (auto EC = DbgStreamWriter.writeArray(Stream.Data))
+      return EC;
+  }
 
   if (Writer.bytesRemaining() > 0)
     return make_error<RawError>(raw_error_code::invalid_format,

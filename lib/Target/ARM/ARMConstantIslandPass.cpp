@@ -197,10 +197,10 @@ namespace {
 
     MachineFunctionProperties getRequiredProperties() const override {
       return MachineFunctionProperties().set(
-          MachineFunctionProperties::Property::AllVRegsAllocated);
+          MachineFunctionProperties::Property::NoVRegs);
     }
 
-    const char *getPassName() const override {
+    StringRef getPassName() const override {
       return "ARM constant island placement and branch shortening pass";
     }
 
@@ -684,7 +684,7 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
         case ARM::Bcc:
           isCond = true;
           UOpc = ARM::B;
-          // Fallthrough
+          LLVM_FALLTHROUGH;
         case ARM::B:
           Bits = 24;
           Scale = 4;
@@ -767,6 +767,7 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
           case ARM::LDRi12:
           case ARM::LDRcp:
           case ARM::t2LDRpci:
+          case ARM::t2LDRHpci:
             Bits = 12;  // +-offset_12
             NegOk = true;
             break;
@@ -781,6 +782,11 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
             Bits = 8;
             Scale = 4;  // +-(offset_8*4)
             NegOk = true;
+            break;
+
+          case ARM::tLDRHi:
+            Bits = 5;
+            Scale = 2; // +(offset_5*2)
             break;
           }
 

@@ -15,6 +15,7 @@
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/PatternMatch.h"
 using namespace llvm;
 using namespace PatternMatch;
@@ -78,7 +79,7 @@ static Value *generateMinMaxSelectPattern(InstCombiner::BuilderTy *Builder,
 /// a bitmask indicating which operands of this instruction are foldable if they
 /// equal the other incoming value of the select.
 ///
-static unsigned GetSelectFoldableOperands(Instruction *I) {
+static unsigned getSelectFoldableOperands(Instruction *I) {
   switch (I->getOpcode()) {
   case Instruction::Add:
   case Instruction::Mul:
@@ -98,7 +99,7 @@ static unsigned GetSelectFoldableOperands(Instruction *I) {
 
 /// For the same transformation as the previous function, return the identity
 /// constant that goes into the select.
-static Constant *GetSelectFoldableConstant(Instruction *I) {
+static Constant *getSelectFoldableConstant(Instruction *I) {
   switch (I->getOpcode()) {
   default: llvm_unreachable("This cannot happen!");
   case Instruction::Add:
@@ -117,7 +118,7 @@ static Constant *GetSelectFoldableConstant(Instruction *I) {
 }
 
 /// We have (select c, TI, FI), and we know that TI and FI have the same opcode.
-Instruction *InstCombiner::FoldSelectOpOp(SelectInst &SI, Instruction *TI,
+Instruction *InstCombiner::foldSelectOpOp(SelectInst &SI, Instruction *TI,
                                           Instruction *FI) {
   // If this is a cast from the same type, merge.
   if (TI->getNumOperands() == 1 && TI->isCast()) {
@@ -154,8 +155,9 @@ Instruction *InstCombiner::FoldSelectOpOp(SelectInst &SI, Instruction *TI,
     }
 
     // Fold this by inserting a select from the input values.
-    Value *NewSI = Builder->CreateSelect(SI.getCondition(), TI->getOperand(0),
-                                         FI->getOperand(0), SI.getName()+".v");
+    Value *NewSI =
+        Builder->CreateSelect(SI.getCondition(), TI->getOperand(0),
+                              FI->getOperand(0), SI.getName() + ".v", &SI);
     return CastInst::Create(Instruction::CastOps(TI->getOpcode()), NewSI,
                             TI->getType());
   }
@@ -199,8 +201,8 @@ Instruction *InstCombiner::FoldSelectOpOp(SelectInst &SI, Instruction *TI,
   }
 
   // If we reach here, they do have operations in common.
-  Value *NewSI = Builder->CreateSelect(SI.getCondition(), OtherOpT,
-                                       OtherOpF, SI.getName()+".v");
+  Value *NewSI = Builder->CreateSelect(SI.getCondition(), OtherOpT, OtherOpF,
+                                       SI.getName() + ".v", &SI);
 
   if (BinaryOperator *BO = dyn_cast<BinaryOperator>(TI)) {
     if (MatchIsOpZero)
@@ -226,14 +228,14 @@ static bool isSelect01(Constant *C1, Constant *C2) {
 
 /// Try to fold the select into one of the operands to allow further
 /// optimization.
-Instruction *InstCombiner::FoldSelectIntoOp(SelectInst &SI, Value *TrueVal,
+Instruction *InstCombiner::foldSelectIntoOp(SelectInst &SI, Value *TrueVal,
                                             Value *FalseVal) {
   // See the comment above GetSelectFoldableOperands for a description of the
   // transformation we are doing here.
   if (Instruction *TVI = dyn_cast<Instruction>(TrueVal)) {
     if (TVI->hasOneUse() && TVI->getNumOperands() == 2 &&
         !isa<Constant>(FalseVal)) {
-      if (unsigned SFO = GetSelectFoldableOperands(TVI)) {
+      if (unsigned SFO = getSelectFoldableOperands(TVI)) {
         unsigned OpToFold = 0;
         if ((SFO & 1) && FalseVal == TVI->getOperand(0)) {
           OpToFold = 1;
@@ -242,7 +244,7 @@ Instruction *InstCombiner::FoldSelectIntoOp(SelectInst &SI, Value *TrueVal,
         }
 
         if (OpToFold) {
-          Constant *C = GetSelectFoldableConstant(TVI);
+          Constant *C = getSelectFoldableConstant(TVI);
           Value *OOp = TVI->getOperand(2-OpToFold);
           // Avoid creating select between 2 constants unless it's selecting
           // between 0, 1 and -1.
@@ -263,7 +265,7 @@ Instruction *InstCombiner::FoldSelectIntoOp(SelectInst &SI, Value *TrueVal,
   if (Instruction *FVI = dyn_cast<Instruction>(FalseVal)) {
     if (FVI->hasOneUse() && FVI->getNumOperands() == 2 &&
         !isa<Constant>(TrueVal)) {
-      if (unsigned SFO = GetSelectFoldableOperands(FVI)) {
+      if (unsigned SFO = getSelectFoldableOperands(FVI)) {
         unsigned OpToFold = 0;
         if ((SFO & 1) && TrueVal == FVI->getOperand(0)) {
           OpToFold = 1;
@@ -272,7 +274,7 @@ Instruction *InstCombiner::FoldSelectIntoOp(SelectInst &SI, Value *TrueVal,
         }
 
         if (OpToFold) {
-          Constant *C = GetSelectFoldableConstant(FVI);
+          Constant *C = getSelectFoldableConstant(FVI);
           Value *OOp = FVI->getOperand(2-OpToFold);
           // Avoid creating select between 2 constants unless it's selecting
           // between 0, 1 and -1.
@@ -412,8 +414,8 @@ static Value *foldSelectCttzCtlz(ICmpInst *ICI, Value *TrueVal, Value *FalseVal,
 }
 
 /// Visit a SelectInst that has an ICmpInst as its first operand.
-Instruction *InstCombiner::visitSelectInstWithICmp(SelectInst &SI,
-                                                   ICmpInst *ICI) {
+Instruction *InstCombiner::foldSelectInstWithICmp(SelectInst &SI,
+                                                  ICmpInst *ICI) {
   bool Changed = false;
   ICmpInst::Predicate Pred = ICI->getPredicate();
   Value *CmpLHS = ICI->getOperand(0);
@@ -452,36 +454,36 @@ Instruction *InstCombiner::visitSelectInstWithICmp(SelectInst &SI,
         // Types do not match. Instead of calculating this with mixed types
         // promote all to the larger type. This enables scalar evolution to
         // analyze this expression.
-        else if (CmpRHS->getType()->getScalarSizeInBits()
-                 < SelectTy->getBitWidth()) {
-          Constant *sextRHS = ConstantExpr::getSExt(AdjustedRHS, SelectTy);
+        else if (CmpRHS->getType()->getScalarSizeInBits() <
+                 SelectTy->getBitWidth()) {
+          Constant *SextRHS = ConstantExpr::getSExt(AdjustedRHS, SelectTy);
 
           // X = sext x; x >s c ? X : C+1 --> X = sext x; X <s C+1 ? C+1 : X
           // X = sext x; x <s c ? X : C-1 --> X = sext x; X >s C-1 ? C-1 : X
           // X = sext x; x >u c ? X : C+1 --> X = sext x; X <u C+1 ? C+1 : X
           // X = sext x; x <u c ? X : C-1 --> X = sext x; X >u C-1 ? C-1 : X
           if (match(TrueVal, m_SExt(m_Specific(CmpLHS))) &&
-                sextRHS == FalseVal) {
+              SextRHS == FalseVal) {
             CmpLHS = TrueVal;
-            AdjustedRHS = sextRHS;
+            AdjustedRHS = SextRHS;
           } else if (match(FalseVal, m_SExt(m_Specific(CmpLHS))) &&
-                     sextRHS == TrueVal) {
+                     SextRHS == TrueVal) {
             CmpLHS = FalseVal;
-            AdjustedRHS = sextRHS;
+            AdjustedRHS = SextRHS;
           } else if (ICI->isUnsigned()) {
-            Constant *zextRHS = ConstantExpr::getZExt(AdjustedRHS, SelectTy);
+            Constant *ZextRHS = ConstantExpr::getZExt(AdjustedRHS, SelectTy);
             // X = zext x; x >u c ? X : C+1 --> X = zext x; X <u C+1 ? C+1 : X
             // X = zext x; x <u c ? X : C-1 --> X = zext x; X >u C-1 ? C-1 : X
             // zext + signed compare cannot be changed:
             //    0xff <s 0x00, but 0x00ff >s 0x0000
             if (match(TrueVal, m_ZExt(m_Specific(CmpLHS))) &&
-                zextRHS == FalseVal) {
+                ZextRHS == FalseVal) {
               CmpLHS = TrueVal;
-              AdjustedRHS = zextRHS;
+              AdjustedRHS = ZextRHS;
             } else if (match(FalseVal, m_ZExt(m_Specific(CmpLHS))) &&
-                       zextRHS == TrueVal) {
+                       ZextRHS == TrueVal) {
               CmpLHS = FalseVal;
-              AdjustedRHS = zextRHS;
+              AdjustedRHS = ZextRHS;
             } else
               break;
           } else
@@ -497,6 +499,7 @@ Instruction *InstCombiner::visitSelectInstWithICmp(SelectInst &SI,
         ICI->setOperand(1, CmpRHS);
         SI.setOperand(1, TrueVal);
         SI.setOperand(2, FalseVal);
+        SI.swapProfMetadata();
 
         // Move ICI instruction right before the select instruction. Otherwise
         // the sext/zext value may be defined after the ICI instruction uses it.
@@ -623,7 +626,7 @@ Instruction *InstCombiner::visitSelectInstWithICmp(SelectInst &SI,
 ///
 /// because Y is not live in BB1/BB2.
 ///
-static bool CanSelectOperandBeMappingIntoPredBlock(const Value *V,
+static bool canSelectOperandBeMappingIntoPredBlock(const Value *V,
                                                    const SelectInst &SI) {
   // If the value is a non-instruction value like a constant or argument, it
   // can always be mapped.
@@ -651,7 +654,7 @@ static bool CanSelectOperandBeMappingIntoPredBlock(const Value *V,
 
 /// We have an SPF (e.g. a min or max) of an SPF of the form:
 ///   SPF2(SPF1(A, B), C)
-Instruction *InstCombiner::FoldSPFofSPF(Instruction *Inner,
+Instruction *InstCombiner::foldSPFofSPF(Instruction *Inner,
                                         SelectPatternFlavor SPF1,
                                         Value *A, Value *B,
                                         Instruction &Outer,
@@ -675,28 +678,24 @@ Instruction *InstCombiner::FoldSPFofSPF(Instruction *Inner,
   }
 
   if (SPF1 == SPF2) {
-    if (ConstantInt *CB = dyn_cast<ConstantInt>(B)) {
-      if (ConstantInt *CC = dyn_cast<ConstantInt>(C)) {
-        const APInt &ACB = CB->getValue();
-        const APInt &ACC = CC->getValue();
+    const APInt *CB, *CC;
+    if (match(B, m_APInt(CB)) && match(C, m_APInt(CC))) {
+      // MIN(MIN(A, 23), 97) -> MIN(A, 23)
+      // MAX(MAX(A, 97), 23) -> MAX(A, 97)
+      if ((SPF1 == SPF_UMIN && CB->ule(*CC)) ||
+          (SPF1 == SPF_SMIN && CB->sle(*CC)) ||
+          (SPF1 == SPF_UMAX && CB->uge(*CC)) ||
+          (SPF1 == SPF_SMAX && CB->sge(*CC)))
+        return replaceInstUsesWith(Outer, Inner);
 
-        // MIN(MIN(A, 23), 97) -> MIN(A, 23)
-        // MAX(MAX(A, 97), 23) -> MAX(A, 97)
-        if ((SPF1 == SPF_UMIN && ACB.ule(ACC)) ||
-            (SPF1 == SPF_SMIN && ACB.sle(ACC)) ||
-            (SPF1 == SPF_UMAX && ACB.uge(ACC)) ||
-            (SPF1 == SPF_SMAX && ACB.sge(ACC)))
-          return replaceInstUsesWith(Outer, Inner);
-
-        // MIN(MIN(A, 97), 23) -> MIN(A, 23)
-        // MAX(MAX(A, 23), 97) -> MAX(A, 97)
-        if ((SPF1 == SPF_UMIN && ACB.ugt(ACC)) ||
-            (SPF1 == SPF_SMIN && ACB.sgt(ACC)) ||
-            (SPF1 == SPF_UMAX && ACB.ult(ACC)) ||
-            (SPF1 == SPF_SMAX && ACB.slt(ACC))) {
-          Outer.replaceUsesOfWith(Inner, A);
-          return &Outer;
-        }
+      // MIN(MIN(A, 97), 23) -> MIN(A, 23)
+      // MAX(MAX(A, 23), 97) -> MAX(A, 97)
+      if ((SPF1 == SPF_UMIN && CB->ugt(*CC)) ||
+          (SPF1 == SPF_SMIN && CB->sgt(*CC)) ||
+          (SPF1 == SPF_UMAX && CB->ult(*CC)) ||
+          (SPF1 == SPF_SMAX && CB->slt(*CC))) {
+        Outer.replaceUsesOfWith(Inner, A);
+        return &Outer;
       }
     }
   }
@@ -712,8 +711,9 @@ Instruction *InstCombiner::FoldSPFofSPF(Instruction *Inner,
   if ((SPF1 == SPF_ABS && SPF2 == SPF_NABS) ||
       (SPF1 == SPF_NABS && SPF2 == SPF_ABS)) {
     SelectInst *SI = cast<SelectInst>(Inner);
-    Value *NewSI = Builder->CreateSelect(
-        SI->getCondition(), SI->getFalseValue(), SI->getTrueValue());
+    Value *NewSI =
+        Builder->CreateSelect(SI->getCondition(), SI->getFalseValue(),
+                              SI->getTrueValue(), SI->getName(), SI);
     return replaceInstUsesWith(Outer, NewSI);
   }
 
@@ -895,7 +895,7 @@ static Instruction *foldAddSubSelect(SelectInst &SI,
       if (AddOp != TI)
         std::swap(NewTrueOp, NewFalseOp);
       Value *NewSel = Builder.CreateSelect(CondVal, NewTrueOp, NewFalseOp,
-                                           SI.getName() + ".p");
+                                           SI.getName() + ".p", &SI);
 
       if (SI.getType()->isFPOrFPVectorTy()) {
         Instruction *RI =
@@ -912,35 +912,148 @@ static Instruction *foldAddSubSelect(SelectInst &SI,
   return nullptr;
 }
 
-/// If one of the operands is a sext/zext from i1 and the other is a constant,
-/// we may be able to create an i1 select which can be further folded to
-/// logical ops.
-static Instruction *foldSelectExtConst(InstCombiner::BuilderTy &Builder,
-                                       SelectInst &SI, Instruction *EI,
-                                       const APInt &C, bool isExtTrueVal,
-                                       bool isSigned) {
-  Value *SmallVal = EI->getOperand(0);
-  Type *SmallType = SmallVal->getType();
+Instruction *InstCombiner::foldSelectExtConst(SelectInst &Sel) {
+  Instruction *ExtInst;
+  if (!match(Sel.getTrueValue(), m_Instruction(ExtInst)) &&
+      !match(Sel.getFalseValue(), m_Instruction(ExtInst)))
+    return nullptr;
 
-  // TODO Handle larger types as well? Note this requires adjusting
-  // FoldOpIntoSelect as well.
+  auto ExtOpcode = ExtInst->getOpcode();
+  if (ExtOpcode != Instruction::ZExt && ExtOpcode != Instruction::SExt)
+    return nullptr;
+
+  // TODO: Handle larger types? That requires adjusting FoldOpIntoSelect too.
+  Value *X = ExtInst->getOperand(0);
+  Type *SmallType = X->getType();
   if (!SmallType->getScalarType()->isIntegerTy(1))
     return nullptr;
 
-  if (C != 0 && (isSigned || C != 1) &&
-      (!isSigned || !C.isAllOnesValue()))
+  Constant *C;
+  if (!match(Sel.getTrueValue(), m_Constant(C)) &&
+      !match(Sel.getFalseValue(), m_Constant(C)))
     return nullptr;
 
-  Value *SmallConst = ConstantInt::get(SmallType, C.trunc(1));
-  Value *TrueVal = isExtTrueVal ? SmallVal : SmallConst;
-  Value *FalseVal = isExtTrueVal ? SmallConst : SmallVal;
-  Value *Select = Builder.CreateSelect(SI.getOperand(0), TrueVal, FalseVal,
-                                       "fold." + SI.getName());
+  // If the constant is the same after truncation to the smaller type and
+  // extension to the original type, we can narrow the select.
+  Value *Cond = Sel.getCondition();
+  Type *SelType = Sel.getType();
+  Constant *TruncC = ConstantExpr::getTrunc(C, SmallType);
+  Constant *ExtC = ConstantExpr::getCast(ExtOpcode, TruncC, SelType);
+  if (ExtC == C) {
+    Value *TruncCVal = cast<Value>(TruncC);
+    if (ExtInst == Sel.getFalseValue())
+      std::swap(X, TruncCVal);
 
-  if (isSigned)
-    return new SExtInst(Select, SI.getType());
+    // select Cond, (ext X), C --> ext(select Cond, X, C')
+    // select Cond, C, (ext X) --> ext(select Cond, C', X)
+    Value *NewSel = Builder->CreateSelect(Cond, X, TruncCVal, "narrow", &Sel);
+    return CastInst::Create(Instruction::CastOps(ExtOpcode), NewSel, SelType);
+  }
 
-  return new ZExtInst(Select, SI.getType());
+  // If one arm of the select is the extend of the condition, replace that arm
+  // with the extension of the appropriate known bool value.
+  if (Cond == X) {
+    SelectInst *NewSel;
+    if (ExtInst == Sel.getTrueValue()) {
+      // select X, (sext X), C --> select X, -1, C
+      // select X, (zext X), C --> select X,  1, C
+      Constant *One = ConstantInt::getTrue(SmallType);
+      Constant *AllOnesOrOne = ConstantExpr::getCast(ExtOpcode, One, SelType);
+      NewSel = SelectInst::Create(Cond, AllOnesOrOne, C);
+    } else {
+      // select X, C, (sext X) --> select X, C, 0
+      // select X, C, (zext X) --> select X, C, 0
+      Constant *Zero = ConstantInt::getNullValue(SelType);
+      NewSel = SelectInst::Create(Cond, C, Zero);
+    }
+    NewSel->copyMetadata(Sel);
+    return NewSel;
+  }
+
+  return nullptr;
+}
+
+/// Try to transform a vector select with a constant condition vector into a
+/// shuffle for easier combining with other shuffles and insert/extract.
+static Instruction *canonicalizeSelectToShuffle(SelectInst &SI) {
+  Value *CondVal = SI.getCondition();
+  Constant *CondC;
+  if (!CondVal->getType()->isVectorTy() || !match(CondVal, m_Constant(CondC)))
+    return nullptr;
+
+  unsigned NumElts = CondVal->getType()->getVectorNumElements();
+  SmallVector<Constant *, 16> Mask;
+  Mask.reserve(NumElts);
+  Type *Int32Ty = Type::getInt32Ty(CondVal->getContext());
+  for (unsigned i = 0; i != NumElts; ++i) {
+    Constant *Elt = CondC->getAggregateElement(i);
+    if (!Elt)
+      return nullptr;
+
+    if (Elt->isOneValue()) {
+      // If the select condition element is true, choose from the 1st vector.
+      Mask.push_back(ConstantInt::get(Int32Ty, i));
+    } else if (Elt->isNullValue()) {
+      // If the select condition element is false, choose from the 2nd vector.
+      Mask.push_back(ConstantInt::get(Int32Ty, i + NumElts));
+    } else if (isa<UndefValue>(Elt)) {
+      // If the select condition element is undef, the shuffle mask is undef.
+      Mask.push_back(UndefValue::get(Int32Ty));
+    } else {
+      // Bail out on a constant expression.
+      return nullptr;
+    }
+  }
+
+  return new ShuffleVectorInst(SI.getTrueValue(), SI.getFalseValue(),
+                               ConstantVector::get(Mask));
+}
+
+/// Reuse bitcasted operands between a compare and select:
+/// select (cmp (bitcast C), (bitcast D)), (bitcast' C), (bitcast' D) -->
+/// bitcast (select (cmp (bitcast C), (bitcast D)), (bitcast C), (bitcast D))
+static Instruction *foldSelectCmpBitcasts(SelectInst &Sel,
+                                          InstCombiner::BuilderTy &Builder) {
+  Value *Cond = Sel.getCondition();
+  Value *TVal = Sel.getTrueValue();
+  Value *FVal = Sel.getFalseValue();
+
+  CmpInst::Predicate Pred;
+  Value *A, *B;
+  if (!match(Cond, m_Cmp(Pred, m_Value(A), m_Value(B))))
+    return nullptr;
+
+  // The select condition is a compare instruction. If the select's true/false
+  // values are already the same as the compare operands, there's nothing to do.
+  if (TVal == A || TVal == B || FVal == A || FVal == B)
+    return nullptr;
+
+  Value *C, *D;
+  if (!match(A, m_BitCast(m_Value(C))) || !match(B, m_BitCast(m_Value(D))))
+    return nullptr;
+
+  // select (cmp (bitcast C), (bitcast D)), (bitcast TSrc), (bitcast FSrc)
+  Value *TSrc, *FSrc;
+  if (!match(TVal, m_BitCast(m_Value(TSrc))) ||
+      !match(FVal, m_BitCast(m_Value(FSrc))))
+    return nullptr;
+
+  // If the select true/false values are *different bitcasts* of the same source
+  // operands, make the select operands the same as the compare operands and
+  // cast the result. This is the canonical select form for min/max.
+  Value *NewSel;
+  if (TSrc == C && FSrc == D) {
+    // select (cmp (bitcast C), (bitcast D)), (bitcast' C), (bitcast' D) -->
+    // bitcast (select (cmp A, B), A, B)
+    NewSel = Builder.CreateSelect(Cond, A, B, "", &Sel);
+  } else if (TSrc == D && FSrc == C) {
+    // select (cmp (bitcast C), (bitcast D)), (bitcast' D), (bitcast' C) -->
+    // bitcast (select (cmp A, B), B, A)
+    NewSel = Builder.CreateSelect(Cond, B, A, "", &Sel);
+  } else {
+    return nullptr;
+  }
+  return CastInst::CreateBitOrPointerCast(NewSel, Sel.getType());
 }
 
 Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
@@ -952,6 +1065,9 @@ Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
   if (Value *V =
           SimplifySelectInst(CondVal, TrueVal, FalseVal, DL, &TLI, &DT, &AC))
     return replaceInstUsesWith(SI, V);
+
+  if (Instruction *I = canonicalizeSelectToShuffle(SI))
+    return I;
 
   if (SelType->getScalarType()->isIntegerTy(1) &&
       TrueVal->getType() == CondVal->getType()) {
@@ -1116,7 +1232,7 @@ Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
 
   // See if we are selecting two values based on a comparison of the two values.
   if (ICmpInst *ICI = dyn_cast<ICmpInst>(CondVal))
-    if (Instruction *Result = visitSelectInstWithICmp(SI, ICI))
+    if (Instruction *Result = foldSelectInstWithICmp(SI, ICI))
       return Result;
 
   if (Instruction *Add = foldAddSubSelect(SI, *Builder))
@@ -1126,37 +1242,15 @@ Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
   auto *TI = dyn_cast<Instruction>(TrueVal);
   auto *FI = dyn_cast<Instruction>(FalseVal);
   if (TI && FI && TI->getOpcode() == FI->getOpcode())
-    if (Instruction *IV = FoldSelectOpOp(SI, TI, FI))
+    if (Instruction *IV = foldSelectOpOp(SI, TI, FI))
       return IV;
 
-  // (select C, (sext X), const) -> (sext (select C, X, const')) and
-  // variations thereof when extending from i1, as that allows further folding
-  // into logic ops. When the sext is from a larger type, we prefer to have it
-  // as an operand.
-  if (TI &&
-      (TI->getOpcode() == Instruction::ZExt || TI->getOpcode() == Instruction::SExt)) {
-    bool IsSExt = TI->getOpcode() == Instruction::SExt;
-    const APInt *C;
-    if (match(FalseVal, m_APInt(C))) {
-      if (Instruction *IV =
-              foldSelectExtConst(*Builder, SI, TI, *C, true, IsSExt))
-        return IV;
-    }
-  }
-  if (FI &&
-      (FI->getOpcode() == Instruction::ZExt || FI->getOpcode() == Instruction::SExt)) {
-    bool IsSExt = FI->getOpcode() == Instruction::SExt;
-    const APInt *C;
-    if (match(TrueVal, m_APInt(C))) {
-      if (Instruction *IV =
-              foldSelectExtConst(*Builder, SI, FI, *C, false, IsSExt))
-          return IV;
-    }
-  }
+  if (Instruction *I = foldSelectExtConst(SI))
+    return I;
 
   // See if we can fold the select into one of our operands.
   if (SelType->isIntOrIntVectorTy() || SelType->isFPOrFPVectorTy()) {
-    if (Instruction *FoldI = FoldSelectIntoOp(SI, TrueVal, FalseVal))
+    if (Instruction *FoldI = foldSelectIntoOp(SI, TrueVal, FalseVal))
       return FoldI;
 
     Value *LHS, *RHS, *LHS2, *RHS2;
@@ -1180,9 +1274,9 @@ Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
           Cmp = Builder->CreateFCmp(Pred, LHS, RHS);
         }
 
-        Value *NewSI = Builder->CreateCast(CastOp,
-                                           Builder->CreateSelect(Cmp, LHS, RHS),
-                                           SelType);
+        Value *NewSI = Builder->CreateCast(
+            CastOp, Builder->CreateSelect(Cmp, LHS, RHS, SI.getName(), &SI),
+            SelType);
         return replaceInstUsesWith(SI, NewSI);
       }
     }
@@ -1195,11 +1289,11 @@ Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
       // ABS(ABS(a)) -> ABS(a)
       // NABS(NABS(a)) -> NABS(a)
       if (SelectPatternFlavor SPF2 = matchSelectPattern(LHS, LHS2, RHS2).Flavor)
-        if (Instruction *R = FoldSPFofSPF(cast<Instruction>(LHS),SPF2,LHS2,RHS2,
+        if (Instruction *R = foldSPFofSPF(cast<Instruction>(LHS),SPF2,LHS2,RHS2,
                                           SI, SPF, RHS))
           return R;
       if (SelectPatternFlavor SPF2 = matchSelectPattern(RHS, LHS2, RHS2).Flavor)
-        if (Instruction *R = FoldSPFofSPF(cast<Instruction>(RHS),SPF2,LHS2,RHS2,
+        if (Instruction *R = foldSPFofSPF(cast<Instruction>(RHS),SPF2,LHS2,RHS2,
                                           SI, SPF, LHS))
           return R;
     }
@@ -1238,8 +1332,8 @@ Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
   // See if we can fold the select into a phi node if the condition is a select.
   if (isa<PHINode>(SI.getCondition()))
     // The true/false values have to be live in the PHI predecessor's blocks.
-    if (CanSelectOperandBeMappingIntoPredBlock(TrueVal, SI) &&
-        CanSelectOperandBeMappingIntoPredBlock(FalseVal, SI))
+    if (canSelectOperandBeMappingIntoPredBlock(TrueVal, SI) &&
+        canSelectOperandBeMappingIntoPredBlock(FalseVal, SI))
       if (Instruction *NV = FoldOpIntoPhi(SI))
         return NV;
 
@@ -1289,7 +1383,7 @@ Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
     return &SI;
   }
 
-  if (VectorType* VecTy = dyn_cast<VectorType>(SelType)) {
+  if (VectorType *VecTy = dyn_cast<VectorType>(SelType)) {
     unsigned VWidth = VecTy->getNumElements();
     APInt UndefElts(VWidth, 0);
     APInt AllOnesEltMask(APInt::getAllOnesValue(VWidth));
@@ -1321,6 +1415,9 @@ Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
       }
     }
   }
+
+  if (Instruction *BitCastSel = foldSelectCmpBitcasts(SI, *Builder))
+    return BitCastSel;
 
   return nullptr;
 }

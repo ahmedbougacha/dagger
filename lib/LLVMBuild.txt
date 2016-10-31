@@ -23,6 +23,7 @@ subdirectories =
  CodeGen
  DC
  DebugInfo
+ Demangle
  ExecutionEngine
  LibDriver
  LineEditor
