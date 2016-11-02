@@ -622,6 +622,8 @@ def int_ppc_altivec_vsl   : PowerPC_Vec_WWW_Intrinsic<"vsl">;
 def int_ppc_altivec_vslo  : PowerPC_Vec_WWW_Intrinsic<"vslo">;
 
 def int_ppc_altivec_vslb  : PowerPC_Vec_BBB_Intrinsic<"vslb">;
+def int_ppc_altivec_vslv  : PowerPC_Vec_BBB_Intrinsic<"vslv">;
+def int_ppc_altivec_vsrv  : PowerPC_Vec_BBB_Intrinsic<"vsrv">;
 def int_ppc_altivec_vslh  : PowerPC_Vec_HHH_Intrinsic<"vslh">;
 def int_ppc_altivec_vslw  : PowerPC_Vec_WWW_Intrinsic<"vslw">;
 
@@ -703,6 +705,11 @@ def int_ppc_altivec_crypto_vpmsumw :
             PowerPC_Vec_WWW_Intrinsic<"crypto_vpmsumw">;
 def int_ppc_altivec_crypto_vpmsumd :
             PowerPC_Vec_DDD_Intrinsic<"crypto_vpmsumd">;
+
+// Absolute Difference intrinsics
+def int_ppc_altivec_vabsdub : PowerPC_Vec_BBB_Intrinsic<"vabsdub">;
+def int_ppc_altivec_vabsduh : PowerPC_Vec_HHH_Intrinsic<"vabsduh">;
+def int_ppc_altivec_vabsduw : PowerPC_Vec_WWW_Intrinsic<"vabsduw">;
 
 //===----------------------------------------------------------------------===//
 // PowerPC VSX Intrinsic Definitions.
