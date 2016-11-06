@@ -256,7 +256,7 @@ private:
     const unsigned NumDefs = TPN.getNumChildren() - 1;
     const TreePatternNode &LastChild = *TPN.getChild(TPN.getNumChildren() - 1);
 
-    assert(NumDefs == LastChild.getNumTypes() &&
+    assert(NumDefs <= LastChild.getNumTypes() &&
            "Invalid 'set': last child needs to define all the others.");
 
     // Visit the last (non-register) child, that defined the values for all
