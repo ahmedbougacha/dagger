@@ -50,7 +50,7 @@ createAArch64MCSubtargetInfo(const Triple &TT, StringRef CPU, StringRef FS) {
 
 static MCRegisterInfo *createAArch64MCRegisterInfo(const Triple &Triple) {
   MCRegisterInfo *X = new MCRegisterInfo();
-  InitAArch64MCRegisterInfo(X, AArch64::LR);
+  InitAArch64MCRegisterInfo(X, AArch64::LR, /*D=*/0, /*E=*/0, AArch64::PC);
   return X;
 }
 

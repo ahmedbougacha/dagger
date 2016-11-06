@@ -125,6 +125,9 @@ def XZR   : AArch64Reg<31, "xzr", [WZR]>, DwarfRegAlias<WSP>;
 // Condition code register.
 def NZCV  : AArch64Reg<0, "nzcv">;
 
+// Program Counter register: not actually referenced by any instruction.
+def PC  : AArch64Reg<0, "pc">;
+
 // GPR register classes with the intersections of GPR32/GPR32sp and
 // GPR64/GPR64sp for use by the coalescer.
 def GPR32common : RegisterClass<"AArch64", [i32], 32, (sequence "W%u", 0, 30)> {
@@ -208,6 +211,15 @@ def CCR : RegisterClass<"AArch64", [i32], 32, (add NZCV)> {
   // CCR is not allocatable.
   let isAllocatable = 0;
 }
+
+// PC regclass.
+def PCR : RegisterClass<"AArch64", [i64], 64, (add PC)> {
+  let CopyCost = -1;  // Don't allow copying of PC.
+
+  // PCR is not allocatable.
+  let isAllocatable = 0;
+}
+
 
 //===----------------------------------------------------------------------===//
 // Floating Point Scalar Registers
