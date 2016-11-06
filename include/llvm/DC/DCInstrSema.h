@@ -152,6 +152,8 @@ protected:
                                         unsigned MIOperandNo) = 0;
   virtual bool translateImplicit(unsigned RegNo) = 0;
 
+  virtual bool translatePredicate(unsigned Pred);
+
   // Try to do a custom translation of a full instruction.
   // Called before translating an instruction.
   // Return true if the translation shouldn't proceed.
@@ -165,6 +167,8 @@ private:
 
   void translateBinOp(Instruction::BinaryOps Opc);
   void translateCastOp(Instruction::CastOps Opc);
+
+  bool translateExtLoad(Type *MemTy, bool isSExt = false);
 
   BasicBlock *insertCallBB(Value *CallTarget);
 

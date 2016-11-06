@@ -640,6 +640,12 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     CurrentTInst->addOpUse(MIOperandNo, OperandType, Op);
     break;
   }
+  case DCINS::PREDICATE: {
+    unsigned Pred = Next();
+    if (!translatePredicate(Pred))
+      return false;
+    break;
+  }
   case DCINS::CONSTANT_OP: {
     unsigned MIOperandNo = Next();
     Type *ResType = ResEVT.getTypeForEVT(Ctx);
@@ -697,4 +703,70 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     return false;
   }
   return true;
+}
+
+bool DCInstrSema::translateExtLoad(Type *MemTy, bool isSExt) {
+  Value *Ptr = getNextOperand();
+  Ptr = Builder->CreateBitOrPointerCast(Ptr, MemTy->getPointerTo());
+  Value *V = Builder->CreateLoad(MemTy, Ptr);
+  Type *ResType = ResEVT.getTypeForEVT(Ctx);
+  registerResult(isSExt ? Builder->CreateSExt(V, ResType)
+                        : Builder->CreateZExt(V, ResType));
+  return true;
+}
+
+bool DCInstrSema::translatePredicate(unsigned Pred) {
+  switch (Pred) {
+  case TargetOpcode::Predicate::memop:
+  case TargetOpcode::Predicate::loadi16:
+  case TargetOpcode::Predicate::loadi32:
+  case TargetOpcode::Predicate::alignedload:
+  case TargetOpcode::Predicate::alignedload256:
+  case TargetOpcode::Predicate::alignedload512:
+    // FIXME: Take advantage of the implied alignment.
+  case TargetOpcode::Predicate::load: {
+    Type *ResType = ResEVT.getTypeForEVT(Ctx);
+    Value *Ptr = getNextOperand();
+    if (!Ptr->getType()->isPointerTy())
+      Ptr = Builder->CreateIntToPtr(Ptr, ResType->getPointerTo());
+    assert(Ptr->getType()->getPointerElementType() == ResType &&
+           "Mismatch between a LOAD's address operand and return type!");
+    registerResult(Builder->CreateAlignedLoad(Ptr, 1));
+    return true;
+  }
+  case TargetOpcode::Predicate::alignednontemporalstore:
+  case TargetOpcode::Predicate::nontemporalstore:
+  case TargetOpcode::Predicate::alignedstore:
+  case TargetOpcode::Predicate::alignedstore256:
+  case TargetOpcode::Predicate::alignedstore512:
+    // FIXME: Take advantage of NT/alignment.
+  case TargetOpcode::Predicate::store: {
+    Value *Val = getNextOperand();
+    Value *Ptr = getNextOperand();
+    Type *ValPtrTy = Val->getType()->getPointerTo();
+    Type *PtrTy = Ptr->getType();
+    if (!PtrTy->isPointerTy())
+      Ptr = Builder->CreateIntToPtr(Ptr, ValPtrTy);
+    else if (PtrTy != ValPtrTy)
+      Ptr = Builder->CreateBitCast(Ptr, ValPtrTy);
+    Builder->CreateAlignedStore(Val, Ptr, 1);
+    return true;
+  }
+  case TargetOpcode::Predicate::zextloadi8:
+    return translateExtLoad(Builder->getInt8Ty());
+  case TargetOpcode::Predicate::zextloadi16:
+    return translateExtLoad(Builder->getInt16Ty());
+  case TargetOpcode::Predicate::sextloadi8:
+    return translateExtLoad(Builder->getInt8Ty(), /*isSExt=*/true);
+  case TargetOpcode::Predicate::sextloadi16:
+    return translateExtLoad(Builder->getInt16Ty(), /*isSExt=*/true);
+  case TargetOpcode::Predicate::sextloadi32:
+    return translateExtLoad(Builder->getInt32Ty(), /*isSExt=*/true);
+
+  case TargetOpcode::Predicate::and_su: {
+    translateBinOp(Instruction::And);
+    return true;
+  }
+  }
+  return false;
 }

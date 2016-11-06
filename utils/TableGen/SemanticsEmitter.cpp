@@ -17,8 +17,11 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
+#include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 #include <algorithm>
@@ -331,6 +334,16 @@ private:
       assert((TPN.getNumTypes() - EquivSDNI.getNumResults()) > 0);
       NS.Types.resize(NS.Types.size() -
                       (TPN.getNumTypes() - EquivSDNI.getNumResults()));
+    }
+
+    ArrayRef<TreePredicateFn> Preds = TPN.getPredicateFns();
+    if (!Preds.empty()) {
+      Record *PredRec = Preds.back().getOrigPatFragRecord()->getRecord();
+      NS.Opcode = "DCINS::PREDICATE";
+      // FIXME: Once we can generate the TargetOpcode::Predicate enum once, we
+      // should add a Namespace field to PatFrag to be able to distinguish
+      // between targets.
+      NS.addOperand("TargetOpcode::Predicate::" + PredRec->getName());
     }
 
     for (unsigned i = 0, e = TPN.getNumChildren(); i != e; ++i) {
