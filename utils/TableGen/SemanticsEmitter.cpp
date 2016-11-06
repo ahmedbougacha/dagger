@@ -172,9 +172,12 @@ private:
   /// the defined values.
   void addSemantics(const LSNode &NS) {
     const unsigned FirstDefNo = CurDefNo;
-    for (auto &Ty : NS.Types)
+    for (auto &Ty : NS.Types) {
       if (Ty != MVT::isVoid)
         ++CurDefNo;
+      if (Ty == MVT::Untyped)
+        I.HasIntrinsic = true;
+    }
     if (FirstDefNo != CurDefNo) {
       I.LastDefNo = FirstDefNo;
       I.LastDefSemaIdx = I.Semantics.size();
