@@ -152,6 +152,7 @@ protected:
                                         unsigned MIOperandNo) = 0;
   virtual bool translateImplicit(unsigned RegNo) = 0;
 
+  virtual Value *translateComplexPattern(unsigned Pattern);
   virtual bool translatePredicate(unsigned Pred);
 
   // Try to do a custom translation of a full instruction.

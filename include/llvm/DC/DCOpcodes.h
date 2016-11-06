@@ -48,6 +48,9 @@ enum DCOpcodes {
   /// Update an implicitly defined register, as defined by the target.
   IMPLICIT,
 
+  /// A complex pattern operator.
+  COMPLEX_PATTERN,
+
   /// An ISD operation predicate (an ISD opcode variant of sorts).
   PREDICATE,
 

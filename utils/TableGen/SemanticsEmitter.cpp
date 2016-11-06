@@ -31,6 +31,27 @@ using namespace llvm;
 
 namespace {
 
+static std::string sanitizeSelectFuncToEnumVal(Record &CP, const CodeGenDAGPatterns &CGP) {
+  const ComplexPattern &CPI = CGP.getComplexPattern(&CP);
+  StringRef F = CPI.getSelectFunc();
+
+  if (!F.startswith("select") && !F.startswith("Select"))
+    PrintFatalError(
+        CP.getLoc(),
+        Twine("ComplexPattern func doesn't start with 'select': '") + F + "'.");
+
+  F = F.drop_front(StringRef("select").size());
+
+  std::string SF = F.str();
+  auto Pos = SF.find('<');
+  if (Pos != SF.npos) {
+    SF[Pos] = '_';
+    SF.pop_back();
+  }
+
+  return SF;
+}
+
 /// The target we're generating semantics for: keeps around some useful
 /// references to the parsed CodeGen target description, and some generation
 /// variables.
@@ -316,6 +337,44 @@ private:
     LSNode NS(TPN);
 
     Record *Operator = TPN.getOperator();
+    if (Operator->isSubClassOf("ComplexPattern")) {
+
+      if (TPN.getIntrinsicInfo(Target.CGPatterns))
+        I.HasIntrinsic = true;
+      I.HasComplexPattern = false;
+
+      NS.Opcode = "DCINS::COMPLEX_PATTERN";
+      NS.addOperand(CGI.Namespace + "::ComplexPattern::" +
+                    sanitizeSelectFuncToEnumVal(*Operator, Target.CGPatterns));
+
+      for (unsigned i = 0, e = TPN.getNumChildren(); i != e; ++i) {
+        LSResults ChildRes = flattenSubtree(*TPN.getChild(i));
+        assert(!ChildRes.empty() && "Subtree didn't defined anything?");
+
+        // Now add one result for each child only.
+        // For instance:
+        //   (store (umul_lohi x, y), addr)
+        // This ignores the second result of umul_lohi, and only stores the
+        // first.
+        NS.addOperand(utostr(ChildRes.front().DefNo));
+      }
+
+      // Now produce our results, ignoring Void "defs", and adjusting for
+      // the SDNode equivalence, if necessary.
+      LSResults R;
+      for (unsigned i = 0, e = NS.Types.size(); i != e; ++i) {
+        MVT::SimpleValueType ResVT = NS.Types[i];
+        assert(ResVT < MVT::Any);
+        if (ResVT != MVT::isVoid)
+          R.emplace_back(CurDefNo + i, ResVT);
+        if (ResVT == MVT::Untyped)
+          I.HasIntrinsic = true;
+      }
+
+      addSemantics(NS);
+      return R;
+    }
+
     if (!Operator->isSubClassOf("SDNode"))
       llvm_unreachable("Unable to handle operator.");
 
@@ -558,6 +617,22 @@ void SemanticsEmitter::run(raw_ostream &OS) {
   OS << "namespace {\n\n";
 
   OS << "#ifdef GET_INSTR_SEMA\n";
+
+  std::vector<Record *> CPs = Records.getAllDerivedDefinitions("ComplexPattern");
+
+  std::vector<std::string> CPKinds;
+
+  for (Record *CP : CPs)
+    CPKinds.push_back(sanitizeSelectFuncToEnumVal(*CP, CGPatterns));
+
+  std::stable_sort(CPKinds.begin(), CPKinds.end());
+  CPKinds.erase(std::unique(CPKinds.begin(), CPKinds.end()), CPKinds.end());
+
+  OS << "namespace ComplexPattern {\n";
+  OS << "enum {\n";
+  for (auto &CPK : CPKinds)
+    OS << "  " << CPK << ",\n";
+  OS << "};\n} // End ComplexPattern namespace\n\n";
 
   OS << "const unsigned InstSemantics[] = {\n";
   OS << "  DCINS::END_OF_INSTRUCTION,\n";

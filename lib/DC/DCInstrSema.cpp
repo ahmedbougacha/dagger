@@ -640,6 +640,14 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     CurrentTInst->addOpUse(MIOperandNo, OperandType, Op);
     break;
   }
+  case DCINS::COMPLEX_PATTERN: {
+    unsigned Pattern = Next();
+    Value *Op = translateComplexPattern(Pattern);
+    if (!Op)
+      return false;
+    registerResult(Op);
+    break;
+  }
   case DCINS::PREDICATE: {
     unsigned Pred = Next();
     if (!translatePredicate(Pred))
@@ -703,6 +711,11 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     return false;
   }
   return true;
+}
+
+Value *DCInstrSema::translateComplexPattern(unsigned Pattern) {
+  (void)Pattern;
+  return nullptr;
 }
 
 bool DCInstrSema::translateExtLoad(Type *MemTy, bool isSExt) {
