@@ -49,6 +49,9 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
        RCI != RCE; ++RCI) {
     unsigned SizeInBits = RCI->getSize() * 8;
     EVT RCVT = RegClassVTs[RCI->getID()];
+    if (RCVT == MVT::Untyped)
+      continue;
+
     Type *RCTy = RCVT.getTypeForEVT(Ctx);
     for (auto Reg : *RCI) {
       if (SizeInBits > RegSizes[Reg]) {
