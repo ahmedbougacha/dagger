@@ -14,6 +14,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/SymbolSize.h"
 #include "llvm/Support/Debug.h"
@@ -221,14 +222,34 @@ tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
   }
 }
 
+//===- MCELFObjectSymbolizer ---------------------------------------------===//
+
+static bool shouldSkipELFSection(SectionRef S) {
+  return !(ELFSectionRef(S).getFlags() & ELF::SHF_ALLOC);
+}
+
+MCELFObjectSymbolizer::MCELFObjectSymbolizer(
+    MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
+    const ELFObjectFileBase &OF)
+    : MCObjectSymbolizer(Ctx, std::move(RelInfo), OF, shouldSkipELFSection),
+      OF(OF) {}
+
+uint64_t MCELFObjectSymbolizer::getEntrypoint() {
+  // FIXME: We only handle 64bit LE ELF.
+  if (auto *EF = dyn_cast<ELF64LEObjectFile>(&OF))
+    return EF->getELFFile()->getHeader()->e_entry;
+  return MCObjectSymbolizer::getEntrypoint();
+}
+
 //===- MCObjectSymbolizer -------------------------------------------------===//
 
 MCObjectSymbolizer::MCObjectSymbolizer(
     MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
-    const ObjectFile &Obj)
+    const ObjectFile &Obj,
+    std::function<bool(object::SectionRef)> ShouldSkipSection)
     : MCSymbolizer(Ctx, std::move(RelInfo)), Obj(Obj),
       SymbolSizes(computeSymbolSizes(Obj)) {
-  buildSectionList();
+  buildSectionList(ShouldSkipSection);
 }
 
 uint64_t MCObjectSymbolizer::getEntrypoint() {
@@ -393,15 +414,22 @@ const RelocationRef *MCObjectSymbolizer::findRelocationAt(uint64_t Addr) const {
   return &*RI;
 }
 
-void MCObjectSymbolizer::buildSectionList() {
-  for (const SectionRef &Section : Obj.sections())
+void MCObjectSymbolizer::buildSectionList(
+    std::function<bool(SectionRef)> ShouldSkipSection) {
+
+  for (const SectionRef &Section : Obj.sections()) {
+    if (ShouldSkipSection && ShouldSkipSection(Section))
+      continue;
     SortedSections.push_back(Section);
+  }
+
   std::sort(SortedSections.begin(), SortedSections.end());
 
   uint64_t PrevSecEnd = 0;
   for (auto &SecInfo : SortedSections) {
     // First build the relocation map for this section.
-    buildRelocationByAddrMap(SecInfo);
+    if (Obj.isRelocatableObject())
+      buildRelocationByAddrMap(SecInfo);
 
     // Also, sanity check that we don't have overlapping sections.
     uint64_t SAddr = SecInfo.Section.getAddress();
@@ -425,5 +453,7 @@ llvm::createMCObjectSymbolizer(MCContext &Ctx, const object::ObjectFile &Obj,
                                std::unique_ptr<MCRelocationInfo> &&RelInfo) {
   if (const MachOObjectFile *MOOF = dyn_cast<MachOObjectFile>(&Obj))
     return new MCMachObjectSymbolizer(Ctx, std::move(RelInfo), *MOOF);
+  if (const ELFObjectFileBase *OF = dyn_cast<ELFObjectFileBase>(&Obj))
+    return new MCELFObjectSymbolizer(Ctx, std::move(RelInfo), *OF);
   return new MCObjectSymbolizer(Ctx, std::move(RelInfo), Obj);
 }

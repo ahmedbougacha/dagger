@@ -19,6 +19,7 @@
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCModuleYAML.h"
+#include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
 #include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -324,9 +325,22 @@ static void DumpObject(const ObjectFile *Obj) {
     return;
   }
 
-  // FIXME: Why no MOS?
+  std::unique_ptr<MCRelocationInfo> RelInfo(
+      TheTarget->createMCRelocationInfo(TripleName, Ctx));
+  if (!RelInfo) {
+    errs() << "error: no relocation info for target " << TripleName << "\n";
+    return;
+  }
+
+  std::unique_ptr<MCObjectSymbolizer> MOS(
+      TheTarget->createMCObjectSymbolizer(Ctx, *Obj, std::move(RelInfo)));
+  if (!MOS) {
+    errs() << "error: no object symbolizer for target " << TripleName << "\n";
+    return;
+  }
+
   std::unique_ptr<MCObjectDisassembler> OD(
-      new MCObjectDisassembler(*Obj, *DisAsm, *MIA));
+      new MCObjectDisassembler(*Obj, *DisAsm, *MIA, MOS.get()));
   std::unique_ptr<MCModule> Mod(OD->buildModule());
   if (EmitDOT) {
     for (MCModule::const_func_iterator FI = Mod->func_begin(),

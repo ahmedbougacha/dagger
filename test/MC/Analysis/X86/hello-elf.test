@@ -1,0 +1,85 @@
+RUN: llvm-mccfg %p/Inputs/hello.exe.elf-x86_64 | FileCheck %s
+
+CHECK-LABEL: ---
+CHECK-NEXT: Functions:
+CHECK-NEXT:   - Name:            fn_400460
+CHECK-NEXT:     BasicBlocks:
+CHECK-NEXT:       - Address:         0x0000000000400460
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [ 0x000000000040049C, 0x000000000040049E ]
+CHECK-NEXT:         SizeInBytes:     60
+CHECK-NEXT:         InstCount:       17
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            XOR32rr
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ REBP, REBP, REBP ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RR9, RRDX ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRSI ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRDX, RRSP ]
+CHECK-NEXT:           - Inst:            AND64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I-16 ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRAX ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRSP ]
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RR8, I4195856 ]
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRCX, I4195712 ]
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRDI, I4195692 ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I-73 ]
+CHECK-NEXT:           - Inst:            HLT
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:           - Inst:            NOOP
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:           - Inst:            SUB64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I8 ]
+CHECK-NEXT:           - Inst:            MOV64rm
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, RRIP, I1, R, I5185, R ]
+CHECK-NEXT:           - Inst:            TEST64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRAX, RRAX ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I2 ]
+CHECK-NEXT:       - Address:         0x000000000040049C
+CHECK-NEXT:         Preds:           [ 0x0000000000400460 ]
+CHECK-NEXT:         Succs:           [ 0x000000000040049E ]
+CHECK-NEXT:         SizeInBytes:     2
+CHECK-NEXT:         InstCount:       1
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            CALL64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RRAX ]
+CHECK-NEXT:       - Address:         0x000000000040049E
+CHECK-NEXT:         Preds:           [ 0x0000000000400460, 0x000000000040049C ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     5
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            ADD64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I8 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT: ...

@@ -130,6 +130,14 @@ static void RemoveDupsFromAddressVector(MCObjectDisassembler::AddressSetTy &V) {
 void MCObjectDisassembler::buildCFG(MCModule &Module) {
   AddressSetTy CallTargets;
 
+  // Start the disassembly at specific function entrypoints.
+  AddressSetTy FuncAddrs;
+
+  // If the object has a well-defined entrypoint, use it.
+  if (MOS)
+    FuncAddrs.push_back(MOS->getEntrypoint());
+
+  // Also start from each 'function' symbol.
   for (const SymbolRef &Symbol : Obj.symbols()) {
     SymbolRef::Type SymType = unwrapOrReportError(Symbol.getType());
     if (SymType == SymbolRef::ST_Function) {
@@ -139,12 +147,19 @@ void MCObjectDisassembler::buildCFG(MCModule &Module) {
       uint64_t SymAddr = *SymAddrOrErr;
       if (MOS)
         SymAddr = MOS->getEffectiveLoadAddr(SymAddr);
-      if (getRegionFor(SymAddr).Bytes.empty())
-        continue;
-      MCFunction *MCFN = createFunction(&Module, SymAddr);
-      for (uint64_t Callee : MCFN->callees())
-        CallTargets.push_back(Callee);
+      FuncAddrs.push_back(SymAddr);
     }
+  }
+
+  RemoveDupsFromAddressVector(FuncAddrs);
+
+  // Now that we gathered functions, disassemble them all.
+  for (uint64_t Addr : FuncAddrs) {
+    if (getRegionFor(Addr).Bytes.empty())
+      continue;
+    MCFunction *MCFN = createFunction(&Module, Addr);
+    for (uint64_t Callee : MCFN->callees())
+      CallTargets.push_back(Callee);
   }
 
   RemoveDupsFromAddressVector(CallTargets);

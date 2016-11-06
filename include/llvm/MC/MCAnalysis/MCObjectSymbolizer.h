@@ -23,6 +23,10 @@
 
 namespace llvm {
 
+namespace object{
+class ELFObjectFileBase;
+}
+
 class MCExpr;
 class MCInst;
 class MCRelocationInfo;
@@ -44,8 +48,10 @@ protected:
   const object::SectionRef *findSectionContaining(uint64_t Addr) const;
 
 public:
-  MCObjectSymbolizer(MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
-                     const object::ObjectFile &Obj);
+  MCObjectSymbolizer(
+      MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
+      const object::ObjectFile &Obj,
+      std::function<bool(object::SectionRef)> ShouldSkipSection = {});
 
   /// \name Overridden MCSymbolizer methods:
   /// @{
@@ -116,7 +122,8 @@ protected:
   std::vector<FunctionSymbol> AddrToFunctionSymbol;
 
   void buildAddrToFunctionSymbolMap();
-  void buildSectionList();
+  void
+  buildSectionList(std::function<bool(object::SectionRef)> ShouldSkipSection);
   void buildRelocationByAddrMap(SectionInfo &SecInfo);
   MCSymbol *findContainingFunction(uint64_t Addr, uint64_t &Offset);
 
@@ -166,6 +173,20 @@ public:
   ArrayRef<uint64_t> getStaticExitFunctions();
   /// @}
 };
+
+class MCELFObjectSymbolizer final : public MCObjectSymbolizer {
+  const object::ELFObjectFileBase &OF;
+
+public:
+  /// \brief Construct a Mach-O specific object symbolizer.
+  /// \param VMAddrSlide The virtual address slide applied by dyld.
+  MCELFObjectSymbolizer(MCContext &Ctx,
+                        std::unique_ptr<MCRelocationInfo> RelInfo,
+                        const object::ELFObjectFileBase &OF);
+
+  uint64_t getEntrypoint() override;
+};
+
 }
 
 #endif
