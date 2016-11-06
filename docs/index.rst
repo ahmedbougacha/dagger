@@ -272,6 +272,7 @@ For API clients and LLVM developers.
    FaultMaps
    MIRLangRef
    Coroutines
+   GlobalISel
    SemanticsEmitterTableGen
 
 :doc:`WritingAnLLVMPass`
@@ -390,6 +391,9 @@ For API clients and LLVM developers.
 
 :doc:`Coroutines`
   LLVM support for coroutines.
+
+:doc:`GlobalISel`
+  This describes the prototype instruction selection replacement, GlobalISel.
 
 :doc:`SemanticsEmitterTableGen`
    This document describes the SemanticsEmitter TableGen backend used to

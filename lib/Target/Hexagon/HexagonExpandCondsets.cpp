@@ -948,6 +948,13 @@ bool HexagonExpandCondsets::predicate(MachineInstr &TfrI, bool Cond,
         return false;
 
       ReferenceMap &Map = Op.isDef() ? Defs : Uses;
+      if (Op.isDef() && Op.isUndef()) {
+        assert(RR.Sub && "Expecting a subregister on <def,read-undef>");
+        // If this is a <def,read-undef>, then it invalidates the non-written
+        // part of the register. For the purpose of checking the validity of
+        // the move, assume that it modifies the whole register.
+        RR.Sub = 0;
+      }
       addRefToMap(RR, Map, Exec);
     }
   }
@@ -1078,6 +1085,8 @@ bool HexagonExpandCondsets::coalesceRegisters(RegisterRef R1, RegisterRef R2) {
   LiveInterval &L2 = LIS->getInterval(R2.Reg);
   if (L2.empty())
     return false;
+  if (L1.hasSubRanges() || L2.hasSubRanges())
+    return false;
   bool Overlap = L1.overlaps(L2);
 
   DEBUG(dbgs() << "compatible registers: ("
@@ -1113,6 +1122,7 @@ bool HexagonExpandCondsets::coalesceRegisters(RegisterRef R1, RegisterRef R2) {
   }
   while (L2.begin() != L2.end())
     L2.removeSegment(*L2.begin());
+  LIS->removeInterval(R2.Reg);
 
   updateKillFlags(R1.Reg);
   DEBUG(dbgs() << "coalesced: " << L1 << "\n");

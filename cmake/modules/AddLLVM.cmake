@@ -584,10 +584,15 @@ macro(add_llvm_library name)
         set(install_type ARCHIVE)
       endif()
 
+      if(${name} IN_LIST LLVM_DISTRIBUTION_COMPONENTS OR
+          NOT LLVM_DISTRIBUTION_COMPONENTS)
+        set(export_to_llvmexports EXPORT LLVMExports)
+      endif()
+
       install(TARGETS ${name}
-            EXPORT LLVMExports
-            ${install_type} DESTINATION ${install_dir}
-            COMPONENT ${name})
+              ${export_to_llvmexports}
+              ${install_type} DESTINATION ${install_dir}
+              COMPONENT ${name})
 
       if (NOT CMAKE_CONFIGURATION_TYPES)
         add_custom_target(install-${name}
@@ -618,10 +623,16 @@ macro(add_llvm_loadable_module name)
         else()
           set(dlldir "lib${LLVM_LIBDIR_SUFFIX}")
         endif()
+
+        if(${name} IN_LIST LLVM_DISTRIBUTION_COMPONENTS OR
+            NOT LLVM_DISTRIBUTION_COMPONENTS)
+          set(export_to_llvmexports EXPORT LLVMExports)
+        endif()
+
         install(TARGETS ${name}
-          EXPORT LLVMExports
-          LIBRARY DESTINATION ${dlldir}
-          ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX})
+                ${export_to_llvmexports}
+                LIBRARY DESTINATION ${dlldir}
+                ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX})
       endif()
       set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${name})
     endif()
@@ -632,7 +643,7 @@ endmacro(add_llvm_loadable_module name)
 
 
 macro(add_llvm_executable name)
-  cmake_parse_arguments(ARG "DISABLE_LLVM_LINK_LLVM_DYLIB;IGNORE_EXTERNALIZE_DEBUGINFO" "" "" ${ARGN})
+  cmake_parse_arguments(ARG "DISABLE_LLVM_LINK_LLVM_DYLIB;IGNORE_EXTERNALIZE_DEBUGINFO;NO_INSTALL_RPATH" "" "" ${ARGN})
   llvm_process_sources( ALL_FILES ${ARG_UNPARSED_ARGUMENTS} )
 
   # Generate objlib
@@ -662,7 +673,9 @@ macro(add_llvm_executable name)
     add_executable(${name} ${ALL_FILES})
   endif()
 
-  llvm_setup_rpath(${name})
+  if(NOT ARG_NO_INSTALL_RPATH)
+    llvm_setup_rpath(${name})
+  endif()
 
   if(DEFINED windows_resource_file)
     set_windows_version_resource_properties(${name} ${windows_resource_file})
@@ -795,8 +808,13 @@ macro(add_llvm_tool name)
 
   if ( ${name} IN_LIST LLVM_TOOLCHAIN_TOOLS OR NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
     if( LLVM_BUILD_TOOLS )
+      if(${name} IN_LIST LLVM_DISTRIBUTION_COMPONENTS OR
+          NOT LLVM_DISTRIBUTION_COMPONENTS)
+        set(export_to_llvmexports EXPORT LLVMExports)
+      endif()
+
       install(TARGETS ${name}
-              EXPORT LLVMExports
+              ${export_to_llvmexports}
               RUNTIME DESTINATION ${LLVM_TOOLS_INSTALL_DIR}
               COMPONENT ${name})
 
@@ -990,7 +1008,7 @@ function(add_unittest test_suite test_name)
   set(LLVM_REQUIRES_RTTI OFF)
 
   list(APPEND LLVM_LINK_COMPONENTS Support) # gtest needs it for raw_ostream
-  add_llvm_executable(${test_name} IGNORE_EXTERNALIZE_DEBUGINFO ${ARGN})
+  add_llvm_executable(${test_name} IGNORE_EXTERNALIZE_DEBUGINFO NO_INSTALL_RPATH ${ARGN})
   set(outdir ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR})
   set_output_directory(${test_name} BINARY_DIR ${outdir} LIBRARY_DIR ${outdir})
   # libpthreads overrides some standard library symbols, so main
@@ -1349,8 +1367,10 @@ function(llvm_setup_rpath name)
     return()
   endif()
 
-  set_target_properties(${name} PROPERTIES
-                        BUILD_WITH_INSTALL_RPATH On
-                        INSTALL_RPATH "${_install_rpath}"
-                        ${_install_name_dir})
+  if(DEFINED _install_rpath)
+    set_target_properties(${name} PROPERTIES
+                          BUILD_WITH_INSTALL_RPATH On
+                          INSTALL_RPATH "${_install_rpath}"
+                          ${_install_name_dir})
+  endif()
 endfunction()
