@@ -48,4 +48,6 @@ Features
 
 X86 is the only currently supported target.
 
-The Mach-O object file format is the best supported. However, except for DYN, there is always a generic fallback, so YMMV with other formats (e.g., ELF).
+The Mach-O object file format is the best supported.  Basic ELF is also
+supported.  However, except for DYN, there is always a generic fallback, so
+YMMV with other formats.
