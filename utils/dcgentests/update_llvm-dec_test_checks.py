@@ -8,17 +8,30 @@ import subprocess
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--llvm-obj', help='The build dir to use')
+    parser.add_argument('--arch', choices=['x86_64', 'arm64'], help='The target architecture')
     parser.add_argument('tests', nargs='+')
     args = parser.parse_args()
 
-    mc_cmd = args.llvm_obj + '/bin/llvm-mc -triple x86_64--darwin -filetype=obj -o - '
+    if args.arch == 'x86_64':
+        COMMENT = '#'
+        RETINST = 'retq'
+        TARGET = 'x86_64-apple-darwin'
+        PCREG = 'RIP'
+    else:
+        assert args.arch == 'arm64'
+        COMMENT = ';'
+        RETINST = 'ret'
+        TARGET = 'aarch64-apple-ios'
+        PCREG = 'PC'
+
+    mc_cmd = args.llvm_obj + '/bin/llvm-mc -triple ' + TARGET + ' -filetype=obj -o - '
     dec_cmd = args.llvm_obj + '/bin/llvm-dec - ' + \
             '-dc-translate-unknown-to-undef -enable-dc-reg-mock-intrin'
 
     valuse_re = re.compile(r'(%[-a-zA-Z$._0-9]+)')
     valdef_re = re.compile(r'%([-a-zA-Z$._0-9]+) = ')
     getreg_re = re.compile(r'call .* @llvm\.dc\.getreg\..*\(metadata !"([A-Z0-9]+)"\)')
-    setrip_re = re.compile(r'call void @llvm\.dc\.setreg\..*, metadata !"RIP"\)')
+    setrip_re = re.compile(r'call void @llvm\.dc\.setreg\..*, metadata !"' + PCREG + '"\)')
 
     for test in args.tests:
         with open(test) as f:
@@ -26,16 +39,17 @@ def main():
 
         test_lines = raw_test_lines
 
-        print '# RUN: llvm-mc -triple x86_64--darwin -filetype=obj -o - %s' \
+        print COMMENT + ' RUN: llvm-mc -triple ' + TARGET + ' -filetype=obj -o - %s' \
                 ' | llvm-dec - -dc-translate-unknown-to-undef' \
                 ' -enable-dc-reg-mock-intrin | FileCheck %s\n'
+
         # run llvm-dec and get the output
         try:
             with open(test) as f:
                 out = subprocess.check_output(mc_cmd + test + ' | ' + dec_cmd,
                                               shell=True, stdin=f)
         except subprocess.CalledProcessError:
-            print '# XFAIL: *\n'
+            print COMMENT + ' XFAIL: *\n'
             print "\n".join(raw_test_lines)
             continue
 
@@ -69,7 +83,7 @@ def main():
                     if not ms:
                         inst = l
                     else:
-                        inst = 'call void @llvm.dc.setreg{{.*}} !"RIP")'
+                        inst = 'call void @llvm.dc.setreg{{.*}} !"' + PCREG + '")'
                 else:
                     inst = l[len(md.group()):]
 
@@ -102,18 +116,18 @@ def main():
         ni = iter(new_inst_blocks)
 
         for l in test_lines:
-            if not l or l.startswith('# CHECK'):
+            if not l or l.startswith(COMMENT + ' CHECK'):
                 continue
-            if l.startswith('#'):
+            if l.startswith(COMMENT):
                 print l
                 continue
-            if l != 'retq':
+            if l != RETINST:
                 new_inst = ni.next()
-                print '# CHECK-LABEL: call void @llvm.dc.startinst'
+                print COMMENT + ' CHECK-LABEL: call void @llvm.dc.startinst'
                 for c in new_inst:
-                    print '# CHECK-NEXT: ' + c
+                    print COMMENT + ' CHECK-NEXT: ' + c
             print l
-            if l != 'retq':
+            if l != RETINST:
                 print
 
 

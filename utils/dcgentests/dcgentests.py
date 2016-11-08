@@ -3,6 +3,10 @@
 import argparse
 import subprocess
 
+COMMENT = ''
+ARCH = ''
+TARGET = ''
+
 # FIXME: Insert final 'retq'
 # FIXME: Provide a stable ordering for opcodes, to avoid spurious changes when
 # LLVM instr names change (see FMA change).  For instance: order by encoding?
@@ -29,14 +33,16 @@ def parseOutput(l):
 
     asm = lines[1].strip()
 
-    if asm.startswith('#'):
+    if asm.startswith(COMMENT):
         return None,None,None
 
-    asm,encoding = asm.split('#', 1)
+    asm,encoding = asm.split(COMMENT, 1)
     asm = asm.rstrip()
 
-    assert encoding.startswith('# encoding: [')
-    encoding = encoding[len('# encoding: ['):-1]
+    if encoding.startswith(COMMENT):
+        encoding = encoding[1:]
+    assert encoding.startswith(' encoding: [')
+    encoding = encoding[len(' encoding: ['):-1]
 
     return name,asm,encoding
 
@@ -92,29 +98,49 @@ def main():
     parser.add_argument('--llvm-obj', help='The build dir to use')
     parser.add_argument('--manual-list', help='A list of instructions from the ref')
     parser.add_argument('--output-dir', help='The directory where to store the output files')
+    parser.add_argument('--arch', default='x86_64', choices=['x86_64', 'arm64'], help='The target architecture')
     args = parser.parse_args()
+
+    global COMMENT
+    global ARCH
+    global TARGET
+
+    if args.arch == 'x86_64':
+        COMMENT = '#'
+        ARCH = 'X86'
+        TARGET = 'x86_64-apple-darwin'
+    else:
+        assert args.arch == 'arm64'
+        COMMENT = ';'
+        ARCH = 'AArch64'
+        TARGET = 'aarch64-apple-ios'
 
     mnemonic_trie = parseManualList(args.manual_list)
 
-    mc_cmd = 'echo | ' + args.llvm_obj + '/bin/llvm-mc'
+    mc_cmd = 'echo | ' + args.llvm_obj + '/bin/llvm-mc -triple ' + TARGET
     mc_cmd += ' -x86-asm-syntax=att -show-encoding -output-asm-variant=0'
     mc_cmd += ' -list-insts -list-num-opc=1'
 
-    intel_mc_cmd = 'echo | ' + args.llvm_obj + '/bin/llvm-mc'
+    intel_mc_cmd = 'echo | ' + args.llvm_obj + '/bin/llvm-mc -triple ' + TARGET
     intel_mc_cmd += ' -x86-asm-syntax=intel -show-encoding -output-asm-variant=1'
     intel_mc_cmd += ' -list-insts -list-num-opc=1'
 
-    as_cmd = args.llvm_obj + '/bin/llvm-mc'
+    as_cmd = args.llvm_obj + '/bin/llvm-mc -triple ' + TARGET
     as_cmd += ' -x86-asm-syntax=att -show-encoding -output-asm-variant=0'
 
-    dis_cmd = args.llvm_obj + '/bin/llvm-mc -disassemble'
+    dis_cmd = args.llvm_obj + '/bin/llvm-mc -triple ' + TARGET + ' -disassemble'
     dis_cmd += ' -x86-asm-syntax=intel -show-encoding -output-asm-variant=1'
 
-    # FIXME: Get the opcodes from the .inc.
-    for i in range(27, 14879):
+    instr_info_path = args.llvm_obj + '/lib/Target/' + ARCH + '/' + ARCH + 'GenInstrInfo.inc'
+
+    max_opc = int(subprocess.check_output('grep INSTRUCTION_LIST_END ' +
+                  instr_info_path + ' | ' + 'cut -d= -f2', shell=True).strip())
+
+    # FIXME: Get the start opcode from the .inc.
+    for i in range(53, max_opc):
         # Figure out the MC instruction name.
         realname = subprocess.check_output('grep -m1 "\t= ' + str(i) + '," "' +\
-                args.llvm_obj + '/lib/Target/X86/X86GenInstrInfo.inc" | ' + \
+                instr_info_path + '" | ' + \
                 'cut -f1', shell=True).strip()
 
         print "Trying", str(i), ":", realname
@@ -192,13 +218,16 @@ def main():
             mnemonic_group = findGroupInTrie(mnemonic_trie, mnemonic)
             if not mnemonic_group:
                 mnemonic_group = mnemonic
+                # Remove the AArch64 .size suffix.
+                if '.' in mnemonic_group:
+                    mnemonic_group = mnemonic_group.split('.')[0]
             output_file = mnemonic_group + '.s'
         else:
             output_file = 'other.s'
 
         # Finally, append it to the inferred mnemonic-group .s file.
         with open(args.output_dir + '/' + output_file, 'a') as o:
-            o.write('## ' + name)
+            o.write(COMMENT + COMMENT + ' ' + name)
             if '.byte' in asm:
                 o.write(':\t' + reasm)
             o.write('\n' + asm + '\n')

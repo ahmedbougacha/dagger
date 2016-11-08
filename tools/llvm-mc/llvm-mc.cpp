@@ -61,6 +61,7 @@ static cl::opt<unsigned> ListStartOpc("list-start-opc", cl::init(TargetOpcode::G
 static cl::opt<unsigned> ListNumOpc("list-num-opc", cl::init(~0U));
 
 static cl::opt<uint64_t> ListImmVal("list-imm-val", cl::init(2));
+static cl::opt<uint64_t> ListUnknownImmVal("list-unknown-imm-val", cl::init(2));
 
 static cl::opt<DebugCompressionType>
 CompressDebugSections("compress-debug-sections", cl::ValueOptional,
@@ -675,6 +676,9 @@ int main(int argc, char **argv) {
           uint64_t Imm = 2;
           if (Op.OperandType == MCOI::OPERAND_IMMEDIATE)
             Imm = ListImmVal;
+          else
+            Imm = ListUnknownImmVal;
+          Imm = 0;
           I.addOperand(MCOperand::createImm(Imm));
         } else {
           auto &RC = MRI->getRegClass(Op.RegClass);
