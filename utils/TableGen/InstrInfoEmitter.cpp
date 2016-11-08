@@ -323,6 +323,8 @@ void InstrInfoEmitter::emitOperandTypesEnum(raw_ostream &OS,
 
   unsigned EnumVal = 0;
   for (const Record *Op : Operands) {
+    // FIXME: This doesn't work well with anonymous operands. Consider using
+    // the name of the ParserMatchClass (which can't be anonymous)?
     if (!Op->isAnonymous())
       OS << "  " << Op->getName() << " = " << EnumVal << ",\n";
     ++EnumVal;
