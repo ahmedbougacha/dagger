@@ -17,6 +17,7 @@
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/SymbolSize.h"
+#include "llvm/Support/DataExtractor.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
@@ -107,11 +108,14 @@ MCMachObjectSymbolizer::MCMachObjectSymbolizer(
 void MCMachObjectSymbolizer::gatherEntrypoints() {
   uint64_t BaseAddr = 0;
   Optional<uint64_t> EntryFileOffset;
+  Optional<MachO::linkedit_data_command> FuncStartsLC;
 
   // Look for LC_MAIN first.
   for (auto LC : MOOF.load_commands()) {
     if (LC.C.cmd == MachO::LC_MAIN)
       EntryFileOffset = MOOF.getEntryPointCommand(LC).entryoff;
+    else if (LC.C.cmd == MachO::LC_FUNCTION_STARTS)
+      FuncStartsLC = MOOF.getLinkeditDataLoadCommand(LC);
     else if (LC.C.cmd == MachO::LC_SEGMENT_64) {
       auto S64LC = MOOF.getSegment64LoadCommand(LC);
       if (S64LC.fileoff == 0 && S64LC.filesize != 0)
@@ -126,6 +130,23 @@ void MCMachObjectSymbolizer::gatherEntrypoints() {
   // If we did find LC_MAIN, compute the virtual address.
   if (EntryFileOffset)
     MainEntrypoint = BaseAddr + *EntryFileOffset;
+
+  // If we also found LC_FUNCTION_STARTS, add those to our entrypoints.
+  if (FuncStartsLC) {
+    StringRef FuncStartsData =
+        MOOF.getData().substr(FuncStartsLC->dataoff, FuncStartsLC->datasize);
+
+    // Extract the ULEB128-encoded function offsets.
+    DataExtractor ULEBExtractor(FuncStartsData, /*IsLittleEndian=*/true,
+                                /*AddressSize=*/0);
+
+    uint32_t Offset = 0;
+    uint64_t FuncAddr = BaseAddr;
+    while (uint64_t Delta = ULEBExtractor.getULEB128(&Offset)) {
+      FuncAddr += Delta;
+      Entrypoints.push_back(FuncAddr);
+    }
+  }
 }
 
 // FIXME: Only do the translations for addresses actually inside the object.

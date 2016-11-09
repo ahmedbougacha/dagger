@@ -1,0 +1,44 @@
+RUN: llvm-mccfg %p/Inputs/function-starts.exe.macho-x86_64 | FileCheck %s
+
+CHECK-LABEL: ---
+CHECK-NEXT: Functions:
+CHECK-NEXT:   - Name:            fn_100000FAF
+CHECK-NEXT:     BasicBlocks:
+CHECK-NEXT:       - Address:         0x0000000100000FAF
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     4
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            ADD64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBX, RRBX, RRAX ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_100000FB3
+CHECK-NEXT:     BasicBlocks:
+CHECK-NEXT:       - Address:         0x0000000100000FB3
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     4
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            SUB64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRDX, RRDX, RRCX ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_100000FB7
+CHECK-NEXT:     BasicBlocks:
+CHECK-NEXT:       - Address:         0x0000000100000FB7
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     1
+CHECK-NEXT:         InstCount:       1
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT: ...
