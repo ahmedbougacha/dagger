@@ -130,36 +130,27 @@ static void RemoveDupsFromAddressVector(MCObjectDisassembler::AddressSetTy &V) {
 void MCObjectDisassembler::buildCFG(MCModule &Module) {
   AddressSetTy CallTargets;
 
-  // Start the disassembly at specific function entrypoints.
-  AddressSetTy FuncAddrs;
+  if (MOS) {
+    // Start the disassembly at specific function entrypoints.
+    AddressSetTy FuncAddrs;
 
-  // If the object has a well-defined entrypoint, use it.
-  if (MOS)
-    FuncAddrs.push_back(MOS->getEntrypoint());
+    // If the object has a well-defined entrypoint, use it.
+    if (auto MainEntrypoint = MOS->getMainEntrypoint())
+      FuncAddrs.push_back(*MainEntrypoint);
 
-  // Also start from each 'function' symbol.
-  for (const SymbolRef &Symbol : Obj.symbols()) {
-    SymbolRef::Type SymType = unwrapOrReportError(Symbol.getType());
-    if (SymType == SymbolRef::ST_Function) {
-      Expected<uint64_t> SymAddrOrErr = Symbol.getAddress();
-      if (Error E = SymAddrOrErr.takeError())
+    // Also use other entrypoints (function symbols, etc.).
+    auto Entrypoints = MOS->getEntrypoints();
+    FuncAddrs.insert(FuncAddrs.end(), Entrypoints.begin(), Entrypoints.end());
+    RemoveDupsFromAddressVector(FuncAddrs);
+
+    // Now that we gathered functions, disassemble them all.
+    for (uint64_t Addr : FuncAddrs) {
+      if (getRegionFor(Addr).Bytes.empty())
         continue;
-      uint64_t SymAddr = *SymAddrOrErr;
-      if (MOS)
-        SymAddr = MOS->getEffectiveLoadAddr(SymAddr);
-      FuncAddrs.push_back(SymAddr);
+      MCFunction *MCFN = createFunction(&Module, Addr);
+      for (uint64_t Callee : MCFN->callees())
+        CallTargets.push_back(Callee);
     }
-  }
-
-  RemoveDupsFromAddressVector(FuncAddrs);
-
-  // Now that we gathered functions, disassemble them all.
-  for (uint64_t Addr : FuncAddrs) {
-    if (getRegionFor(Addr).Bytes.empty())
-      continue;
-    MCFunction *MCFN = createFunction(&Module, Addr);
-    for (uint64_t Callee : MCFN->callees())
-      CallTargets.push_back(Callee);
   }
 
   RemoveDupsFromAddressVector(CallTargets);

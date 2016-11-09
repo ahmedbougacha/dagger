@@ -229,8 +229,10 @@ int main(int argc, char **argv) {
       new DCTranslator(Ctx, DL, TOLvl, *DIS, *DRS, *MIP, *STI, *MCM, OD.get(),
                        MOS.get(), AnnotateIROutput));
 
-  if (!TranslationEntrypoint)
-    TranslationEntrypoint = MOS->getEntrypoint();
+  if (!TranslationEntrypoint) {
+    if (auto MainEntrypoint = MOS->getMainEntrypoint())
+      TranslationEntrypoint = *MainEntrypoint;
+  }
 
   DT->createMainFunctionWrapper(
       DT->translateRecursivelyAt(TranslationEntrypoint));

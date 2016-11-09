@@ -466,8 +466,14 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
 
   TranslateAndRunStaticInitExit(MOS->getStaticInitFunctions());
 
+  auto MainEntrypoint = MOS->getMainEntrypoint();
+  if (!MainEntrypoint) {
+    errs() << "error: unable to find entrypoint.\n";
+    exit(1);
+  }
+
   // Now we can start running real code.
-  uint64_t CurPC = MOS->getEffectiveLoadAddr(MOS->getEntrypoint());
+  uint64_t CurPC = MOS->getEffectiveLoadAddr(*MainEntrypoint);
   assert(dlsym(RTLD_MAIN_ONLY, "main") == (void *)CurPC);
   do {
     Function *Fn = DT->translateRecursivelyAt(CurPC);

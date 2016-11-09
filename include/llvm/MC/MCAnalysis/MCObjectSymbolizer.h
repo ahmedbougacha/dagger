@@ -74,8 +74,11 @@ public:
   /// \returns The function's name, or the empty string if not found.
   virtual StringRef findExternalFunctionAt(uint64_t Addr);
 
-  /// \brief Get the effective address of the entrypoint, or 0 if there is none.
-  virtual uint64_t getEntrypoint();
+  /// Get the original address of the main entrypoint, if there is one.
+  Optional<uint64_t> getMainEntrypoint();
+
+  /// Get the original address of the non-main entrypoints.
+  ArrayRef<uint64_t> getEntrypoints();
 
   /// \name Translation between effective and objectfile load address.
   /// @{
@@ -121,6 +124,9 @@ protected:
   std::vector<SectionInfo> SortedSections;
   std::vector<FunctionSymbol> AddrToFunctionSymbol;
 
+  std::vector<uint64_t> Entrypoints;
+  Optional<uint64_t> MainEntrypoint;
+
   void buildAddrToFunctionSymbolMap();
   void
   buildSectionList(std::function<bool(object::SectionRef)> ShouldSkipSection);
@@ -156,8 +162,6 @@ public:
 
   StringRef findExternalFunctionAt(uint64_t Addr) override;
 
-  uint64_t getEntrypoint() override;
-
   void tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
                                        uint64_t Address) override;
 
@@ -172,6 +176,9 @@ public:
   ArrayRef<uint64_t> getStaticInitFunctions();
   ArrayRef<uint64_t> getStaticExitFunctions();
   /// @}
+
+private:
+  void gatherEntrypoints();
 };
 
 class MCELFObjectSymbolizer final : public MCObjectSymbolizer {
@@ -183,8 +190,6 @@ public:
   MCELFObjectSymbolizer(MCContext &Ctx,
                         std::unique_ptr<MCRelocationInfo> RelInfo,
                         const object::ELFObjectFileBase &OF);
-
-  uint64_t getEntrypoint() override;
 };
 
 }

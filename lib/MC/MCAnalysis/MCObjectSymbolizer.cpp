@@ -99,6 +99,33 @@ MCMachObjectSymbolizer::MCMachObjectSymbolizer(
       Section.getContents(ModExitContents);
     }
   }
+
+  // Finally, look for entrypoints.
+  gatherEntrypoints();
+}
+
+void MCMachObjectSymbolizer::gatherEntrypoints() {
+  uint64_t BaseAddr = 0;
+  Optional<uint64_t> EntryFileOffset;
+
+  // Look for LC_MAIN first.
+  for (auto LC : MOOF.load_commands()) {
+    if (LC.C.cmd == MachO::LC_MAIN)
+      EntryFileOffset = MOOF.getEntryPointCommand(LC).entryoff;
+    else if (LC.C.cmd == MachO::LC_SEGMENT_64) {
+      auto S64LC = MOOF.getSegment64LoadCommand(LC);
+      if (S64LC.fileoff == 0 && S64LC.filesize != 0)
+        BaseAddr = S64LC.vmaddr;
+    } else if (LC.C.cmd == MachO::LC_SEGMENT) {
+      auto SLC = MOOF.getSegmentLoadCommand(LC);
+      if (SLC.fileoff == 0 && SLC.filesize != 0)
+        BaseAddr = SLC.vmaddr;
+    }
+  }
+
+  // If we did find LC_MAIN, compute the virtual address.
+  if (EntryFileOffset)
+    MainEntrypoint = BaseAddr + *EntryFileOffset;
 }
 
 // FIXME: Only do the translations for addresses actually inside the object.
@@ -157,41 +184,6 @@ StringRef MCMachObjectSymbolizer::findExternalFunctionAt(uint64_t Addr) {
   return SymName.substr(1);
 }
 
-uint64_t MCMachObjectSymbolizer::getEntrypoint() {
-  uint64_t EntryFileOffset = 0;
-
-  // Look for LC_MAIN first.
-  for (auto LC : MOOF.load_commands()) {
-    if (LC.C.cmd == MachO::LC_MAIN) {
-      EntryFileOffset = MOOF.getEntryPointCommand(LC).entryoff;
-      break;
-    }
-  }
-
-  // If we did find LC_MAIN, compute the virtual address, by looking for the
-  // segment that it points into.
-  if (EntryFileOffset) {
-    for (auto LC : MOOF.load_commands()) {
-      if (LC.C.cmd == MachO::LC_SEGMENT_64) {
-        auto S64LC = MOOF.getSegment64LoadCommand(LC);
-        if (S64LC.fileoff <= EntryFileOffset &&
-            S64LC.fileoff + S64LC.filesize > EntryFileOffset)
-          return EntryFileOffset + S64LC.vmaddr;
-      }
-      if (LC.C.cmd == MachO::LC_SEGMENT) {
-        auto SLC = MOOF.getSegmentLoadCommand(LC);
-        if (SLC.fileoff <= EntryFileOffset &&
-            SLC.fileoff + SLC.filesize > EntryFileOffset)
-          return EntryFileOffset + SLC.vmaddr;
-      }
-    }
-  }
-
-  // We tried harder, but none of our tricks worked, fall back to the common
-  // implementation for good.
-  return MCObjectSymbolizer::getEntrypoint();
-}
-
 void MCMachObjectSymbolizer::
 tryAddingPcLoadReferenceComment(raw_ostream &cStream, int64_t Value,
                                 uint64_t Address) {
@@ -232,13 +224,12 @@ MCELFObjectSymbolizer::MCELFObjectSymbolizer(
     MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
     const ELFObjectFileBase &OF)
     : MCObjectSymbolizer(Ctx, std::move(RelInfo), OF, shouldSkipELFSection),
-      OF(OF) {}
+      OF(OF) {
 
-uint64_t MCELFObjectSymbolizer::getEntrypoint() {
+  // Refine the main entrypoint if possible.
   // FIXME: We only handle 64bit LE ELF.
   if (auto *EF = dyn_cast<ELF64LEObjectFile>(&OF))
-    return EF->getELFFile()->getHeader()->e_entry;
-  return MCObjectSymbolizer::getEntrypoint();
+    MainEntrypoint = EF->getELFFile()->getHeader()->e_entry;
 }
 
 //===- MCObjectSymbolizer -------------------------------------------------===//
@@ -249,16 +240,30 @@ MCObjectSymbolizer::MCObjectSymbolizer(
     std::function<bool(object::SectionRef)> ShouldSkipSection)
     : MCSymbolizer(Ctx, std::move(RelInfo)), Obj(Obj),
       SymbolSizes(computeSymbolSizes(Obj)) {
+  // Gather sections.
   buildSectionList(ShouldSkipSection);
+
+  // Gather entrypoints.
+  for (const SymbolRef &Symbol : Obj.symbols()) {
+    SymbolRef::Type SymType = unwrapOrReportError(Symbol.getType());
+    if (SymType != SymbolRef::ST_Function)
+      continue;
+
+    StringRef Name = unwrapOrReportError(Symbol.getName());
+    uint64_t Addr = unwrapOrReportError(Symbol.getAddress());
+
+    if (Name == "main" || Name == "_main")
+      MainEntrypoint = Addr;
+    Entrypoints.push_back(Addr);
+  }
 }
 
-uint64_t MCObjectSymbolizer::getEntrypoint() {
-  for (const SymbolRef &Symbol : Obj.symbols()) {
-    StringRef Name = unwrapOrReportError(Symbol.getName());
-    if (Name == "main" || Name == "_main")
-      return unwrapOrReportError(Symbol.getAddress());
-  }
-  return 0;
+Optional<uint64_t> MCObjectSymbolizer::getMainEntrypoint() {
+  return MainEntrypoint;
+}
+
+ArrayRef<uint64_t> MCObjectSymbolizer::getEntrypoints() {
+  return Entrypoints;
 }
 
 uint64_t MCObjectSymbolizer::getEffectiveLoadAddr(uint64_t Addr) {
