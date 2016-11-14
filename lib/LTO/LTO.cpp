@@ -14,7 +14,8 @@
 #include "llvm/LTO/LTO.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/IR/AutoUpgrade.h"
 #include "llvm/IR/DiagnosticPrinter.h"
@@ -103,18 +104,16 @@ std::unique_ptr<Module>
 llvm::loadModuleFromBuffer(const MemoryBufferRef &Buffer, LLVMContext &Context,
                            bool Lazy) {
   SMDiagnostic Err;
-  ErrorOr<std::unique_ptr<Module>> ModuleOrErr(nullptr);
-  if (Lazy) {
-    ModuleOrErr =
-        getLazyBitcodeModule(MemoryBuffer::getMemBuffer(Buffer, false), Context,
-                             /* ShouldLazyLoadMetadata */ Lazy);
-  } else {
-    ModuleOrErr = parseBitcodeFile(Buffer, Context);
-  }
-  if (std::error_code EC = ModuleOrErr.getError()) {
-    Err = SMDiagnostic(Buffer.getBufferIdentifier(), SourceMgr::DK_Error,
-                       EC.message());
-    Err.print("ThinLTO", errs());
+  Expected<std::unique_ptr<Module>> ModuleOrErr =
+      Lazy ? getLazyBitcodeModule(Buffer, Context,
+                                  /* ShouldLazyLoadMetadata */ true)
+           : parseBitcodeFile(Buffer, Context);
+  if (!ModuleOrErr) {
+    handleAllErrors(ModuleOrErr.takeError(), [&](ErrorInfoBase &EIB) {
+      SMDiagnostic Err = SMDiagnostic(Buffer.getBufferIdentifier(),
+                                      SourceMgr::DK_Error, EIB.message());
+      Err.print("ThinLTO", errs());
+    });
     report_fatal_error("Can't load module, abort.");
   }
   return std::move(ModuleOrErr.get());
@@ -204,24 +203,12 @@ void llvm::thinLTOInternalizeAndPromoteInIndex(
 
 Expected<std::unique_ptr<InputFile>> InputFile::create(MemoryBufferRef Object) {
   std::unique_ptr<InputFile> File(new InputFile);
-  std::string Msg;
-  auto DiagHandler = [](const DiagnosticInfo &DI, void *MsgP) {
-    auto *Msg = reinterpret_cast<std::string *>(MsgP);
-    raw_string_ostream OS(*Msg);
-    DiagnosticPrinterRawOStream DP(OS);
-    DI.print(DP);
-  };
-  File->Ctx.setDiagnosticHandler(DiagHandler, static_cast<void *>(&Msg));
 
-  ErrorOr<std::unique_ptr<object::IRObjectFile>> IRObj =
+  Expected<std::unique_ptr<object::IRObjectFile>> IRObj =
       IRObjectFile::create(Object, File->Ctx);
-  if (!Msg.empty())
-    return make_error<StringError>(Msg, inconvertibleErrorCode());
   if (!IRObj)
-    return errorCodeToError(IRObj.getError());
+    return IRObj.takeError();
   File->Obj = std::move(*IRObj);
-
-  File->Ctx.setDiagnosticHandler(nullptr, nullptr);
 
   for (const auto &C : File->Obj->getModule().getComdatSymbolTable()) {
     auto P =
@@ -328,9 +315,11 @@ Error LTO::add(std::unique_ptr<InputFile> Input,
     M.setTargetTriple(Conf.DefaultTriple);
 
   MemoryBufferRef MBRef = Input->Obj->getMemoryBufferRef();
-  bool HasThinLTOSummary = hasGlobalValueSummary(MBRef, Conf.DiagHandler);
+  Expected<bool> HasThinLTOSummary = hasGlobalValueSummary(MBRef);
+  if (!HasThinLTOSummary)
+    return HasThinLTOSummary.takeError();
 
-  if (HasThinLTOSummary)
+  if (*HasThinLTOSummary)
     return addThinLTO(std::move(Input), Res);
   else
     return addRegularLTO(std::move(Input), Res);
@@ -344,14 +333,15 @@ Error LTO::addRegularLTO(std::unique_ptr<InputFile> Input,
         llvm::make_unique<Module>("ld-temp.o", RegularLTO.Ctx);
     RegularLTO.Mover = llvm::make_unique<IRMover>(*RegularLTO.CombinedModule);
   }
-  ErrorOr<std::unique_ptr<object::IRObjectFile>> ObjOrErr =
+  Expected<std::unique_ptr<object::IRObjectFile>> ObjOrErr =
       IRObjectFile::create(Input->Obj->getMemoryBufferRef(), RegularLTO.Ctx);
   if (!ObjOrErr)
-    return errorCodeToError(ObjOrErr.getError());
+    return ObjOrErr.takeError();
   std::unique_ptr<object::IRObjectFile> Obj = std::move(*ObjOrErr);
 
   Module &M = Obj->getModule();
-  M.materializeMetadata();
+  if (Error Err = M.materializeMetadata())
+    return Err;
   UpgradeDebugInfo(M);
 
   SmallPtrSet<GlobalValue *, 8> Used;
@@ -414,11 +404,10 @@ Error LTO::addThinLTO(std::unique_ptr<InputFile> Input,
   collectUsedGlobalVariables(M, Used, /*CompilerUsed*/ false);
 
   MemoryBufferRef MBRef = Input->Obj->getMemoryBufferRef();
-  ErrorOr<std::unique_ptr<object::ModuleSummaryIndexObjectFile>>
-      SummaryObjOrErr =
-          object::ModuleSummaryIndexObjectFile::create(MBRef, Conf.DiagHandler);
+  Expected<std::unique_ptr<object::ModuleSummaryIndexObjectFile>>
+      SummaryObjOrErr = object::ModuleSummaryIndexObjectFile::create(MBRef);
   if (!SummaryObjOrErr)
-    return errorCodeToError(SummaryObjOrErr.getError());
+    return SummaryObjOrErr.takeError();
   ThinLTO.CombinedIndex.mergeFrom((*SummaryObjOrErr)->takeIndex(),
                                   ThinLTO.ModuleMap.size());
 
@@ -437,7 +426,7 @@ Error LTO::addThinLTO(std::unique_ptr<InputFile> Input,
   assert(ResI == Res.end());
 
   ThinLTO.ModuleMap[MBRef.getBufferIdentifier()] = MBRef;
-  return Error();
+  return Error::success();
 }
 
 unsigned LTO::getMaxTasks() const {
@@ -489,7 +478,7 @@ Error LTO::runRegularLTO(AddStreamFn AddStream) {
 
   if (Conf.PreOptModuleHook &&
       !Conf.PreOptModuleHook(0, *RegularLTO.CombinedModule))
-    return Error();
+    return Error::success();
 
   if (!Conf.CodeGenOnly) {
     for (const auto &R : GlobalResolutions) {
@@ -512,7 +501,7 @@ Error LTO::runRegularLTO(AddStreamFn AddStream) {
 
     if (Conf.PostInternalizeModuleHook &&
         !Conf.PostInternalizeModuleHook(0, *RegularLTO.CombinedModule))
-      return Error();
+      return Error::success();
   }
   return backend(Conf, AddStream, RegularLTO.ParallelCodeGenParallelismLevel,
                  std::move(RegularLTO.CombinedModule));
@@ -569,9 +558,10 @@ public:
       MapVector<StringRef, MemoryBufferRef> &ModuleMap) {
     auto RunThinBackend = [&](AddStreamFn AddStream) {
       LTOLLVMContext BackendContext(Conf);
-      ErrorOr<std::unique_ptr<Module>> MOrErr =
+      Expected<std::unique_ptr<Module>> MOrErr =
           parseBitcodeFile(MBRef, BackendContext);
-      assert(MOrErr && "Unable to load module in thread?");
+      if (!MOrErr)
+        return MOrErr.takeError();
 
       return thinBackend(Conf, Task, AddStream, **MOrErr, CombinedIndex,
                          ImportList, DefinedGlobals, ModuleMap);
@@ -593,7 +583,7 @@ public:
     if (AddStreamFn CacheAddStream = Cache(Task, Key))
       return RunThinBackend(CacheAddStream);
 
-    return Error();
+    return Error::success();
   }
 
   Error start(
@@ -628,7 +618,7 @@ public:
         MBRef, std::ref(CombinedIndex), std::ref(ImportList),
         std::ref(ExportList), std::ref(ResolvedODR), std::ref(DefinedGlobals),
         std::ref(ModuleMap));
-    return Error();
+    return Error::success();
   }
 
   Error wait() override {
@@ -636,7 +626,7 @@ public:
     if (Err)
       return std::move(*Err);
     else
-      return Error();
+      return Error::success();
   }
 };
 
@@ -722,10 +712,10 @@ public:
     if (ShouldEmitImportsFiles)
       return errorCodeToError(
           EmitImportsFiles(ModulePath, NewModulePath + ".imports", ImportList));
-    return Error();
+    return Error::success();
   }
 
-  Error wait() override { return Error(); }
+  Error wait() override { return Error::success(); }
 };
 
 ThinBackend lto::createWriteIndexesThinBackend(std::string OldPrefix,
@@ -744,10 +734,10 @@ ThinBackend lto::createWriteIndexesThinBackend(std::string OldPrefix,
 Error LTO::runThinLTO(AddStreamFn AddStream, NativeObjectCache Cache,
                       bool HasRegularLTO) {
   if (ThinLTO.ModuleMap.empty())
-    return Error();
+    return Error::success();
 
   if (Conf.CombinedIndexHook && !Conf.CombinedIndexHook(ThinLTO.CombinedIndex))
-    return Error();
+    return Error::success();
 
   // Collect for each module the list of function it defines (GUID ->
   // Summary).

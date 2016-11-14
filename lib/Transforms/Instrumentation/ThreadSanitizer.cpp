@@ -99,12 +99,15 @@ struct ThreadSanitizer : public FunctionPass {
                                       const DataLayout &DL);
   bool addrPointsToConstantData(Value *Addr);
   int getMemoryAccessFuncIndex(Value *Addr, const DataLayout &DL);
+  void InsertRuntimeIgnores(Function &F, SmallVector<Instruction*, 8> &RetVec);
 
   Type *IntptrTy;
   IntegerType *OrdTy;
   // Callbacks to run-time library are computed in doInitialization.
   Function *TsanFuncEntry;
   Function *TsanFuncExit;
+  Function *TsanIgnoreBegin;
+  Function *TsanIgnoreEnd;
   // Accesses sizes are powers of two: 1, 2, 4, 8, 16.
   static const size_t kNumberOfAccessSizes = 5;
   Function *TsanRead[kNumberOfAccessSizes];
@@ -152,6 +155,10 @@ void ThreadSanitizer::initializeCallbacks(Module &M) {
       "__tsan_func_entry", IRB.getVoidTy(), IRB.getInt8PtrTy(), nullptr));
   TsanFuncExit = checkSanitizerInterfaceFunction(
       M.getOrInsertFunction("__tsan_func_exit", IRB.getVoidTy(), nullptr));
+  TsanIgnoreBegin = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+      "__tsan_ignore_thread_begin", IRB.getVoidTy(), nullptr));
+  TsanIgnoreEnd = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+      "__tsan_ignore_thread_end", IRB.getVoidTy(), nullptr));
   OrdTy = IRB.getInt32Ty();
   for (size_t i = 0; i < kNumberOfAccessSizes; ++i) {
     const unsigned ByteSize = 1U << i;
@@ -376,6 +383,16 @@ static bool isAtomic(Instruction *I) {
   return false;
 }
 
+void ThreadSanitizer::InsertRuntimeIgnores(Function &F,
+                                         SmallVector<Instruction*, 8> &RetVec) {
+  IRBuilder<> IRB(F.getEntryBlock().getFirstNonPHI());
+  IRB.CreateCall(TsanIgnoreBegin);
+  for (auto RetInst : RetVec) {
+    IRBuilder<> IRB(RetInst);
+    IRB.CreateCall(TsanIgnoreEnd);
+  }
+}
+
 bool ThreadSanitizer::runOnFunction(Function &F) {
   // This is required to prevent instrumenting call to __tsan_init from within
   // the module constructor.
@@ -437,6 +454,12 @@ bool ThreadSanitizer::runOnFunction(Function &F) {
     for (auto Inst : MemIntrinCalls) {
       Res |= instrumentMemIntrinsic(Inst);
     }
+
+  if (F.hasFnAttribute("sanitize_thread_no_checking_at_run_time")) {
+    assert(!F.hasFnAttribute(Attribute::SanitizeThread));
+    if (HasCalls)
+      InsertRuntimeIgnores(F, RetVec);
+  }
 
   // Instrument function entry/exit points if there were instrumented accesses.
   if ((Res || HasCalls) && ClInstrumentFuncEntryExit) {
@@ -549,11 +572,6 @@ bool ThreadSanitizer::instrumentMemIntrinsic(Instruction *I) {
   return false;
 }
 
-static Value *createIntOrPtrToIntCast(Value *V, Type* Ty, IRBuilder<> &IRB) {
-  return isa<PointerType>(V->getType()) ?
-    IRB.CreatePtrToInt(V, Ty) : IRB.CreateIntCast(V, Ty, false);
-}
-
 // Both llvm and ThreadSanitizer atomic operations are based on C++11/C1x
 // standards.  For background see C++11 standard.  A slightly older, publicly
 // available draft of the standard (not entirely up-to-date, but close enough
@@ -576,15 +594,9 @@ bool ThreadSanitizer::instrumentAtomic(Instruction *I, const DataLayout &DL) {
     Value *Args[] = {IRB.CreatePointerCast(Addr, PtrTy),
                      createOrdering(&IRB, LI->getOrdering())};
     Type *OrigTy = cast<PointerType>(Addr->getType())->getElementType();
-    if (Ty == OrigTy) {
-      Instruction *C = CallInst::Create(TsanAtomicLoad[Idx], Args);
-      ReplaceInstWithInst(I, C);
-    } else {
-      // We are loading a pointer, so we need to cast the return value.
-      Value *C = IRB.CreateCall(TsanAtomicLoad[Idx], Args);
-      Instruction *Cast = CastInst::Create(Instruction::IntToPtr, C, OrigTy);
-      ReplaceInstWithInst(I, Cast);
-    }
+    Value *C = IRB.CreateCall(TsanAtomicLoad[Idx], Args);
+    Value *Cast = IRB.CreateBitOrPointerCast(C, OrigTy);
+    I->replaceAllUsesWith(Cast);
   } else if (StoreInst *SI = dyn_cast<StoreInst>(I)) {
     Value *Addr = SI->getPointerOperand();
     int Idx = getMemoryAccessFuncIndex(Addr, DL);
@@ -595,7 +607,7 @@ bool ThreadSanitizer::instrumentAtomic(Instruction *I, const DataLayout &DL) {
     Type *Ty = Type::getIntNTy(IRB.getContext(), BitSize);
     Type *PtrTy = Ty->getPointerTo();
     Value *Args[] = {IRB.CreatePointerCast(Addr, PtrTy),
-                     createIntOrPtrToIntCast(SI->getValueOperand(), Ty, IRB),
+                     IRB.CreateBitOrPointerCast(SI->getValueOperand(), Ty),
                      createOrdering(&IRB, SI->getOrdering())};
     CallInst *C = CallInst::Create(TsanAtomicStore[Idx], Args);
     ReplaceInstWithInst(I, C);
@@ -626,9 +638,9 @@ bool ThreadSanitizer::instrumentAtomic(Instruction *I, const DataLayout &DL) {
     Type *Ty = Type::getIntNTy(IRB.getContext(), BitSize);
     Type *PtrTy = Ty->getPointerTo();
     Value *CmpOperand =
-      createIntOrPtrToIntCast(CASI->getCompareOperand(), Ty, IRB);
+      IRB.CreateBitOrPointerCast(CASI->getCompareOperand(), Ty);
     Value *NewOperand =
-      createIntOrPtrToIntCast(CASI->getNewValOperand(), Ty, IRB);
+      IRB.CreateBitOrPointerCast(CASI->getNewValOperand(), Ty);
     Value *Args[] = {IRB.CreatePointerCast(Addr, PtrTy),
                      CmpOperand,
                      NewOperand,

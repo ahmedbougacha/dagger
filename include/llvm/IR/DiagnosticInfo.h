@@ -49,7 +49,6 @@ enum DiagnosticSeverity : char {
 /// \brief Defines the different supported kind of a diagnostic.
 /// This enum should be extended with a new ID for each added concrete subclass.
 enum DiagnosticKind {
-  DK_Bitcode,
   DK_InlineAsm,
   DK_ResourceLimit,
   DK_StackSize,
@@ -385,6 +384,8 @@ public:
   struct Argument {
     StringRef Key;
     std::string Val;
+    // If set, the debug location corresponding to the value.
+    DebugLoc DLoc;
 
     explicit Argument(StringRef Str = "") : Key("String"), Val(Str) {}
     Argument(StringRef Key, Value *V);

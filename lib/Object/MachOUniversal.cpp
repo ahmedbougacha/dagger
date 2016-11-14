@@ -107,7 +107,7 @@ void MachOUniversalBinary::anchor() { }
 
 Expected<std::unique_ptr<MachOUniversalBinary>>
 MachOUniversalBinary::create(MemoryBufferRef Source) {
-  Error Err;
+  Error Err = Error::success();
   std::unique_ptr<MachOUniversalBinary> Ret(
       new MachOUniversalBinary(Source, Err));
   if (Err)
@@ -157,10 +157,9 @@ MachOUniversalBinary::getObjectForArch(StringRef ArchName) const {
                                               ArchName,
                                           object_error::arch_not_found);
 
-  for (object_iterator I = begin_objects(), E = end_objects(); I != E; ++I) {
-    if (I->getArchTypeName() == ArchName)
-      return I->getAsObjectFile();
-  }
+  for (auto &Obj : objects())
+    if (Obj.getArchTypeName() == ArchName)
+      return Obj.getAsObjectFile();
   return make_error<GenericBinaryError>("fat file does not "
                                         "contain " +
                                             ArchName,

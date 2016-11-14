@@ -273,6 +273,8 @@ For API clients and LLVM developers.
    MIRLangRef
    Coroutines
    GlobalISel
+   XRay
+   PDB/index
    SemanticsEmitterTableGen
 
 :doc:`WritingAnLLVMPass`
@@ -394,6 +396,12 @@ For API clients and LLVM developers.
 
 :doc:`GlobalISel`
   This describes the prototype instruction selection replacement, GlobalISel.
+
+:doc:`XRay`
+  High-level documentation of how to use XRay in LLVM.
+
+:doc:`The Microsoft PDB File Format <PDB/index>`
+  A detailed description of the Microsoft PDB (Program Database) file format.
 
 :doc:`SemanticsEmitterTableGen`
    This document describes the SemanticsEmitter TableGen backend used to

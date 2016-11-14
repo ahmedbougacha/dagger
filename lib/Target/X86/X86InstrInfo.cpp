@@ -641,11 +641,11 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::VCVTSS2SIrr,     X86::VCVTSS2SIrm,         0 },
     { X86::VCVTDQ2PDrr,     X86::VCVTDQ2PDrm,         0 },
     { X86::VCVTDQ2PSrr,     X86::VCVTDQ2PSrm,         0 },
-    { X86::VCVTPD2DQrr,     X86::VCVTPD2DQXrm,        0 },
-    { X86::VCVTPD2PSrr,     X86::VCVTPD2PSXrm,        0 },
+    { X86::VCVTPD2DQrr,     X86::VCVTPD2DQrm,         0 },
+    { X86::VCVTPD2PSrr,     X86::VCVTPD2PSrm,         0 },
     { X86::VCVTPS2DQrr,     X86::VCVTPS2DQrm,         0 },
     { X86::VCVTPS2PDrr,     X86::VCVTPS2PDrm,         0 },
-    { X86::VCVTTPD2DQrr,    X86::VCVTTPD2DQXrm,       0 },
+    { X86::VCVTTPD2DQrr,    X86::VCVTTPD2DQrm,        0 },
     { X86::VCVTTPS2DQrr,    X86::VCVTTPS2DQrm,        0 },
     { X86::VMOV64toPQIrr,   X86::VMOVQI2PQIrm,        0 },
     { X86::VMOV64toSDrr,    X86::VMOV64toSDrm,        0 },
@@ -5303,6 +5303,8 @@ bool X86InstrInfo::analyzeCompare(const MachineInstr &MI, unsigned &SrcReg,
   case X86::CMP16ri:
   case X86::CMP16ri8:
   case X86::CMP8ri:
+    if (!MI.getOperand(1).isImm())
+      return false;
     SrcReg = MI.getOperand(0).getReg();
     SrcReg2 = 0;
     CmpMask = ~0;
@@ -5334,6 +5336,8 @@ bool X86InstrInfo::analyzeCompare(const MachineInstr &MI, unsigned &SrcReg,
   case X86::SUB16ri:
   case X86::SUB16ri8:
   case X86::SUB8ri:
+    if (!MI.getOperand(2).isImm())
+      return false;
     SrcReg = MI.getOperand(1).getReg();
     SrcReg2 = 0;
     CmpMask = ~0;

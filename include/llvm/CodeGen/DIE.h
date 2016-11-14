@@ -15,88 +15,92 @@
 #define LLVM_LIB_CODEGEN_ASMPRINTER_DIE_H
 
 #include "llvm/ADT/FoldingSet.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/PointerIntPair.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/DwarfStringPoolEntry.h"
+#include "llvm/Support/AlignOf.h"
+#include "llvm/Support/Allocator.h"
 #include "llvm/Support/Dwarf.h"
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <new>
+#include <type_traits>
 
 namespace llvm {
+
 class AsmPrinter;
 class MCExpr;
 class MCSymbol;
 class raw_ostream;
-class DwarfTypeUnit;
 
 //===--------------------------------------------------------------------===//
-/// DIEAbbrevData - Dwarf abbreviation data, describes one attribute of a
-/// Dwarf abbreviation.
+/// Dwarf abbreviation data, describes one attribute of a Dwarf abbreviation.
 class DIEAbbrevData {
-  /// Attribute - Dwarf attribute code.
-  ///
+  /// Dwarf attribute code.
   dwarf::Attribute Attribute;
 
-  /// Form - Dwarf form code.
-  ///
+  /// Dwarf form code.
   dwarf::Form Form;
 
 public:
   DIEAbbrevData(dwarf::Attribute A, dwarf::Form F) : Attribute(A), Form(F) {}
 
-  // Accessors.
+  /// Accessors.
+  /// @{
   dwarf::Attribute getAttribute() const { return Attribute; }
   dwarf::Form getForm() const { return Form; }
+  /// @}
 
-  /// Profile - Used to gather unique data for the abbreviation folding set.
-  ///
+  /// Used to gather unique data for the abbreviation folding set.
   void Profile(FoldingSetNodeID &ID) const;
 };
 
 //===--------------------------------------------------------------------===//
-/// DIEAbbrev - Dwarf abbreviation, describes the organization of a debug
-/// information object.
+/// Dwarf abbreviation, describes the organization of a debug information
+/// object.
 class DIEAbbrev : public FoldingSetNode {
   /// Unique number for node.
-  ///
   unsigned Number;
 
-  /// Tag - Dwarf tag code.
-  ///
+  /// Dwarf tag code.
   dwarf::Tag Tag;
 
-  /// Children - Whether or not this node has children.
+  /// Whether or not this node has children.
   ///
-  // This cheats a bit in all of the uses since the values in the standard
-  // are 0 and 1 for no children and children respectively.
+  /// This cheats a bit in all of the uses since the values in the standard
+  /// are 0 and 1 for no children and children respectively.
   bool Children;
 
-  /// Data - Raw data bytes for abbreviation.
-  ///
+  /// Raw data bytes for abbreviation.
   SmallVector<DIEAbbrevData, 12> Data;
 
 public:
-  DIEAbbrev(dwarf::Tag T, bool C) : Tag(T), Children(C), Data() {}
+  DIEAbbrev(dwarf::Tag T, bool C) : Tag(T), Children(C) {}
 
-  // Accessors.
+  /// Accessors.
+  /// @{
   dwarf::Tag getTag() const { return Tag; }
   unsigned getNumber() const { return Number; }
   bool hasChildren() const { return Children; }
   const SmallVectorImpl<DIEAbbrevData> &getData() const { return Data; }
   void setChildrenFlag(bool hasChild) { Children = hasChild; }
   void setNumber(unsigned N) { Number = N; }
+  /// @}
 
-  /// AddAttribute - Adds another set of attribute information to the
-  /// abbreviation.
+  /// Adds another set of attribute information to the abbreviation.
   void AddAttribute(dwarf::Attribute Attribute, dwarf::Form Form) {
     Data.push_back(DIEAbbrevData(Attribute, Form));
   }
 
-  /// Profile - Used to gather unique data for the abbreviation folding set.
-  ///
+  /// Used to gather unique data for the abbreviation folding set.
   void Profile(FoldingSetNodeID &ID) const;
 
-  /// Emit - Print the abbreviation using the specified asm printer.
-  ///
+  /// Print the abbreviation using the specified asm printer.
   void Emit(const AsmPrinter *AP) const;
 
   void print(raw_ostream &O);
@@ -104,7 +108,7 @@ public:
 };
 
 //===--------------------------------------------------------------------===//
-/// DIEInteger - An integer value DIE.
+/// An integer value DIE.
 ///
 class DIEInteger {
   uint64_t Integer;
@@ -112,8 +116,7 @@ class DIEInteger {
 public:
   explicit DIEInteger(uint64_t I) : Integer(I) {}
 
-  /// BestForm - Choose the best form for integer.
-  ///
+  /// Choose the best form for integer.
   static dwarf::Form BestForm(bool IsSigned, uint64_t Int) {
     if (IsSigned) {
       const int64_t SignedInt = Int;
@@ -144,16 +147,14 @@ public:
 };
 
 //===--------------------------------------------------------------------===//
-/// DIEExpr - An expression DIE.
-//
+/// An expression DIE.
 class DIEExpr {
   const MCExpr *Expr;
 
 public:
   explicit DIEExpr(const MCExpr *E) : Expr(E) {}
 
-  /// getValue - Get MCExpr.
-  ///
+  /// Get MCExpr.
   const MCExpr *getValue() const { return Expr; }
 
   void EmitValue(const AsmPrinter *AP, dwarf::Form Form) const;
@@ -163,16 +164,14 @@ public:
 };
 
 //===--------------------------------------------------------------------===//
-/// DIELabel - A label DIE.
-//
+/// A label DIE.
 class DIELabel {
   const MCSymbol *Label;
 
 public:
   explicit DIELabel(const MCSymbol *L) : Label(L) {}
 
-  /// getValue - Get MCSymbol.
-  ///
+  /// Get MCSymbol.
   const MCSymbol *getValue() const { return Label; }
 
   void EmitValue(const AsmPrinter *AP, dwarf::Form Form) const;
@@ -182,7 +181,7 @@ public:
 };
 
 //===--------------------------------------------------------------------===//
-/// DIEDelta - A simple label difference DIE.
+/// A simple label difference DIE.
 ///
 class DIEDelta {
   const MCSymbol *LabelHi;
@@ -198,7 +197,7 @@ public:
 };
 
 //===--------------------------------------------------------------------===//
-/// DIEString - A container for string values.
+/// A container for string values.
 ///
 class DIEString {
   DwarfStringPoolEntryRef S;
@@ -206,7 +205,7 @@ class DIEString {
 public:
   DIEString(DwarfStringPoolEntryRef S) : S(S) {}
 
-  /// getString - Grab the string out of the object.
+  /// Grab the string out of the object.
   StringRef getString() const { return S.getString(); }
 
   void EmitValue(const AsmPrinter *AP, dwarf::Form Form) const;
@@ -216,9 +215,9 @@ public:
 };
 
 //===--------------------------------------------------------------------===//
-/// DIEEntry - A pointer to another debug information entry.  An instance of
-/// this class can also be used as a proxy for a debug information entry not
-/// yet defined (ie. types.)
+/// A pointer to another debug information entry.  An instance of this class can
+/// also be used as a proxy for a debug information entry not yet defined
+/// (ie. types.)
 class DIE;
 class DIEEntry {
   DIE *Entry;
@@ -243,17 +242,16 @@ public:
 };
 
 //===--------------------------------------------------------------------===//
-/// DIELocList - Represents a pointer to a location list in the debug_loc
+/// Represents a pointer to a location list in the debug_loc
 /// section.
-//
 class DIELocList {
-  // Index into the .debug_loc vector.
+  /// Index into the .debug_loc vector.
   size_t Index;
 
 public:
   DIELocList(size_t I) : Index(I) {}
 
-  /// getValue - Grab the current index out.
+  /// Grab the current index out.
   size_t getValue() const { return Index; }
 
   void EmitValue(const AsmPrinter *AP, dwarf::Form Form) const;
@@ -263,9 +261,8 @@ public:
 };
 
 //===--------------------------------------------------------------------===//
-/// DIEValue - A debug information entry value. Some of these roughly correlate
+/// A debug information entry value. Some of these roughly correlate
 /// to DWARF attribute classes.
-///
 class DIEBlock;
 class DIELoc;
 class DIEValue {
@@ -277,8 +274,7 @@ public:
   };
 
 private:
-  /// Ty - Type of data stored in the value.
-  ///
+  /// Type of data stored in the value.
   Type Ty = isNone;
   dwarf::Attribute Attribute = (dwarf::Attribute)0;
   dwarf::Form Form = (dwarf::Form)0;
@@ -355,9 +351,11 @@ private:
 
 public:
   DIEValue() = default;
+
   DIEValue(const DIEValue &X) : Ty(X.Ty), Attribute(X.Attribute), Form(X.Form) {
     copyVal(X);
   }
+
   DIEValue &operator=(const DIEValue &X) {
     destroyVal();
     Ty = X.Ty;
@@ -366,6 +364,7 @@ public:
     copyVal(X);
     return *this;
   }
+
   ~DIEValue() { destroyVal(); }
 
 #define HANDLE_DIEVALUE_SMALL(T)                                               \
@@ -381,11 +380,13 @@ public:
   }
 #include "llvm/CodeGen/DIEValue.def"
 
-  // Accessors
+  /// Accessors.
+  /// @{
   Type getType() const { return Ty; }
   dwarf::Attribute getAttribute() const { return Attribute; }
   dwarf::Form getForm() const { return Form; }
   explicit operator bool() const { return Ty; }
+  /// @}
 
 #define HANDLE_DIEVALUE_SMALL(T)                                               \
   const DIE##T &getDIE##T() const {                                            \
@@ -399,12 +400,10 @@ public:
   }
 #include "llvm/CodeGen/DIEValue.def"
 
-  /// EmitValue - Emit value via the Dwarf writer.
-  ///
+  /// Emit value via the Dwarf writer.
   void EmitValue(const AsmPrinter *AP) const;
 
-  /// SizeOf - Return the size of a value in bytes.
-  ///
+  /// Return the size of a value in bytes.
   unsigned SizeOf(const AsmPrinter *AP) const;
 
   void print(raw_ostream &O) const;
@@ -413,6 +412,7 @@ public:
 
 struct IntrusiveBackListNode {
   PointerIntPair<IntrusiveBackListNode *, 1> Next;
+
   IntrusiveBackListNode() : Next(this, true) {}
 
   IntrusiveBackListNode *getNext() const {
@@ -576,12 +576,11 @@ public:
   }
 
   value_range values() {
-    return llvm::make_range(value_iterator(List.begin()),
-                            value_iterator(List.end()));
+    return make_range(value_iterator(List.begin()), value_iterator(List.end()));
   }
   const_value_range values() const {
-    return llvm::make_range(const_value_iterator(List.begin()),
-                            const_value_iterator(List.end()));
+    return make_range(const_value_iterator(List.begin()),
+                      const_value_iterator(List.end()));
   }
 };
 
@@ -631,10 +630,10 @@ public:
   typedef iterator_range<const_child_iterator> const_child_range;
 
   child_range children() {
-    return llvm::make_range(Children.begin(), Children.end());
+    return make_range(Children.begin(), Children.end());
   }
   const_child_range children() const {
-    return llvm::make_range(Children.begin(), Children.end());
+    return make_range(Children.begin(), Children.end());
   }
 
   DIE *getParent() const { return Parent; }
@@ -740,6 +739,6 @@ public:
   void print(raw_ostream &O) const;
 };
 
-} // end llvm namespace
+} // end namespace llvm
 
-#endif
+#endif // LLVM_LIB_CODEGEN_ASMPRINTER_DIE_H

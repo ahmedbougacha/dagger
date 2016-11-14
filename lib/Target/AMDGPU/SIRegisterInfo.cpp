@@ -24,6 +24,12 @@
 
 using namespace llvm;
 
+static cl::opt<bool> EnableSpillSGPRToSMEM(
+  "amdgpu-spill-sgpr-to-smem",
+  cl::desc("Use scalar stores to spill SGPRs if supported by subtarget"),
+  cl::init(true));
+
+
 static bool hasPressureSet(const int *PSets, unsigned PSetID) {
   for (unsigned i = 0; PSets[i] != -1; ++i) {
     if (PSets[i] == (int)PSetID)
@@ -475,24 +481,76 @@ void SIRegisterInfo::buildSpillLoadStore(MachineBasicBlock::iterator MI,
 void SIRegisterInfo::spillSGPR(MachineBasicBlock::iterator MI,
                                int Index,
                                RegScavenger *RS) const {
-  MachineFunction *MF = MI->getParent()->getParent();
-  MachineRegisterInfo &MRI = MF->getRegInfo();
   MachineBasicBlock *MBB = MI->getParent();
-  SIMachineFunctionInfo *MFI = MF->getInfo<SIMachineFunctionInfo>();
-  MachineFrameInfo &FrameInfo = MF->getFrameInfo();
+  MachineFunction *MF = MBB->getParent();
+  MachineRegisterInfo &MRI = MF->getRegInfo();
   const SISubtarget &ST =  MF->getSubtarget<SISubtarget>();
   const SIInstrInfo *TII = ST.getInstrInfo();
-  const DebugLoc &DL = MI->getDebugLoc();
 
   unsigned NumSubRegs = getNumSubRegsForSpillOp(MI->getOpcode());
   unsigned SuperReg = MI->getOperand(0).getReg();
   bool IsKill = MI->getOperand(0).isKill();
+  const DebugLoc &DL = MI->getDebugLoc();
+
+  SIMachineFunctionInfo *MFI = MF->getInfo<SIMachineFunctionInfo>();
+  MachineFrameInfo &FrameInfo = MF->getFrameInfo();
+
+  bool SpillToSMEM = ST.hasScalarStores() && EnableSpillSGPRToSMEM;
 
   // SubReg carries the "Kill" flag when SubReg == SuperReg.
   unsigned SubKillState = getKillRegState((NumSubRegs == 1) && IsKill);
   for (unsigned i = 0, e = NumSubRegs; i < e; ++i) {
     unsigned SubReg = NumSubRegs == 1 ?
       SuperReg : getSubReg(SuperReg, getSubRegFromChannel(i));
+
+    if (SpillToSMEM) {
+      if (SuperReg == AMDGPU::M0) {
+        assert(NumSubRegs == 1);
+        unsigned CopyM0
+          = MRI.createVirtualRegister(&AMDGPU::SReg_32_XM0RegClass);
+
+        BuildMI(*MBB, MI, DL, TII->get(AMDGPU::COPY), CopyM0)
+          .addReg(AMDGPU::M0, getKillRegState(IsKill));
+
+        // The real spill now kills the temp copy.
+        SubReg = SuperReg = CopyM0;
+        IsKill = true;
+      }
+
+      int64_t FrOffset = FrameInfo.getObjectOffset(Index);
+      unsigned Size = FrameInfo.getObjectSize(Index);
+      unsigned Align = FrameInfo.getObjectAlignment(Index);
+      MachinePointerInfo PtrInfo
+        = MachinePointerInfo::getFixedStack(*MF, Index);
+      MachineMemOperand *MMO
+        = MF->getMachineMemOperand(PtrInfo, MachineMemOperand::MOStore,
+                                   Size, Align);
+
+      unsigned OffsetReg = AMDGPU::M0;
+      // Add i * 4 wave offset.
+      //
+      // SMEM instructions only support a single offset, so increment the wave
+      // offset.
+
+      int64_t Offset = ST.getWavefrontSize() * (FrOffset + 4 * i);
+      if (Offset != 0) {
+        BuildMI(*MBB, MI, DL, TII->get(AMDGPU::S_ADD_U32), OffsetReg)
+          .addReg(MFI->getScratchWaveOffsetReg())
+          .addImm(Offset);
+      } else {
+        BuildMI(*MBB, MI, DL, TII->get(AMDGPU::S_MOV_B32), OffsetReg)
+          .addReg(MFI->getScratchWaveOffsetReg());
+      }
+
+      BuildMI(*MBB, MI, DL, TII->get(AMDGPU::S_BUFFER_STORE_DWORD_SGPR))
+        .addReg(SubReg, getKillRegState(IsKill)) // sdata
+        .addReg(MFI->getScratchRSrcReg())        // sbase
+        .addReg(OffsetReg)                       // soff
+        .addImm(0)                               // glc
+        .addMemOperand(MMO);
+
+      continue;
+    }
 
     struct SIMachineFunctionInfo::SpilledReg Spill =
       MFI->getSpilledReg(MF, Index, i);
@@ -520,10 +578,9 @@ void SIRegisterInfo::spillSGPR(MachineBasicBlock::iterator MI,
       // it are fixed.
     } else {
       // Spill SGPR to a frame index.
-      // FIXME we should use S_STORE_DWORD here for VI.
-
       // TODO: Should VI try to spill to VGPR and then spill to SMEM?
       unsigned TmpReg = MRI.createVirtualRegister(&AMDGPU::VGPR_32RegClass);
+      // TODO: Should VI try to spill to VGPR and then spill to SMEM?
 
       MachineInstrBuilder Mov
         = BuildMI(*MBB, MI, DL, TII->get(AMDGPU::V_MOV_B32_e32), TmpReg)
@@ -575,6 +632,7 @@ void SIRegisterInfo::restoreSGPR(MachineBasicBlock::iterator MI,
 
   unsigned NumSubRegs = getNumSubRegsForSpillOp(MI->getOpcode());
   unsigned SuperReg = MI->getOperand(0).getReg();
+  bool SpillToSMEM = ST.hasScalarStores() && EnableSpillSGPRToSMEM;
 
   // m0 is not allowed as with readlane/writelane, so a temporary SGPR and
   // extra copy is needed.
@@ -584,9 +642,43 @@ void SIRegisterInfo::restoreSGPR(MachineBasicBlock::iterator MI,
     SuperReg = MRI.createVirtualRegister(&AMDGPU::SReg_32_XM0RegClass);
   }
 
+  int64_t FrOffset = FrameInfo.getObjectOffset(Index);
+
   for (unsigned i = 0, e = NumSubRegs; i < e; ++i) {
     unsigned SubReg = NumSubRegs == 1 ?
       SuperReg : getSubReg(SuperReg, getSubRegFromChannel(i));
+
+    if (SpillToSMEM) {
+      unsigned Size = FrameInfo.getObjectSize(Index);
+      unsigned Align = FrameInfo.getObjectAlignment(Index);
+      MachinePointerInfo PtrInfo
+        = MachinePointerInfo::getFixedStack(*MF, Index);
+      MachineMemOperand *MMO
+        = MF->getMachineMemOperand(PtrInfo, MachineMemOperand::MOLoad,
+                                   Size, Align);
+
+      unsigned OffsetReg = AMDGPU::M0;
+
+      // Add i * 4 offset
+      int64_t Offset = ST.getWavefrontSize() * (FrOffset + 4 * i);
+      if (Offset != 0) {
+        BuildMI(*MBB, MI, DL, TII->get(AMDGPU::S_ADD_U32), OffsetReg)
+          .addReg(MFI->getScratchWaveOffsetReg())
+          .addImm(Offset);
+      } else {
+        BuildMI(*MBB, MI, DL, TII->get(AMDGPU::S_MOV_B32), OffsetReg)
+          .addReg(MFI->getScratchWaveOffsetReg());
+      }
+
+      BuildMI(*MBB, MI, DL, TII->get(AMDGPU::S_BUFFER_LOAD_DWORD_SGPR), SubReg)
+        .addReg(MFI->getScratchRSrcReg()) // sbase
+        .addReg(OffsetReg)                // soff
+        .addImm(0)                        // glc
+        .addMemOperand(MMO)
+        .addReg(MI->getOperand(0).getReg(), RegState::ImplicitDefine);
+
+      continue;
+    }
 
     SIMachineFunctionInfo::SpilledReg Spill
       = MFI->getSpilledReg(MF, Index, i);
@@ -1167,4 +1259,107 @@ unsigned SIRegisterInfo::getMaxNumVGPRs(const MachineFunction &MF) const {
   }
 
   return MaxNumVGPRs - getNumDebuggerReservedVGPRs(ST);
+}
+
+ArrayRef<int16_t> SIRegisterInfo::getRegSplitParts(const TargetRegisterClass *RC,
+                                                   unsigned EltSize) const {
+  if (EltSize == 4) {
+    static const int16_t Sub0_15[] = {
+      AMDGPU::sub0, AMDGPU::sub1, AMDGPU::sub2, AMDGPU::sub3,
+      AMDGPU::sub4, AMDGPU::sub5, AMDGPU::sub6, AMDGPU::sub7,
+      AMDGPU::sub8, AMDGPU::sub9, AMDGPU::sub10, AMDGPU::sub11,
+      AMDGPU::sub12, AMDGPU::sub13, AMDGPU::sub14, AMDGPU::sub15,
+    };
+
+    static const int16_t Sub0_7[] = {
+      AMDGPU::sub0, AMDGPU::sub1, AMDGPU::sub2, AMDGPU::sub3,
+      AMDGPU::sub4, AMDGPU::sub5, AMDGPU::sub6, AMDGPU::sub7,
+    };
+
+    static const int16_t Sub0_3[] = {
+      AMDGPU::sub0, AMDGPU::sub1, AMDGPU::sub2, AMDGPU::sub3,
+    };
+
+    static const int16_t Sub0_2[] = {
+      AMDGPU::sub0, AMDGPU::sub1, AMDGPU::sub2,
+    };
+
+    static const int16_t Sub0_1[] = {
+      AMDGPU::sub0, AMDGPU::sub1,
+    };
+
+    switch (AMDGPU::getRegBitWidth(*RC->MC)) {
+    case 32:
+      return {};
+    case 64:
+      return makeArrayRef(Sub0_1);
+    case 96:
+      return makeArrayRef(Sub0_2);
+    case 128:
+      return makeArrayRef(Sub0_3);
+    case 256:
+      return makeArrayRef(Sub0_7);
+    case 512:
+      return makeArrayRef(Sub0_15);
+    default:
+      llvm_unreachable("unhandled register size");
+    }
+  }
+
+  if (EltSize == 8) {
+    static const int16_t Sub0_15_64[] = {
+      AMDGPU::sub0_sub1, AMDGPU::sub2_sub3,
+      AMDGPU::sub4_sub5, AMDGPU::sub6_sub7,
+      AMDGPU::sub8_sub9, AMDGPU::sub10_sub11,
+      AMDGPU::sub12_sub13, AMDGPU::sub14_sub15
+    };
+
+    static const int16_t Sub0_7_64[] = {
+      AMDGPU::sub0_sub1, AMDGPU::sub2_sub3,
+      AMDGPU::sub4_sub5, AMDGPU::sub6_sub7
+    };
+
+
+    static const int16_t Sub0_3_64[] = {
+      AMDGPU::sub0_sub1, AMDGPU::sub2_sub3
+    };
+
+    switch (AMDGPU::getRegBitWidth(*RC->MC)) {
+    case 64:
+      return {};
+    case 128:
+      return makeArrayRef(Sub0_3_64);
+    case 256:
+      return makeArrayRef(Sub0_7_64);
+    case 512:
+      return makeArrayRef(Sub0_15_64);
+    default:
+      llvm_unreachable("unhandled register size");
+    }
+  }
+
+  assert(EltSize == 16 && "unhandled register spill split size");
+
+  static const int16_t Sub0_15_128[] = {
+    AMDGPU::sub0_sub1_sub2_sub3,
+    AMDGPU::sub4_sub5_sub6_sub7,
+    AMDGPU::sub8_sub9_sub10_sub11,
+    AMDGPU::sub12_sub13_sub14_sub15
+  };
+
+  static const int16_t Sub0_7_128[] = {
+    AMDGPU::sub0_sub1_sub2_sub3,
+    AMDGPU::sub4_sub5_sub6_sub7
+  };
+
+  switch (AMDGPU::getRegBitWidth(*RC->MC)) {
+  case 128:
+    return {};
+  case 256:
+    return makeArrayRef(Sub0_7_128);
+  case 512:
+    return makeArrayRef(Sub0_15_128);
+  default:
+    llvm_unreachable("unhandled register size");
+  }
 }
