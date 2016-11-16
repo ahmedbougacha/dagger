@@ -546,12 +546,12 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::LOAD: {
-    Type *ResType = ResEVT.getTypeForEVT(Ctx);
+    Type *ResPtrTy = ResEVT.getTypeForEVT(Ctx)->getPointerTo();
     Value *Ptr = getNextOperand();
     if (!Ptr->getType()->isPointerTy())
-      Ptr = Builder->CreateIntToPtr(Ptr, ResType->getPointerTo());
-    assert(Ptr->getType()->getPointerElementType() == ResType &&
-           "Mismatch between a LOAD's address operand and return type!");
+      Ptr = Builder->CreateIntToPtr(Ptr, ResPtrTy);
+    else if (Ptr->getType() != ResPtrTy)
+      Ptr = Builder->CreateBitCast(Ptr, ResPtrTy);
     registerResult(Builder->CreateAlignedLoad(Ptr, 1));
     break;
   }
@@ -738,12 +738,12 @@ bool DCInstrSema::translatePredicate(unsigned Pred) {
   case TargetOpcode::Predicate::alignedload512:
     // FIXME: Take advantage of the implied alignment.
   case TargetOpcode::Predicate::load: {
-    Type *ResType = ResEVT.getTypeForEVT(Ctx);
+    Type *ResPtrTy = ResEVT.getTypeForEVT(Ctx)->getPointerTo();
     Value *Ptr = getNextOperand();
     if (!Ptr->getType()->isPointerTy())
-      Ptr = Builder->CreateIntToPtr(Ptr, ResType->getPointerTo());
-    assert(Ptr->getType()->getPointerElementType() == ResType &&
-           "Mismatch between a LOAD's address operand and return type!");
+      Ptr = Builder->CreateIntToPtr(Ptr, ResPtrTy);
+    else if (Ptr->getType() != ResPtrTy)
+      Ptr = Builder->CreateBitCast(Ptr, ResPtrTy);
     registerResult(Builder->CreateAlignedLoad(Ptr, 1));
     return true;
   }
