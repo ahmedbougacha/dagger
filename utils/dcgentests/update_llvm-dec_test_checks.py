@@ -15,7 +15,7 @@ def main():
     if args.arch == 'x86_64':
         COMMENT = '#'
         RETINST = 'retq'
-        TARGET = 'x86_64-apple-darwin'
+        TARGET = 'x86_64--darwin'
         PCREG = 'RIP'
     else:
         assert args.arch == 'arm64'
