@@ -635,6 +635,21 @@ bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::HADD:  translateHorizontalBinop(Instruction::Add);  break;
   case X86ISD::FHSUB: translateHorizontalBinop(Instruction::FSub); break;
   case X86ISD::FHADD: translateHorizontalBinop(Instruction::FAdd); break;
+
+  case X86ISD::CVTDQ2PD: {
+    auto *ResTy = cast<VectorType>(ResEVT.getTypeForEVT(Ctx));
+    Value *Src = getNextOperand();
+    auto *SrcTy = cast<VectorType>(Src->getType());
+
+    assert((Src->getType() == VectorType::get(Builder->getInt32Ty(), 4) &&
+            ResTy == VectorType::get(Builder->getDoubleTy(), 2)) &&
+           "X86ISD::CVTDQ2PD only supports v4i32->v2f64");
+
+    registerResult(Builder->CreateSIToFP(
+        Builder->CreateShuffleVector(Src, UndefValue::get(SrcTy), {0, 1}),
+        ResTy));
+    break;
+  }
   }
 
   return true;
