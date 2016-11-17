@@ -270,10 +270,10 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FP_TO_FP16, MVT::i16, Promote);
     AddPromotedToType(ISD::FP_TO_FP16, MVT::i16, MVT::i32);
 
-    setOperationAction(ISD::FP_TO_SINT, MVT::i16, Custom);
-    setOperationAction(ISD::FP_TO_UINT, MVT::i16, Custom);
-    setOperationAction(ISD::SINT_TO_FP, MVT::i16, Custom);
-    setOperationAction(ISD::UINT_TO_FP, MVT::i16, Custom);
+    setOperationAction(ISD::FP_TO_SINT, MVT::i16, Promote);
+    setOperationAction(ISD::FP_TO_UINT, MVT::i16, Promote);
+    setOperationAction(ISD::SINT_TO_FP, MVT::i16, Promote);
+    setOperationAction(ISD::UINT_TO_FP, MVT::i16, Promote);
 
     // F16 - Constant Actions.
     setOperationAction(ISD::ConstantFP, MVT::f16, Custom);
@@ -285,10 +285,17 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     AddPromotedToType(ISD::STORE, MVT::f16, MVT::i16);
 
     // F16 - VOP1 Actions.
+    setOperationAction(ISD::FP_ROUND, MVT::f16, Custom);
     setOperationAction(ISD::FCOS, MVT::f16, Promote);
     setOperationAction(ISD::FSIN, MVT::f16, Promote);
+    setOperationAction(ISD::FP_TO_SINT, MVT::f16, Promote);
+    setOperationAction(ISD::FP_TO_UINT, MVT::f16, Promote);
+    setOperationAction(ISD::SINT_TO_FP, MVT::f16, Promote);
+    setOperationAction(ISD::UINT_TO_FP, MVT::f16, Promote);
 
     // F16 - VOP2 Actions.
+    setOperationAction(ISD::BR_CC, MVT::f16, Expand);
+    setOperationAction(ISD::SELECT_CC, MVT::f16, Expand);
     setOperationAction(ISD::FMAXNUM, MVT::f16, Legal);
     setOperationAction(ISD::FMINNUM, MVT::f16, Legal);
     setOperationAction(ISD::FDIV, MVT::f16, Promote);
@@ -1826,12 +1833,8 @@ SDValue SITargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
 
   case ISD::ConstantFP:
     return lowerConstantFP(Op, DAG);
-  case ISD::FP_TO_SINT:
-  case ISD::FP_TO_UINT:
-    return lowerFpToInt(Op, DAG);
-  case ISD::SINT_TO_FP:
-  case ISD::UINT_TO_FP:
-    return lowerIntToFp(Op, DAG);
+  case ISD::FP_ROUND:
+    return lowerFP_ROUND(Op, DAG);
   }
   return SDValue();
 }
@@ -2043,46 +2046,21 @@ SDValue SITargetLowering::lowerConstantFP(SDValue Op, SelectionDAG &DAG) const {
   return SDValue();
 }
 
-SDValue SITargetLowering::lowerFpToInt(SDValue Op, SelectionDAG &DAG) const {
+SDValue SITargetLowering::lowerFP_ROUND(SDValue Op, SelectionDAG &DAG) const {
   EVT DstVT = Op.getValueType();
   EVT SrcVT = Op.getOperand(0).getValueType();
-  if (DstVT == MVT::i64) {
-    return Op.getOpcode() == ISD::FP_TO_SINT ?
-        AMDGPUTargetLowering::LowerFP_TO_SINT(Op, DAG) :
-        AMDGPUTargetLowering::LowerFP_TO_UINT(Op, DAG);
-  }
 
-  if (SrcVT == MVT::f16)
+  assert(DstVT == MVT::f16 &&
+         "Do not know how to custom lower FP_ROUND for non-f16 type");
+
+  if (SrcVT != MVT::f64)
     return Op;
 
   SDLoc DL(Op);
-  SDValue OrigSrc = Op.getOperand(0);
-  SDValue FPRoundFlag = DAG.getIntPtrConstant(0, DL);
-  SDValue FPRoundSrc =
-      DAG.getNode(ISD::FP_ROUND, DL, MVT::f16, OrigSrc, FPRoundFlag);
-
-  return DAG.getNode(Op.getOpcode(), DL, DstVT, FPRoundSrc);
-}
-
-SDValue SITargetLowering::lowerIntToFp(SDValue Op, SelectionDAG &DAG) const {
-  EVT DstVT = Op.getValueType();
-  EVT SrcVT = Op.getOperand(0).getValueType();
-  if (SrcVT == MVT::i64) {
-    return Op.getOpcode() == ISD::SINT_TO_FP ?
-        AMDGPUTargetLowering::LowerSINT_TO_FP(Op, DAG) :
-        AMDGPUTargetLowering::LowerUINT_TO_FP(Op, DAG);
-  }
-
-  if (DstVT == MVT::f16)
-    return Op;
-
-  SDLoc DL(Op);
-  SDValue OrigSrc = Op.getOperand(0);
-  SDValue SExtOrZExtOrTruncSrc = Op.getOpcode() == ISD::SINT_TO_FP ?
-      DAG.getSExtOrTrunc(OrigSrc, DL, MVT::i32) :
-      DAG.getZExtOrTrunc(OrigSrc, DL, MVT::i32);
-
-  return DAG.getNode(Op.getOpcode(), DL, DstVT, SExtOrZExtOrTruncSrc);
+  SDValue Src = Op.getOperand(0);
+  SDValue FpToFp16 = DAG.getNode(ISD::FP_TO_FP16, DL, MVT::i32, Src);
+  SDValue Trunc = DAG.getNode(ISD::TRUNCATE, DL, MVT::i16, FpToFp16);
+  return DAG.getNode(ISD::BITCAST, DL, MVT::f16, Trunc);;
 }
 
 SDValue SITargetLowering::getSegmentAperture(unsigned AS,
@@ -4047,13 +4025,16 @@ void SITargetLowering::AdjustInstrPostInstrSelection(MachineInstr &MI,
 
   if (TII->isMIMG(MI)) {
     unsigned VReg = MI.getOperand(0).getReg();
+    const TargetRegisterClass *RC = MRI.getRegClass(VReg);
+    // TODO: Need mapping tables to handle other cases (register classes).
+    if (RC != &AMDGPU::VReg_128RegClass)
+      return;
+
     unsigned DmaskIdx = MI.getNumOperands() == 12 ? 3 : 4;
     unsigned Writemask = MI.getOperand(DmaskIdx).getImm();
     unsigned BitsSet = 0;
     for (unsigned i = 0; i < 4; ++i)
       BitsSet += Writemask & (1 << i) ? 1 : 0;
-
-    const TargetRegisterClass *RC;
     switch (BitsSet) {
     default: return;
     case 1:  RC = &AMDGPU::VGPR_32RegClass; break;

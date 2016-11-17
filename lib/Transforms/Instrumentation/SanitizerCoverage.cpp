@@ -357,9 +357,9 @@ bool SanitizerCoverageModule::runOnModule(Module &M) {
   // Create variable for module (compilation unit) name
   Constant *ModNameStrConst =
       ConstantDataArray::getString(M.getContext(), M.getName(), true);
-  GlobalVariable *ModuleName =
-      new GlobalVariable(M, ModNameStrConst->getType(), true,
-                         GlobalValue::PrivateLinkage, ModNameStrConst);
+  GlobalVariable *ModuleName = new GlobalVariable(
+      M, ModNameStrConst->getType(), true, GlobalValue::PrivateLinkage,
+      ModNameStrConst, "__sancov_gen_modname");
   if (Options.TracePCGuard) {
     if (HasSancovGuardsSection) {
       Function *CtorFunc;
@@ -514,7 +514,7 @@ void SanitizerCoverageModule::CreateFunctionGuardArray(size_t NumGuards,
   ArrayType *ArrayOfInt32Ty = ArrayType::get(Int32Ty, NumGuards);
   FunctionGuardArray = new GlobalVariable(
       *CurModule, ArrayOfInt32Ty, false, GlobalVariable::PrivateLinkage,
-      Constant::getNullValue(ArrayOfInt32Ty), "__sancov_guard");
+      Constant::getNullValue(ArrayOfInt32Ty), "__sancov_gen_");
   if (auto Comdat = F.getComdat())
     FunctionGuardArray->setComdat(Comdat);
   FunctionGuardArray->setSection(SanCovTracePCGuardSection);

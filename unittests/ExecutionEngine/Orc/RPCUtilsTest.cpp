@@ -19,10 +19,11 @@ using namespace llvm::orc::rpc;
 
 class Queue : public std::queue<char> {
 public:
-  std::mutex &getLock() { return Lock; }
-
+  std::mutex &getMutex() { return M; }
+  std::condition_variable &getCondVar() { return CV; }
 private:
-  std::mutex Lock;
+  std::mutex M;
+  std::condition_variable CV;
 };
 
 class QueueChannel : public RawByteChannel {
@@ -31,26 +32,22 @@ public:
       : InQueue(InQueue), OutQueue(OutQueue) {}
 
   Error readBytes(char *Dst, unsigned Size) override {
-    while (Size != 0) {
-      // If there's nothing to read then yield.
+    std::unique_lock<std::mutex> Lock(InQueue.getMutex());
+    while (Size) {
       while (InQueue.empty())
-        std::this_thread::yield();
-
-      // Lock the channel and read what we can.
-      std::lock_guard<std::mutex> Lock(InQueue.getLock());
-      while (!InQueue.empty() && Size) {
-        *Dst++ = InQueue.front();
-        --Size;
-        InQueue.pop();
-      }
+        InQueue.getCondVar().wait(Lock);
+      *Dst++ = InQueue.front();
+      --Size;
+      InQueue.pop();
     }
     return Error::success();
   }
 
   Error appendBytes(const char *Src, unsigned Size) override {
-    std::lock_guard<std::mutex> Lock(OutQueue.getLock());
+    std::unique_lock<std::mutex> Lock(OutQueue.getMutex());
     while (Size--)
       OutQueue.push(*Src++);
+    OutQueue.getCondVar().notify_one();
     return Error::success();
   }
 
@@ -92,6 +89,7 @@ public:
 private:
   QueueChannel C;
 };
+
 
 TEST(DummyRPC, TestAsyncVoidBool) {
   Queue Q1, Q2;
@@ -246,27 +244,3 @@ TEST(DummyRPC, TestSerialization) {
 
   ServerThread.join();
 }
-
-// Test the synchronous call API.
-// FIXME: Re-enable once deadlock encountered on S390 has been debugged / fixed,
-//        see http://lab.llvm.org:8011/builders/clang-s390x-linux/builds/3459
-// TEST_F(DummyRPC, TestSynchronousCall) {
-//   Queue Q1, Q2;
-//   QueueChannel C1(Q1, Q2);
-//   QueueChannel C2(Q2, Q1);
-//
-//   auto ServerResult =
-//     std::async(std::launch::async,
-//       [&]() {
-//         return expect<IntInt>(C2, [&](int32_t V) { return V; });
-//       });
-//
-//   auto ValOrErr = callST<IntInt>(C1, 42);
-//
-//   EXPECT_FALSE(!!ServerResult.get())
-//     << "Server returned an error.";
-//   EXPECT_TRUE(!!ValOrErr)
-//     << "callST returned an error.";
-//   EXPECT_EQ(*ValOrErr, 42)
-//     << "Incorrect callST<IntInt> result";
-// }

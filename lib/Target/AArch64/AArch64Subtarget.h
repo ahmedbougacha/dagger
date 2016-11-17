@@ -43,6 +43,7 @@ public:
     CortexA73,
     Cyclone,
     ExynosM1,
+    Falkor,
     Kryo,
     Vulcan
   };
@@ -171,6 +172,8 @@ public:
   bool hasZeroCycleZeroing() const { return HasZeroCycleZeroing; }
 
   bool requiresStrictAlign() const { return StrictAlign; }
+
+  bool isXRaySupported() const override { return true; }
 
   bool isX18Reserved() const { return ReserveX18; }
   bool hasFPARMv8() const { return HasFPARMv8; }

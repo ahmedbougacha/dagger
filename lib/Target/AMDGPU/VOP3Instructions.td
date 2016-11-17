@@ -167,11 +167,13 @@ def V_LDEXP_F64 : VOP3Inst <"v_ldexp_f64", VOP3_Profile<VOP_F64_F64_I32>, AMDGPU
 
 def V_DIV_SCALE_F32 : VOP3_Pseudo <"v_div_scale_f32", VOP3b_F32_I1_F32_F32_F32, [], 1> {
   let SchedRW = [WriteFloatFMA, WriteSALU];
+  let hasExtraSrcRegAllocReq = 1;
 }
 
 // Double precision division pre-scale.
 def V_DIV_SCALE_F64 : VOP3_Pseudo <"v_div_scale_f64", VOP3b_F64_I1_F64_F64_F64, [], 1> {
   let SchedRW = [WriteDouble, WriteSALU];
+  let hasExtraSrcRegAllocReq = 1;
 }
 
 def V_MSAD_U8 : VOP3Inst <"v_msad_u8", VOP3_Profile<VOP_I32_I32_I32_I32>, int_amdgcn_msad_u8>;
@@ -229,11 +231,6 @@ def V_MAD_I16 : VOP3Inst <"v_mad_i16", VOP3_Profile<VOP_I16_I16_I16_I16>>;
 }  // End isCommutable = 1
 
 } // End SubtargetPredicate = isVI
-
-def : Pat <
-  (i16 (select i1:$src0, i16:$src1, i16:$src2)),
-  (V_CNDMASK_B32_e64 $src2, $src1, $src0)
->;
 
 let Predicates = [isVI] in {
 

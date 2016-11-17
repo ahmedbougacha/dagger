@@ -30,6 +30,7 @@ add_tablegen(llvm-tblgen LLVM
   SearchableTableEmitter.cpp
   SemanticsEmitter.cpp
   SubtargetEmitter.cpp
+  SubtargetFeatureInfo.cpp
   TableGen.cpp
   X86DisassemblerTables.cpp
   X86ModRMFilters.cpp

@@ -13,6 +13,19 @@ tablegen(LLVM X86GenSubtargetInfo.inc -gen-subtarget)
 tablegen(LLVM X86GenSema.inc -gen-semantics)
 add_public_tablegen_target(X86CommonTableGen)
 
+# Add GlobalISel files if the build option was enabled.
+set(GLOBAL_ISEL_FILES
+  X86CallLowering.cpp
+  )
+
+if(LLVM_BUILD_GLOBAL_ISEL)
+  set(GLOBAL_ISEL_BUILD_FILES ${GLOBAL_ISEL_FILES})
+else()
+  set(GLOBAL_ISEL_BUILD_FILES "")
+  set(LLVM_OPTIONAL_SOURCES LLVMGlobalISel ${GLOBAL_ISEL_FILES})
+endif()
+
+
 set(sources
   X86AsmPrinter.cpp
   X86CallFrameOptimization.cpp
@@ -42,6 +55,8 @@ set(sources
   X86VZeroUpper.cpp
   X86WinAllocaExpander.cpp
   X86WinEHState.cpp
+  X86CallingConv.cpp
+  ${GLOBAL_ISEL_BUILD_FILES}
   )
 
 add_llvm_target(X86CodeGen ${sources})
