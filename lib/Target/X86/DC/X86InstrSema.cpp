@@ -30,6 +30,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/TypeBuilder.h"
+#include <algorithm>
 
 #define GET_INSTR_SEMA
 #include "X86GenSema.inc"
@@ -641,17 +642,16 @@ bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::FHSUB: translateHorizontalBinop(Instruction::FSub); break;
   case X86ISD::FHADD: translateHorizontalBinop(Instruction::FAdd); break;
 
-  case X86ISD::CVTDQ2PD: {
+  case X86ISD::CVTSI2P: {
     auto *ResTy = cast<VectorType>(ResEVT.getTypeForEVT(Ctx));
     Value *Src = getNextOperand();
     auto *SrcTy = cast<VectorType>(Src->getType());
 
-    assert((Src->getType() == VectorType::get(Builder->getInt32Ty(), 4) &&
-            ResTy == VectorType::get(Builder->getDoubleTy(), 2)) &&
-           "X86ISD::CVTDQ2PD only supports v4i32->v2f64");
+    SmallVector<unsigned, 4> SrcMask(ResTy->getVectorNumElements());
+    std::iota(SrcMask.begin(), SrcMask.end(), 0);
 
     registerResult(Builder->CreateSIToFP(
-        Builder->CreateShuffleVector(Src, UndefValue::get(SrcTy), {0, 1}),
+        Builder->CreateShuffleVector(Src, UndefValue::get(SrcTy), SrcMask),
         ResTy));
     break;
   }
