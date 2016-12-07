@@ -231,6 +231,7 @@ bool X86InstrSema::translateTargetInst() {
   case X86::NOOPL:
     return true;
 
+  case X86::HLT:
   case X86::XLAT:
   case X86::CPUID: {
     // FIXME: There's no reason to have a function, this is just a hack to get
