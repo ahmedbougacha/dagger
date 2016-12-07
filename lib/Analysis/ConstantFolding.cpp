@@ -58,7 +58,37 @@ namespace {
 // Constant Folding internal helper functions
 //===----------------------------------------------------------------------===//
 
-/// Constant fold bitcast, symbolically evaluating it with DataLayout.
+static Constant *foldConstVectorToAPInt(APInt &Result, Type *DestTy,
+                                        Constant *C, Type *SrcEltTy,
+                                        unsigned NumSrcElts,
+                                        const DataLayout &DL) {
+  // Now that we know that the input value is a vector of integers, just shift
+  // and insert them into our result.
+  unsigned BitShift = DL.getTypeSizeInBits(SrcEltTy);
+  for (unsigned i = 0; i != NumSrcElts; ++i) {
+    Constant *Element;
+    if (DL.isLittleEndian())
+      Element = C->getAggregateElement(NumSrcElts - i - 1);
+    else
+      Element = C->getAggregateElement(i);
+
+    if (Element && isa<UndefValue>(Element)) {
+      Result <<= BitShift;
+      continue;
+    }
+
+    auto *ElementCI = dyn_cast_or_null<ConstantInt>(Element);
+    if (!ElementCI)
+      return ConstantExpr::getBitCast(C, DestTy);
+
+    Result <<= BitShift;
+    Result |= ElementCI->getValue().zextOrSelf(Result.getBitWidth());
+  }
+
+  return nullptr;
+}
+
+// Constant fold bitcast, symbolically evaluating it with DataLayout.
 /// This always returns a non-null constant, but it may be a
 /// ConstantExpr if unfoldable.
 Constant *FoldBitCast(Constant *C, Type *DestTy, const DataLayout &DL) {
@@ -88,29 +118,10 @@ Constant *FoldBitCast(Constant *C, Type *DestTy, const DataLayout &DL) {
       C = ConstantExpr::getBitCast(C, SrcIVTy);
     }
 
-    // Now that we know that the input value is a vector of integers, just shift
-    // and insert them into our result.
-    unsigned BitShift = DL.getTypeSizeInBits(SrcEltTy);
     APInt Result(IT->getBitWidth(), 0);
-    for (unsigned i = 0; i != NumSrcElts; ++i) {
-      Constant *Element;
-      if (DL.isLittleEndian())
-        Element = C->getAggregateElement(NumSrcElts-i-1);
-      else
-        Element = C->getAggregateElement(i);
-
-      if (Element && isa<UndefValue>(Element)) {
-        Result <<= BitShift;
-        continue;
-      }
-
-      auto *ElementCI = dyn_cast_or_null<ConstantInt>(Element);
-      if (!ElementCI)
-        return ConstantExpr::getBitCast(C, DestTy);
-
-      Result <<= BitShift;
-      Result |= ElementCI->getValue().zextOrSelf(IT->getBitWidth());
-    }
+    if (Constant *CE = foldConstVectorToAPInt(Result, DestTy, C,
+                                              SrcEltTy, NumSrcElts, DL))
+      return CE;
 
     return ConstantInt::get(IT, Result);
   }
@@ -773,6 +784,7 @@ Constant *SymbolicallyEvaluateGEP(const GEPOperator *GEP,
                                   const DataLayout &DL,
                                   const TargetLibraryInfo *TLI) {
   const GEPOperator *InnermostGEP = GEP;
+  bool InBounds = GEP->isInBounds();
 
   Type *SrcElemTy = GEP->getSourceElementType();
   Type *ResElemTy = GEP->getResultElementType();
@@ -825,6 +837,7 @@ Constant *SymbolicallyEvaluateGEP(const GEPOperator *GEP,
   // If this is a GEP of a GEP, fold it all into a single GEP.
   while (auto *GEP = dyn_cast<GEPOperator>(Ptr)) {
     InnermostGEP = GEP;
+    InBounds &= GEP->isInBounds();
 
     SmallVector<Value *, 4> NestedOps(GEP->op_begin() + 1, GEP->op_end());
 
@@ -946,8 +959,8 @@ Constant *SymbolicallyEvaluateGEP(const GEPOperator *GEP,
     }
 
   // Create a GEP.
-  Constant *C = ConstantExpr::getGetElementPtr(
-      SrcElemTy, Ptr, NewIdxs, /*InBounds=*/false, InRangeIndex);
+  Constant *C = ConstantExpr::getGetElementPtr(SrcElemTy, Ptr, NewIdxs,
+                                               InBounds, InRangeIndex);
   assert(C->getType()->getPointerElementType() == Ty &&
          "Computed GetElementPtr has unexpected type!");
 

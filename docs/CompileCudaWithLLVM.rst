@@ -33,8 +33,10 @@ for details.  Note that clang `does not support
 <https://llvm.org/bugs/show_bug.cgi?id=26966>`_ the CUDA toolkit as installed
 by many Linux package managers; you probably need to install nvidia's package.
 
-You will need CUDA 7.0 or 7.5 to compile with clang.  CUDA 8 support is in the
-works.
+You will need CUDA 7.0, 7.5, or 8.0 to compile with clang.
+
+CUDA compilation is supported on Linux, and on MacOS as of XXXX-XX-XX.  Windows
+support is planned but not yet in place.
 
 Invoking clang
 --------------
@@ -60,6 +62,10 @@ brackets as described below:
   y[1] = 4
   y[2] = 6
   y[3] = 8
+
+On MacOS, replace `-lcudart_static` with `-lcudart`; otherwise, you may get
+"CUDA driver version is insufficient for CUDA runtime version" errors when you
+run your program.
 
 * ``<CUDA install path>`` -- the directory where you installed CUDA SDK.
   Typically, ``/usr/local/cuda``.

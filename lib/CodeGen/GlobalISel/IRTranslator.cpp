@@ -74,7 +74,7 @@ unsigned IRTranslator::getOrCreateVReg(const Value &Val) {
         if (!TPC->isGlobalISelAbortEnabled()) {
           MIRBuilder.getMF().getProperties().set(
               MachineFunctionProperties::Property::FailedISel);
-          return 0;
+          return VReg;
         }
         reportTranslationError(Val, "unable to translate constant");
       }
@@ -336,7 +336,7 @@ bool IRTranslator::translateGetElementPtr(const User &U) {
   for (gep_type_iterator GTI = gep_type_begin(&U), E = gep_type_end(&U);
        GTI != E; ++GTI) {
     const Value *Idx = GTI.getOperand();
-    if (StructType *StTy = dyn_cast<StructType>(*GTI)) {
+    if (StructType *StTy = GTI.getStructTypeOrNull()) {
       unsigned Field = cast<Constant>(Idx)->getUniqueInteger().getZExtValue();
       Offset += DL->getStructLayout(StTy)->getElementOffset(Field);
       continue;
@@ -448,7 +448,7 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI,
   case Intrinsic::eh_typeid_for: {
     GlobalValue *GV = ExtractTypeInfo(CI.getArgOperand(0));
     unsigned Reg = getOrCreateVReg(CI);
-    unsigned TypeID = MIRBuilder.getMF().getMMI().getTypeIDFor(GV);
+    unsigned TypeID = MIRBuilder.getMF().getTypeIDFor(GV);
     MIRBuilder.buildConstant(Reg, TypeID);
     return true;
   }
@@ -541,7 +541,7 @@ bool IRTranslator::translateCall(const User &U) {
 bool IRTranslator::translateInvoke(const User &U) {
   const InvokeInst &I = cast<InvokeInst>(U);
   MachineFunction &MF = MIRBuilder.getMF();
-  MachineModuleInfo &MMI = MF.getMMI();
+  MCContext &Context = MF.getContext();
 
   const BasicBlock *ReturnBB = I.getSuccessor(0);
   const BasicBlock *EHPadBB = I.getSuccessor(1);
@@ -564,9 +564,9 @@ bool IRTranslator::translateInvoke(const User &U) {
     return false;
 
 
-  // Emit the actual call, bracketed by EH_LABELs so that the MMI knows about
+  // Emit the actual call, bracketed by EH_LABELs so that the MF knows about
   // the region covered by the try.
-  MCSymbol *BeginSymbol = MMI.getContext().createTempSymbol();
+  MCSymbol *BeginSymbol = Context.createTempSymbol();
   MIRBuilder.buildInstr(TargetOpcode::EH_LABEL).addSym(BeginSymbol);
 
   unsigned Res = I.getType()->isVoidTy() ? 0 : getOrCreateVReg(I);
@@ -578,13 +578,13 @@ bool IRTranslator::translateInvoke(const User &U) {
                       CallLowering::ArgInfo(Res, I.getType()), Args))
     return false;
 
-  MCSymbol *EndSymbol = MMI.getContext().createTempSymbol();
+  MCSymbol *EndSymbol = Context.createTempSymbol();
   MIRBuilder.buildInstr(TargetOpcode::EH_LABEL).addSym(EndSymbol);
 
   // FIXME: track probabilities.
   MachineBasicBlock &EHPadMBB = getOrCreateBB(*EHPadBB),
                     &ReturnMBB = getOrCreateBB(*ReturnBB);
-  MMI.addInvoke(&EHPadMBB, BeginSymbol, EndSymbol);
+  MF.addInvoke(&EHPadMBB, BeginSymbol, EndSymbol);
   MIRBuilder.getMBB().addSuccessor(&ReturnMBB);
   MIRBuilder.getMBB().addSuccessor(&EHPadMBB);
 
@@ -596,8 +596,7 @@ bool IRTranslator::translateLandingPad(const User &U) {
 
   MachineBasicBlock &MBB = MIRBuilder.getMBB();
   MachineFunction &MF = MIRBuilder.getMF();
-  MachineModuleInfo &MMI = MF.getMMI();
-  addLandingPadInfo(LP, MMI, MBB);
+  addLandingPadInfo(LP, MBB);
 
   MBB.setIsEHPad();
 
@@ -619,7 +618,7 @@ bool IRTranslator::translateLandingPad(const User &U) {
   // Add a label to mark the beginning of the landing pad.  Deletion of the
   // landing pad can thus be detected via the MachineModuleInfo.
   MIRBuilder.buildInstr(TargetOpcode::EH_LABEL)
-    .addSym(MMI.addLandingPad(&MBB));
+    .addSym(MF.addLandingPad(&MBB));
 
   // Mark exception register as live in.
   SmallVector<unsigned, 2> Regs;
@@ -679,8 +678,6 @@ void IRTranslator::finishPendingPhis() {
       MIB.addMBB(BBToMBB[PI->getIncomingBlock(i)]);
     }
   }
-
-  PendingPHIs.clear();
 }
 
 bool IRTranslator::translate(const Instruction &Inst) {
@@ -698,15 +695,13 @@ bool IRTranslator::translate(const Instruction &Inst) {
 
 bool IRTranslator::translate(const Constant &C, unsigned Reg) {
   if (auto CI = dyn_cast<ConstantInt>(&C))
-    EntryBuilder.buildConstant(Reg, CI->getZExtValue());
+    EntryBuilder.buildConstant(Reg, *CI);
   else if (auto CF = dyn_cast<ConstantFP>(&C))
     EntryBuilder.buildFConstant(Reg, *CF);
   else if (isa<UndefValue>(C))
     EntryBuilder.buildInstr(TargetOpcode::IMPLICIT_DEF).addDef(Reg);
   else if (isa<ConstantPointerNull>(C))
-    EntryBuilder.buildInstr(TargetOpcode::G_CONSTANT)
-        .addDef(Reg)
-        .addImm(0);
+    EntryBuilder.buildConstant(Reg, 0);
   else if (auto GV = dyn_cast<GlobalValue>(&C))
     EntryBuilder.buildGlobalValue(Reg, GV);
   else if (auto CE = dyn_cast<ConstantExpr>(&C)) {
@@ -728,10 +723,9 @@ bool IRTranslator::translate(const Constant &C, unsigned Reg) {
 }
 
 void IRTranslator::finalizeFunction() {
-  finishPendingPhis();
-
   // Release the memory used by the different maps we
   // needed during the translation.
+  PendingPHIs.clear();
   ValToVReg.clear();
   FrameIndices.clear();
   Constants.clear();
@@ -761,6 +755,7 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &MF) {
     if (!TPC->isGlobalISelAbortEnabled()) {
       MIRBuilder.getMF().getProperties().set(
           MachineFunctionProperties::Property::FailedISel);
+      finalizeFunction();
       return false;
     }
     report_fatal_error("Unable to lower arguments");
@@ -769,7 +764,7 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &MF) {
   // Now that we've got the ABI handling code, it's safe to set a location for
   // any Constants we find in the IR.
   if (MBB.empty())
-    EntryBuilder.setMBB(MBB);
+    EntryBuilder.setMBB(MBB, /* Beginning */ true);
   else
     EntryBuilder.setInstr(MBB.back(), /* Before */ false);
 
@@ -780,7 +775,7 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &MF) {
     MIRBuilder.setMBB(MBB);
 
     for (const Instruction &Inst: BB) {
-      bool Succeeded = translate(Inst);
+      Succeeded &= translate(Inst);
       if (!Succeeded) {
         if (TPC->isGlobalISelAbortEnabled())
           reportTranslationError(Inst, "unable to translate instruction");
@@ -790,11 +785,15 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &MF) {
     }
   }
 
-  finalizeFunction();
+  if (Succeeded) {
+    finishPendingPhis();
 
-  // Now that the MachineFrameInfo has been configured, no further changes to
-  // the reserved registers are possible.
-  MRI->freezeReservedRegs(MF);
+    // Now that the MachineFrameInfo has been configured, no further changes to
+    // the reserved registers are possible.
+    MRI->freezeReservedRegs(MF);
+  }
+
+  finalizeFunction();
 
   return false;
 }

@@ -1025,7 +1025,6 @@ static void computeKnownBitsFromOperator(const Operator *I, APInt &KnownZero,
     break; // Can't work with floating point.
   case Instruction::PtrToInt:
   case Instruction::IntToPtr:
-  case Instruction::AddrSpaceCast: // Pointers could be different sizes.
     // Fall through and handle them the same as zext/trunc.
     LLVM_FALLTHROUGH;
   case Instruction::ZExt:
@@ -1232,7 +1231,7 @@ static void computeKnownBitsFromOperator(const Operator *I, APInt &KnownZero,
     gep_type_iterator GTI = gep_type_begin(I);
     for (unsigned i = 1, e = I->getNumOperands(); i != e; ++i, ++GTI) {
       Value *Index = I->getOperand(i);
-      if (StructType *STy = dyn_cast<StructType>(*GTI)) {
+      if (StructType *STy = GTI.getStructTypeOrNull()) {
         // Handle struct member offset arithmetic.
 
         // Handle case when index is vector zeroinitializer
@@ -1731,7 +1730,7 @@ static bool isGEPKnownNonNull(const GEPOperator *GEP, unsigned Depth,
   for (gep_type_iterator GTI = gep_type_begin(GEP), GTE = gep_type_end(GEP);
        GTI != GTE; ++GTI) {
     // Struct types are easy -- they must always be indexed by a constant.
-    if (StructType *STy = dyn_cast<StructType>(*GTI)) {
+    if (StructType *STy = GTI.getStructTypeOrNull()) {
       ConstantInt *OpC = cast<ConstantInt>(GTI.getOperand());
       unsigned ElementIdx = OpC->getZExtValue();
       const StructLayout *SL = Q.DL.getStructLayout(STy);

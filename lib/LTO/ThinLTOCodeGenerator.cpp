@@ -40,11 +40,13 @@
 #include "llvm/Object/ModuleSummaryIndexObjectFile.h"
 #include "llvm/Support/CachePruning.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/SHA1.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/Threading.h"
+#include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/FunctionImport.h"
@@ -62,12 +64,35 @@ using namespace llvm;
 namespace llvm {
 // Flags -discard-value-names, defined in LTOCodeGenerator.cpp
 extern cl::opt<bool> LTODiscardValueNames;
+extern cl::opt<std::string> LTORemarksFilename;
+extern cl::opt<bool> LTOPassRemarksWithHotness;
 }
 
 namespace {
 
 static cl::opt<int>
     ThreadCount("threads", cl::init(llvm::heavyweight_hardware_concurrency()));
+
+Expected<std::unique_ptr<tool_output_file>>
+setupOptimizationRemarks(LLVMContext &Ctx, int Count) {
+  if (LTOPassRemarksWithHotness)
+    Ctx.setDiagnosticHotnessRequested(true);
+
+  if (LTORemarksFilename.empty())
+    return nullptr;
+
+  std::string FileName =
+      LTORemarksFilename + ".thin." + llvm::utostr(Count) + ".yaml";
+  std::error_code EC;
+  auto DiagnosticOutputFile =
+      llvm::make_unique<tool_output_file>(FileName, EC, sys::fs::F_None);
+  if (EC)
+    return errorCodeToError(EC);
+  Ctx.setDiagnosticsOutputFile(
+      llvm::make_unique<yaml::Output>(DiagnosticOutputFile->os()));
+  DiagnosticOutputFile->keep();
+  return std::move(DiagnosticOutputFile);
+}
 
 // Simple helper to save temporary files for debug.
 static void saveTempBitcode(const Module &TheModule, StringRef TempDir,
@@ -141,11 +166,34 @@ static void promoteModule(Module &TheModule, const ModuleSummaryIndex &Index) {
     report_fatal_error("renameModuleForThinLTO failed");
 }
 
+static std::unique_ptr<Module>
+loadModuleFromBuffer(const MemoryBufferRef &Buffer, LLVMContext &Context,
+                     bool Lazy) {
+  SMDiagnostic Err;
+  Expected<std::unique_ptr<Module>> ModuleOrErr =
+      Lazy ? getLazyBitcodeModule(Buffer, Context,
+                                  /* ShouldLazyLoadMetadata */ true)
+           : parseBitcodeFile(Buffer, Context);
+  if (!ModuleOrErr) {
+    handleAllErrors(ModuleOrErr.takeError(), [&](ErrorInfoBase &EIB) {
+      SMDiagnostic Err = SMDiagnostic(Buffer.getBufferIdentifier(),
+                                      SourceMgr::DK_Error, EIB.message());
+      Err.print("ThinLTO", errs());
+    });
+    report_fatal_error("Can't load module, abort.");
+  }
+  return std::move(ModuleOrErr.get());
+}
+
 static void
 crossImportIntoModule(Module &TheModule, const ModuleSummaryIndex &Index,
                       StringMap<MemoryBufferRef> &ModuleMap,
                       const FunctionImporter::ImportMapTy &ImportList) {
-  ModuleLoader Loader(TheModule.getContext(), ModuleMap);
+  auto Loader = [&](StringRef Identifier) {
+    return loadModuleFromBuffer(ModuleMap[Identifier], TheModule.getContext(),
+                                /*Lazy=*/true);
+  };
+
   FunctionImporter Importer(Index, Loader);
   if (!Importer.importFunctions(TheModule, ImportList))
     report_fatal_error("importFunctions failed");
@@ -834,6 +882,12 @@ void ThinLTOCodeGenerator::run() {
         LLVMContext Context;
         Context.setDiscardValueNames(LTODiscardValueNames);
         Context.enableDebugTypeODRUniquing();
+        auto DiagFileOrErr = setupOptimizationRemarks(Context, count);
+        if (!DiagFileOrErr) {
+          errs() << "Error: " << toString(DiagFileOrErr.takeError()) << "\n";
+          report_fatal_error("ThinLTO: Can't get an output file for the "
+                             "remarks");
+        }
 
         // Parse module now
         auto TheModule = loadModuleFromBuffer(ModuleBuffer, Context, false);

@@ -299,7 +299,7 @@ bool SIInstrInfo::getMemOpBaseRegImmOfs(MachineInstr &LdSt, unsigned &BaseReg,
   }
 
   if (isFLAT(LdSt)) {
-    const MachineOperand *AddrReg = getNamedOperand(LdSt, AMDGPU::OpName::addr);
+    const MachineOperand *AddrReg = getNamedOperand(LdSt, AMDGPU::OpName::vaddr);
     BaseReg = AddrReg->getReg();
     Offset = 0;
     return true;
@@ -314,20 +314,16 @@ bool SIInstrInfo::shouldClusterMemOps(MachineInstr &FirstLdSt,
   const MachineOperand *FirstDst = nullptr;
   const MachineOperand *SecondDst = nullptr;
 
-  if (isDS(FirstLdSt) && isDS(SecondLdSt)) {
-    FirstDst = getNamedOperand(FirstLdSt, AMDGPU::OpName::vdst);
-    SecondDst = getNamedOperand(SecondLdSt, AMDGPU::OpName::vdst);
-  }
-
-  if (isSMRD(FirstLdSt) && isSMRD(SecondLdSt)) {
-    FirstDst = getNamedOperand(FirstLdSt, AMDGPU::OpName::sdst);
-    SecondDst = getNamedOperand(SecondLdSt, AMDGPU::OpName::sdst);
-  }
-
   if ((isMUBUF(FirstLdSt) && isMUBUF(SecondLdSt)) ||
       (isMTBUF(FirstLdSt) && isMTBUF(SecondLdSt))) {
     FirstDst = getNamedOperand(FirstLdSt, AMDGPU::OpName::vdata);
     SecondDst = getNamedOperand(SecondLdSt, AMDGPU::OpName::vdata);
+  } else if (isSMRD(FirstLdSt) && isSMRD(SecondLdSt)) {
+    FirstDst = getNamedOperand(FirstLdSt, AMDGPU::OpName::sdst);
+    SecondDst = getNamedOperand(SecondLdSt, AMDGPU::OpName::sdst);
+  } else if (isDS(FirstLdSt) && isDS(SecondLdSt)) {
+    FirstDst = getNamedOperand(FirstLdSt, AMDGPU::OpName::vdst);
+    SecondDst = getNamedOperand(SecondLdSt, AMDGPU::OpName::vdst);
   }
 
   if (!FirstDst || !SecondDst)
@@ -364,7 +360,8 @@ void SIInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   }
 
-  if (RC == &AMDGPU::SReg_32RegClass) {
+  if (RC == &AMDGPU::SReg_32_XM0RegClass ||
+      RC == &AMDGPU::SReg_32RegClass) {
     if (SrcReg == AMDGPU::SCC) {
       BuildMI(MBB, MI, DL, get(AMDGPU::S_CSELECT_B32), DestReg)
           .addImm(-1)
@@ -1672,48 +1669,22 @@ bool SIInstrInfo::isSchedulingBoundary(const MachineInstr &MI,
   // boundaries prevents incorrect movements of such instructions.
   return TargetInstrInfo::isSchedulingBoundary(MI, MBB, MF) ||
          MI.modifiesRegister(AMDGPU::EXEC, &RI) ||
+         MI.getOpcode() == AMDGPU::S_SETREG_IMM32_B32 ||
+         MI.getOpcode() == AMDGPU::S_SETREG_B32 ||
          changesVGPRIndexingMode(MI);
 }
 
 bool SIInstrInfo::isInlineConstant(const APInt &Imm) const {
-  int64_t SVal = Imm.getSExtValue();
-  if (SVal >= -16 && SVal <= 64)
-    return true;
-
-  if (Imm.getBitWidth() == 64) {
-    uint64_t Val = Imm.getZExtValue();
-    return (DoubleToBits(0.0) == Val) ||
-           (DoubleToBits(1.0) == Val) ||
-           (DoubleToBits(-1.0) == Val) ||
-           (DoubleToBits(0.5) == Val) ||
-           (DoubleToBits(-0.5) == Val) ||
-           (DoubleToBits(2.0) == Val) ||
-           (DoubleToBits(-2.0) == Val) ||
-           (DoubleToBits(4.0) == Val) ||
-           (DoubleToBits(-4.0) == Val) ||
-           (ST.hasInv2PiInlineImm() && Val == 0x3fc45f306dc9c882);
+  switch (Imm.getBitWidth()) {
+  case 32:
+    return AMDGPU::isInlinableLiteral32(Imm.getSExtValue(),
+                                        ST.hasInv2PiInlineImm());
+  case 64:
+    return AMDGPU::isInlinableLiteral64(Imm.getSExtValue(),
+                                        ST.hasInv2PiInlineImm());
+  default:
+    llvm_unreachable("invalid bitwidth");
   }
-
-  // The actual type of the operand does not seem to matter as long
-  // as the bits match one of the inline immediate values.  For example:
-  //
-  // -nan has the hexadecimal encoding of 0xfffffffe which is -2 in decimal,
-  // so it is a legal inline immediate.
-  //
-  // 1065353216 has the hexadecimal encoding 0x3f800000 which is 1.0f in
-  // floating-point, so it is a legal inline immediate.
-  uint32_t Val = Imm.getZExtValue();
-
-  return (FloatToBits(0.0f) == Val) ||
-         (FloatToBits(1.0f) == Val) ||
-         (FloatToBits(-1.0f) == Val) ||
-         (FloatToBits(0.5f) == Val) ||
-         (FloatToBits(-0.5f) == Val) ||
-         (FloatToBits(2.0f) == Val) ||
-         (FloatToBits(-2.0f) == Val) ||
-         (FloatToBits(4.0f) == Val) ||
-         (FloatToBits(-4.0f) == Val) ||
-         (ST.hasInv2PiInlineImm() && Val == 0x3e22f983);
 }
 
 bool SIInstrInfo::isInlineConstant(const MachineOperand &MO,
@@ -1724,9 +1695,16 @@ bool SIInstrInfo::isInlineConstant(const MachineOperand &MO,
     // 32-bit floating point immediate bit pattern is legal for an integer
     // immediate. It would be for any 32-bit integer operand, but would not be
     // for a 64-bit one.
-
-    unsigned BitSize = 8 * OpSize;
-    return isInlineConstant(APInt(BitSize, MO.getImm(), true));
+    switch (OpSize) {
+    case 4:
+      return AMDGPU::isInlinableLiteral32(static_cast<int32_t>(MO.getImm()),
+                                          ST.hasInv2PiInlineImm());
+    case 8:
+      return AMDGPU::isInlinableLiteral64(MO.getImm(),
+                                          ST.hasInv2PiInlineImm());
+    default:
+      llvm_unreachable("invalid bitwidth");
+    }
   }
 
   return false;
@@ -2580,7 +2558,8 @@ void SIInstrInfo::legalizeGenericOperand(MachineBasicBlock &InsertMBB,
 }
 
 void SIInstrInfo::legalizeOperands(MachineInstr &MI) const {
-  MachineRegisterInfo &MRI = MI.getParent()->getParent()->getRegInfo();
+  MachineFunction &MF = *MI.getParent()->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
 
   // Legalize VOP2
   if (isVOP2(MI) || isVOPC(MI)) {
@@ -2690,8 +2669,14 @@ void SIInstrInfo::legalizeOperands(MachineInstr &MI) const {
     return;
   }
 
-  // Legalize MIMG
-  if (isMIMG(MI)) {
+  // Legalize MIMG and MUBUF/MTBUF for shaders.
+  //
+  // Shaders only generate MUBUF/MTBUF instructions via intrinsics or via
+  // scratch memory access. In both cases, the legalization never involves
+  // conversion to the addr64 form.
+  if (isMIMG(MI) ||
+      (AMDGPU::isShader(MF.getFunction()->getCallingConv()) &&
+       (isMUBUF(MI) || isMTBUF(MI)))) {
     MachineOperand *SRsrc = getNamedOperand(MI, AMDGPU::OpName::srsrc);
     if (SRsrc && !RI.isSGPRClass(MRI.getRegClass(SRsrc->getReg()))) {
       unsigned SGPR = readlaneVGPRToSGPR(SRsrc->getReg(), MI, MRI);
@@ -2706,9 +2691,10 @@ void SIInstrInfo::legalizeOperands(MachineInstr &MI) const {
     return;
   }
 
-  // Legalize MUBUF* instructions
+  // Legalize MUBUF* instructions by converting to addr64 form.
   // FIXME: If we start using the non-addr64 instructions for compute, we
-  // may need to legalize them here.
+  // may need to legalize them as above. This especially applies to the
+  // buffer_load_format_* variants and variants with idxen (or bothen).
   int SRsrcIdx =
       AMDGPU::getNamedOperandIdx(MI.getOpcode(), AMDGPU::OpName::srsrc);
   if (SRsrcIdx != -1) {

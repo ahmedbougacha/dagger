@@ -177,11 +177,10 @@ static bool simplifyAssocCastAssoc(BinaryOperator *BinOp1) {
     return false;
 
   // TODO: Enhance logic for other BinOps and remove this check.
-  auto AssocOpcode = BinOp1->getOpcode();
-  if (AssocOpcode != Instruction::Xor && AssocOpcode != Instruction::And &&
-      AssocOpcode != Instruction::Or)
+  if (!BinOp1->isBitwiseLogicOp())
     return false;
 
+  auto AssocOpcode = BinOp1->getOpcode();
   auto *BinOp2 = dyn_cast<BinaryOperator>(Cast->getOperand(0));
   if (!BinOp2 || !BinOp2->hasOneUse() || BinOp2->getOpcode() != AssocOpcode)
     return false;
@@ -820,9 +819,9 @@ Instruction *InstCombiner::FoldOpIntoSelect(Instruction &Op, SelectInst *SI) {
     }
   }
 
-  Value *SelectTVal = foldOperationIntoSelectOperand(Op, TV, this);
-  Value *SelectFVal = foldOperationIntoSelectOperand(Op, FV, this);
-  return SelectInst::Create(SI->getCondition(), SelectTVal, SelectFVal);
+  Value *NewTV = foldOperationIntoSelectOperand(Op, TV, this);
+  Value *NewFV = foldOperationIntoSelectOperand(Op, FV, this);
+  return SelectInst::Create(SI->getCondition(), NewTV, NewFV, "", nullptr, SI);
 }
 
 /// Given a binary operator, cast instruction, or select which has a PHI node as
@@ -1390,7 +1389,7 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
   for (User::op_iterator I = GEP.op_begin() + 1, E = GEP.op_end(); I != E;
        ++I, ++GTI) {
     // Skip indices into struct types.
-    if (isa<StructType>(*GTI))
+    if (GTI.isStruct())
       continue;
 
     // Index type should have the same width as IntPtr
@@ -1547,7 +1546,7 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
     bool EndsWithSequential = false;
     for (gep_type_iterator I = gep_type_begin(*Src), E = gep_type_end(*Src);
          I != E; ++I)
-      EndsWithSequential = !(*I)->isStructTy();
+      EndsWithSequential = I.isSequential();
 
     // Can we combine the two pointer arithmetics offsets?
     if (EndsWithSequential) {
@@ -2576,7 +2575,7 @@ Instruction *InstCombiner::visitLandingPadInst(LandingPadInst &LI) {
           // remove it from the filter.  An unexpected type handler may be
           // set up for a call site which throws an exception of the same
           // type caught.  In order for the exception thrown by the unexpected
-          // handler to propogate correctly, the filter must be correctly
+          // handler to propagate correctly, the filter must be correctly
           // described for the call site.
           //
           // Example:

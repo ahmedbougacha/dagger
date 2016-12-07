@@ -9,12 +9,14 @@
 
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/IR/CallSite.h"
+#include "llvm/IR/InstIterator.h"
 
 using namespace llvm;
 
 namespace llvm {
 
 // Explicit instantiations for the core proxy templates.
+template class AllAnalysesOn<LazyCallGraph::SCC>;
 template class AnalysisManager<LazyCallGraph::SCC, LazyCallGraph &>;
 template class PassManager<LazyCallGraph::SCC, CGSCCAnalysisManager,
                            LazyCallGraph &, CGSCCUpdateResult &>;
@@ -56,10 +58,8 @@ PassManager<LazyCallGraph::SCC, CGSCCAnalysisManager, LazyCallGraph &,
     assert(C->begin() != C->end() && "Cannot have an empty SCC!");
 
     // Update the analysis manager as each pass runs and potentially
-    // invalidates analyses. We also update the preserved set of analyses
-    // based on what analyses we have already handled the invalidation for
-    // here and don't need to invalidate when finished.
-    PassPA = AM.invalidate(*C, std::move(PassPA));
+    // invalidates analyses.
+    AM.invalidate(*C, PassPA);
 
     // Finally, we intersect the final preserved analyses to compute the
     // aggregate preserved set for this pass manager.
@@ -71,6 +71,12 @@ PassManager<LazyCallGraph::SCC, CGSCCAnalysisManager, LazyCallGraph &,
     // in the new pass manager so it is currently omitted.
     // ...getContext().yield();
   }
+
+  // Invaliadtion was handled after each pass in the above loop for the current
+  // SCC. Therefore, the remaining analysis results in the AnalysisManager are
+  // preserved. We mark this with a set so that we don't need to inspect each
+  // one individually.
+  PA.preserve<AllAnalysesOn<LazyCallGraph::SCC>>();
 
   if (DebugLogging)
     dbgs() << "Finished CGSCC pass manager run.\n";
@@ -151,52 +157,46 @@ LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
   SmallPtrSet<Function *, 16> RetainedEdges;
   SmallSetVector<Function *, 4> PromotedRefTargets;
   SmallSetVector<Function *, 4> DemotedCallTargets;
+
   // First walk the function and handle all called functions. We do this first
   // because if there is a single call edge, whether there are ref edges is
   // irrelevant.
-  for (BasicBlock &BB : F)
-    for (Instruction &I : BB)
-      if (auto CS = CallSite(&I))
-        if (Function *Callee = CS.getCalledFunction())
-          if (Visited.insert(Callee).second && !Callee->isDeclaration()) {
-            const Edge *E = N.lookup(*Callee);
-            // FIXME: We should really handle adding new calls. While it will
-            // make downstream usage more complex, there is no fundamental
-            // limitation and it will allow passes within the CGSCC to be a bit
-            // more flexible in what transforms they can do. Until then, we
-            // verify that new calls haven't been introduced.
-            assert(E && "No function transformations should introduce *new* "
-                        "call edges! Any new calls should be modeled as "
-                        "promoted existing ref edges!");
-            RetainedEdges.insert(Callee);
-            if (!E->isCall())
-              PromotedRefTargets.insert(Callee);
-          }
+  for (Instruction &I : instructions(F))
+    if (auto CS = CallSite(&I))
+      if (Function *Callee = CS.getCalledFunction())
+        if (Visited.insert(Callee).second && !Callee->isDeclaration()) {
+          const Edge *E = N.lookup(*Callee);
+          // FIXME: We should really handle adding new calls. While it will
+          // make downstream usage more complex, there is no fundamental
+          // limitation and it will allow passes within the CGSCC to be a bit
+          // more flexible in what transforms they can do. Until then, we
+          // verify that new calls haven't been introduced.
+          assert(E && "No function transformations should introduce *new* "
+                      "call edges! Any new calls should be modeled as "
+                      "promoted existing ref edges!");
+          RetainedEdges.insert(Callee);
+          if (!E->isCall())
+            PromotedRefTargets.insert(Callee);
+        }
 
   // Now walk all references.
-  for (BasicBlock &BB : F)
-    for (Instruction &I : BB) {
-      for (Value *Op : I.operand_values())
-        if (Constant *C = dyn_cast<Constant>(Op))
-          if (Visited.insert(C).second)
-            Worklist.push_back(C);
+  for (Instruction &I : instructions(F))
+    for (Value *Op : I.operand_values())
+      if (Constant *C = dyn_cast<Constant>(Op))
+        if (Visited.insert(C).second)
+          Worklist.push_back(C);
 
-      LazyCallGraph::visitReferences(Worklist, Visited, [&](Function &Referee) {
-        // Skip declarations.
-        if (Referee.isDeclaration())
-          return;
-
-        const Edge *E = N.lookup(Referee);
-        // FIXME: Similarly to new calls, we also currently preclude
-        // introducing new references. See above for details.
-        assert(E && "No function transformations should introduce *new* ref "
-                    "edges! Any new ref edges would require IPO which "
-                    "function passes aren't allowed to do!");
-        RetainedEdges.insert(&Referee);
-        if (E->isCall())
-          DemotedCallTargets.insert(&Referee);
-      });
-    }
+  LazyCallGraph::visitReferences(Worklist, Visited, [&](Function &Referee) {
+    const Edge *E = N.lookup(Referee);
+    // FIXME: Similarly to new calls, we also currently preclude
+    // introducing new references. See above for details.
+    assert(E && "No function transformations should introduce *new* ref "
+                "edges! Any new ref edges would require IPO which "
+                "function passes aren't allowed to do!");
+    RetainedEdges.insert(&Referee);
+    if (E->isCall())
+      DemotedCallTargets.insert(&Referee);
+  });
 
   // First remove all of the edges that are no longer present in this function.
   // We have to build a list of dead targets first and then remove them as the

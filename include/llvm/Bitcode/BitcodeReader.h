@@ -42,6 +42,7 @@ namespace llvm {
 
   /// Represents a module in a bitcode file.
   class BitcodeModule {
+    // This covers the identification (if present) and module blocks.
     ArrayRef<uint8_t> Buffer;
     StringRef ModuleIdentifier;
 
@@ -65,6 +66,10 @@ namespace llvm {
                   bool ShouldLazyLoadMetadata);
 
   public:
+    StringRef getBuffer() const {
+      return StringRef((const char *)Buffer.begin(), Buffer.size());
+    }
+
     /// Read the bitcode module and prepare for lazy deserialization of function
     /// bodies. If ShouldLazyLoadMetadata is true, lazily load metadata as well.
     Expected<std::unique_ptr<Module>>
@@ -72,6 +77,12 @@ namespace llvm {
 
     /// Read the entire bitcode module and return it.
     Expected<std::unique_ptr<Module>> parseModule(LLVMContext &Context);
+
+    /// Check if the given bitcode buffer contains a summary block.
+    Expected<bool> hasSummary();
+
+    /// Parse the specified bitcode buffer, returning the module summary index.
+    Expected<std::unique_ptr<ModuleSummaryIndex>> getSummary();
   };
 
   /// Returns a list of modules in the specified bitcode buffer.

@@ -125,15 +125,15 @@ MCSymbol *MCContext::getOrCreateSymbol(const Twine &Name) {
 }
 
 MCSymbolELF *MCContext::getOrCreateSectionSymbol(const MCSectionELF &Section) {
-  MCSymbolELF *&Sym = SectionSymbols[&Section];
+  MCSymbol *&Sym = SectionSymbols[&Section];
   if (Sym)
-    return Sym;
+    return cast<MCSymbolELF>(Sym);
 
   StringRef Name = Section.getSectionName();
   auto NameIter = UsedNames.insert(std::make_pair(Name, false)).first;
   Sym = new (&*NameIter, *this) MCSymbolELF(&*NameIter, /*isTemporary*/ false);
 
-  return Sym;
+  return cast<MCSymbolELF>(Sym);
 }
 
 MCSymbol *MCContext::getOrCreateFrameAllocSymbol(StringRef FuncName,
@@ -258,6 +258,13 @@ MCSymbol *MCContext::lookupSymbol(const Twine &Name) const {
   SmallString<128> NameSV;
   StringRef NameRef = Name.toStringRef(NameSV);
   return Symbols.lookup(NameRef);
+}
+
+void MCContext::setSymbolValue(MCStreamer &Streamer,
+                              StringRef Sym,
+                              uint64_t Val) {
+  auto Symbol = getOrCreateSymbol(Sym);
+  Streamer.EmitAssignment(Symbol, MCConstantExpr::create(Val, *this));
 }
 
 //===----------------------------------------------------------------------===//

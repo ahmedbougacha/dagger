@@ -255,22 +255,16 @@ define <2 x i64> @test_mm_cvtpd_epi32_zext(<2 x double> %a0) nounwind {
 ; SSE-LABEL: test_mm_cvtpd_epi32_zext:
 ; SSE:       ## BB#0:
 ; SSE-NEXT:    cvtpd2dq %xmm0, %xmm0 ## encoding: [0xf2,0x0f,0xe6,0xc0]
-; SSE-NEXT:    movq %xmm0, %xmm0 ## encoding: [0xf3,0x0f,0x7e,0xc0]
-; SSE-NEXT:    ## xmm0 = xmm0[0],zero
 ; SSE-NEXT:    retl ## encoding: [0xc3]
 ;
 ; AVX2-LABEL: test_mm_cvtpd_epi32_zext:
 ; AVX2:       ## BB#0:
 ; AVX2-NEXT:    vcvtpd2dq %xmm0, %xmm0 ## encoding: [0xc5,0xfb,0xe6,0xc0]
-; AVX2-NEXT:    vmovq %xmm0, %xmm0 ## encoding: [0xc5,0xfa,0x7e,0xc0]
-; AVX2-NEXT:    ## xmm0 = xmm0[0],zero
 ; AVX2-NEXT:    retl ## encoding: [0xc3]
 ;
 ; SKX-LABEL: test_mm_cvtpd_epi32_zext:
 ; SKX:       ## BB#0:
 ; SKX-NEXT:    vcvtpd2dq %xmm0, %xmm0 ## encoding: [0x62,0xf1,0xff,0x08,0xe6,0xc0]
-; SKX-NEXT:    vmovq %xmm0, %xmm0 ## encoding: [0x62,0xf1,0xfe,0x08,0x7e,0xc0]
-; SKX-NEXT:    ## xmm0 = xmm0[0],zero
 ; SKX-NEXT:    retl ## encoding: [0xc3]
   %cvt = call <4 x i32> @llvm.x86.sse2.cvtpd2dq(<2 x double> %a0)
   %res = shufflevector <4 x i32> %cvt, <4 x i32> zeroinitializer, <4 x i32> <i32 0, i32 1, i32 4, i32 5>
@@ -1504,6 +1498,33 @@ define <2 x double> @test_x86_sse2_sqrt_sd(<2 x double> %a0) {
   ret <2 x double> %res
 }
 declare <2 x double> @llvm.x86.sse2.sqrt.sd(<2 x double>) nounwind readnone
+
+
+define <2 x double> @test_x86_sse2_sqrt_sd_vec_load(<2 x double>* %a0) {
+; SSE-LABEL: test_x86_sse2_sqrt_sd_vec_load:
+; SSE:       ## BB#0:
+; SSE-NEXT:    movl {{[0-9]+}}(%esp), %eax ## encoding: [0x8b,0x44,0x24,0x04]
+; SSE-NEXT:    movaps (%eax), %xmm0 ## encoding: [0x0f,0x28,0x00]
+; SSE-NEXT:    sqrtsd %xmm0, %xmm0 ## encoding: [0xf2,0x0f,0x51,0xc0]
+; SSE-NEXT:    retl ## encoding: [0xc3]
+;
+; AVX2-LABEL: test_x86_sse2_sqrt_sd_vec_load:
+; AVX2:       ## BB#0:
+; AVX2-NEXT:    movl {{[0-9]+}}(%esp), %eax ## encoding: [0x8b,0x44,0x24,0x04]
+; AVX2-NEXT:    vmovaps (%eax), %xmm0 ## encoding: [0xc5,0xf8,0x28,0x00]
+; AVX2-NEXT:    vsqrtsd %xmm0, %xmm0, %xmm0 ## encoding: [0xc5,0xfb,0x51,0xc0]
+; AVX2-NEXT:    retl ## encoding: [0xc3]
+;
+; SKX-LABEL: test_x86_sse2_sqrt_sd_vec_load:
+; SKX:       ## BB#0:
+; SKX-NEXT:    movl {{[0-9]+}}(%esp), %eax ## encoding: [0x8b,0x44,0x24,0x04]
+; SKX-NEXT:    vmovaps (%eax), %xmm0 ## encoding: [0x62,0xf1,0x7c,0x08,0x28,0x00]
+; SKX-NEXT:    vsqrtsd %xmm0, %xmm0, %xmm0 ## encoding: [0xc5,0xfb,0x51,0xc0]
+; SKX-NEXT:    retl ## encoding: [0xc3]
+  %a1 = load <2 x double>, <2 x double>* %a0, align 16
+  %res = call <2 x double> @llvm.x86.sse2.sqrt.sd(<2 x double> %a1) ; <<2 x double>> [#uses=1]
+  ret <2 x double> %res
+}
 
 
 define i32 @test_x86_sse2_ucomieq_sd(<2 x double> %a0, <2 x double> %a1) {

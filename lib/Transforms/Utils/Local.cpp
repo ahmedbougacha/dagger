@@ -890,6 +890,17 @@ bool llvm::TryToSimplifyUncondBranchFromEmptyBlock(BasicBlock *BB) {
     }
   }
 
+  // If the unconditional branch we replaced contains llvm.loop metadata, we
+  // add the metadata to the branch instructions in the predecessors.
+  unsigned LoopMDKind = BB->getContext().getMDKindID("llvm.loop");
+  Instruction *TI = BB->getTerminator();
+  if (TI)
+    if (MDNode *LoopMD = TI->getMetadata(LoopMDKind))
+      for (pred_iterator PI = pred_begin(BB), E = pred_end(BB); PI != E; ++PI) {
+        BasicBlock *Pred = *PI;
+        Pred->getTerminator()->setMetadata(LoopMDKind, LoopMD);
+      }
+
   // Everything that jumped to BB now goes to Succ.
   BB->replaceAllUsesWith(Succ);
   if (!Succ->hasName()) Succ->takeName(BB);
@@ -1091,26 +1102,26 @@ void llvm::ConvertDebugDeclareToDebugValue(DbgDeclareInst *DDI,
   if (SExtInst *SExt = dyn_cast<SExtInst>(SI->getOperand(0)))
     ExtendedArg = dyn_cast<Argument>(SExt->getOperand(0));
   if (ExtendedArg) {
-    // We're now only describing a subset of the variable. The piece we're
+    // We're now only describing a subset of the variable. The fragment we're
     // describing will always be smaller than the variable size, because
     // VariableSize == Size of Alloca described by DDI. Since SI stores
     // to the alloca described by DDI, if it's first operand is an extend,
     // we're guaranteed that before extension, the value was narrower than
     // the size of the alloca, hence the size of the described variable.
     SmallVector<uint64_t, 3> Ops;
-    unsigned PieceOffset = 0;
-    // If this already is a bit piece, we drop the bit piece from the expression
-    // and record the offset.
-    if (DIExpr->isBitPiece()) {
+    unsigned FragmentOffset = 0;
+    // If this already is a bit fragment, we drop the bit fragment from the
+    // expression and record the offset.
+    if (DIExpr->isFragment()) {
       Ops.append(DIExpr->elements_begin(), DIExpr->elements_end()-3);
-      PieceOffset = DIExpr->getBitPieceOffset();
+      FragmentOffset = DIExpr->getFragmentOffsetInBits();
     } else {
       Ops.append(DIExpr->elements_begin(), DIExpr->elements_end());
     }
-    Ops.push_back(dwarf::DW_OP_bit_piece);
-    Ops.push_back(PieceOffset); // Offset
+    Ops.push_back(dwarf::DW_OP_LLVM_fragment);
+    Ops.push_back(FragmentOffset);
     const DataLayout &DL = DDI->getModule()->getDataLayout();
-    Ops.push_back(DL.getTypeSizeInBits(ExtendedArg->getType())); // Size
+    Ops.push_back(DL.getTypeSizeInBits(ExtendedArg->getType()));
     auto NewDIExpr = Builder.createExpression(Ops);
     if (!LdStHasDebugValue(DIVar, NewDIExpr, SI))
       Builder.insertDbgValueIntrinsic(ExtendedArg, 0, DIVar, NewDIExpr,
@@ -1358,12 +1369,13 @@ unsigned llvm::removeAllNonTerminatorAndEHPadInstructions(BasicBlock *BB) {
   return NumDeadInst;
 }
 
-unsigned llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap) {
+unsigned llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap,
+                                   bool PreserveLCSSA) {
   BasicBlock *BB = I->getParent();
   // Loop over all of the successors, removing BB's entry from any PHI
   // nodes.
   for (BasicBlock *Successor : successors(BB))
-    Successor->removePredecessor(BB);
+    Successor->removePredecessor(BB, PreserveLCSSA);
 
   // Insert a call to llvm.trap right before this.  This turns the undefined
   // behavior into a hard fail instead of falling through into random code.

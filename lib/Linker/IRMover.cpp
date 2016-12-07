@@ -169,11 +169,9 @@ bool TypeMapTy::areTypesIsomorphic(Type *DstTy, Type *SrcTy) {
     if (DSTy->isLiteral() != SSTy->isLiteral() ||
         DSTy->isPacked() != SSTy->isPacked())
       return false;
-  } else if (ArrayType *DATy = dyn_cast<ArrayType>(DstTy)) {
-    if (DATy->getNumElements() != cast<ArrayType>(SrcTy)->getNumElements())
-      return false;
-  } else if (VectorType *DVTy = dyn_cast<VectorType>(DstTy)) {
-    if (DVTy->getNumElements() != cast<VectorType>(SrcTy)->getNumElements())
+  } else if (auto *DSeqTy = dyn_cast<SequentialType>(DstTy)) {
+    if (DSeqTy->getNumElements() !=
+        cast<SequentialType>(SrcTy)->getNumElements())
       return false;
   }
 
@@ -700,6 +698,14 @@ void IRLinker::computeTypeMapping() {
   for (StructType *ST : Types) {
     if (!ST->hasName())
       continue;
+
+    if (TypeMap.DstStructTypesSet.hasType(ST)) {
+      // This is actually a type from the destination module.
+      // getIdentifiedStructTypes() can have found it by walking debug info
+      // metadata nodes, some of which get linked by name when ODR Type Uniquing
+      // is enabled on the Context, from the source to the destination module.
+      continue;
+    }
 
     // Check to see if there is a dot in the name followed by a digit.
     size_t DotPos = ST->getName().rfind('.');
@@ -1342,7 +1348,7 @@ bool IRMover::IdentifiedStructTypeSet::hasType(StructType *Ty) {
 
 IRMover::IRMover(Module &M) : Composite(M) {
   TypeFinder StructTypes;
-  StructTypes.run(M, true);
+  StructTypes.run(M, /* OnlyNamed */ false);
   for (StructType *Ty : StructTypes) {
     if (Ty->isOpaque())
       IdentifiedStructTypes.addOpaque(Ty);

@@ -402,22 +402,22 @@ static int AsLexInput(SourceMgr &SrcMgr, MCAsmInfo &MAI,
   return Error;
 }
 
-static int fillCommandLineSymbols(MCAsmParser &Parser){
-  for(auto &I: DefineSymbol){
+static int fillCommandLineSymbols(MCAsmParser &Parser) {
+  for (auto &I: DefineSymbol) {
     auto Pair = StringRef(I).split('=');
-    if(Pair.second.empty()){
-      errs() << "error: defsym must be of the form: sym=value: " << I;
+    auto Sym = Pair.first;
+    auto Val = Pair.second;
+
+    if (Sym.empty() || Val.empty()) {
+      errs() << "error: defsym must be of the form: sym=value: " << I << "\n";
       return 1;
     }
     int64_t Value;
-    if(Pair.second.getAsInteger(0, Value)){
-      errs() << "error: Value is not an integer: " << Pair.second;
+    if (Val.getAsInteger(0, Value)) {
+      errs() << "error: Value is not an integer: " << Val << "\n";
       return 1;
     }
-    auto &Context = Parser.getContext();
-    auto Symbol = Context.getOrCreateSymbol(Pair.first);
-    Parser.getStreamer().EmitAssignment(Symbol,
-                                        MCConstantExpr::create(Value, Context));
+    Parser.getContext().setSymbolValue(Parser.getStreamer(), Sym, Value);
   }
   return 0;
 }

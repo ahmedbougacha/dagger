@@ -12,16 +12,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <map>
-#include <set>
-#include <sstream>
-
 #include "FuzzerCorpus.h"
 #include "FuzzerDefs.h"
 #include "FuzzerDictionary.h"
 #include "FuzzerExtFunctions.h"
+#include "FuzzerIO.h"
 #include "FuzzerTracePC.h"
 #include "FuzzerValueBitMap.h"
+#include <map>
+#include <set>
+#include <sstream>
 
 namespace fuzzer {
 
@@ -57,41 +57,6 @@ void TracePC::PrintModuleInfo() {
   for (size_t i = 0; i < NumModules; i++)
     Printf("[%p, %p), ", Modules[i].Start, Modules[i].Stop);
   Printf("\n");
-}
-
-size_t TracePC::FinalizeTrace(InputCorpus *C, size_t InputSize, bool Shrink) {
-  if (!UsingTracePcGuard()) return 0;
-  size_t Res = 0;
-  const size_t Step = 8;
-  assert(reinterpret_cast<uintptr_t>(Counters) % Step == 0);
-  size_t N = Min(kNumCounters, NumGuards + 1);
-  N = (N + Step - 1) & ~(Step - 1);  // Round up.
-  for (size_t Idx = 0; Idx < N; Idx += Step) {
-    uint64_t Bundle = *reinterpret_cast<uint64_t*>(&Counters[Idx]);
-    if (!Bundle) continue;
-    for (size_t i = Idx; i < Idx + Step; i++) {
-      uint8_t Counter = (Bundle >> (i * 8)) & 0xff;
-      if (!Counter) continue;
-      Counters[i] = 0;
-      unsigned Bit = 0;
-      /**/ if (Counter >= 128) Bit = 7;
-      else if (Counter >= 32) Bit = 6;
-      else if (Counter >= 16) Bit = 5;
-      else if (Counter >= 8) Bit = 4;
-      else if (Counter >= 4) Bit = 3;
-      else if (Counter >= 3) Bit = 2;
-      else if (Counter >= 2) Bit = 1;
-      size_t Feature = (i * 8 + Bit);
-      if (C->AddFeature(Feature, InputSize, Shrink))
-        Res++;
-    }
-  }
-  if (UseValueProfile)
-    ValueProfileMap.ForEach([&](size_t Idx) {
-      if (C->AddFeature(NumGuards + Idx, InputSize, Shrink))
-        Res++;
-    });
-  return Res;
 }
 
 void TracePC::HandleCallerCallee(uintptr_t Caller, uintptr_t Callee) {
@@ -131,7 +96,8 @@ void TracePC::PrintCoverage() {
   }
   std::map<std::string, std::vector<uintptr_t>> CoveredPCsPerModule;
   std::map<std::string, uintptr_t> ModuleOffsets;
-  std::set<std::string> CoveredFiles, CoveredFunctions, CoveredLines;
+  std::set<std::string> CoveredDirs, CoveredFiles, CoveredFunctions,
+      CoveredLines;
   Printf("COVERAGE:\n");
   for (size_t i = 1; i < GetNumPCs(); i++) {
     if (!PCs[i]) continue;
@@ -150,11 +116,20 @@ void TracePC::PrintCoverage() {
     CoveredPCsPerModule[Module].push_back(PcOffset);
     CoveredFunctions.insert(FunctionStr);
     CoveredFiles.insert(FileStr);
+    CoveredDirs.insert(DirName(FileStr));
     if (!CoveredLines.insert(FileStr + ":" + LineStr).second)
       continue;
     Printf("COVERED: %s %s:%s\n", FunctionStr.c_str(),
            FileStr.c_str(), LineStr.c_str());
   }
+
+  std::string CoveredDirsStr;
+  for (auto &Dir : CoveredDirs) {
+    if (!CoveredDirsStr.empty())
+      CoveredDirsStr += ",";
+    CoveredDirsStr += Dir;
+  }
+  Printf("COVERED_DIRS: %s\n", CoveredDirsStr.c_str());
 
   for (auto &M : CoveredPCsPerModule) {
     std::set<std::string> UncoveredFiles, UncoveredFunctions;

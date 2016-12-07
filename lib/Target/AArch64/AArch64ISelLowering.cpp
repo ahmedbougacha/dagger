@@ -7157,8 +7157,8 @@ bool AArch64TargetLowering::isExtFreeImpl(const Instruction *Ext) const {
     case Instruction::GetElementPtr: {
       gep_type_iterator GTI = gep_type_begin(Instr);
       auto &DL = Ext->getModule()->getDataLayout();
-      std::advance(GTI, U.getOperandNo());
-      Type *IdxTy = *GTI;
+      std::advance(GTI, U.getOperandNo()-1);
+      Type *IdxTy = GTI.getIndexedType();
       // This extension will end up with a shift because of the scaling factor.
       // 8-bit sized types have a scaling factor of 1, thus a shift amount of 0.
       // Get the shift amount based on the scaling factor:
@@ -7437,7 +7437,7 @@ bool AArch64TargetLowering::isLegalAddressingMode(const DataLayout &DL,
     int64_t Offset = AM.BaseOffs;
 
     // 9-bit signed offset
-    if (Offset >= -(1LL << 9) && Offset <= (1LL << 9) - 1)
+    if (isInt<9>(Offset))
       return true;
 
     // 12-bit unsigned offset

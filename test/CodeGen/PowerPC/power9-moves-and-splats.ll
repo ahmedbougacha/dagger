@@ -10,15 +10,9 @@ entry:
 ; The FIXME below is due to the lowering for BUILD_VECTOR needing a re-vamp
 ; which will happen in a subsequent patch.
 ; CHECK-LABEL: test1
-; FIXME: mtvsrdd 34, 4, 3
-; CHECK: mtvsrd {{[0-9]+}}, 3
-; CHECK: mtvsrd {{[0-9]+}}, 4
-; CHECK: xxmrgld
+; CHECK: mtvsrdd 34, 4, 3
 ; CHECK-BE-LABEL: test1
-; FIXME-BE: mtvsrdd 34, 3, 4
-; CHECK-BE: mtvsrd {{[0-9]+}}, 4
-; CHECK-BE: mtvsrd {{[0-9]+}}, 3
-; CHECK-BE: xxmrghd
+; CHECK-BE: mtvsrdd 34, 3, 4
   %vecins = insertelement <2 x i64> undef, i64 %a, i32 0
   %vecins1 = insertelement <2 x i64> %vecins, i64 %b, i32 1
   ret <2 x i64> %vecins1

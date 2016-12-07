@@ -195,8 +195,7 @@ Counters SIInsertWaits::getHwCounts(MachineInstr &MI) {
   Result.Named.VM = !!(TSFlags & SIInstrFlags::VM_CNT);
 
   // Only consider stores or EXP for EXP_CNT
-  Result.Named.EXP = !!(TSFlags & SIInstrFlags::EXP_CNT &&
-      (MI.getOpcode() == AMDGPU::EXP || MI.getDesc().mayStore()));
+  Result.Named.EXP = !!(TSFlags & SIInstrFlags::EXP_CNT) && MI.mayStore();
 
   // LGKM may uses larger values
   if (TSFlags & SIInstrFlags::LGKM_CNT) {
@@ -238,9 +237,10 @@ bool SIInsertWaits::isOpRelevant(MachineOperand &Op) {
   if (Op.isDef())
     return true;
 
-  // For exports all registers are relevant
+  // For exports all registers are relevant.
+  // TODO: Skip undef/disabled registers.
   MachineInstr &MI = *Op.getParent();
-  if (MI.getOpcode() == AMDGPU::EXP)
+  if (TII->isEXP(MI))
     return true;
 
   // For stores the stored value is also relevant
@@ -252,12 +252,6 @@ bool SIInsertWaits::isOpRelevant(MachineOperand &Op) {
   // operand comes before the value operand and it may have
   // multiple data operands.
 
-  if (TII->isDS(MI) || TII->isFLAT(MI)) {
-    MachineOperand *Data = TII->getNamedOperand(MI, AMDGPU::OpName::data);
-    if (Data && Op.isIdenticalTo(*Data))
-      return true;
-  }
-
   if (TII->isDS(MI)) {
     MachineOperand *Data0 = TII->getNamedOperand(MI, AMDGPU::OpName::data0);
     if (Data0 && Op.isIdenticalTo(*Data0))
@@ -265,6 +259,12 @@ bool SIInsertWaits::isOpRelevant(MachineOperand &Op) {
 
     MachineOperand *Data1 = TII->getNamedOperand(MI, AMDGPU::OpName::data1);
     return Data1 && Op.isIdenticalTo(*Data1);
+  }
+
+  if (TII->isFLAT(MI)) {
+    MachineOperand *Data = TII->getNamedOperand(MI, AMDGPU::OpName::vdata);
+    if (Data && Op.isIdenticalTo(*Data))
+      return true;
   }
 
   // NOTE: This assumes that the value operand is before the
@@ -340,7 +340,7 @@ void SIInsertWaits::pushInstruction(MachineBasicBlock &MBB,
 
   // Remember which export instructions we have seen
   if (Increment.Named.EXP) {
-    ExpInstrTypesSeen |= I->getOpcode() == AMDGPU::EXP ? 1 : 2;
+    ExpInstrTypesSeen |= TII->isEXP(*I) ? 1 : 2;
   }
 
   for (unsigned i = 0, e = I->getNumOperands(); i != e; ++i) {

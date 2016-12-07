@@ -9353,7 +9353,7 @@ class SHAInstSS<bits<4> opc, string asm, Intrinsic OpNode>
 // ST<OP>{<order>}[<size>] <Ws>, [<Xn|SP>]
 // ST<OP>{<order>} <Xs>, [<Xn|SP>]
 
-let Predicates = [HasV8_1a], mayLoad = 1, mayStore = 1, hasSideEffects = 1 in
+let Predicates = [HasLSE], mayLoad = 1, mayStore = 1, hasSideEffects = 1 in
 class BaseCASEncoding<dag oops, dag iops, string asm, string operands,
                       string cstr, list<dag> pattern>
       : I<oops, iops, asm, operands, cstr, pattern> {
@@ -9374,6 +9374,7 @@ class BaseCASEncoding<dag oops, dag iops, string asm, string operands,
   let Inst{14-10} = 0b11111;
   let Inst{9-5} = Rn;
   let Inst{4-0} = Rt;
+  let Predicates = [HasLSE];
 }
 
 class BaseCAS<string order, string size, RegisterClass RC>
@@ -9406,7 +9407,7 @@ multiclass CompareAndSwapPair<bits<1> Acq, bits<1> Rel, string order> {
     def d : BaseCASP<order, "", XSeqPairClassOperand>;
 }
 
-let Predicates = [HasV8_1a] in
+let Predicates = [HasLSE] in
 class BaseSWP<string order, string size, RegisterClass RC>
       : I<(outs RC:$Rt),(ins RC:$Rs, GPR64sp:$Rn), "swp" # order # size,
           "\t$Rs, $Rt, [$Rn]","",[]>,
@@ -9429,6 +9430,7 @@ class BaseSWP<string order, string size, RegisterClass RC>
   let Inst{11-10} = 0b00;
   let Inst{9-5} = Rn;
   let Inst{4-0} = Rt;
+  let Predicates = [HasLSE];
 }
 
 multiclass Swap<bits<1> Acq, bits<1> Rel, string order> {
@@ -9438,7 +9440,7 @@ multiclass Swap<bits<1> Acq, bits<1> Rel, string order> {
   let Sz = 0b11, Acq = Acq, Rel = Rel in def d : BaseSWP<order, "", GPR64>;
 }
 
-let Predicates = [HasV8_1a], mayLoad = 1, mayStore = 1, hasSideEffects = 1 in
+let Predicates = [HasLSE], mayLoad = 1, mayStore = 1, hasSideEffects = 1 in
 class BaseLDOPregister<string op, string order, string size, RegisterClass RC>
       : I<(outs RC:$Rt),(ins RC:$Rs, GPR64sp:$Rn), "ld" # op # order # size,
           "\t$Rs, $Rt, [$Rn]","",[]>,
@@ -9461,6 +9463,7 @@ class BaseLDOPregister<string op, string order, string size, RegisterClass RC>
   let Inst{11-10} = 0b00;
   let Inst{9-5} = Rn;
   let Inst{4-0} = Rt;
+  let Predicates = [HasLSE];
 }
 
 multiclass LDOPregister<bits<3> opc, string op, bits<1> Acq, bits<1> Rel, 
@@ -9475,7 +9478,7 @@ multiclass LDOPregister<bits<3> opc, string op, bits<1> Acq, bits<1> Rel,
     def d : BaseLDOPregister<op, order, "", GPR64>;
 }
 
-let Predicates = [HasV8_1a] in
+let Predicates = [HasLSE] in
 class BaseSTOPregister<string asm, RegisterClass OP, Register Reg,
                         Instruction inst> :
       InstAlias<asm # "\t$Rs, [$Rn]", (inst Reg, OP:$Rs, GPR64sp:$Rn)>;

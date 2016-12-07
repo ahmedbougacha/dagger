@@ -1930,6 +1930,8 @@ static void printPrivateFileHeaders(const ObjectFile *o, bool onlyFirst) {
     return printELFFileHeader(o);
   if (o->isCOFF())
     return printCOFFFileHeader(o);
+  if (o->isWasm())
+    return printWasmFileHeader(o);
   if (o->isMachO()) {
     printMachOFileHeader(o);
     if (!onlyFirst)

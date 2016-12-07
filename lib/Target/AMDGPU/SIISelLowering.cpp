@@ -21,6 +21,7 @@
 #include "AMDGPU.h"
 #include "AMDGPUIntrinsicInfo.h"
 #include "AMDGPUSubtarget.h"
+#include "SIDefines.h"
 #include "SIISelLowering.h"
 #include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
@@ -59,7 +60,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   addRegisterClass(MVT::i1, &AMDGPU::VReg_1RegClass);
   addRegisterClass(MVT::i64, &AMDGPU::SReg_64RegClass);
 
-  addRegisterClass(MVT::i32, &AMDGPU::SReg_32RegClass);
+  addRegisterClass(MVT::i32, &AMDGPU::SReg_32_XM0RegClass);
   addRegisterClass(MVT::f32, &AMDGPU::VGPR_32RegClass);
 
   addRegisterClass(MVT::f64, &AMDGPU::VReg_64RegClass);
@@ -79,8 +80,8 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   addRegisterClass(MVT::v16f32, &AMDGPU::VReg_512RegClass);
 
   if (Subtarget->has16BitInsts()) {
-    addRegisterClass(MVT::i16, &AMDGPU::SReg_32RegClass);
-    addRegisterClass(MVT::f16, &AMDGPU::SReg_32RegClass);
+    addRegisterClass(MVT::i16, &AMDGPU::SReg_32_XM0RegClass);
+    addRegisterClass(MVT::f16, &AMDGPU::SReg_32_XM0RegClass);
   }
 
   computeRegisterProperties(STI.getRegisterInfo());
@@ -600,13 +601,23 @@ EVT SITargetLowering::getOptimalMemOpType(uint64_t Size, unsigned DstAlign,
 
 static bool isFlatGlobalAddrSpace(unsigned AS) {
   return AS == AMDGPUAS::GLOBAL_ADDRESS ||
-    AS == AMDGPUAS::FLAT_ADDRESS ||
-    AS == AMDGPUAS::CONSTANT_ADDRESS;
+         AS == AMDGPUAS::FLAT_ADDRESS ||
+         AS == AMDGPUAS::CONSTANT_ADDRESS;
 }
 
 bool SITargetLowering::isNoopAddrSpaceCast(unsigned SrcAS,
                                            unsigned DestAS) const {
   return isFlatGlobalAddrSpace(SrcAS) && isFlatGlobalAddrSpace(DestAS);
+}
+
+bool SITargetLowering::isCheapAddrSpaceCast(unsigned SrcAS,
+                                            unsigned DestAS) const {
+  // Flat -> private/local is a simple truncate.
+  // Flat -> global is no-op
+  if (SrcAS == AMDGPUAS::FLAT_ADDRESS)
+    return true;
+
+  return isNoopAddrSpaceCast(SrcAS, DestAS);
 }
 
 bool SITargetLowering::isMemOpUniform(const SDNode *N) const {
@@ -817,31 +828,31 @@ SDValue SITargetLowering::LowerFormalArguments(
 
   if (Info->hasDispatchPtr()) {
     unsigned DispatchPtrReg = Info->addDispatchPtr(*TRI);
-    MF.addLiveIn(DispatchPtrReg, &AMDGPU::SReg_64RegClass);
+    MF.addLiveIn(DispatchPtrReg, &AMDGPU::SGPR_64RegClass);
     CCInfo.AllocateReg(DispatchPtrReg);
   }
 
   if (Info->hasQueuePtr()) {
     unsigned QueuePtrReg = Info->addQueuePtr(*TRI);
-    MF.addLiveIn(QueuePtrReg, &AMDGPU::SReg_64RegClass);
+    MF.addLiveIn(QueuePtrReg, &AMDGPU::SGPR_64RegClass);
     CCInfo.AllocateReg(QueuePtrReg);
   }
 
   if (Info->hasKernargSegmentPtr()) {
     unsigned InputPtrReg = Info->addKernargSegmentPtr(*TRI);
-    MF.addLiveIn(InputPtrReg, &AMDGPU::SReg_64RegClass);
+    MF.addLiveIn(InputPtrReg, &AMDGPU::SGPR_64RegClass);
     CCInfo.AllocateReg(InputPtrReg);
   }
 
   if (Info->hasDispatchID()) {
     unsigned DispatchIDReg = Info->addDispatchID(*TRI);
-    MF.addLiveIn(DispatchIDReg, &AMDGPU::SReg_64RegClass);
+    MF.addLiveIn(DispatchIDReg, &AMDGPU::SGPR_64RegClass);
     CCInfo.AllocateReg(DispatchIDReg);
   }
 
   if (Info->hasFlatScratchInit()) {
     unsigned FlatScratchInitReg = Info->addFlatScratchInit(*TRI);
-    MF.addLiveIn(FlatScratchInitReg, &AMDGPU::SReg_64RegClass);
+    MF.addLiveIn(FlatScratchInitReg, &AMDGPU::SGPR_64RegClass);
     CCInfo.AllocateReg(FlatScratchInitReg);
   }
 
@@ -896,8 +907,8 @@ SDValue SITargetLowering::LowerFormalArguments(
     if (VT == MVT::i64) {
       // For now assume it is a pointer
       Reg = TRI->getMatchingSuperReg(Reg, AMDGPU::sub0,
-                                     &AMDGPU::SReg_64RegClass);
-      Reg = MF.addLiveIn(Reg, &AMDGPU::SReg_64RegClass);
+                                     &AMDGPU::SGPR_64RegClass);
+      Reg = MF.addLiveIn(Reg, &AMDGPU::SGPR_64RegClass);
       SDValue Copy = DAG.getCopyFromReg(Chain, DL, Reg, VT);
       InVals.push_back(Copy);
       continue;
@@ -941,25 +952,25 @@ SDValue SITargetLowering::LowerFormalArguments(
   // Start adding system SGPRs.
   if (Info->hasWorkGroupIDX()) {
     unsigned Reg = Info->addWorkGroupIDX();
-    MF.addLiveIn(Reg, &AMDGPU::SReg_32RegClass);
+    MF.addLiveIn(Reg, &AMDGPU::SReg_32_XM0RegClass);
     CCInfo.AllocateReg(Reg);
   }
 
   if (Info->hasWorkGroupIDY()) {
     unsigned Reg = Info->addWorkGroupIDY();
-    MF.addLiveIn(Reg, &AMDGPU::SReg_32RegClass);
+    MF.addLiveIn(Reg, &AMDGPU::SReg_32_XM0RegClass);
     CCInfo.AllocateReg(Reg);
   }
 
   if (Info->hasWorkGroupIDZ()) {
     unsigned Reg = Info->addWorkGroupIDZ();
-    MF.addLiveIn(Reg, &AMDGPU::SReg_32RegClass);
+    MF.addLiveIn(Reg, &AMDGPU::SReg_32_XM0RegClass);
     CCInfo.AllocateReg(Reg);
   }
 
   if (Info->hasWorkGroupInfo()) {
     unsigned Reg = Info->addWorkGroupInfo();
-    MF.addLiveIn(Reg, &AMDGPU::SReg_32RegClass);
+    MF.addLiveIn(Reg, &AMDGPU::SReg_32_XM0RegClass);
     CCInfo.AllocateReg(Reg);
   }
 
@@ -2047,17 +2058,16 @@ SDValue SITargetLowering::lowerConstantFP(SDValue Op, SelectionDAG &DAG) const {
 }
 
 SDValue SITargetLowering::lowerFP_ROUND(SDValue Op, SelectionDAG &DAG) const {
-  EVT DstVT = Op.getValueType();
-  EVT SrcVT = Op.getOperand(0).getValueType();
-
-  assert(DstVT == MVT::f16 &&
+  assert(Op.getValueType() == MVT::f16 &&
          "Do not know how to custom lower FP_ROUND for non-f16 type");
 
+  SDValue Src = Op.getOperand(0);
+  EVT SrcVT = Src.getValueType();
   if (SrcVT != MVT::f64)
     return Op;
 
   SDLoc DL(Op);
-  SDValue Src = Op.getOperand(0);
+
   SDValue FpToFp16 = DAG.getNode(ISD::FP_TO_FP16, DL, MVT::i32, Src);
   SDValue Trunc = DAG.getNode(ISD::TRUNCATE, DL, MVT::i16, FpToFp16);
   return DAG.getNode(ISD::BITCAST, DL, MVT::f16, Trunc);;
@@ -2415,15 +2425,15 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
                                   SI::KernelInputOffsets::LOCAL_SIZE_Z);
   case Intrinsic::amdgcn_workgroup_id_x:
   case Intrinsic::r600_read_tgid_x:
-    return CreateLiveInRegister(DAG, &AMDGPU::SReg_32RegClass,
+    return CreateLiveInRegister(DAG, &AMDGPU::SReg_32_XM0RegClass,
       TRI->getPreloadedValue(MF, SIRegisterInfo::WORKGROUP_ID_X), VT);
   case Intrinsic::amdgcn_workgroup_id_y:
   case Intrinsic::r600_read_tgid_y:
-    return CreateLiveInRegister(DAG, &AMDGPU::SReg_32RegClass,
+    return CreateLiveInRegister(DAG, &AMDGPU::SReg_32_XM0RegClass,
       TRI->getPreloadedValue(MF, SIRegisterInfo::WORKGROUP_ID_Y), VT);
   case Intrinsic::amdgcn_workgroup_id_z:
   case Intrinsic::r600_read_tgid_z:
-    return CreateLiveInRegister(DAG, &AMDGPU::SReg_32RegClass,
+    return CreateLiveInRegister(DAG, &AMDGPU::SReg_32_XM0RegClass,
       TRI->getPreloadedValue(MF, SIRegisterInfo::WORKGROUP_ID_Z), VT);
   case Intrinsic::amdgcn_workitem_id_x:
   case Intrinsic::r600_read_tidig_x:
@@ -2477,6 +2487,8 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
                             DAG.getConstant(0, DL, MVT::i32));
     SDValue J = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, MVT::i32, IJ,
                             DAG.getConstant(1, DL, MVT::i32));
+    I = DAG.getNode(ISD::BITCAST, DL, MVT::f32, I);
+    J = DAG.getNode(ISD::BITCAST, DL, MVT::f32, J);
     SDValue M0 = copyToM0(DAG, DAG.getEntryNode(), DL, Op.getOperand(3));
     SDValue Glue = M0.getValue(1);
     SDValue P1 = DAG.getNode(AMDGPUISD::INTERP_P1, DL,
@@ -2485,6 +2497,12 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     Glue = SDValue(P1.getNode(), 1);
     return DAG.getNode(AMDGPUISD::INTERP_P2, DL, MVT::f32, P1, J,
                              Op.getOperand(1), Op.getOperand(2), Glue);
+  }
+  case Intrinsic::amdgcn_interp_mov: {
+    SDValue M0 = copyToM0(DAG, DAG.getEntryNode(), DL, Op.getOperand(4));
+    SDValue Glue = M0.getValue(1);
+    return DAG.getNode(AMDGPUISD::INTERP_MOV, DL, MVT::f32, Op.getOperand(1),
+                       Op.getOperand(2), Op.getOperand(3), Glue);
   }
   case Intrinsic::amdgcn_interp_p1: {
     SDValue M0 = copyToM0(DAG, DAG.getEntryNode(), DL, Op.getOperand(4));
@@ -2672,6 +2690,29 @@ SDValue SITargetLowering::LowerINTRINSIC_VOID(SDValue Op,
     SDValue Cast = DAG.getNode(ISD::BITCAST, DL, MVT::i32, Src);
     return DAG.getNode(AMDGPUISD::KILL, DL, MVT::Other, Chain, Cast);
   }
+  case AMDGPUIntrinsic::SI_export: {
+    const ConstantSDNode *En = cast<ConstantSDNode>(Op.getOperand(2));
+    const ConstantSDNode *VM = cast<ConstantSDNode>(Op.getOperand(3));
+    const ConstantSDNode *Done = cast<ConstantSDNode>(Op.getOperand(4));
+    const ConstantSDNode *Tgt = cast<ConstantSDNode>(Op.getOperand(5));
+    const ConstantSDNode *Compr = cast<ConstantSDNode>(Op.getOperand(6));
+
+    const SDValue Ops[] = {
+      Chain,
+      DAG.getTargetConstant(En->getZExtValue(), DL, MVT::i8),
+      DAG.getTargetConstant(VM->getZExtValue(), DL, MVT::i1),
+      DAG.getTargetConstant(Tgt->getZExtValue(), DL, MVT::i8),
+      DAG.getTargetConstant(Compr->getZExtValue(), DL, MVT::i1),
+      Op.getOperand(7), // src0
+      Op.getOperand(8), // src1
+      Op.getOperand(9), // src2
+      Op.getOperand(10) // src3
+    };
+
+    unsigned Opc = Done->isNullValue() ?
+      AMDGPUISD::EXPORT : AMDGPUISD::EXPORT_DONE;
+    return DAG.getNode(Opc, DL, Op->getVTList(), Ops);
+  }
   default:
     return SDValue();
   }
@@ -2857,6 +2898,47 @@ SDValue SITargetLowering::lowerFastUnsafeFDIV(SDValue Op,
   return SDValue();
 }
 
+static SDValue getFPBinOp(SelectionDAG &DAG, unsigned Opcode, const SDLoc &SL,
+                          EVT VT, SDValue A, SDValue B, SDValue GlueChain) {
+  if (GlueChain->getNumValues() <= 1) {
+    return DAG.getNode(Opcode, SL, VT, A, B);
+  }
+
+  assert(GlueChain->getNumValues() == 3);
+
+  SDVTList VTList = DAG.getVTList(VT, MVT::Other, MVT::Glue);
+  switch (Opcode) {
+  default: llvm_unreachable("no chain equivalent for opcode");
+  case ISD::FMUL:
+    Opcode = AMDGPUISD::FMUL_W_CHAIN;
+    break;
+  }
+
+  return DAG.getNode(Opcode, SL, VTList, GlueChain.getValue(1), A, B,
+                     GlueChain.getValue(2));
+}
+
+static SDValue getFPTernOp(SelectionDAG &DAG, unsigned Opcode, const SDLoc &SL,
+                           EVT VT, SDValue A, SDValue B, SDValue C,
+                           SDValue GlueChain) {
+  if (GlueChain->getNumValues() <= 1) {
+    return DAG.getNode(Opcode, SL, VT, A, B, C);
+  }
+
+  assert(GlueChain->getNumValues() == 3);
+
+  SDVTList VTList = DAG.getVTList(VT, MVT::Other, MVT::Glue);
+  switch (Opcode) {
+  default: llvm_unreachable("no chain equivalent for opcode");
+  case ISD::FMA:
+    Opcode = AMDGPUISD::FMA_W_CHAIN;
+    break;
+  }
+
+  return DAG.getNode(Opcode, SL, VTList, GlueChain.getValue(1), A, B, C,
+                     GlueChain.getValue(2));
+}
+
 // Faster 2.5 ULP division that does not support denormals.
 SDValue SITargetLowering::lowerFDIV_FAST(SDValue Op, SelectionDAG &DAG) const {
   SDLoc SL(Op);
@@ -2903,25 +2985,73 @@ SDValue SITargetLowering::LowerFDIV32(SDValue Op, SelectionDAG &DAG) const {
 
   SDVTList ScaleVT = DAG.getVTList(MVT::f32, MVT::i1);
 
-  SDValue DenominatorScaled = DAG.getNode(AMDGPUISD::DIV_SCALE, SL, ScaleVT, RHS, RHS, LHS);
-  SDValue NumeratorScaled = DAG.getNode(AMDGPUISD::DIV_SCALE, SL, ScaleVT, LHS, RHS, LHS);
+  SDValue DenominatorScaled = DAG.getNode(AMDGPUISD::DIV_SCALE, SL, ScaleVT,
+                                          RHS, RHS, LHS);
+  SDValue NumeratorScaled = DAG.getNode(AMDGPUISD::DIV_SCALE, SL, ScaleVT,
+                                        LHS, RHS, LHS);
 
   // Denominator is scaled to not be denormal, so using rcp is ok.
-  SDValue ApproxRcp = DAG.getNode(AMDGPUISD::RCP, SL, MVT::f32, DenominatorScaled);
+  SDValue ApproxRcp = DAG.getNode(AMDGPUISD::RCP, SL, MVT::f32,
+                                  DenominatorScaled);
+  SDValue NegDivScale0 = DAG.getNode(ISD::FNEG, SL, MVT::f32,
+                                     DenominatorScaled);
 
-  SDValue NegDivScale0 = DAG.getNode(ISD::FNEG, SL, MVT::f32, DenominatorScaled);
+  const unsigned Denorm32Reg = AMDGPU::Hwreg::ID_MODE |
+                               (4 << AMDGPU::Hwreg::OFFSET_SHIFT_) |
+                               (1 << AMDGPU::Hwreg::WIDTH_M1_SHIFT_);
 
-  SDValue Fma0 = DAG.getNode(ISD::FMA, SL, MVT::f32, NegDivScale0, ApproxRcp, One);
-  SDValue Fma1 = DAG.getNode(ISD::FMA, SL, MVT::f32, Fma0, ApproxRcp, ApproxRcp);
+  const SDValue BitField = DAG.getTargetConstant(Denorm32Reg, SL, MVT::i16);
 
-  SDValue Mul = DAG.getNode(ISD::FMUL, SL, MVT::f32, NumeratorScaled, Fma1);
+  if (!Subtarget->hasFP32Denormals()) {
+    SDVTList BindParamVTs = DAG.getVTList(MVT::Other, MVT::Glue);
+    const SDValue EnableDenormValue = DAG.getConstant(FP_DENORM_FLUSH_NONE,
+                                                      SL, MVT::i32);
+    SDValue EnableDenorm = DAG.getNode(AMDGPUISD::SETREG, SL, BindParamVTs,
+                                       DAG.getEntryNode(),
+                                       EnableDenormValue, BitField);
+    SDValue Ops[3] = {
+      NegDivScale0,
+      EnableDenorm.getValue(0),
+      EnableDenorm.getValue(1)
+    };
 
-  SDValue Fma2 = DAG.getNode(ISD::FMA, SL, MVT::f32, NegDivScale0, Mul, NumeratorScaled);
-  SDValue Fma3 = DAG.getNode(ISD::FMA, SL, MVT::f32, Fma2, Fma1, Mul);
-  SDValue Fma4 = DAG.getNode(ISD::FMA, SL, MVT::f32, NegDivScale0, Fma3, NumeratorScaled);
+    NegDivScale0 = DAG.getMergeValues(Ops, SL);
+  }
+
+  SDValue Fma0 = getFPTernOp(DAG, ISD::FMA, SL, MVT::f32, NegDivScale0,
+                             ApproxRcp, One, NegDivScale0);
+
+  SDValue Fma1 = getFPTernOp(DAG, ISD::FMA, SL, MVT::f32, Fma0, ApproxRcp,
+                             ApproxRcp, Fma0);
+
+  SDValue Mul = getFPBinOp(DAG, ISD::FMUL, SL, MVT::f32, NumeratorScaled,
+                           Fma1, Fma1);
+
+  SDValue Fma2 = getFPTernOp(DAG, ISD::FMA, SL, MVT::f32, NegDivScale0, Mul,
+                             NumeratorScaled, Mul);
+
+  SDValue Fma3 = getFPTernOp(DAG, ISD::FMA,SL, MVT::f32, Fma2, Fma1, Mul, Fma2);
+
+  SDValue Fma4 = getFPTernOp(DAG, ISD::FMA, SL, MVT::f32, NegDivScale0, Fma3,
+                             NumeratorScaled, Fma3);
+
+  if (!Subtarget->hasFP32Denormals()) {
+    const SDValue DisableDenormValue =
+        DAG.getConstant(FP_DENORM_FLUSH_IN_FLUSH_OUT, SL, MVT::i32);
+    SDValue DisableDenorm = DAG.getNode(AMDGPUISD::SETREG, SL, MVT::Other,
+                                        Fma4.getValue(1),
+                                        DisableDenormValue,
+                                        BitField,
+                                        Fma4.getValue(2));
+
+    SDValue OutputChain = DAG.getNode(ISD::TokenFactor, SL, MVT::Other,
+                                      DisableDenorm, DAG.getRoot());
+    DAG.setRoot(OutputChain);
+  }
 
   SDValue Scale = NumeratorScaled.getValue(1);
-  SDValue Fmas = DAG.getNode(AMDGPUISD::DIV_FMAS, SL, MVT::f32, Fma4, Fma1, Fma3, Scale);
+  SDValue Fmas = DAG.getNode(AMDGPUISD::DIV_FMAS, SL, MVT::f32,
+                             Fma4, Fma1, Fma3, Scale);
 
   return DAG.getNode(AMDGPUISD::DIV_FIXUP, SL, MVT::f32, Fmas, RHS, LHS);
 }
@@ -4172,6 +4302,8 @@ std::pair<unsigned, const TargetRegisterClass *>
 SITargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
                                                StringRef Constraint,
                                                MVT VT) const {
+  if (!isTypeLegal(VT))
+    return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
 
   if (Constraint.size() == 1) {
     switch (Constraint[0]) {
@@ -4181,7 +4313,7 @@ SITargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
       default:
         return std::make_pair(0U, nullptr);
       case 32:
-        return std::make_pair(0U, &AMDGPU::SReg_32RegClass);
+        return std::make_pair(0U, &AMDGPU::SReg_32_XM0RegClass);
       case 64:
         return std::make_pair(0U, &AMDGPU::SGPR_64RegClass);
       case 128:

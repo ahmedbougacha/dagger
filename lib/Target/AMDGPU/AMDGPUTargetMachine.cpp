@@ -102,14 +102,8 @@ static ScheduleDAGInstrs *
 createGCNMaxOccupancyMachineScheduler(MachineSchedContext *C) {
   ScheduleDAGMILive *DAG =
       new ScheduleDAGMILive(C, make_unique<GCNMaxOccupancySchedStrategy>(C));
-
-  const SIInstrInfo *TII = static_cast<const SIInstrInfo *>(DAG->TII);
-  if (TII->enableClusterLoads())
-    DAG->addMutation(createLoadClusterDAGMutation(TII, DAG->TRI));
-
-  if (TII->enableClusterStores())
-    DAG->addMutation(createStoreClusterDAGMutation(TII, DAG->TRI));
-
+  DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
+  DAG->addMutation(createStoreClusterDAGMutation(DAG->TII, DAG->TRI));
   return DAG;
 }
 
@@ -168,7 +162,6 @@ AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, const Triple &TT,
                       FS, Options, getEffectiveRelocModel(RM), CM, OptLevel),
     TLOF(createTLOF(getTargetTriple())),
     IntrinsicInfo() {
-  setRequiresStructuredCFG(true);
   initAsmInfo();
 }
 
@@ -197,7 +190,9 @@ R600TargetMachine::R600TargetMachine(const Target &T, const Triple &TT,
                                      TargetOptions Options,
                                      Optional<Reloc::Model> RM,
                                      CodeModel::Model CM, CodeGenOpt::Level OL)
-  : AMDGPUTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL) {}
+  : AMDGPUTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL) {
+  setRequiresStructuredCFG(true);
+}
 
 const R600Subtarget *R600TargetMachine::getSubtargetImpl(
   const Function &F) const {
@@ -289,6 +284,14 @@ public:
 
   AMDGPUTargetMachine &getAMDGPUTargetMachine() const {
     return getTM<AMDGPUTargetMachine>();
+  }
+
+  ScheduleDAGInstrs *
+  createMachineScheduler(MachineSchedContext *C) const override {
+    ScheduleDAGMILive *DAG = createGenericSchedLive(C);
+    DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
+    DAG->addMutation(createStoreClusterDAGMutation(DAG->TII, DAG->TRI));
+    return DAG;
   }
 
   void addEarlyCSEOrGVNPass();
