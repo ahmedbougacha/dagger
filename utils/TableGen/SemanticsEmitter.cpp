@@ -107,7 +107,7 @@ struct LSNode {
   /// All the operands of this instruction.
   std::vector<std::string> Operands;
 
-  void addOperand(StringRef Op) { Operands.push_back(Op); }
+  void addOperand(std::string Op) { Operands.push_back(Op); }
 
   LSNode(const TreePatternNode &TPN) : TPN(&TPN) {
     if (TPN.getNumTypes()) {
@@ -211,7 +211,7 @@ private:
         Op.Opcode = "DCINS::CONSTANT_OP";
       } else {
         Op.Opcode = "DCINS::CUSTOM_OP";
-        Op.addOperand(CGI.Namespace + "::OpTypes::" + OpRec->getName());
+        Op.addOperand(CGI.Namespace + "::OpTypes::" + OpRec->getName().str());
         auto It = OperandByName.find(OpInfo->Name);
         if (It == OperandByName.end()) {
           OperandByName[OpInfo->Name] = CurDefNo;
@@ -261,7 +261,7 @@ private:
 
     if (OpRec->isSubClassOf("Register")) {
       Op.Opcode = "DCINS::GET_REG";
-      Op.addOperand(CGI.Namespace + "::" + OpRec->getName());
+      Op.addOperand(CGI.Namespace + "::" + OpRec->getName().str());
     } else {
       llvm_unreachable("Unknown operand type");
     }
@@ -318,7 +318,7 @@ private:
         NS.addOperand(utostr(OpInfo->MIOperandNo));
       } else if (OpRec->isSubClassOf("Register")) {
         NS.Opcode = "DCINS::PUT_REG";
-        NS.addOperand(CGI.Namespace + "::" + OpRec->getName());
+        NS.addOperand(CGI.Namespace + "::" + OpRec->getName().str());
         I.ExplicitDefs.push_back(OpRec);
       } else {
         llvm_unreachable("SET operator should only set registers!");
@@ -405,7 +405,7 @@ private:
       // FIXME: Once we can generate the TargetOpcode::Predicate enum once, we
       // should add a Namespace field to PatFrag to be able to distinguish
       // between targets.
-      NS.addOperand("TargetOpcode::Predicate::" + PredRec->getName());
+      NS.addOperand("TargetOpcode::Predicate::" + PredRec->getName().str());
     }
 
     for (unsigned i = 0, e = TPN.getNumChildren(); i != e; ++i) {
