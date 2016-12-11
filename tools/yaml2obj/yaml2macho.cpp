@@ -389,10 +389,12 @@ Error MachOWriter::writeDWARFData(raw_ostream &OS,
   for(auto Section : Sections) {
     ZeroToOffset(OS, Section.offset);
     if (0 == strncmp(&Section.sectname[0], "__debug_str", 16)) {
-      for (auto Str : Obj.DWARF.DebugStrings) {
-        OS.write(Str.data(), Str.size());
-        OS.write('\0');
-      }
+      yaml2debug_str(OS, Obj.DWARF);
+    } else if (0 == strncmp(&Section.sectname[0], "__debug_abbrev", 16)) {
+      yaml2debug_abbrev(OS, Obj.DWARF);
+    }
+    else if (0 == strncmp(&Section.sectname[0], "__debug_aranges", 16)) {
+      yaml2debug_aranges(OS, Obj.DWARF);
     }
   }
   return Error::success();
