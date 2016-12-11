@@ -16,6 +16,7 @@
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
 #include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
+#include "llvm/MC/MCInstrInfo.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/PrettyStackTrace.h"
@@ -214,8 +215,9 @@ void DCTranslator::translateFunction(const MCFunction &MCFN) {
       DEBUG(dbgs() << "Translating instruction:\n "; dbgs() << I.Inst << "\n";);
       DCTranslatedInst TI(I);
       if (!DIS.translateInst(I, TI)) {
-        errs() << "Cannot translate instruction: \n  ";
-        errs() << I.Inst << "\n";
+        errs() << "Cannot translate instruction: \n  "
+               << "  " << DIS.getDRS().MII.getName(I.Inst.getOpcode()) << ": "
+               << I.Inst << "\n";
         llvm_unreachable("Couldn't translate instruction\n");
       }
       if (EnableIRAnnotation)
