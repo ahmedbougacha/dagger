@@ -52,7 +52,27 @@ Value *AArch64InstrSema::translateComplexPattern(unsigned Pattern) {
 
 Value *AArch64InstrSema::translateCustomOperand(unsigned OperandType,
                                                 unsigned MIOperandNo) {
-  return nullptr;
+  switch (OperandType) {
+  case AArch64::OpTypes::logical_shifted_reg32:
+  case AArch64::OpTypes::logical_shifted_reg64: {
+    Value *R = getReg(getRegOp(MIOperandNo));
+    const unsigned LSLImm = getImmOp(MIOperandNo + 1);
+
+    const auto ShiftType = AArch64_AM::getShiftType(LSLImm);
+    const auto ShiftImm = AArch64_AM::getShiftValue(LSLImm);
+
+    if (ShiftImm) {
+      if (ShiftType != AArch64_AM::LSL)
+        return nullptr;
+
+      R = Builder->CreateShl(R, ConstantInt::get(R->getType(), ShiftImm));
+    }
+
+    return R;
+  }
+  default:
+    return nullptr;
+  }
 }
 
 bool AArch64InstrSema::translateImplicit(unsigned RegNo) {
