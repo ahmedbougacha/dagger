@@ -48,11 +48,14 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
   for (auto RCI = MRI.regclass_begin(), RCE = MRI.regclass_end();
        RCI != RCE; ++RCI) {
     unsigned SizeInBits = RCI->getSize() * 8;
+    Type *RCTy = nullptr;
+
     EVT RCVT = RegClassVTs[RCI->getID()];
     if (RCVT == MVT::Untyped)
-      continue;
+      RCTy = IntegerType::get(Ctx, SizeInBits);
+    else
+      RCTy = RCVT.getTypeForEVT(Ctx);
 
-    Type *RCTy = RCVT.getTypeForEVT(Ctx);
     for (auto Reg : *RCI) {
       if (SizeInBits > RegSizes[Reg]) {
         RegSizes[Reg] = SizeInBits;
