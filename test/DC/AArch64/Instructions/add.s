@@ -6,8 +6,8 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[W17_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W17")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[V1:%.+]] = add i32 [[W17_0]], 0
+; CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V1]], metadata !"W16")
 add	w16, w17, #0
 
 ;; ADDWrs
@@ -16,8 +16,9 @@ add	w16, w17, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[W17_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W17")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
+; CHECK-NEXT: [[V1:%.+]] = add i32 [[W17_0]], [[W18_0]]
+; CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V1]], metadata !"W16")
 add		w16, w17, w18
 
 ;; ADDWrx
@@ -26,8 +27,11 @@ add		w16, w17, w18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[W17_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W17")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
+; CHECK-NEXT: [[V1:%.+]] = trunc i32 [[W18_0]] to i8
+; CHECK-NEXT: [[V2:%.+]] = zext i8 [[V1]] to i32
+; CHECK-NEXT: [[V3:%.+]] = add i32 [[W17_0]], [[V2]]
+; CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V3]], metadata !"W16")
 add	w16, w17, w18, uxtb
 
 ;; ADDXri
@@ -36,8 +40,8 @@ add	w16, w17, w18, uxtb
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[V1:%.+]] = add i64 [[X17_0]], 0
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V1]], metadata !"X16")
 add	x16, x17, #0
 
 ;; ADDXrs
@@ -46,8 +50,9 @@ add	x16, x17, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[X18_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X18")
+; CHECK-NEXT: [[V1:%.+]] = add i64 [[X17_0]], [[X18_0]]
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V1]], metadata !"X16")
 add		x16, x17, x18
 
 ;; ADDXrx
@@ -56,8 +61,12 @@ add		x16, x17, x18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
+; CHECK-NEXT: [[V1:%.+]] = trunc i32 [[W18_0]] to i8
+; CHECK-NEXT: [[V2:%.+]] = zext i8 [[V1]] to i32
+; CHECK-NEXT: [[V3:%.+]] = zext i32 [[V2]] to i64
+; CHECK-NEXT: [[V4:%.+]] = add i64 [[X17_0]], [[V3]]
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V4]], metadata !"X16")
 add	x16, x17, w18, uxtb
 
 ;; ADDv16i8
