@@ -37,10 +37,10 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
     : MRI(MRI), MII(MII), DL(DL), Ctx(Ctx), RegSetType(0),
       NumRegs(MRI.getNumRegs()), NumLargest(0), RegSizes(NumRegs),
       RegTypes(NumRegs), RegLargestSupers(NumRegs), RegAliased(NumRegs),
-      RegOffsetsInSet(NumRegs, -1), LargestRegs(), TheModule(0),
-      Builder(new DCIRBuilder(Ctx)), RegPtrs(NumRegs), RegAllocas(NumRegs),
-      RegInits(NumRegs), RegAssignments(NumRegs), TheFunction(0),
-      RegVals(NumRegs), CurrentInst(0) {
+      RegOffsetsInSet(NumRegs, -1), LargestRegs(), RegConstantVals(NumRegs),
+      TheModule(0), Builder(new DCIRBuilder(Ctx)), RegPtrs(NumRegs),
+      RegAllocas(NumRegs), RegInits(NumRegs), RegAssignments(NumRegs),
+      TheFunction(0), RegVals(NumRegs), CurrentInst(0) {
 
   // First, determine the (spill) size of each register, in bits.
   // FIXME: the best (only) way to know the size of a reg is to find a
@@ -291,6 +291,9 @@ Value *DCRegisterSema::getReg(unsigned RegNo) {
     return Builder->CreateCall(GetRegIntrin, MDRegName);
   }
 
+  if (Constant *C = RegConstantVals[RegNo])
+    return C;
+
   getRegNoCallback(RegNo);
   onRegisterGet(RegNo);
   return RegVals[RegNo];
@@ -299,6 +302,9 @@ Value *DCRegisterSema::getReg(unsigned RegNo) {
 Value *DCRegisterSema::getRegNoCallback(unsigned RegNo) {
   if (RegAliased[RegNo])
     llvm_unreachable("Access to aliased registers not implemented yet");
+
+  if (RegConstantVals[RegNo])
+    llvm_unreachable("Can't set constant register!");
 
   Value *&RV = RegVals[RegNo];
 

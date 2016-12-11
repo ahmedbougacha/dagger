@@ -105,6 +105,9 @@ protected:
 
   std::vector<unsigned> LargestRegs;
 
+  // Always valid inside a context.
+  std::vector<Constant *> RegConstantVals;
+
   // Valid only inside a Module.
   Module *TheModule;
   typedef IRBuilder<NoFolder> DCIRBuilder;

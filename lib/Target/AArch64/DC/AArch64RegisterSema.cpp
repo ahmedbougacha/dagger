@@ -22,7 +22,12 @@ AArch64RegisterSema::AArch64RegisterSema(LLVMContext &Ctx,
                                          const MCRegisterInfo &MRI,
                                          const MCInstrInfo &MII,
                                          const DataLayout &DL)
-    : DCRegisterSema(Ctx, MRI, MII, DL, AArch64::RegClassVTs) {}
+    : DCRegisterSema(Ctx, MRI, MII, DL, AArch64::RegClassVTs) {
+  RegConstantVals[AArch64::XZR] =
+      Constant::getNullValue(IntegerType::get(Ctx, 64));
+  RegConstantVals[AArch64::WZR] =
+      Constant::getNullValue(IntegerType::get(Ctx, 32));
+}
 
 // FIXME: What about using the stuff in CallingConvLower.h?
 void AArch64RegisterSema::insertInitRegSetCode(Function *InitFn) {
