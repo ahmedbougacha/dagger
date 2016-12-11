@@ -91,6 +91,13 @@ protected:
   // The largest super register of each register, 0 if undefined, itself if the
   // register has no super-register.
   std::vector<unsigned> RegLargestSupers;
+
+  // Whether a register partially aliases other registers: this is usually the
+  // case for tuples of registers, which alias the other permutations.
+  // These registers don't participate in the regset and are materialized lazily
+  // from their sub-registers.
+  std::vector<bool> RegAliased;
+
   // The offset of each register in RegSetType, or -1 if not present.
   // Only the largest super registers are present, meaning there are only
   // NumLargest elements not equal to -1.

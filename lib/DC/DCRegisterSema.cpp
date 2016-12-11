@@ -17,6 +17,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <dlfcn.h>
@@ -35,11 +36,11 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
                                InitSpecialRegSizesFnTy InitSpecialRegSizesFn)
     : MRI(MRI), MII(MII), DL(DL), Ctx(Ctx), RegSetType(0),
       NumRegs(MRI.getNumRegs()), NumLargest(0), RegSizes(NumRegs),
-      RegTypes(NumRegs),
-      RegLargestSupers(NumRegs), RegOffsetsInSet(NumRegs, -1), LargestRegs(),
-      TheModule(0), Builder(new DCIRBuilder(Ctx)), RegPtrs(NumRegs),
-      RegAllocas(NumRegs), RegInits(NumRegs), RegAssignments(NumRegs),
-      TheFunction(0), RegVals(NumRegs), CurrentInst(0) {
+      RegTypes(NumRegs), RegLargestSupers(NumRegs), RegAliased(NumRegs),
+      RegOffsetsInSet(NumRegs, -1), LargestRegs(), TheModule(0),
+      Builder(new DCIRBuilder(Ctx)), RegPtrs(NumRegs), RegAllocas(NumRegs),
+      RegInits(NumRegs), RegAssignments(NumRegs), TheFunction(0),
+      RegVals(NumRegs), CurrentInst(0) {
 
   // First, determine the (spill) size of each register, in bits.
   // FIXME: the best (only) way to know the size of a reg is to find a
@@ -69,17 +70,108 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
     InitSpecialRegSizesFn(RegSizes);
 
   // Now we have all the sizes we need, determine the largest super registers.
+  // Do that in two steps: first, look at all regunit roots to determine which
+  // registers are super-registers of multiple regunit roots.
+  //
+  // Use that as a tie-breaker: if a register has multiple super-registers with
+  // the same size, pick the unique super-register that is a super-register of
+  // the least number of regunit roots.
+  //
+  // In other words, say we have (on AArch64):
+  //     W0       W1
+  //       \     / | \
+  //        W0_W1 X1  W1_W2
+  //          |  /   \ |
+  //        X0_X1     X1_X2
+  //
+  // We want to pick X1 as the largest super of W1, because the others all
+  // overlap and can't be expressed (short of having one value for the entire
+  // register file).
+  //
+  // FIXME: We should eventually materialize the ignored super-registers from
+  // their sub-registers on get, and split them on set.
+  std::vector<unsigned> RegNumRootUnits(getNumRegs());
+
+  for (unsigned RUI = 0, RUE = MRI.getNumRegUnits(); RUI != RUE; ++RUI) {
+   MCRegUnitRootIterator RI(RUI, &MRI);
+   unsigned RURoot = *RI;
+
+   // Regunits with multiple roots usually involve aliases; don't worry about
+   // those yet.
+   ++RI;
+   if (RI.isValid())
+     llvm_unreachable("Regunits with multiple roots not supported yet");
+
+   for (MCSuperRegIterator SI(RURoot, &MRI, true); SI.isValid(); ++SI)
+     ++RegNumRootUnits[*SI];
+  }
+
+  DEBUG(dbgs() << "Computing reg largest supers:\n");
   for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
+    DEBUG(dbgs() << " - For " << MRI.getName(RI) << ":\n");
     if (RegSizes[RI] == 0)
       continue;
     unsigned &Largest = RegLargestSupers[RI];
     Largest = RI;
+
+    // Gather all super-registers of RI.
+    SmallVector<unsigned, 4> SuperRegs;
     for (MCSuperRegIterator SRI(RI, &MRI); SRI.isValid(); ++SRI) {
       if (RegSizes[*SRI] == 0)
         continue;
-      if (RegSizes[Largest] < RegSizes[*SRI])
-        Largest = *SRI;
+      DEBUG(dbgs() << "   Considering: " << MRI.getName(*SRI) << "\n");
+      SuperRegs.push_back(*SRI);
     }
+
+    // If there are no super-registers, there's no largest super-register.
+    if (SuperRegs.empty())
+      continue;
+
+    // Order them by size, then number of roots, then register number.
+    std::stable_sort(SuperRegs.begin(), SuperRegs.end(),
+                     [&](unsigned LR, unsigned RR) {
+                       return RegSizes[LR] == RegSizes[RR]
+                                  ? RegNumRootUnits[LR] < RegNumRootUnits[RR]
+                                  : RegSizes[LR] < RegSizes[RR];
+                     });
+
+    // Pick the largest super: go through the ordered list of super-registers
+    // by iterating on groups of same-size super-registers.
+    for (int SRI = 0, SRE = SuperRegs.size(); SRI != SRE; ++SRI) {
+      unsigned SR = SuperRegs[SRI];
+      unsigned SRSize = RegSizes[SR];
+
+      // If this is the last super-register, it's trivially the largest.
+      if ((SRI + 1) == SRE) {
+        Largest = SR;
+        break;
+      }
+
+      // If there are multiple super-registers, and one (and only one) has less
+      // units, it's a candidate to being the largest super-register.
+      unsigned NSR = SuperRegs[SRI + 1];
+      if (RegSizes[NSR] == SRSize) {
+        // If there are multiple super-registers with the same number of units,
+        // we can't look through the aliasing and bail out.
+        if (RegNumRootUnits[NSR] == RegNumRootUnits[SR]) {
+          RegAliased[SR] = true;
+          while ((SRI + 1) != SRE)
+            RegAliased[SuperRegs[++SRI]] = true;
+          break;
+        }
+        Largest = SR;
+      }
+
+      while ((SRI + 1) != SRE && RegSizes[SuperRegs[SRI + 1]] == SRSize)
+        RegAliased[SuperRegs[++SRI]] = true;
+    }
+
+    DEBUG(dbgs() << "   Picked largest: " << MRI.getName(Largest) << "\n");
+  }
+
+  for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
+    if (RegAliased[RI])
+      RegLargestSupers[RI] = 0;
   }
 
   LargestRegs.resize(RegLargestSupers.size());
@@ -205,6 +297,9 @@ Value *DCRegisterSema::getReg(unsigned RegNo) {
 }
 
 Value *DCRegisterSema::getRegNoCallback(unsigned RegNo) {
+  if (RegAliased[RegNo])
+    llvm_unreachable("Access to aliased registers not implemented yet");
+
   Value *&RV = RegVals[RegNo];
 
   // First, look for a value in this basic block.
@@ -334,10 +429,14 @@ Value *DCRegisterSema::recreateSuperRegFromSub(unsigned Super, unsigned Sub) {
 
 void DCRegisterSema::defineAllSubSuperRegs(unsigned RegNo) {
   for (MCSuperRegIterator SRI(RegNo, &MRI); SRI.isValid(); ++SRI) {
+    if (RegAliased[*SRI])
+      continue;
     setRegNoSubSuper(*SRI, recreateSuperRegFromSub(*SRI, RegNo));
   }
 
   for (MCSubRegIterator SRI(RegNo, &MRI); SRI.isValid(); ++SRI) {
+    if (RegAliased[*SRI])
+      continue;
     setRegNoSubSuper(*SRI, extractSubRegFromSuper(RegNo, *SRI));
   }
 }
@@ -359,6 +458,9 @@ void DCRegisterSema::setReg(unsigned RegNo, Value *Val) {
     Builder->CreateCall(SetRegIntrin, {Val, MDRegName});
     return;
   }
+
+  if (RegAliased[RegNo])
+    llvm_unreachable("Access to aliased registers not implemented yet");
 
   setRegNoSubSuper(RegNo, Val);
   defineAllSubSuperRegs(RegNo);
