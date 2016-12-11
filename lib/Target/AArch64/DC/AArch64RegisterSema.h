@@ -25,6 +25,8 @@ public:
   AArch64RegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
                       const MCInstrInfo &MII, const DataLayout &DL);
 
+  bool doesSubRegIndexClearSuper(unsigned Idx) const override;
+
   void insertInitRegSetCode(Function *InitFn) override;
   void insertFiniRegSetCode(Function *FiniFn) override;
 

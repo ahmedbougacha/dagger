@@ -29,6 +29,18 @@ AArch64RegisterSema::AArch64RegisterSema(LLVMContext &Ctx,
       Constant::getNullValue(IntegerType::get(Ctx, 32));
 }
 
+bool AArch64RegisterSema::doesSubRegIndexClearSuper(unsigned Idx) const {
+  switch (Idx) {
+  case AArch64::sub_32:
+  case AArch64::bsub:
+  case AArch64::hsub:
+  case AArch64::ssub:
+  case AArch64::dsub:
+    return true;
+  }
+  return false;
+}
+
 // FIXME: What about using the stuff in CallingConvLower.h?
 void AArch64RegisterSema::insertInitRegSetCode(Function *InitFn) {
   IRBuilderBase::InsertPointGuard IPG(*Builder);
