@@ -182,6 +182,7 @@ static void runOldPMPasses(Config &Conf, Module &Mod, TargetMachine *TM,
   PMB.LoopVectorize = true;
   PMB.SLPVectorize = true;
   PMB.OptLevel = Conf.OptLevel;
+  PMB.PGOSampleUse = Conf.SampleProfile;
   if (IsThinLTO)
     PMB.populateThinLTOPassManager(passes);
   else
@@ -191,7 +192,6 @@ static void runOldPMPasses(Config &Conf, Module &Mod, TargetMachine *TM,
 
 bool opt(Config &Conf, TargetMachine *TM, unsigned Task, Module &Mod,
          bool IsThinLTO) {
-  Mod.setDataLayout(TM->createDataLayout());
   if (Conf.OptPipeline.empty())
     runOldPMPasses(Conf, Mod, TM, IsThinLTO);
   else
@@ -318,7 +318,7 @@ Error lto::thinBackend(Config &Conf, unsigned Task, AddStreamFn AddStream,
                        Module &Mod, ModuleSummaryIndex &CombinedIndex,
                        const FunctionImporter::ImportMapTy &ImportList,
                        const GVSummaryMapTy &DefinedGlobals,
-                       MapVector<StringRef, MemoryBufferRef> &ModuleMap) {
+                       MapVector<StringRef, BitcodeModule> &ModuleMap) {
   Expected<const Target *> TOrErr = initAndLookupTarget(Conf, Mod);
   if (!TOrErr)
     return TOrErr.takeError();
@@ -353,8 +353,11 @@ Error lto::thinBackend(Config &Conf, unsigned Task, AddStreamFn AddStream,
   auto ModuleLoader = [&](StringRef Identifier) {
     assert(Mod.getContext().isODRUniquingDebugTypes() &&
            "ODR Type uniquing should be enabled on the context");
-    return getLazyBitcodeModule(ModuleMap[Identifier], Mod.getContext(),
-                                /*ShouldLazyLoadMetadata=*/true);
+    auto I = ModuleMap.find(Identifier);
+    assert(I != ModuleMap.end());
+    return I->second.getLazyModule(Mod.getContext(),
+                                   /*ShouldLazyLoadMetadata=*/true,
+                                   /*IsImporting*/ true);
   };
 
   FunctionImporter Importer(CombinedIndex, ModuleLoader);

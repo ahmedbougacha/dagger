@@ -15,13 +15,14 @@
 #include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstrDesc.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
-
-#include <string>
+#include <cassert>
 
 using namespace llvm;
 using namespace llvm::AMDGPU;
@@ -450,7 +451,6 @@ void AMDGPUInstPrinter::printImmediate64(uint64_t Imm,
 void AMDGPUInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
                                      const MCSubtargetInfo &STI,
                                      raw_ostream &O) {
-
   if (OpNo >= MI->getNumOperands()) {
     O << "/*Missing OP" << OpNo << "*/";
     return;
@@ -749,6 +749,20 @@ void AMDGPUInstPrinter::printInterpSlot(const MCInst *MI, unsigned OpNum,
   }
 }
 
+void AMDGPUInstPrinter::printInterpAttr(const MCInst *MI, unsigned OpNum,
+                                        const MCSubtargetInfo &STI,
+                                        raw_ostream &O) {
+  unsigned Attr = MI->getOperand(OpNum).getImm();
+  O << "attr" << Attr;
+}
+
+void AMDGPUInstPrinter::printInterpAttrChan(const MCInst *MI, unsigned OpNum,
+                                        const MCSubtargetInfo &STI,
+                                        raw_ostream &O) {
+  unsigned Chan = MI->getOperand(OpNum).getImm();
+  O << '.' << "xyzw"[Chan & 0x3];
+}
+
 void AMDGPUInstPrinter::printVGPRIndexMode(const MCInst *MI, unsigned OpNo,
                                            const MCSubtargetInfo &STI,
                                            raw_ostream &O) {
@@ -940,7 +954,6 @@ void AMDGPUInstPrinter::printBankSwizzle(const MCInst *MI, unsigned OpNo,
   default:
     break;
   }
-  return;
 }
 
 void AMDGPUInstPrinter::printRSel(const MCInst *MI, unsigned OpNo,
@@ -1037,7 +1050,7 @@ void AMDGPUInstPrinter::printSendMsg(const MCInst *MI, unsigned OpNo,
       O << "sendmsg(" << IdSymbolic[Id] << ", " << OpSysSymbolic[OpSys] << ')';
       return;
     }
-  } while (0);
+  } while (false);
   O << SImm16; // Unknown simm16 code.
 }
 

@@ -89,7 +89,6 @@ set(Tests
   RepeatedBytesTest
   SimpleCmpTest
   SimpleDictionaryTest
-  SimpleFnAdapterTest
   SimpleHashTest
   SimpleTest
   SimpleThreadedTest
@@ -109,6 +108,7 @@ set(Tests
   ThreadedLeakTest
   ThreadedTest
   TimeoutTest
+  TimeoutEmptyTest
   TraceMallocTest
   )
 
@@ -133,7 +133,6 @@ endforeach()
 
 add_executable(LLVMFuzzer-Unittest
   FuzzerUnittest.cpp
-  FuzzerFnAdapterUnittest.cpp
   )
 
 add_executable(LLVMFuzzer-StandaloneInitializeTest
@@ -169,7 +168,7 @@ set_target_properties(LLVMFuzzer-StandaloneInitializeTest
 
 include_directories(..)
 
-add_subdirectory(uninstrumented)
+# add_subdirectory(uninstrumented)
 add_subdirectory(no-coverage)
 add_subdirectory(ubsan)
 

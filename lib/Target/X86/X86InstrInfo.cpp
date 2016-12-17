@@ -6576,14 +6576,6 @@ MachineInstr *X86InstrInfo::optimizeLoadInstr(MachineInstr &MI,
                                               const MachineRegisterInfo *MRI,
                                               unsigned &FoldAsLoadDefReg,
                                               MachineInstr *&DefMI) const {
-  if (FoldAsLoadDefReg == 0)
-    return nullptr;
-  // To be conservative, if there exists another load, clear the load candidate.
-  if (MI.mayLoad()) {
-    FoldAsLoadDefReg = 0;
-    return nullptr;
-  }
-
   // Check whether we can move DefMI here.
   DefMI = MRI->getVRegDef(FoldAsLoadDefReg);
   assert(DefMI);
@@ -6592,27 +6584,24 @@ MachineInstr *X86InstrInfo::optimizeLoadInstr(MachineInstr &MI,
     return nullptr;
 
   // Collect information about virtual register operands of MI.
-  unsigned SrcOperandId = 0;
-  bool FoundSrcOperand = false;
-  for (unsigned i = 0, e = MI.getDesc().getNumOperands(); i != e; ++i) {
+  SmallVector<unsigned, 1> SrcOperandIds;
+  for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
     MachineOperand &MO = MI.getOperand(i);
     if (!MO.isReg())
       continue;
     unsigned Reg = MO.getReg();
     if (Reg != FoldAsLoadDefReg)
       continue;
-    // Do not fold if we have a subreg use or a def or multiple uses.
-    if (MO.getSubReg() || MO.isDef() || FoundSrcOperand)
+    // Do not fold if we have a subreg use or a def.
+    if (MO.getSubReg() || MO.isDef())
       return nullptr;
-
-    SrcOperandId = i;
-    FoundSrcOperand = true;
+    SrcOperandIds.push_back(i);
   }
-  if (!FoundSrcOperand)
+  if (SrcOperandIds.empty())
     return nullptr;
 
   // Check whether we can fold the def into SrcOperandId.
-  if (MachineInstr *FoldMI = foldMemoryOperand(MI, SrcOperandId, *DefMI)) {
+  if (MachineInstr *FoldMI = foldMemoryOperand(MI, SrcOperandIds, *DefMI)) {
     FoldAsLoadDefReg = 0;
     return FoldMI;
   }
@@ -7242,12 +7231,8 @@ static bool hasPartialRegUpdate(unsigned Opcode) {
   case X86::CVTSI2SD64rm:
   case X86::CVTSD2SSrr:
   case X86::CVTSD2SSrm:
-  case X86::Int_CVTSD2SSrr:
-  case X86::Int_CVTSD2SSrm:
   case X86::CVTSS2SDrr:
   case X86::CVTSS2SDrm:
-  case X86::Int_CVTSS2SDrr:
-  case X86::Int_CVTSS2SDrm:
   case X86::MOVHPDrm:
   case X86::MOVHPSrm:
   case X86::MOVLPDrm:
@@ -7258,12 +7243,8 @@ static bool hasPartialRegUpdate(unsigned Opcode) {
   case X86::RCPSSm_Int:
   case X86::ROUNDSDr:
   case X86::ROUNDSDm:
-  case X86::ROUNDSDr_Int:
-  case X86::ROUNDSDm_Int:
   case X86::ROUNDSSr:
   case X86::ROUNDSSm:
-  case X86::ROUNDSSr_Int:
-  case X86::ROUNDSSm_Int:
   case X86::RSQRTSSr:
   case X86::RSQRTSSm:
   case X86::RSQRTSSr_Int:
@@ -8475,7 +8456,10 @@ static const uint16_t ReplaceableInstrs[][3] = {
   { X86::MOVAPSrr,   X86::MOVAPDrr,  X86::MOVDQArr  },
   { X86::MOVUPSmr,   X86::MOVUPDmr,  X86::MOVDQUmr  },
   { X86::MOVUPSrm,   X86::MOVUPDrm,  X86::MOVDQUrm  },
-  { X86::MOVLPSmr,   X86::MOVLPDmr,  X86::MOVPQI2QImr  },
+  { X86::MOVLPSmr,   X86::MOVLPDmr,  X86::MOVPQI2QImr },
+  { X86::MOVSSmr,    X86::MOVSSmr,   X86::MOVPDI2DImr },
+  { X86::MOVSDrm,    X86::MOVSDrm,   X86::MOVQI2PQIrm },
+  { X86::MOVSSrm,    X86::MOVSSrm,   X86::MOVDI2PDIrm },
   { X86::MOVNTPSmr,  X86::MOVNTPDmr, X86::MOVNTDQmr },
   { X86::ANDNPSrm,   X86::ANDNPDrm,  X86::PANDNrm   },
   { X86::ANDNPSrr,   X86::ANDNPDrr,  X86::PANDNrr   },
@@ -8491,7 +8475,10 @@ static const uint16_t ReplaceableInstrs[][3] = {
   { X86::VMOVAPSrr,  X86::VMOVAPDrr,  X86::VMOVDQArr  },
   { X86::VMOVUPSmr,  X86::VMOVUPDmr,  X86::VMOVDQUmr  },
   { X86::VMOVUPSrm,  X86::VMOVUPDrm,  X86::VMOVDQUrm  },
-  { X86::VMOVLPSmr,  X86::VMOVLPDmr,  X86::VMOVPQI2QImr  },
+  { X86::VMOVLPSmr,  X86::VMOVLPDmr,  X86::VMOVPQI2QImr },
+  { X86::VMOVSSmr,   X86::VMOVSSmr,   X86::VMOVPDI2DImr },
+  { X86::VMOVSDrm,   X86::VMOVSDrm,   X86::VMOVQI2PQIrm },
+  { X86::VMOVSSrm,   X86::VMOVSSrm,   X86::VMOVDI2PDIrm },
   { X86::VMOVNTPSmr, X86::VMOVNTPDmr, X86::VMOVNTDQmr },
   { X86::VANDNPSrm,  X86::VANDNPDrm,  X86::VPANDNrm   },
   { X86::VANDNPSrr,  X86::VANDNPDrr,  X86::VPANDNrr   },
@@ -8513,6 +8500,10 @@ static const uint16_t ReplaceableInstrs[][3] = {
   { X86::VMOVNTPSZ128mr, X86::VMOVNTPDZ128mr, X86::VMOVNTDQZ128mr },
   { X86::VMOVNTPSZ128mr, X86::VMOVNTPDZ128mr, X86::VMOVNTDQZ128mr },
   { X86::VMOVNTPSZmr,    X86::VMOVNTPDZmr,    X86::VMOVNTDQZmr    },
+  { X86::VMOVSDZmr,      X86::VMOVSDZmr,      X86::VMOVPQI2QIZmr  },
+  { X86::VMOVSSZmr,      X86::VMOVSSZmr,      X86::VMOVPDI2DIZmr  },
+  { X86::VMOVSDZrm,      X86::VMOVSDZrm,      X86::VMOVQI2PQIZrm  },
+  { X86::VMOVSSZrm,      X86::VMOVSSZrm,      X86::VMOVDI2PDIZrm  },
   { X86::VBROADCASTSSZ128r, X86::VBROADCASTSSZ128r, X86::VPBROADCASTDZ128r },
   { X86::VBROADCASTSSZ128m, X86::VBROADCASTSSZ128m, X86::VPBROADCASTDZ128m },
   { X86::VBROADCASTSSZ256r, X86::VBROADCASTSSZ256r, X86::VPBROADCASTDZ256r },

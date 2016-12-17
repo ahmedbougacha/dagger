@@ -68,7 +68,6 @@ void initializeAliasSetPrinterPass(PassRegistry&);
 void initializeAlignmentFromAssumptionsPass(PassRegistry&);
 void initializeAlwaysInlinerLegacyPassPass(PassRegistry&);
 void initializeArgPromotionPass(PassRegistry&);
-void initializeAssumptionCacheTrackerPass(PassRegistry &);
 void initializeAtomicExpandPass(PassRegistry&);
 void initializeBBVectorizePass(PassRegistry&);
 void initializeBDCELegacyPassPass(PassRegistry &);
@@ -355,6 +354,7 @@ void initializeVirtRegRewriterPass(PassRegistry&);
 void initializeWholeProgramDevirtPass(PassRegistry &);
 void initializeWinEHPreparePass(PassRegistry&);
 void initializeWriteBitcodePassPass(PassRegistry &);
+void initializeWriteThinLTOBitcodePass(PassRegistry &);
 void initializeXRayInstrumentationPass(PassRegistry &);
 }
 

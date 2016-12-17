@@ -40,7 +40,6 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/ConstantFolding.h"
@@ -683,14 +682,14 @@ Value *InstCombiner::SimplifyUsingDistributiveLaws(BinaryOperator &I) {
       if (SI0->getCondition() == SI1->getCondition()) {
         Value *SI = nullptr;
         if (Value *V = SimplifyBinOp(TopLevelOpcode, SI0->getFalseValue(),
-                                     SI1->getFalseValue(), DL, &TLI, &DT, &AC))
+                                     SI1->getFalseValue(), DL, &TLI, &DT))
           SI = Builder->CreateSelect(SI0->getCondition(),
                                      Builder->CreateBinOp(TopLevelOpcode,
                                                           SI0->getTrueValue(),
                                                           SI1->getTrueValue()),
                                      V);
         if (Value *V = SimplifyBinOp(TopLevelOpcode, SI0->getTrueValue(),
-                                     SI1->getTrueValue(), DL, &TLI, &DT, &AC))
+                                     SI1->getTrueValue(), DL, &TLI, &DT))
           SI = Builder->CreateSelect(
               SI0->getCondition(), V,
               Builder->CreateBinOp(TopLevelOpcode, SI0->getFalseValue(),
@@ -1374,7 +1373,7 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
   SmallVector<Value*, 8> Ops(GEP.op_begin(), GEP.op_end());
 
   if (Value *V =
-          SimplifyGEPInst(GEP.getSourceElementType(), Ops, DL, &TLI, &DT, &AC))
+          SimplifyGEPInst(GEP.getSourceElementType(), Ops, DL, &TLI, &DT))
     return replaceInstUsesWith(GEP, V);
 
   Value *PtrOp = GEP.getOperand(0);
@@ -2232,6 +2231,20 @@ Instruction *InstCombiner::visitBranchInst(BranchInst &BI) {
 
 Instruction *InstCombiner::visitSwitchInst(SwitchInst &SI) {
   Value *Cond = SI.getCondition();
+  Value *Op0;
+  ConstantInt *AddRHS;
+  if (match(Cond, m_Add(m_Value(Op0), m_ConstantInt(AddRHS)))) {
+    // Change 'switch (X+4) case 1:' into 'switch (X) case -3'.
+    for (SwitchInst::CaseIt CaseIter : SI.cases()) {
+      Constant *NewCase = ConstantExpr::getSub(CaseIter.getCaseValue(), AddRHS);
+      assert(isa<ConstantInt>(NewCase) &&
+             "Result of expression should be constant");
+      CaseIter.setValue(cast<ConstantInt>(NewCase));
+    }
+    SI.setCondition(Op0);
+    return &SI;
+  }
+
   unsigned BitWidth = cast<IntegerType>(Cond->getType())->getBitWidth();
   APInt KnownZero(BitWidth, 0), KnownOne(BitWidth, 0);
   computeKnownBits(Cond, KnownZero, KnownOne, 0, &SI);
@@ -2252,44 +2265,20 @@ Instruction *InstCombiner::visitSwitchInst(SwitchInst &SI) {
   // Shrink the condition operand if the new type is smaller than the old type.
   // This may produce a non-standard type for the switch, but that's ok because
   // the backend should extend back to a legal type for the target.
-  bool TruncCond = false;
   if (NewWidth > 0 && NewWidth < BitWidth) {
-    TruncCond = true;
     IntegerType *Ty = IntegerType::get(SI.getContext(), NewWidth);
     Builder->SetInsertPoint(&SI);
     Value *NewCond = Builder->CreateTrunc(Cond, Ty, "trunc");
     SI.setCondition(NewCond);
 
-    for (auto &C : SI.cases())
-      static_cast<SwitchInst::CaseIt *>(&C)->setValue(ConstantInt::get(
-          SI.getContext(), C.getCaseValue()->getValue().trunc(NewWidth)));
-  }
-
-  Value *Op0 = nullptr;
-  ConstantInt *AddRHS = nullptr;
-  if (match(Cond, m_Add(m_Value(Op0), m_ConstantInt(AddRHS)))) {
-    // Change 'switch (X+4) case 1:' into 'switch (X) case -3'.
-    for (SwitchInst::CaseIt i = SI.case_begin(), e = SI.case_end(); i != e;
-         ++i) {
-      ConstantInt *CaseVal = i.getCaseValue();
-      Constant *LHS = CaseVal;
-      if (TruncCond) {
-        LHS = LeadingKnownZeros
-                  ? ConstantExpr::getZExt(CaseVal, Cond->getType())
-                  : ConstantExpr::getSExt(CaseVal, Cond->getType());
-      }
-      Constant *NewCaseVal = ConstantExpr::getSub(LHS, AddRHS);
-      assert(isa<ConstantInt>(NewCaseVal) &&
-             "Result of expression should be constant");
-      i.setValue(cast<ConstantInt>(NewCaseVal));
+    for (SwitchInst::CaseIt CaseIter : SI.cases()) {
+      APInt TruncatedCase = CaseIter.getCaseValue()->getValue().trunc(NewWidth);
+      CaseIter.setValue(ConstantInt::get(SI.getContext(), TruncatedCase));
     }
-    SI.setCondition(Op0);
-    if (auto *CondI = dyn_cast<Instruction>(Cond))
-      Worklist.Add(CondI);
     return &SI;
   }
 
-  return TruncCond ? &SI : nullptr;
+  return nullptr;
 }
 
 Instruction *InstCombiner::visitExtractValueInst(ExtractValueInst &EV) {
@@ -2299,7 +2288,7 @@ Instruction *InstCombiner::visitExtractValueInst(ExtractValueInst &EV) {
     return replaceInstUsesWith(EV, Agg);
 
   if (Value *V =
-          SimplifyExtractValueInst(Agg, EV.getIndices(), DL, &TLI, &DT, &AC))
+          SimplifyExtractValueInst(Agg, EV.getIndices(), DL, &TLI, &DT))
     return replaceInstUsesWith(EV, V);
 
   if (InsertValueInst *IV = dyn_cast<InsertValueInst>(Agg)) {
@@ -3125,8 +3114,8 @@ static bool prepareICWorklistFromFunction(Function &F, const DataLayout &DL,
 
 static bool
 combineInstructionsOverFunction(Function &F, InstCombineWorklist &Worklist,
-                                AliasAnalysis *AA, AssumptionCache &AC,
-                                TargetLibraryInfo &TLI, DominatorTree &DT,
+                                AliasAnalysis *AA, TargetLibraryInfo &TLI,
+                                DominatorTree &DT,
                                 bool ExpensiveCombines = true,
                                 LoopInfo *LI = nullptr) {
   auto &DL = F.getParent()->getDataLayout();
@@ -3136,12 +3125,8 @@ combineInstructionsOverFunction(Function &F, InstCombineWorklist &Worklist,
   /// instructions into the worklist when they are created.
   IRBuilder<TargetFolder, IRBuilderCallbackInserter> Builder(
       F.getContext(), TargetFolder(DL),
-      IRBuilderCallbackInserter([&Worklist, &AC](Instruction *I) {
+      IRBuilderCallbackInserter([&Worklist](Instruction *I) {
         Worklist.Add(I);
-
-        using namespace llvm::PatternMatch;
-        if (match(I, m_Intrinsic<Intrinsic::assume>()))
-          AC.registerAssumption(cast<CallInst>(I));
       }));
 
   // Lower dbg.declare intrinsics otherwise their value may be clobbered
@@ -3158,7 +3143,7 @@ combineInstructionsOverFunction(Function &F, InstCombineWorklist &Worklist,
     bool Changed = prepareICWorklistFromFunction(F, DL, &TLI, Worklist);
 
     InstCombiner IC(Worklist, &Builder, F.optForMinSize(), ExpensiveCombines,
-                    AA, AC, TLI, DT, DL, LI);
+                    AA, TLI, DT, DL, LI);
     Changed |= IC.run();
 
     if (!Changed)
@@ -3170,14 +3155,13 @@ combineInstructionsOverFunction(Function &F, InstCombineWorklist &Worklist,
 
 PreservedAnalyses InstCombinePass::run(Function &F,
                                        FunctionAnalysisManager &AM) {
-  auto &AC = AM.getResult<AssumptionAnalysis>(F);
   auto &DT = AM.getResult<DominatorTreeAnalysis>(F);
   auto &TLI = AM.getResult<TargetLibraryAnalysis>(F);
 
   auto *LI = AM.getCachedResult<LoopAnalysis>(F);
 
   // FIXME: The AliasAnalysis is not yet supported in the new pass manager
-  if (!combineInstructionsOverFunction(F, Worklist, nullptr, AC, TLI, DT,
+  if (!combineInstructionsOverFunction(F, Worklist, nullptr, TLI, DT,
                                        ExpensiveCombines, LI))
     // No changes, all analyses are preserved.
     return PreservedAnalyses::all();
@@ -3192,7 +3176,6 @@ PreservedAnalyses InstCombinePass::run(Function &F,
 void InstructionCombiningPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesCFG();
   AU.addRequired<AAResultsWrapperPass>();
-  AU.addRequired<AssumptionCacheTracker>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addPreserved<DominatorTreeWrapperPass>();
@@ -3207,7 +3190,6 @@ bool InstructionCombiningPass::runOnFunction(Function &F) {
 
   // Required analyses.
   auto AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
-  auto &AC = getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 
@@ -3215,14 +3197,13 @@ bool InstructionCombiningPass::runOnFunction(Function &F) {
   auto *LIWP = getAnalysisIfAvailable<LoopInfoWrapperPass>();
   auto *LI = LIWP ? &LIWP->getLoopInfo() : nullptr;
 
-  return combineInstructionsOverFunction(F, Worklist, AA, AC, TLI, DT,
+  return combineInstructionsOverFunction(F, Worklist, AA, TLI, DT,
                                          ExpensiveCombines, LI);
 }
 
 char InstructionCombiningPass::ID = 0;
 INITIALIZE_PASS_BEGIN(InstructionCombiningPass, "instcombine",
                       "Combine redundant instructions", false, false)
-INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)

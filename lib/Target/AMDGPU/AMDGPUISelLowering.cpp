@@ -789,8 +789,10 @@ SDValue AMDGPUTargetLowering::LowerCall(CallLoweringInfo &CLI,
       Fn, "unsupported call to function " + FuncName, CLI.DL.getDebugLoc());
   DAG.getContext()->diagnose(NoCalls);
 
-  for (unsigned I = 0, E = CLI.Ins.size(); I != E; ++I)
-    InVals.push_back(DAG.getUNDEF(CLI.Ins[I].VT));
+  if (!CLI.IsTailCall) {
+    for (unsigned I = 0, E = CLI.Ins.size(); I != E; ++I)
+      InVals.push_back(DAG.getUNDEF(CLI.Ins[I].VT));
+  }
 
   return DAG.getEntryNode();
 }
@@ -1614,7 +1616,7 @@ SDValue AMDGPUTargetLowering::LowerFRINT(SDValue Op, SelectionDAG &DAG) const {
 
   assert(Op.getValueType() == MVT::f64);
 
-  APFloat C1Val(APFloat::IEEEdouble, "0x1.0p+52");
+  APFloat C1Val(APFloat::IEEEdouble(), "0x1.0p+52");
   SDValue C1 = DAG.getConstantFP(C1Val, SL, MVT::f64);
   SDValue CopySign = DAG.getNode(ISD::FCOPYSIGN, SL, MVT::f64, C1, Src);
 
@@ -1625,7 +1627,7 @@ SDValue AMDGPUTargetLowering::LowerFRINT(SDValue Op, SelectionDAG &DAG) const {
 
   SDValue Fabs = DAG.getNode(ISD::FABS, SL, MVT::f64, Src);
 
-  APFloat C2Val(APFloat::IEEEdouble, "0x1.fffffffffffffp+51");
+  APFloat C2Val(APFloat::IEEEdouble(), "0x1.fffffffffffffp+51");
   SDValue C2 = DAG.getConstantFP(C2Val, SL, MVT::f64);
 
   EVT SetCCVT =

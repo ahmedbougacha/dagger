@@ -62,11 +62,6 @@ static cl::opt<bool>
 DisableDebugInfoPrinting("disable-debug-info-print", cl::Hidden,
                          cl::desc("Disable debug info printing"));
 
-static cl::opt<bool> UnknownLocations(
-    "use-unknown-locations", cl::Hidden,
-    cl::desc("Make an absence of debug location information explicit."),
-    cl::init(false));
-
 static cl::opt<bool>
 GenerateGnuPubSections("generate-gnu-dwarf-pub-sections", cl::Hidden,
                        cl::desc("Generate GNU-style pubnames and pubtypes"),
@@ -80,6 +75,13 @@ static cl::opt<bool> GenerateARangeSection("generate-arange-section",
 namespace {
 enum DefaultOnOff { Default, Enable, Disable };
 }
+
+static cl::opt<DefaultOnOff> UnknownLocations(
+    "use-unknown-locations", cl::Hidden,
+    cl::desc("Make an absence of debug location information explicit."),
+    cl::values(clEnumVal(Default, "At top of block or after label"),
+               clEnumVal(Enable, "In all cases"), clEnumVal(Disable, "Never")),
+    cl::init(Default));
 
 static cl::opt<DefaultOnOff>
 DwarfAccelTables("dwarf-accel-tables", cl::Hidden,
@@ -362,13 +364,13 @@ void DwarfDebug::constructAbstractSubprogramScopeDIE(LexicalScope *Scope) {
   assert(Scope->isAbstractScope());
   assert(!Scope->getInlinedAt());
 
-  const MDNode *SP = Scope->getScopeNode();
+  auto *SP = cast<DISubprogram>(Scope->getScopeNode());
 
   ProcessedSPNodes.insert(SP);
 
   // Find the subprogram's DwarfCompileUnit in the SPMap in case the subprogram
   // was inlined from another compile unit.
-  auto &CU = *CUMap.lookup(cast<DISubprogram>(SP)->getUnit());
+  auto &CU = *CUMap.lookup(SP->getUnit());
   forBothCUs(CU, [&](DwarfCompileUnit &CU) {
     CU.constructAbstractSubprogramScopeDIE(Scope);
   });
@@ -533,13 +535,11 @@ void DwarfDebug::finishVariableDefinitions() {
 }
 
 void DwarfDebug::finishSubprogramDefinitions() {
-  for (auto &F : MMI->getModule()->functions())
-    if (auto *SP = F.getSubprogram())
-      if (ProcessedSPNodes.count(SP) &&
-          SP->getUnit()->getEmissionKind() != DICompileUnit::NoDebug)
-        forBothCUs(*CUMap.lookup(SP->getUnit()), [&](DwarfCompileUnit &CU) {
-          CU.finishSubprogramDefinition(SP);
-        });
+  for (const DISubprogram *SP : ProcessedSPNodes)
+    if (SP->getUnit()->getEmissionKind() != DICompileUnit::NoDebug)
+      forBothCUs(*CUMap.lookup(SP->getUnit()), [&](DwarfCompileUnit &CU) {
+        CU.finishSubprogramDefinition(SP);
+      });
 }
 
 void DwarfDebug::finalizeModuleInfo() {
@@ -1010,31 +1010,78 @@ void DwarfDebug::beginInstruction(const MachineInstr *MI) {
   if (MI->isDebugValue() || MI->isCFIInstruction())
     return;
   const DebugLoc &DL = MI->getDebugLoc();
-  if (DL == PrevInstLoc)
-    return;
+  // When we emit a line-0 record, we don't update PrevInstLoc; so look at
+  // the last line number actually emitted, to see if it was line 0.
+  unsigned LastAsmLine =
+      Asm->OutStreamer->getContext().getCurrentDwarfLoc().getLine();
 
-  if (!DL) {
-    // We have an unspecified location, which might want to be line 0.
-    if (UnknownLocations) {
-      PrevInstLoc = DL;
-      recordSourceLine(0, 0, nullptr, 0);
+  if (DL == PrevInstLoc) {
+    // If we have an ongoing unspecified location, nothing to do here.
+    if (!DL)
+      return;
+    // We have an explicit location, same as the previous location.
+    // But we might be coming back to it after a line 0 record.
+    if (LastAsmLine == 0 && DL.getLine() != 0) {
+      // Reinstate the source location but not marked as a statement.
+      const MDNode *Scope = DL.getScope();
+      recordSourceLine(DL.getLine(), DL.getCol(), Scope, /*Flags=*/0);
     }
     return;
   }
 
-  // We have a new, explicit location.
+  if (!DL) {
+    // We have an unspecified location, which might want to be line 0.
+    // If we have already emitted a line-0 record, don't repeat it.
+    if (LastAsmLine == 0)
+      return;
+    // If user said Don't Do That, don't do that.
+    if (UnknownLocations == Disable)
+      return;
+    // See if we have a reason to emit a line-0 record now.
+    // Reasons to emit a line-0 record include:
+    // - User asked for it (UnknownLocations).
+    // - Instruction has a label, so it's referenced from somewhere else,
+    //   possibly debug information; we want it to have a source location.
+    // - Instruction is at the top of a block; we don't want to inherit the
+    //   location from the physically previous (maybe unrelated) block.
+    if (UnknownLocations == Enable || PrevLabel ||
+        (PrevInstBB && PrevInstBB != MI->getParent())) {
+      // Preserve the file and column numbers, if we can, to save space in
+      // the encoded line table.
+      // Do not update PrevInstLoc, it remembers the last non-0 line.
+      const MDNode *Scope = nullptr;
+      unsigned Column = 0;
+      if (PrevInstLoc) {
+        Scope = PrevInstLoc.getScope();
+        Column = PrevInstLoc.getCol();
+      }
+      recordSourceLine(/*Line=*/0, Column, Scope, /*Flags=*/0);
+    }
+    return;
+  }
+
+  // We have an explicit location, different from the previous location.
+  // Don't repeat a line-0 record, but otherwise emit the new location.
+  // (The new location might be an explicit line 0, which we do emit.)
+  if (PrevInstLoc && DL.getLine() == 0 && LastAsmLine == 0)
+    return;
   unsigned Flags = 0;
-  PrevInstLoc = DL;
   if (DL == PrologEndLoc) {
     Flags |= DWARF2_FLAG_PROLOGUE_END | DWARF2_FLAG_IS_STMT;
     PrologEndLoc = DebugLoc();
   }
-  if (DL.getLine() !=
-      Asm->OutStreamer->getContext().getCurrentDwarfLoc().getLine())
+  // If the line changed, we call that a new statement; unless we went to
+  // line 0 and came back, in which case it is not a new statement.
+  unsigned OldLine = PrevInstLoc ? PrevInstLoc.getLine() : LastAsmLine;
+  if (DL.getLine() && DL.getLine() != OldLine)
     Flags |= DWARF2_FLAG_IS_STMT;
 
   const MDNode *Scope = DL.getScope();
   recordSourceLine(DL.getLine(), DL.getCol(), Scope, Flags);
+
+  // If we're not at line 0, remember this location.
+  if (DL.getLine())
+    PrevInstLoc = DL;
 }
 
 static DebugLoc findPrologueEndLoc(const MachineFunction *MF) {
@@ -1108,18 +1155,14 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
       "endFunction should be called with the same function as beginFunction");
 
   const DISubprogram *SP = MF->getFunction()->getSubprogram();
-  if (!MMI->hasDebugInfo() || LScopes.empty() || !SP ||
+  if (!MMI->hasDebugInfo() || !SP ||
       SP->getUnit()->getEmissionKind() == DICompileUnit::NoDebug) {
-    // If we don't have a lexical scope for this function then there will
-    // be a hole in the range information. Keep note of this by setting the
-    // previously used section to nullptr.
+    // If we don't have a subprogram for this function then there will be a hole
+    // in the range information. Keep note of this by setting the previously
+    // used section to nullptr.
     PrevCU = nullptr;
     CurFn = nullptr;
     DebugHandlerBase::endFunction(MF);
-    // Mark functions with no debug info on any instructions, but a
-    // valid DISubprogram as processed.
-    if (SP)
-      ProcessedSPNodes.insert(SP);
     return;
   }
 
@@ -1127,7 +1170,7 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
   Asm->OutStreamer->getContext().setDwarfCompileUnitID(0);
 
   LexicalScope *FnScope = LScopes.getCurrentFunctionScope();
-  SP = cast<DISubprogram>(FnScope->getScopeNode());
+  assert(!FnScope || SP == FnScope->getScopeNode());
   DwarfCompileUnit &TheCU = *CUMap.lookup(SP->getUnit());
 
   DenseSet<InlinedVariable> ProcessedVars;
@@ -1169,11 +1212,12 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
     constructAbstractSubprogramScopeDIE(AScope);
   }
 
-  TheCU.constructSubprogramScopeDIE(FnScope);
+  ProcessedSPNodes.insert(SP);
+  TheCU.constructSubprogramScopeDIE(SP, FnScope);
   if (auto *SkelCU = TheCU.getSkeleton())
     if (!LScopes.getAbstractScopesList().empty() &&
         TheCU.getCUNode()->getSplitDebugInlining())
-      SkelCU->constructSubprogramScopeDIE(FnScope);
+      SkelCU->constructSubprogramScopeDIE(SP, FnScope);
 
   // Clear debug info
   // Ownership of DbgVariables is a bit subtle - ScopeVariables owns all the

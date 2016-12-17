@@ -84,6 +84,7 @@ Some important things to remember about fuzz targets:
 * It must be as deterministic as possible. Non-determinism (e.g. random decisions not based on the input bytes) will make fuzzing inefficient.
 * It must be fast. Try avoiding cubic or greater complexity, logging, or excessive memory consumption.
 * Ideally, it should not modify any global state (although that's not strict).
+* Usually, the narrower the target the better. E.g. if your target can parse several data formats, split it into several targets, one per format.
 
 
 Building
@@ -340,9 +341,6 @@ possible event codes are:
 ``DONE``
   The fuzzer has completed operation because it has reached the specified
   iteration limit (``-runs``) or time limit (``-max_total_time``).
-``MIN<n>``
-  The fuzzer is minimizing the combination of input corpus directories into
-  a single unified corpus (due to the ``-merge`` command line option).
 ``RELOAD``
   The fuzzer is performing a periodic reload of inputs from the corpus
   directory; this allows it to discover any inputs discovered by other
