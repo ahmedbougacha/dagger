@@ -103,7 +103,7 @@ static OwningBinary<MachOObjectFile> openObjectFileAtPath(StringRef Path) {
     for (auto &Obj : FatBinPtr->objects()) {
       // FIXME: Realistically, we only support x86_64 for now.
       // This won't be hardest place to fix.
-      if (Obj.getArchTypeName() != "x86_64")
+      if (Obj.getArchFlagName() != "x86_64")
         continue;
       auto SliceOrErr = Obj.getAsObjectFile();
       if (auto E = SliceOrErr.takeError()) {
