@@ -90,14 +90,35 @@ CostModelAnalysis::runOnFunction(Function &F) {
  return false;
 }
 
-static bool isReverseVectorMask(SmallVectorImpl<int> &Mask) {
+static bool isReverseVectorMask(ArrayRef<int> Mask) {
   for (unsigned i = 0, MaskSize = Mask.size(); i < MaskSize; ++i)
     if (Mask[i] >= 0 && Mask[i] != (int)(MaskSize - 1 - i))
       return false;
   return true;
 }
 
-static bool isAlternateVectorMask(SmallVectorImpl<int> &Mask) {
+static bool isSingleSourceVectorMask(ArrayRef<int> Mask) {
+  bool Vec0 = false;
+  bool Vec1 = false;
+  for (unsigned i = 0, NumVecElts = Mask.size(); i < NumVecElts; ++i) {
+    if (Mask[i] >= 0) {
+      if ((unsigned)Mask[i] >= NumVecElts)
+        Vec1 = true;
+      else
+        Vec0 = true;
+    }
+  }
+  return !(Vec0 && Vec1);
+}
+
+static bool isZeroEltBroadcastVectorMask(ArrayRef<int> Mask) {
+  for (unsigned i = 0; i < Mask.size(); ++i)
+    if (Mask[i] > 0)
+      return false;
+  return true;
+}
+
+static bool isAlternateVectorMask(ArrayRef<int> Mask) {
   bool isAlternate = true;
   unsigned MaskSize = Mask.size();
 
@@ -501,6 +522,17 @@ unsigned CostModelAnalysis::getInstructionCost(const Instruction *I) const {
       if (isAlternateVectorMask(Mask))
         return TTI->getShuffleCost(TargetTransformInfo::SK_Alternate,
                                    VecTypOp0, 0, nullptr);
+
+      if (isZeroEltBroadcastVectorMask(Mask))
+        return TTI->getShuffleCost(TargetTransformInfo::SK_Broadcast,
+                                   VecTypOp0, 0, nullptr);
+
+      if (isSingleSourceVectorMask(Mask))
+        return TTI->getShuffleCost(TargetTransformInfo::SK_PermuteSingleSrc,
+                                   VecTypOp0, 0, nullptr);
+
+      return TTI->getShuffleCost(TargetTransformInfo::SK_PermuteTwoSrc,
+                                 VecTypOp0, 0, nullptr);
     }
 
     return -1;

@@ -60,7 +60,7 @@ public:
   /// otherwise easily derivable from the IR text.
   ///
   enum CommentFlag {
-    ReloadReuse = 0x1
+    ReloadReuse = 0x1 // higher bits are reserved for target dep comments.
   };
 
   enum MIFlag {
@@ -143,8 +143,8 @@ public:
   }
 
   /// Set a flag for the AsmPrinter.
-  void setAsmPrinterFlag(CommentFlag Flag) {
-    AsmPrinterFlags |= (uint8_t)Flag;
+  void setAsmPrinterFlag(uint8_t Flag) {
+    AsmPrinterFlags |= Flag;
   }
 
   /// Clear specific AsmPrinter flags.
@@ -1149,10 +1149,11 @@ public:
   //
   // Debugging support
   //
-  void print(raw_ostream &OS, bool SkipOpers = false) const;
-  void print(raw_ostream &OS, ModuleSlotTracker &MST,
-             bool SkipOpers = false) const;
-  void dump() const;
+  void print(raw_ostream &OS, bool SkipOpers = false,
+             const TargetInstrInfo *TII = nullptr) const;
+  void print(raw_ostream &OS, ModuleSlotTracker &MST, bool SkipOpers = false,
+             const TargetInstrInfo *TII = nullptr) const;
+  void dump(const TargetInstrInfo *TII = nullptr) const;
 
   //===--------------------------------------------------------------------===//
   // Accessors used to build up machine instructions.

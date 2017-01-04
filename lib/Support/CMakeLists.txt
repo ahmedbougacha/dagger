@@ -56,11 +56,11 @@ add_llvm_library(LLVMSupport
   FoldingSet.cpp
   FormattedStream.cpp
   FormatVariadic.cpp
+  GlobPattern.cpp
   GraphWriter.cpp
   Hashing.cpp
   IntEqClasses.cpp
   IntervalMap.cpp
-  IntrusiveRefCntPtr.cpp
   JamCRC.cpp
   LEB128.cpp
   LineIterator.cpp

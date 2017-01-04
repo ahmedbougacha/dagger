@@ -232,6 +232,13 @@ if(MSVC)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:10000000")
 elseif(MINGW) # FIXME: Also cygwin?
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack,16777216")
+
+  # Pass -mbig-obj to mingw gas on Win64. COFF has a 2**16 section limit, and
+  # on Win64, every COMDAT function creates at least 3 sections: .text, .pdata,
+  # and .xdata.
+  if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+    append("-Wa,-mbig-obj" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+  endif()
 endif()
 
 if( MSVC )
@@ -447,6 +454,9 @@ elseif( LLVM_COMPILER_IS_GCC_COMPATIBLE )
     if (NOT C_WCOMMENT_ALLOWS_LINE_WRAP)
       append("-Wno-comment" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
     endif()
+
+    # Enable -Wstring-conversion to catch misuse of string literals.
+    add_flag_if_supported("-Wstring-conversion" STRING_CONVERSION_FLAG)
   endif (LLVM_ENABLE_WARNINGS)
   append_if(LLVM_ENABLE_WERROR "-Werror" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
   add_flag_if_supported("-Werror=date-time" WERROR_DATE_TIME)

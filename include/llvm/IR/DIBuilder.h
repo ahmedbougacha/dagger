@@ -107,9 +107,14 @@ namespace llvm {
                           DICompileUnit::DebugEmissionKind::FullDebug,
                       uint64_t DWOId = 0, bool SplitDebugInlining = true);
 
-    /// Create a file descriptor to hold debugging information
-    /// for a file.
-    DIFile *createFile(StringRef Filename, StringRef Directory);
+    /// Create a file descriptor to hold debugging information for a file.
+    /// \param Filename  File name.
+    /// \param Directory Directory.
+    /// \param CSKind    Checksum kind (e.g. CSK_None, CSK_MD5, CSK_SHA1, etc.).
+    /// \param Checksum  Checksum data.
+    DIFile *createFile(StringRef Filename, StringRef Directory,
+                       DIFile::ChecksumKind CSKind = DIFile::CSK_None,
+                       StringRef Checksum = StringRef());
 
     /// Create a single enumerator value.
     DIEnumerator *createEnumerator(StringRef Name, int64_t Val);
@@ -449,8 +454,7 @@ namespace llvm {
     /// implicitly uniques the values returned.
     DISubrange *getOrCreateSubrange(int64_t Lo, int64_t Count);
 
-    /// Create a new descriptor for the specified
-    /// variable.
+    /// Create a new descriptor for the specified variable.
     /// \param Context     Variable scope.
     /// \param Name        Name of the variable.
     /// \param LinkageName Mangled  name of the variable.
@@ -464,20 +468,18 @@ namespace llvm {
     /// \param Decl        Reference to the corresponding declaration.
     /// \param AlignInBits Variable alignment(or 0 if no alignment attr was
     ///                    specified)
-    DIGlobalVariable *createGlobalVariable(DIScope *Context, StringRef Name,
-                                           StringRef LinkageName, DIFile *File,
-                                           unsigned LineNo, DIType *Ty,
-                                           bool isLocalToUnit,
-                                           DIExpression *Expr = nullptr,
-                                           MDNode *Decl = nullptr,
-                                           uint32_t AlignInBits = 0);
+    DIGlobalVariableExpression *createGlobalVariableExpression(
+        DIScope *Context, StringRef Name, StringRef LinkageName, DIFile *File,
+        unsigned LineNo, DIType *Ty, bool isLocalToUnit,
+        DIExpression *Expr = nullptr, MDNode *Decl = nullptr,
+        uint32_t AlignInBits = 0);
 
     /// Identical to createGlobalVariable
     /// except that the resulting DbgNode is temporary and meant to be RAUWed.
     DIGlobalVariable *createTempGlobalVariableFwdDecl(
         DIScope *Context, StringRef Name, StringRef LinkageName, DIFile *File,
-        unsigned LineNo, DIType *Ty, bool isLocalToUnit, DIExpression *Expr,
-        MDNode *Decl = nullptr, uint32_t AlignInBits = 0);
+        unsigned LineNo, DIType *Ty, bool isLocalToUnit, MDNode *Decl = nullptr,
+        uint32_t AlignInBits = 0);
 
     /// Create a new descriptor for an auto variable.  This is a local variable
     /// that is not a subprogram parameter.

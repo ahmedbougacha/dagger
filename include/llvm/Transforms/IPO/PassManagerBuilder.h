@@ -124,9 +124,6 @@ public:
   /// added to the per-module passes.
   Pass *Inliner;
 
-  /// The module summary index to use for function importing.
-  const ModuleSummaryIndex *ModuleSummary;
-
   bool DisableTailCalls;
   bool DisableUnitAtATime;
   bool DisableUnrollLoops;
@@ -135,6 +132,7 @@ public:
   bool LoopVectorize;
   bool RerollLoops;
   bool LoadCombine;
+  bool NewGVN;
   bool DisableGVNLoadPRE;
   bool VerifyInput;
   bool VerifyOutput;

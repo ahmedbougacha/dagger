@@ -14,6 +14,7 @@
 
 #include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/InstructionSimplify.h"
@@ -45,16 +46,14 @@ static cl::opt<unsigned>
     UnrollThreshold("unroll-threshold", cl::Hidden,
                     cl::desc("The baseline cost threshold for loop unrolling"));
 
-static cl::opt<unsigned> UnrollPercentDynamicCostSavedThreshold(
-    "unroll-percent-dynamic-cost-saved-threshold", cl::init(50), cl::Hidden,
-    cl::desc("The percentage of estimated dynamic cost which must be saved by "
-             "unrolling to allow unrolling up to the max threshold."));
-
-static cl::opt<unsigned> UnrollDynamicCostSavingsDiscount(
-    "unroll-dynamic-cost-savings-discount", cl::init(100), cl::Hidden,
-    cl::desc("This is the amount discounted from the total unroll cost when "
-             "the unrolled form has a high dynamic cost savings (triggered by "
-             "the '-unroll-perecent-dynamic-cost-saved-threshold' flag)."));
+static cl::opt<unsigned> UnrollMaxPercentThresholdBoost(
+    "unroll-max-percent-threshold-boost", cl::init(400), cl::Hidden,
+    cl::desc("The maximum 'boost' (represented as a percentage >= 100) applied "
+             "to the threshold when aggressively unrolling a loop due to the "
+             "dynamic cost savings. If completely unrolling a loop will reduce "
+             "the total runtime from X to Y, we boost the loop unroll "
+             "threshold to DefaultThreshold*std::min(MaxPercentThresholdBoost, "
+             "X/Y). This limit avoids excessive code bloat."));
 
 static cl::opt<unsigned> UnrollMaxIterationsCountToAnalyze(
     "unroll-max-iteration-count-to-analyze", cl::init(10), cl::Hidden,
@@ -126,8 +125,7 @@ static TargetTransformInfo::UnrollingPreferences gatherUnrollingPreferences(
 
   // Set up the defaults
   UP.Threshold = 150;
-  UP.PercentDynamicCostSavedThreshold = 50;
-  UP.DynamicCostSavingsDiscount = 100;
+  UP.MaxPercentThresholdBoost = 400;
   UP.OptSizeThreshold = 0;
   UP.PartialThreshold = UP.Threshold;
   UP.PartialOptSizeThreshold = 0;
@@ -159,11 +157,8 @@ static TargetTransformInfo::UnrollingPreferences gatherUnrollingPreferences(
     UP.Threshold = UnrollThreshold;
     UP.PartialThreshold = UnrollThreshold;
   }
-  if (UnrollPercentDynamicCostSavedThreshold.getNumOccurrences() > 0)
-    UP.PercentDynamicCostSavedThreshold =
-        UnrollPercentDynamicCostSavedThreshold;
-  if (UnrollDynamicCostSavingsDiscount.getNumOccurrences() > 0)
-    UP.DynamicCostSavingsDiscount = UnrollDynamicCostSavingsDiscount;
+  if (UnrollMaxPercentThresholdBoost.getNumOccurrences() > 0)
+    UP.MaxPercentThresholdBoost = UnrollMaxPercentThresholdBoost;
   if (UnrollMaxCount.getNumOccurrences() > 0)
     UP.MaxCount = UnrollMaxCount;
   if (UnrollFullMaxCount.getNumOccurrences() > 0)
@@ -555,9 +550,9 @@ analyzeLoopUnrollCost(const Loop *L, unsigned TripCount, DominatorTree &DT,
 static unsigned ApproximateLoopSize(const Loop *L, unsigned &NumCalls,
                                     bool &NotDuplicatable, bool &Convergent,
                                     const TargetTransformInfo &TTI,
-                                    unsigned BEInsns) {
+                                    AssumptionCache *AC, unsigned BEInsns) {
   SmallPtrSet<const Value *, 32> EphValues;
-  CodeMetrics::collectEphemeralValues(L, EphValues);
+  CodeMetrics::collectEphemeralValues(L, AC, EphValues);
 
   CodeMetrics Metrics;
   for (BasicBlock *BB : L->blocks())
@@ -661,56 +656,21 @@ static void SetLoopAlreadyUnrolled(Loop *L) {
   L->setLoopID(NewLoopID);
 }
 
-static bool canUnrollCompletely(Loop *L, unsigned Threshold,
-                                unsigned PercentDynamicCostSavedThreshold,
-                                unsigned DynamicCostSavingsDiscount,
-                                uint64_t UnrolledCost,
-                                uint64_t RolledDynamicCost) {
-  if (Threshold == NoThreshold) {
-    DEBUG(dbgs() << "  Can fully unroll, because no threshold is set.\n");
-    return true;
-  }
-
-  if (UnrolledCost <= Threshold) {
-    DEBUG(dbgs() << "  Can fully unroll, because unrolled cost: "
-                 << UnrolledCost << "<=" << Threshold << "\n");
-    return true;
-  }
-
-  assert(UnrolledCost && "UnrolledCost can't be 0 at this point.");
-  assert(RolledDynamicCost >= UnrolledCost &&
-         "Cannot have a higher unrolled cost than a rolled cost!");
-
-  // Compute the percentage of the dynamic cost in the rolled form that is
-  // saved when unrolled. If unrolling dramatically reduces the estimated
-  // dynamic cost of the loop, we use a higher threshold to allow more
-  // unrolling.
-  unsigned PercentDynamicCostSaved =
-      (uint64_t)(RolledDynamicCost - UnrolledCost) * 100ull / RolledDynamicCost;
-
-  if (PercentDynamicCostSaved >= PercentDynamicCostSavedThreshold &&
-      (int64_t)UnrolledCost - (int64_t)DynamicCostSavingsDiscount <=
-          (int64_t)Threshold) {
-    DEBUG(dbgs() << "  Can fully unroll, because unrolling will reduce the "
-                    "expected dynamic cost by "
-                 << PercentDynamicCostSaved << "% (threshold: "
-                 << PercentDynamicCostSavedThreshold << "%)\n"
-                 << "  and the unrolled cost (" << UnrolledCost
-                 << ") is less than the max threshold ("
-                 << DynamicCostSavingsDiscount << ").\n");
-    return true;
-  }
-
-  DEBUG(dbgs() << "  Too large to fully unroll:\n");
-  DEBUG(dbgs() << "    Threshold: " << Threshold << "\n");
-  DEBUG(dbgs() << "    Max threshold: " << DynamicCostSavingsDiscount << "\n");
-  DEBUG(dbgs() << "    Percent cost saved threshold: "
-               << PercentDynamicCostSavedThreshold << "%\n");
-  DEBUG(dbgs() << "    Unrolled cost: " << UnrolledCost << "\n");
-  DEBUG(dbgs() << "    Rolled dynamic cost: " << RolledDynamicCost << "\n");
-  DEBUG(dbgs() << "    Percent cost saved: " << PercentDynamicCostSaved
-               << "\n");
-  return false;
+// Computes the boosting factor for complete unrolling.
+// If fully unrolling the loop would save a lot of RolledDynamicCost, it would
+// be beneficial to fully unroll the loop even if unrolledcost is large. We
+// use (RolledDynamicCost / UnrolledCost) to model the unroll benefits to adjust
+// the unroll threshold.
+static unsigned getFullUnrollBoostingFactor(const EstimatedUnrollCost &Cost,
+                                            unsigned MaxPercentThresholdBoost) {
+  if (Cost.RolledDynamicCost >= UINT_MAX / 100)
+    return 100;
+  else if (Cost.UnrolledCost != 0)
+    // The boosting factor is RolledDynamicCost / UnrolledCost
+    return std::min(100 * Cost.RolledDynamicCost / Cost.UnrolledCost,
+                    MaxPercentThresholdBoost);
+  else
+    return MaxPercentThresholdBoost;
 }
 
 // Returns loop size estimation for unrolled loop.
@@ -786,9 +746,7 @@ static bool computeUnrollCount(
   if (FullUnrollTripCount && FullUnrollTripCount <= UP.FullUnrollMaxCount) {
     // When computing the unrolled size, note that BEInsns are not replicated
     // like the rest of the loop body.
-    if (canUnrollCompletely(L, UP.Threshold, 100, UP.DynamicCostSavingsDiscount,
-                            getUnrolledLoopSize(LoopSize, UP),
-                            getUnrolledLoopSize(LoopSize, UP))) {
+    if (getUnrolledLoopSize(LoopSize, UP) < UP.Threshold) {
       UseUpperBound = (MaxTripCount == FullUnrollTripCount);
       TripCount = FullUnrollTripCount;
       TripMultiple = UP.UpperBound ? 1 : TripMultiple;
@@ -799,16 +757,16 @@ static bool computeUnrollCount(
       // To check that, run additional analysis on the loop.
       if (Optional<EstimatedUnrollCost> Cost = analyzeLoopUnrollCost(
               L, FullUnrollTripCount, DT, *SE, TTI,
-              UP.Threshold + UP.DynamicCostSavingsDiscount))
-        if (canUnrollCompletely(L, UP.Threshold,
-                                UP.PercentDynamicCostSavedThreshold,
-                                UP.DynamicCostSavingsDiscount,
-                                Cost->UnrolledCost, Cost->RolledDynamicCost)) {
+              UP.Threshold * UP.MaxPercentThresholdBoost / 100)) {
+        unsigned Boost =
+            getFullUnrollBoostingFactor(*Cost, UP.MaxPercentThresholdBoost);
+        if (Cost->UnrolledCost < UP.Threshold * Boost / 100) {
           UseUpperBound = (MaxTripCount == FullUnrollTripCount);
           TripCount = FullUnrollTripCount;
           TripMultiple = UP.UpperBound ? 1 : TripMultiple;
           return ExplicitUnroll;
         }
+      }
     }
   }
 
@@ -955,7 +913,7 @@ static bool computeUnrollCount(
 
 static bool tryToUnrollLoop(Loop *L, DominatorTree &DT, LoopInfo *LI,
                             ScalarEvolution *SE, const TargetTransformInfo &TTI,
-                            OptimizationRemarkEmitter &ORE,
+                            AssumptionCache &AC, OptimizationRemarkEmitter &ORE,
                             bool PreserveLCSSA,
                             Optional<unsigned> ProvidedCount,
                             Optional<unsigned> ProvidedThreshold,
@@ -982,7 +940,7 @@ static bool tryToUnrollLoop(Loop *L, DominatorTree &DT, LoopInfo *LI,
   if (UP.Threshold == 0 && (!UP.Partial || UP.PartialThreshold == 0))
     return false;
   unsigned LoopSize = ApproximateLoopSize(
-      L, NumInlineCandidates, NotDuplicatable, Convergent, TTI, UP.BEInsns);
+      L, NumInlineCandidates, NotDuplicatable, Convergent, TTI, &AC, UP.BEInsns);
   DEBUG(dbgs() << "  Loop Size = " << LoopSize << "\n");
   if (NotDuplicatable) {
     DEBUG(dbgs() << "  Not unrolling loop which contains non-duplicatable"
@@ -1058,7 +1016,7 @@ static bool tryToUnrollLoop(Loop *L, DominatorTree &DT, LoopInfo *LI,
   // Unroll the loop.
   if (!UnrollLoop(L, UP.Count, TripCount, UP.Force, UP.Runtime,
                   UP.AllowExpensiveTripCount, UseUpperBound, MaxOrZero,
-                  TripMultiple, UP.PeelCount, LI, SE, &DT, &ORE,
+                  TripMultiple, UP.PeelCount, LI, SE, &DT, &AC, &ORE,
                   PreserveLCSSA))
     return false;
 
@@ -1103,13 +1061,14 @@ public:
     ScalarEvolution *SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     const TargetTransformInfo &TTI =
         getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
+    auto &AC = getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
     // For the old PM, we can't use OptimizationRemarkEmitter as an analysis
     // pass.  Function analyses need to be preserved across loop transformations
     // but ORE cannot be preserved (see comment before the pass definition).
     OptimizationRemarkEmitter ORE(&F);
     bool PreserveLCSSA = mustPreserveAnalysisID(LCSSAID);
 
-    return tryToUnrollLoop(L, DT, LI, SE, TTI, ORE, PreserveLCSSA,
+    return tryToUnrollLoop(L, DT, LI, SE, TTI, AC, ORE, PreserveLCSSA,
                            ProvidedCount, ProvidedThreshold,
                            ProvidedAllowPartial, ProvidedRuntime,
                            ProvidedUpperBound);
@@ -1119,6 +1078,7 @@ public:
   /// loop preheaders be inserted into the CFG...
   ///
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<TargetTransformInfoWrapperPass>();
     // FIXME: Loop passes are required to preserve domtree, and for now we just
     // recreate dom info if anything gets unrolled.
@@ -1129,6 +1089,7 @@ public:
 
 char LoopUnroll::ID = 0;
 INITIALIZE_PASS_BEGIN(LoopUnroll, "loop-unroll", "Unroll loops", false, false)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(LoopPass)
 INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
 INITIALIZE_PASS_END(LoopUnroll, "loop-unroll", "Unroll loops", false, false)
@@ -1160,6 +1121,7 @@ PreservedAnalyses LoopUnrollPass::run(Loop &L, LoopAnalysisManager &AM) {
   LoopInfo *LI = FAM.getCachedResult<LoopAnalysis>(*F);
   ScalarEvolution *SE = FAM.getCachedResult<ScalarEvolutionAnalysis>(*F);
   auto *TTI = FAM.getCachedResult<TargetIRAnalysis>(*F);
+  auto *AC = FAM.getCachedResult<AssumptionAnalysis>(*F);
   auto *ORE = FAM.getCachedResult<OptimizationRemarkEmitterAnalysis>(*F);
   if (!DT)
     report_fatal_error(
@@ -1173,12 +1135,15 @@ PreservedAnalyses LoopUnrollPass::run(Loop &L, LoopAnalysisManager &AM) {
   if (!TTI)
     report_fatal_error(
         "LoopUnrollPass: TargetIRAnalysis not cached at a higher level");
+  if (!AC)
+    report_fatal_error(
+        "LoopUnrollPass: AssumptionAnalysis not cached at a higher level");
   if (!ORE)
     report_fatal_error("LoopUnrollPass: OptimizationRemarkEmitterAnalysis not "
                        "cached at a higher level");
 
   bool Changed =
-      tryToUnrollLoop(&L, *DT, LI, SE, *TTI, *ORE, /*PreserveLCSSA*/ true,
+      tryToUnrollLoop(&L, *DT, LI, SE, *TTI, *AC, *ORE, /*PreserveLCSSA*/ true,
                       ProvidedCount, ProvidedThreshold, ProvidedAllowPartial,
                       ProvidedRuntime, ProvidedUpperBound);
 

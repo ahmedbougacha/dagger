@@ -313,6 +313,7 @@ namespace {
     // This transformation requires dominator postdominator info
     void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.setPreservesCFG();
+      AU.addRequired<AssumptionCacheTracker>();
       AU.addRequired<DominatorTreeWrapperPass>();
       AU.addRequired<MemoryDependenceWrapperPass>();
       AU.addRequired<AAResultsWrapperPass>();
@@ -346,6 +347,7 @@ FunctionPass *llvm::createMemCpyOptPass() { return new MemCpyOptLegacyPass(); }
 
 INITIALIZE_PASS_BEGIN(MemCpyOptLegacyPass, "memcpyopt", "MemCpy Optimization",
                       false, false)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
@@ -487,7 +489,8 @@ static unsigned findCommonAlignment(const DataLayout &DL, const StoreInst *SI,
 // It will lift the store and its argument + that anything that
 // may alias with these.
 // The method returns true if it was successful.
-static bool moveUp(AliasAnalysis &AA, StoreInst *SI, Instruction *P) {
+static bool moveUp(AliasAnalysis &AA, StoreInst *SI, Instruction *P,
+                   const LoadInst *LI) {
   // If the store alias this position, early bail out.
   MemoryLocation StoreLoc = MemoryLocation::get(SI);
   if (AA.getModRefInfo(P, StoreLoc) != MRI_NoModRef)
@@ -504,11 +507,12 @@ static bool moveUp(AliasAnalysis &AA, StoreInst *SI, Instruction *P) {
   SmallVector<Instruction*, 8> ToLift;
 
   // Memory locations of lifted instructions.
-  SmallVector<MemoryLocation, 8> MemLocs;
-  MemLocs.push_back(StoreLoc);
+  SmallVector<MemoryLocation, 8> MemLocs{StoreLoc};
 
   // Lifted callsites.
   SmallVector<ImmutableCallSite, 8> CallSites;
+
+  const MemoryLocation LoadLoc = MemoryLocation::get(LI);
 
   for (auto I = --SI->getIterator(), E = P->getIterator(); I != E; --I) {
     auto *C = &*I;
@@ -533,7 +537,11 @@ static bool moveUp(AliasAnalysis &AA, StoreInst *SI, Instruction *P) {
       continue;
 
     if (MayAlias) {
-      if (auto CS = ImmutableCallSite(C)) {
+      // Since LI is implicitly moved downwards past the lifted instructions,
+      // none of them may modify its source.
+      if (AA.getModRefInfo(C, LoadLoc) & MRI_Mod)
+        return false;
+      else if (auto CS = ImmutableCallSite(C)) {
         // If we can't lift this before P, it's game over.
         if (AA.getModRefInfo(P, CS) != MRI_NoModRef)
           return false;
@@ -608,7 +616,7 @@ bool MemCpyOptPass::processStore(StoreInst *SI, BasicBlock::iterator &BBI) {
         // position if nothing alias the store memory after this and the store
         // destination is not in the range.
         if (P && P != SI) {
-          if (!moveUp(AA, SI, P))
+          if (!moveUp(AA, SI, P, LI))
             P = nullptr;
         }
 
@@ -1291,10 +1299,11 @@ bool MemCpyOptPass::processByValArgument(CallSite CS, unsigned ArgNo) {
 
   // If it is greater than the memcpy, then we check to see if we can force the
   // source of the memcpy to the alignment we need.  If we fail, we bail out.
+  AssumptionCache &AC = LookupAssumptionCache();
   DominatorTree &DT = LookupDomTree();
   if (MDep->getAlignment() < ByValAlign &&
       getOrEnforceKnownAlignment(MDep->getSource(), ByValAlign, DL,
-                                 CS.getInstruction(), &DT) < ByValAlign)
+                                 CS.getInstruction(), &AC, &DT) < ByValAlign)
     return false;
 
   // Verify that the copied-from memory doesn't change in between the memcpy and
@@ -1373,11 +1382,15 @@ PreservedAnalyses MemCpyOptPass::run(Function &F, FunctionAnalysisManager &AM) {
   auto LookupAliasAnalysis = [&]() -> AliasAnalysis & {
     return AM.getResult<AAManager>(F);
   };
+  auto LookupAssumptionCache = [&]() -> AssumptionCache & {
+    return AM.getResult<AssumptionAnalysis>(F);
+  };
   auto LookupDomTree = [&]() -> DominatorTree & {
     return AM.getResult<DominatorTreeAnalysis>(F);
   };
 
-  bool MadeChange = runImpl(F, &MD, &TLI, LookupAliasAnalysis, LookupDomTree);
+  bool MadeChange = runImpl(F, &MD, &TLI, LookupAliasAnalysis,
+                            LookupAssumptionCache, LookupDomTree);
   if (!MadeChange)
     return PreservedAnalyses::all();
   PreservedAnalyses PA;
@@ -1389,11 +1402,13 @@ PreservedAnalyses MemCpyOptPass::run(Function &F, FunctionAnalysisManager &AM) {
 bool MemCpyOptPass::runImpl(
     Function &F, MemoryDependenceResults *MD_, TargetLibraryInfo *TLI_,
     std::function<AliasAnalysis &()> LookupAliasAnalysis_,
+    std::function<AssumptionCache &()> LookupAssumptionCache_,
     std::function<DominatorTree &()> LookupDomTree_) {
   bool MadeChange = false;
   MD = MD_;
   TLI = TLI_;
   LookupAliasAnalysis = std::move(LookupAliasAnalysis_);
+  LookupAssumptionCache = std::move(LookupAssumptionCache_);
   LookupDomTree = std::move(LookupDomTree_);
 
   // If we don't have at least memset and memcpy, there is little point of doing
@@ -1423,9 +1438,13 @@ bool MemCpyOptLegacyPass::runOnFunction(Function &F) {
   auto LookupAliasAnalysis = [this]() -> AliasAnalysis & {
     return getAnalysis<AAResultsWrapperPass>().getAAResults();
   };
+  auto LookupAssumptionCache = [this, &F]() -> AssumptionCache & {
+    return getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
+  };
   auto LookupDomTree = [this]() -> DominatorTree & {
     return getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   };
 
-  return Impl.runImpl(F, MD, TLI, LookupAliasAnalysis, LookupDomTree);
+  return Impl.runImpl(F, MD, TLI, LookupAliasAnalysis, LookupAssumptionCache,
+                      LookupDomTree);
 }

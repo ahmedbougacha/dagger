@@ -286,7 +286,7 @@ Instruction *InstCombiner::visitAllocaInst(AllocaInst &AI) {
     SmallVector<Instruction *, 4> ToDelete;
     if (MemTransferInst *Copy = isOnlyCopiedFromConstantGlobal(&AI, ToDelete)) {
       unsigned SourceAlign = getOrEnforceKnownAlignment(
-          Copy->getSource(), AI.getAlignment(), DL, &AI, &DT);
+          Copy->getSource(), AI.getAlignment(), DL, &AI, &AC, &DT);
       if (AI.getAlignment() <= SourceAlign) {
         DEBUG(dbgs() << "Found alloca equal to global: " << AI << '\n');
         DEBUG(dbgs() << "  memcpy = " << *Copy << '\n');
@@ -826,7 +826,7 @@ Instruction *InstCombiner::visitLoadInst(LoadInst &LI) {
 
   // Attempt to improve the alignment.
   unsigned KnownAlign = getOrEnforceKnownAlignment(
-      Op, DL.getPrefTypeAlignment(LI.getType()), DL, &LI, &DT);
+      Op, DL.getPrefTypeAlignment(LI.getType()), DL, &LI, &AC, &DT);
   unsigned LoadAlign = LI.getAlignment();
   unsigned EffectiveLoadAlign =
       LoadAlign != 0 ? LoadAlign : DL.getABITypeAlignment(LI.getType());
@@ -850,20 +850,10 @@ Instruction *InstCombiner::visitLoadInst(LoadInst &LI) {
   // separated by a few arithmetic operations.
   BasicBlock::iterator BBI(LI);
   bool IsLoadCSE = false;
-  if (Value *AvailableVal =
-      FindAvailableLoadedValue(&LI, LI.getParent(), BBI,
-                               DefMaxInstsToScan, AA, &IsLoadCSE)) {
-    if (IsLoadCSE) {
-      LoadInst *NLI = cast<LoadInst>(AvailableVal);
-      unsigned KnownIDs[] = {
-          LLVMContext::MD_tbaa,            LLVMContext::MD_alias_scope,
-          LLVMContext::MD_noalias,         LLVMContext::MD_range,
-          LLVMContext::MD_invariant_load,  LLVMContext::MD_nonnull,
-          LLVMContext::MD_invariant_group, LLVMContext::MD_align,
-          LLVMContext::MD_dereferenceable,
-          LLVMContext::MD_dereferenceable_or_null};
-      combineMetadata(NLI, &LI, KnownIDs);
-    };
+  if (Value *AvailableVal = FindAvailableLoadedValue(
+          &LI, LI.getParent(), BBI, DefMaxInstsToScan, AA, &IsLoadCSE)) {
+    if (IsLoadCSE)
+      combineMetadataForCSE(cast<LoadInst>(AvailableVal), &LI);
 
     return replaceInstUsesWith(
         LI, Builder->CreateBitOrPointerCast(AvailableVal, LI.getType(),
@@ -1199,7 +1189,7 @@ Instruction *InstCombiner::visitStoreInst(StoreInst &SI) {
 
   // Attempt to improve the alignment.
   unsigned KnownAlign = getOrEnforceKnownAlignment(
-      Ptr, DL.getPrefTypeAlignment(Val->getType()), DL, &SI, &DT);
+      Ptr, DL.getPrefTypeAlignment(Val->getType()), DL, &SI, &AC, &DT);
   unsigned StoreAlign = SI.getAlignment();
   unsigned EffectiveStoreAlign =
       StoreAlign != 0 ? StoreAlign : DL.getABITypeAlignment(Val->getType());

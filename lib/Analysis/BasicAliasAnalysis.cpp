@@ -23,6 +23,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -61,6 +62,21 @@ const unsigned MaxNumPhiBBsValueReachabilityCheck = 20;
 // GetUnderlyingObject(), both functions need to use the same search
 // depth otherwise the algorithm in aliasGEP will assert.
 static const unsigned MaxLookupSearchDepth = 6;
+
+bool BasicAAResult::invalidate(Function &F, const PreservedAnalyses &PA,
+                               FunctionAnalysisManager::Invalidator &Inv) {
+  // We don't care if this analysis itself is preserved, it has no state. But
+  // we need to check that the analyses it depends on have been. Note that we
+  // may be created without handles to some analyses and in that case don't
+  // depend on them.
+  if (Inv.invalidate<AssumptionAnalysis>(F, PA) ||
+      (DT && Inv.invalidate<DominatorTreeAnalysis>(F, PA)) ||
+      (LI && Inv.invalidate<LoopAnalysis>(F, PA)))
+    return true;
+
+  // Otherwise this analysis result remains valid.
+  return false;
+}
 
 //===----------------------------------------------------------------------===//
 // Useful predicates
@@ -181,7 +197,7 @@ static bool isObjectSize(const Value *V, uint64_t Size, const DataLayout &DL,
 /*static*/ const Value *BasicAAResult::GetLinearExpression(
     const Value *V, APInt &Scale, APInt &Offset, unsigned &ZExtBits,
     unsigned &SExtBits, const DataLayout &DL, unsigned Depth,
-    DominatorTree *DT, bool &NSW, bool &NUW) {
+    AssumptionCache *AC, DominatorTree *DT, bool &NSW, bool &NUW) {
   assert(V->getType()->isIntegerTy() && "Not an integer value");
 
   // Limit our recursion depth.
@@ -220,7 +236,7 @@ static bool isObjectSize(const Value *V, uint64_t Size, const DataLayout &DL,
       case Instruction::Or:
         // X|C == X+C if all the bits in C are unset in X.  Otherwise we can't
         // analyze it.
-        if (!MaskedValueIsZero(BOp->getOperand(0), RHSC->getValue(), DL, 0,
+        if (!MaskedValueIsZero(BOp->getOperand(0), RHSC->getValue(), DL, 0, AC,
                                BOp, DT)) {
           Scale = 1;
           Offset = 0;
@@ -229,23 +245,23 @@ static bool isObjectSize(const Value *V, uint64_t Size, const DataLayout &DL,
         LLVM_FALLTHROUGH;
       case Instruction::Add:
         V = GetLinearExpression(BOp->getOperand(0), Scale, Offset, ZExtBits,
-                                SExtBits, DL, Depth + 1, DT, NSW, NUW);
+                                SExtBits, DL, Depth + 1, AC, DT, NSW, NUW);
         Offset += RHS;
         break;
       case Instruction::Sub:
         V = GetLinearExpression(BOp->getOperand(0), Scale, Offset, ZExtBits,
-                                SExtBits, DL, Depth + 1, DT, NSW, NUW);
+                                SExtBits, DL, Depth + 1, AC, DT, NSW, NUW);
         Offset -= RHS;
         break;
       case Instruction::Mul:
         V = GetLinearExpression(BOp->getOperand(0), Scale, Offset, ZExtBits,
-                                SExtBits, DL, Depth + 1, DT, NSW, NUW);
+                                SExtBits, DL, Depth + 1, AC, DT, NSW, NUW);
         Offset *= RHS;
         Scale *= RHS;
         break;
       case Instruction::Shl:
         V = GetLinearExpression(BOp->getOperand(0), Scale, Offset, ZExtBits,
-                                SExtBits, DL, Depth + 1, DT, NSW, NUW);
+                                SExtBits, DL, Depth + 1, AC, DT, NSW, NUW);
         Offset <<= RHS.getLimitedValue();
         Scale <<= RHS.getLimitedValue();
         // the semantics of nsw and nuw for left shifts don't match those of
@@ -272,7 +288,7 @@ static bool isObjectSize(const Value *V, uint64_t Size, const DataLayout &DL,
     unsigned OldZExtBits = ZExtBits, OldSExtBits = SExtBits;
     const Value *Result =
         GetLinearExpression(CastOp, Scale, Offset, ZExtBits, SExtBits, DL,
-                            Depth + 1, DT, NSW, NUW);
+                            Depth + 1, AC, DT, NSW, NUW);
 
     // zext(zext(%x)) == zext(%x), and similarly for sext; we'll handle this
     // by just incrementing the number of bits we've extended by.
@@ -343,7 +359,7 @@ static int64_t adjustToPointerSize(int64_t Offset, unsigned PointerSize) {
 /// depth (MaxLookupSearchDepth). When DataLayout not is around, it just looks
 /// through pointer casts.
 bool BasicAAResult::DecomposeGEPExpression(const Value *V,
-       DecomposedGEP &Decomposed, const DataLayout &DL,
+       DecomposedGEP &Decomposed, const DataLayout &DL, AssumptionCache *AC,
        DominatorTree *DT) {
   // Limit recursion depth to limit compile time in crazy cases.
   unsigned MaxLookup = MaxLookupSearchDepth;
@@ -384,9 +400,10 @@ bool BasicAAResult::DecomposeGEPExpression(const Value *V,
       // If it's not a GEP, hand it off to SimplifyInstruction to see if it
       // can come up with something. This matches what GetUnderlyingObject does.
       if (const Instruction *I = dyn_cast<Instruction>(V))
-	// TODO: Get a DominatorTree and use it here (it is now available in
-	// this function, but this should be updated when GetUnderlyingObject
-	// is updated). TLI should be provided also.
+        // TODO: Get a DominatorTree and AssumptionCache and use them here
+        // (these are both now available in this function, but this should be
+        // updated when GetUnderlyingObject is updated). TLI should be
+        // provided also.
         if (const Value *Simplified =
                 SimplifyInstruction(const_cast<Instruction *>(I), DL)) {
           V = Simplified;
@@ -448,7 +465,7 @@ bool BasicAAResult::DecomposeGEPExpression(const Value *V,
       APInt IndexScale(Width, 0), IndexOffset(Width, 0);
       bool NSW = true, NUW = true;
       Index = GetLinearExpression(Index, IndexScale, IndexOffset, ZExtBits,
-                                  SExtBits, DL, 0, DT, NSW, NUW);
+                                  SExtBits, DL, 0, AC, DT, NSW, NUW);
 
       // The GEP index scale ("Scale") scales C1*V+C2, yielding (C1*V+C2)*Scale.
       // This gives us an aggregate computation of (C1*Scale)*V + C2*Scale.
@@ -774,6 +791,31 @@ ModRefInfo BasicAAResult::getModRefInfo(ImmutableCallSite CS,
       return MRI_NoModRef;
   }
 
+  // The semantics of memcpy intrinsics forbid overlap between their respective
+  // operands, i.e., source and destination of any given memcpy must no-alias.
+  // If Loc must-aliases either one of these two locations, then it necessarily
+  // no-aliases the other.
+  if (auto *Inst = dyn_cast<MemCpyInst>(CS.getInstruction())) {
+    AliasResult SrcAA, DestAA;
+
+    if ((SrcAA = getBestAAResults().alias(MemoryLocation::getForSource(Inst),
+                                          Loc)) == MustAlias)
+      // Loc is exactly the memcpy source thus disjoint from memcpy dest.
+      return MRI_Ref;
+    if ((DestAA = getBestAAResults().alias(MemoryLocation::getForDest(Inst),
+                                           Loc)) == MustAlias)
+      // The converse case.
+      return MRI_Mod;
+
+    // It's also possible for Loc to alias both src and dest, or neither.
+    ModRefInfo rv = MRI_NoModRef;
+    if (SrcAA != NoAlias)
+      rv = static_cast<ModRefInfo>(rv | MRI_Ref);
+    if (DestAA != NoAlias)
+      rv = static_cast<ModRefInfo>(rv | MRI_Mod);
+    return rv;
+  }
+
   // While the assume intrinsic is marked as arbitrarily writing so that
   // proper control dependencies will be maintained, it never aliases any
   // particular memory location.
@@ -1057,9 +1099,9 @@ AliasResult BasicAAResult::aliasGEP(const GEPOperator *GEP1, uint64_t V1Size,
                                     const Value *UnderlyingV2) {
   DecomposedGEP DecompGEP1, DecompGEP2;
   bool GEP1MaxLookupReached =
-    DecomposeGEPExpression(GEP1, DecompGEP1, DL, DT);
+    DecomposeGEPExpression(GEP1, DecompGEP1, DL, &AC, DT);
   bool GEP2MaxLookupReached =
-    DecomposeGEPExpression(V2, DecompGEP2, DL, DT);
+    DecomposeGEPExpression(V2, DecompGEP2, DL, &AC, DT);
 
   int64_t GEP1BaseOffset = DecompGEP1.StructOffset + DecompGEP1.OtherOffset;
   int64_t GEP2BaseOffset = DecompGEP2.StructOffset + DecompGEP2.OtherOffset;
@@ -1221,7 +1263,7 @@ AliasResult BasicAAResult::aliasGEP(const GEPOperator *GEP1, uint64_t V1Size,
 
         bool SignKnownZero, SignKnownOne;
         ComputeSignBit(const_cast<Value *>(V), SignKnownZero, SignKnownOne, DL,
-                       0, nullptr, DT);
+                       0, &AC, nullptr, DT);
 
         // Zero-extension widens the variable, and so forces the sign
         // bit to zero.
@@ -1256,7 +1298,7 @@ AliasResult BasicAAResult::aliasGEP(const GEPOperator *GEP1, uint64_t V1Size,
       return NoAlias;
 
     if (constantOffsetHeuristic(DecompGEP1.VarIndices, V1Size, V2Size,
-                                GEP1BaseOffset, DT))
+                                GEP1BaseOffset, &AC, DT))
       return NoAlias;
   }
 
@@ -1658,7 +1700,7 @@ void BasicAAResult::GetIndexDifference(
 
 bool BasicAAResult::constantOffsetHeuristic(
     const SmallVectorImpl<VariableGEPIndex> &VarIndices, uint64_t V1Size,
-    uint64_t V2Size, int64_t BaseOffset,
+    uint64_t V2Size, int64_t BaseOffset, AssumptionCache *AC,
     DominatorTree *DT) {
   if (VarIndices.size() != 2 || V1Size == MemoryLocation::UnknownSize ||
       V2Size == MemoryLocation::UnknownSize)
@@ -1681,11 +1723,11 @@ bool BasicAAResult::constantOffsetHeuristic(
   bool NSW = true, NUW = true;
   unsigned V0ZExtBits = 0, V0SExtBits = 0, V1ZExtBits = 0, V1SExtBits = 0;
   const Value *V0 = GetLinearExpression(Var0.V, V0Scale, V0Offset, V0ZExtBits,
-                                        V0SExtBits, DL, 0, DT, NSW, NUW);
+                                        V0SExtBits, DL, 0, AC, DT, NSW, NUW);
   NSW = true;
   NUW = true;
   const Value *V1 = GetLinearExpression(Var1.V, V1Scale, V1Offset, V1ZExtBits,
-                                        V1SExtBits, DL, 0, DT, NSW, NUW);
+                                        V1SExtBits, DL, 0, AC, DT, NSW, NUW);
 
   if (V0Scale != V1Scale || V0ZExtBits != V1ZExtBits ||
       V0SExtBits != V1SExtBits || !isValueEqualInPotentialCycles(V0, V1))
@@ -1719,6 +1761,7 @@ AnalysisKey BasicAA::Key;
 BasicAAResult BasicAA::run(Function &F, FunctionAnalysisManager &AM) {
   return BasicAAResult(F.getParent()->getDataLayout(),
                        AM.getResult<TargetLibraryAnalysis>(F),
+                       AM.getResult<AssumptionAnalysis>(F),
                        &AM.getResult<DominatorTreeAnalysis>(F),
                        AM.getCachedResult<LoopAnalysis>(F));
 }
@@ -1732,6 +1775,7 @@ void BasicAAWrapperPass::anchor() {}
 
 INITIALIZE_PASS_BEGIN(BasicAAWrapperPass, "basicaa",
                       "Basic Alias Analysis (stateless AA impl)", true, true)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(BasicAAWrapperPass, "basicaa",
@@ -1742,12 +1786,13 @@ FunctionPass *llvm::createBasicAAWrapperPass() {
 }
 
 bool BasicAAWrapperPass::runOnFunction(Function &F) {
+  auto &ACT = getAnalysis<AssumptionCacheTracker>();
   auto &TLIWP = getAnalysis<TargetLibraryInfoWrapperPass>();
   auto &DTWP = getAnalysis<DominatorTreeWrapperPass>();
   auto *LIWP = getAnalysisIfAvailable<LoopInfoWrapperPass>();
 
   Result.reset(new BasicAAResult(F.getParent()->getDataLayout(), TLIWP.getTLI(),
-                                 &DTWP.getDomTree(),
+                                 ACT.getAssumptionCache(F), &DTWP.getDomTree(),
                                  LIWP ? &LIWP->getLoopInfo() : nullptr));
 
   return false;
@@ -1755,6 +1800,7 @@ bool BasicAAWrapperPass::runOnFunction(Function &F) {
 
 void BasicAAWrapperPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
+  AU.addRequired<AssumptionCacheTracker>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
 }
@@ -1762,5 +1808,6 @@ void BasicAAWrapperPass::getAnalysisUsage(AnalysisUsage &AU) const {
 BasicAAResult llvm::createLegacyPMBasicAAResult(Pass &P, Function &F) {
   return BasicAAResult(
       F.getParent()->getDataLayout(),
-      P.getAnalysis<TargetLibraryInfoWrapperPass>().getTLI());
+      P.getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(),
+      P.getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F));
 }

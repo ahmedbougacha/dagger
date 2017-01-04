@@ -387,6 +387,14 @@ public:
     return block_begin() + getNumOperands();
   }
 
+  iterator_range<block_iterator> blocks() {
+    return make_range(block_begin(), block_end());
+  }
+
+  iterator_range<const_block_iterator> blocks() const {
+    return make_range(block_begin(), block_end());
+  }
+
   op_range incoming_values() { return operands(); }
 
   const_op_range incoming_values() const { return operands(); }
@@ -569,6 +577,15 @@ public:
   MemoryUseOrDef *createMemoryAccessAfter(Instruction *I,
                                           MemoryAccess *Definition,
                                           MemoryAccess *InsertPt);
+
+  // \brief Splice \p What to just before \p Where.
+  //
+  // In order to be efficient, the following conditions must be met:
+  //   - \p Where  dominates \p What,
+  //   - All memory accesses in [\p Where, \p What) are no-alias with \p What.
+  //
+  // TODO: relax the MemoryDef requirement on Where.
+  void spliceMemoryAccessAbove(MemoryDef *Where, MemoryUseOrDef *What);
 
   /// \brief Remove a MemoryAccess from MemorySSA, including updating all
   /// definitions and uses.
@@ -963,7 +980,7 @@ private:
     if (WalkingPhi && Location.Ptr) {
       PHITransAddr Translator(
           const_cast<Value *>(Location.Ptr),
-          OriginalAccess->getBlock()->getModule()->getDataLayout());
+          OriginalAccess->getBlock()->getModule()->getDataLayout(), nullptr);
       if (!Translator.PHITranslateValue(OriginalAccess->getBlock(),
                                         DefIterator.getPhiArgBlock(), nullptr,
                                         false))

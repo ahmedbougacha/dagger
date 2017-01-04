@@ -76,8 +76,12 @@ namespace llvm {
      compile-time arithmetic on PPC double-double numbers, it is not able
      to represent all possible values held by a PPC double-double number,
      for example: (long double) 1.0 + (long double) 0x1p-106
-     Should this be replaced by a full emulation of PPC double-double?  */
-  static const fltSemantics semPPCDoubleDouble = {0, 0, 0, 0};
+     Should this be replaced by a full emulation of PPC double-double?
+
+     Note: we need to make the value different from semBogus as otherwise
+     an unsafe optimization may collapse both values to a single address,
+     and we heavily rely on them having distinct addresses.             */
+  static const fltSemantics semPPCDoubleDouble = {-1, 0, 0, 0};
 
   /* There are temporary semantics for the real PPCDoubleDouble implementation.
      Currently, APFloat of PPCDoubleDouble holds one PPCDoubleDoubleImpl as the
@@ -4110,13 +4114,15 @@ void DoubleAPFloat::makeNaN(bool SNaN, bool Neg, const APInt *fill) {
 APFloat::Storage::Storage(IEEEFloat F, const fltSemantics &Semantics) {
   if (usesLayout<IEEEFloat>(Semantics)) {
     new (&IEEE) IEEEFloat(std::move(F));
-  } else if (usesLayout<DoubleAPFloat>(Semantics)) {
+    return;
+  }
+  if (usesLayout<DoubleAPFloat>(Semantics)) {
     new (&Double)
         DoubleAPFloat(Semantics, APFloat(std::move(F), F.getSemantics()),
                       APFloat(semIEEEdouble));
-  } else {
-    llvm_unreachable("Unexpected semantics");
+    return;
   }
+  llvm_unreachable("Unexpected semantics");
 }
 
 APFloat::opStatus APFloat::convertFromString(StringRef Str, roundingMode RM) {
@@ -4135,24 +4141,24 @@ APFloat::opStatus APFloat::convert(const fltSemantics &ToSemantics,
   if (&getSemantics() == &ToSemantics)
     return opOK;
   if (usesLayout<IEEEFloat>(getSemantics()) &&
-      usesLayout<IEEEFloat>(ToSemantics)) {
+      usesLayout<IEEEFloat>(ToSemantics))
     return U.IEEE.convert(ToSemantics, RM, losesInfo);
-  } else if (usesLayout<IEEEFloat>(getSemantics()) &&
-             usesLayout<DoubleAPFloat>(ToSemantics)) {
+  if (usesLayout<IEEEFloat>(getSemantics()) &&
+      usesLayout<DoubleAPFloat>(ToSemantics)) {
     assert(&ToSemantics == &semPPCDoubleDouble);
     auto Ret = U.IEEE.convert(semPPCDoubleDoubleImpl, RM, losesInfo);
-    *this = APFloat(
-        DoubleAPFloat(semPPCDoubleDouble, std::move(*this), APFloat(semIEEEdouble)),
-        ToSemantics);
+    *this = APFloat(DoubleAPFloat(semPPCDoubleDouble, std::move(*this),
+                                  APFloat(semIEEEdouble)),
+                    ToSemantics);
     return Ret;
-  } else if (usesLayout<DoubleAPFloat>(getSemantics()) &&
-             usesLayout<IEEEFloat>(ToSemantics)) {
+  }
+  if (usesLayout<DoubleAPFloat>(getSemantics()) &&
+      usesLayout<IEEEFloat>(ToSemantics)) {
     auto Ret = getIEEE().convert(ToSemantics, RM, losesInfo);
     *this = APFloat(std::move(getIEEE()), ToSemantics);
     return Ret;
-  } else {
-    llvm_unreachable("Unexpected semantics");
   }
+  llvm_unreachable("Unexpected semantics");
 }
 
 APFloat APFloat::getAllOnesValue(unsigned BitWidth, bool isIEEE) {

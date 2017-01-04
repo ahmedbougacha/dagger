@@ -58,6 +58,19 @@ def SItbuffer_store : SDNode<"AMDGPUISD::TBUFFER_STORE_FORMAT",
   [SDNPMayStore, SDNPMemOperand, SDNPHasChain]
 >;
 
+def SDTBufferLoad : SDTypeProfile<1, 5,
+    [                    // vdata
+     SDTCisVT<1, v4i32>, // rsrc
+     SDTCisVT<2, i32>,   // vindex
+     SDTCisVT<3, i32>,   // offset
+     SDTCisVT<4, i1>,    // glc
+     SDTCisVT<5, i1>]>;  // slc
+
+def SIbuffer_load : SDNode <"AMDGPUISD::BUFFER_LOAD", SDTBufferLoad,
+                            [SDNPMemOperand, SDNPHasChain, SDNPMayLoad]>;
+def SIbuffer_load_format : SDNode <"AMDGPUISD::BUFFER_LOAD_FORMAT", SDTBufferLoad,
+                            [SDNPMemOperand, SDNPHasChain, SDNPMayLoad]>;
+
 def SIload_input : SDNode<"AMDGPUISD::LOAD_INPUT",
   SDTypeProfile<1, 3, [SDTCisVT<0, v4f32>, SDTCisVT<1, v4i32>, SDTCisVT<2, i16>,
                        SDTCisVT<3, i32>]>
@@ -81,8 +94,8 @@ def SIpc_add_rel_offset : SDNode<"AMDGPUISD::PC_ADD_REL_OFFSET",
 // PatFrags for global memory operations
 //===----------------------------------------------------------------------===//
 
-def atomic_inc_global : global_binary_atomic_op<SIatomic_inc>;
-def atomic_dec_global : global_binary_atomic_op<SIatomic_dec>;
+defm atomic_inc_global : global_binary_atomic_op<SIatomic_inc>;
+defm atomic_dec_global : global_binary_atomic_op<SIatomic_dec>;
 
 //===----------------------------------------------------------------------===//
 // SDNodes and PatFrag for local loads and stores to enable s_mov_b32 m0, -1
@@ -844,11 +857,11 @@ class getInsSDWA <RegisterClass Src0RC, RegisterClass Src1RC, int NumSrcArgs,
                     src0_sel:$src0_sel),
             !if(!eq(NumSrcArgs, 2),
                !if(!eq(DstVT.Size, 1),
-                  // VOPC_SDWA with float modifiers
+                  // VOPC_SDWA with modifiers
                   (ins Src0Mod:$src0_modifiers, Src0RC:$src0,
                        Src1Mod:$src1_modifiers, Src1RC:$src1,
                        clampmod:$clamp, src0_sel:$src0_sel, src1_sel:$src1_sel),
-                  // VOP2_SDWA or VOPC_SDWA with float modifiers
+                  // VOP2_SDWA or VOPC_SDWA with modifiers
                   (ins Src0Mod:$src0_modifiers, Src0RC:$src0,
                        Src1Mod:$src1_modifiers, Src1RC:$src1,
                        clampmod:$clamp, dst_sel:$dst_sel, dst_unused:$dst_unused,

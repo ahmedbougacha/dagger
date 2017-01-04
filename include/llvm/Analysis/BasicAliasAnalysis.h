@@ -16,6 +16,7 @@
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
@@ -26,34 +27,41 @@
 #include "llvm/Support/ErrorHandling.h"
 
 namespace llvm {
+class AssumptionCache;
 class DominatorTree;
 class LoopInfo;
 
 /// This is the AA result object for the basic, local, and stateless alias
 /// analysis. It implements the AA query interface in an entirely stateless
-/// manner. As one consequence, it is never invalidated. While it does retain
-/// some storage, that is used as an optimization and not to preserve
-/// information from query to query.
+/// manner. As one consequence, it is never invalidated due to IR changes.
+/// While it does retain some storage, that is used as an optimization and not
+/// to preserve information from query to query. However it does retain handles
+/// to various other analyses and must be recomputed when those analyses are.
 class BasicAAResult : public AAResultBase<BasicAAResult> {
   friend AAResultBase<BasicAAResult>;
 
   const DataLayout &DL;
   const TargetLibraryInfo &TLI;
+  AssumptionCache &AC;
   DominatorTree *DT;
   LoopInfo *LI;
 
 public:
   BasicAAResult(const DataLayout &DL, const TargetLibraryInfo &TLI,
-                DominatorTree *DT = nullptr,
+                AssumptionCache &AC, DominatorTree *DT = nullptr,
                 LoopInfo *LI = nullptr)
-      : AAResultBase(), DL(DL), TLI(TLI), DT(DT), LI(LI) {}
+      : AAResultBase(), DL(DL), TLI(TLI), AC(AC), DT(DT), LI(LI) {}
 
   BasicAAResult(const BasicAAResult &Arg)
-      : AAResultBase(Arg), DL(Arg.DL), TLI(Arg.TLI), DT(Arg.DT),
+      : AAResultBase(Arg), DL(Arg.DL), TLI(Arg.TLI), AC(Arg.AC), DT(Arg.DT),
         LI(Arg.LI) {}
   BasicAAResult(BasicAAResult &&Arg)
-      : AAResultBase(std::move(Arg)), DL(Arg.DL), TLI(Arg.TLI),
+      : AAResultBase(std::move(Arg)), DL(Arg.DL), TLI(Arg.TLI), AC(Arg.AC),
         DT(Arg.DT), LI(Arg.LI) {}
+
+  /// Handle invalidation events in the new pass manager.
+  bool invalidate(Function &F, const PreservedAnalyses &PA,
+                  FunctionAnalysisManager::Invalidator &Inv);
 
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB);
 
@@ -142,11 +150,11 @@ private:
   static const Value *
   GetLinearExpression(const Value *V, APInt &Scale, APInt &Offset,
                       unsigned &ZExtBits, unsigned &SExtBits,
-                      const DataLayout &DL, unsigned Depth,
+                      const DataLayout &DL, unsigned Depth, AssumptionCache *AC,
                       DominatorTree *DT, bool &NSW, bool &NUW);
 
   static bool DecomposeGEPExpression(const Value *V, DecomposedGEP &Decomposed,
-      const DataLayout &DL, DominatorTree *DT);
+      const DataLayout &DL, AssumptionCache *AC, DominatorTree *DT);
 
   static bool isGEPBaseAtNegativeOffset(const GEPOperator *GEPOp,
       const DecomposedGEP &DecompGEP, const DecomposedGEP &DecompObject,
@@ -163,7 +171,7 @@ private:
   bool
   constantOffsetHeuristic(const SmallVectorImpl<VariableGEPIndex> &VarIndices,
                           uint64_t V1Size, uint64_t V2Size, int64_t BaseOffset,
-                          DominatorTree *DT);
+                          AssumptionCache *AC, DominatorTree *DT);
 
   bool isValueEqualInPotentialCycles(const Value *V1, const Value *V2);
 

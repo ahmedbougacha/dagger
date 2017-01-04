@@ -40,6 +40,9 @@ public:
   
   bool isValid() const { return U && Die; }
   explicit operator bool() const { return isValid(); }
+  bool operator ==(const DWARFDie &RHS) const {
+    return Die == RHS.Die && U == RHS.U;
+  }
   const DWARFDebugInfoEntry *getDebugInfoEntry() const { return Die; }
   DWARFUnit *getDwarfUnit() const { return U; }
 
@@ -82,23 +85,26 @@ public:
   /// Returns true if DIE represents a subprogram or an inlined subroutine.
   bool isSubroutineDIE() const;
 
-
-  /// Get the silbing of this DIE object.
+  /// Get the parent of this DIE object.
+  ///
+  /// \returns a valid DWARFDie instance if this object has a parent or an
+  /// invalid DWARFDie instance if it doesn't.
+  DWARFDie getParent() const;
+  
+  /// Get the sibling of this DIE object.
   ///
   /// \returns a valid DWARFDie instance if this object has a sibling or an
   /// invalid DWARFDie instance if it doesn't.
-  DWARFDie getSibling() const {
-    assert(isValid() && "must check validity prior to calling");
-    return DWARFDie(U, Die->getSibling());
-  }
+  DWARFDie getSibling() const;
   
   /// Get the first child of this DIE object.
   ///
   /// \returns a valid DWARFDie instance if this object has children or an
   /// invalid DWARFDie instance if it doesn't.
   DWARFDie getFirstChild() const {
-    assert(isValid() && "must check validity prior to calling");
-    return DWARFDie(U, Die->getFirstChild());
+    if (isValid() && Die->hasChildren())
+      return DWARFDie(U, Die + 1);
+    return DWARFDie();
   }
   
   /// Dump the DIE and all of its attributes to the supplied stream.
@@ -285,6 +291,18 @@ public:
   /// \returns anm optional absolute section offset value for the attribute.
   Optional<uint64_t> getRangesBaseAttribute() const;
   
+  /// Get the DW_AT_high_pc attribute value as an address.
+  ///
+  /// In DWARF version 4 and later the high PC can be encoded as an offset from
+  /// the DW_AT_low_pc. This function takes care of extracting the value as an
+  /// address or offset and adds it to the low PC if needed and returns the
+  /// value as an optional in case the DIE doesn't have a DW_AT_high_pc
+  /// attribute.
+  ///
+  /// \param LowPC the low PC that might be needed to calculate the high PC.
+  /// \returns an optional address value for the attribute.
+  Optional<uint64_t> getHighPC(uint64_t LowPC) const;
+
   /// Retrieves DW_AT_low_pc and DW_AT_high_pc from CU.
   /// Returns true if both attributes are present.
   bool getLowAndHighPC(uint64_t &LowPC, uint64_t &HighPC) const;

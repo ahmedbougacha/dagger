@@ -1019,13 +1019,14 @@ static unsigned enforceKnownAlignment(Value *V, unsigned Align,
 unsigned llvm::getOrEnforceKnownAlignment(Value *V, unsigned PrefAlign,
                                           const DataLayout &DL,
                                           const Instruction *CxtI,
+                                          AssumptionCache *AC,
                                           const DominatorTree *DT) {
   assert(V->getType()->isPointerTy() &&
          "getOrEnforceKnownAlignment expects a pointer!");
   unsigned BitWidth = DL.getPointerTypeSizeInBits(V->getType());
 
   APInt KnownZero(BitWidth, 0), KnownOne(BitWidth, 0);
-  computeKnownBits(V, KnownZero, KnownOne, DL, 0, CxtI, DT);
+  computeKnownBits(V, KnownZero, KnownOne, DL, 0, AC, CxtI, DT);
   unsigned TrailZ = KnownZero.countTrailingOnes();
 
   // Avoid trouble with ridiculously large TrailZ values, such as
@@ -1111,9 +1112,10 @@ void llvm::ConvertDebugDeclareToDebugValue(DbgDeclareInst *DDI,
     unsigned FragmentOffset = 0;
     // If this already is a bit fragment, we drop the bit fragment from the
     // expression and record the offset.
-    if (DIExpr->isFragment()) {
+    auto Fragment = DIExpr->getFragmentInfo();
+    if (Fragment) {
       Ops.append(DIExpr->elements_begin(), DIExpr->elements_end()-3);
-      FragmentOffset = DIExpr->getFragmentOffsetInBits();
+      FragmentOffset = Fragment->OffsetInBits;
     } else {
       Ops.append(DIExpr->elements_begin(), DIExpr->elements_end());
     }

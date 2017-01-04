@@ -30,6 +30,7 @@ class Function;
 class FunctionPass;
 class Instruction;
 class CallSite;
+class AssumptionCache;
 class MemoryDependenceResults;
 class PredIteratorCache;
 class DominatorTree;
@@ -69,7 +70,7 @@ class MemDepResult {
     ///   1. This could be a load or store for dependence queries on
     ///      load/store.  The value loaded or stored is the produced value.
     ///      Note that the pointer operand may be different than that of the
-    ///      queried pointer due to must aliases and phi translation.  Note
+    ///      queried pointer due to must aliases and phi translation. Note
     ///      that the def may not be the same type as the query, the pointers
     ///      may just be must aliases.
     ///   2. For loads and stores, this could be an allocation instruction. In
@@ -338,15 +339,20 @@ private:
 
   /// Current AA implementation, just a cache.
   AliasAnalysis &AA;
+  AssumptionCache &AC;
   const TargetLibraryInfo &TLI;
   DominatorTree &DT;
   PredIteratorCache PredCache;
 
 public:
-  MemoryDependenceResults(AliasAnalysis &AA,
+  MemoryDependenceResults(AliasAnalysis &AA, AssumptionCache &AC,
                           const TargetLibraryInfo &TLI,
                           DominatorTree &DT)
-      : AA(AA), TLI(TLI), DT(DT) {}
+      : AA(AA), AC(AC), TLI(TLI), DT(DT) {}
+
+  /// Handle invalidation in the new PM.
+  bool invalidate(Function &F, const PreservedAnalyses &PA,
+                  FunctionAnalysisManager::Invalidator &Inv);
 
   /// Some methods limit the number of instructions they will examine.
   /// The return value of this method is the default limit that will be

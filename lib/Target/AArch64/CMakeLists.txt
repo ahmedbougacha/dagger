@@ -15,6 +15,10 @@ tablegen(LLVM AArch64GenDisassemblerTables.inc -gen-disassembler)
 tablegen(LLVM AArch64GenSystemOperands.inc -gen-searchable-tables)
 tablegen(LLVM AArch64GenSema.inc -gen-semantics)
 
+if(LLVM_BUILD_GLOBAL_ISEL)
+  tablegen(LLVM AArch64GenGlobalISel.inc -gen-global-isel)
+endif()
+
 add_public_tablegen_target(AArch64CommonTableGen)
 
 # List of all GlobalISel files.
