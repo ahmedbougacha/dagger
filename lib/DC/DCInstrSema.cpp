@@ -343,22 +343,27 @@ BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
 }
 
 Value *DCInstrSema::insertTranslateAt(Value *OrigTarget) {
-  void* CBPtr = DynTranslateAtCBPtr;
-  if (!CBPtr) {
-    // If we don't have access to the dynamic translate_at function, jump to
-    // some bad address.
-    // FIXME: A better target would be a dedicated IR function with just trap+
-    // unreachable, which would make it possible to debug more easily.
-    // FIXME: We should be able generate a table with all possible call targets
-    // from the symbol table.
-    CBPtr = reinterpret_cast<void*>(0xDEAD);
+  Value *TranslateAtFn = nullptr;
+  // If we don't have access to the dynamic translate_at function, defer to
+  // using an intrinsic.
+  // FIXME: A better target would be a dedicated IR function with just trap+
+  // unreachable, which would make it possible to debug more easily.
+  // FIXME: We should be able generate a table with all possible call targets
+  // from the symbol table.
+  if (DynTranslateAtCBPtr) {
+    FunctionType *CallbackType = FunctionType::get(
+        FuncType->getPointerTo(), Builder->getInt8PtrTy(), /*isVarArg=*/false);
+    TranslateAtFn =
+        DRS.getCallTargetForExtFn(CallbackType, DynTranslateAtCBPtr);
+  } else {
+    TranslateAtFn =
+        Intrinsic::getDeclaration(TheModule, Intrinsic::dc_translate_at);
   }
 
-  FunctionType *CallbackType = FunctionType::get(
-      FuncType->getPointerTo(), Builder->getInt8PtrTy(), /*isVarArg=*/false);
-  return Builder->CreateCall(
-      DRS.getCallTargetForExtFn(CallbackType, CBPtr),
+  Value *Ptr = Builder->CreateCall(
+      TranslateAtFn,
       {Builder->CreateIntToPtr(OrigTarget, Builder->getInt8PtrTy())});
+  return Builder->CreateBitCast(Ptr, FuncType->getPointerTo());
 }
 
 void DCInstrSema::insertCall(Value *CallTarget) {

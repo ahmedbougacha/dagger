@@ -792,3 +792,4 @@ include "llvm/IR/IntrinsicsWebAssembly.td"
 def int_dc_getreg : Intrinsic<[llvm_any_ty], [llvm_metadata_ty], []>;
 def int_dc_setreg : Intrinsic<[], [llvm_any_ty, llvm_metadata_ty], []>;
 def int_dc_startinst : Intrinsic<[], [llvm_i64_ty], []>;
+def int_dc_translate_at : Intrinsic<[llvm_ptr_ty], [llvm_ptr_ty], []>;
