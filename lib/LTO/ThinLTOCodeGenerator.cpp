@@ -196,8 +196,15 @@ crossImportIntoModule(Module &TheModule, const ModuleSummaryIndex &Index,
   };
 
   FunctionImporter Importer(Index, Loader);
-  if (!Importer.importFunctions(TheModule, ImportList))
+  Expected<bool> Result = Importer.importFunctions(TheModule, ImportList);
+  if (!Result) {
+    handleAllErrors(Result.takeError(), [&](ErrorInfoBase &EIB) {
+      SMDiagnostic Err = SMDiagnostic(TheModule.getModuleIdentifier(),
+                                      SourceMgr::DK_Error, EIB.message());
+      Err.print("ThinLTO", errs());
+    });
     report_fatal_error("importFunctions failed");
+  }
 }
 
 static void optimizeModule(Module &TheModule, TargetMachine &TM,
@@ -581,11 +588,18 @@ void ThinLTOCodeGenerator::promote(Module &TheModule,
   StringMap<GVSummaryMapTy> ModuleToDefinedGVSummaries;
   Index.collectDefinedGVSummariesPerModule(ModuleToDefinedGVSummaries);
 
+  // Convert the preserved symbols set from string to GUID
+  auto GUIDPreservedSymbols = computeGUIDPreservedSymbols(
+      PreservedSymbols, Triple(TheModule.getTargetTriple()));
+
+  // Compute "dead" symbols, we don't want to import/export these!
+  auto DeadSymbols = computeDeadSymbols(Index, GUIDPreservedSymbols);
+
   // Generate import/export list
   StringMap<FunctionImporter::ImportMapTy> ImportLists(ModuleCount);
   StringMap<FunctionImporter::ExportSetTy> ExportLists(ModuleCount);
   ComputeCrossModuleImport(Index, ModuleToDefinedGVSummaries, ImportLists,
-                           ExportLists);
+                           ExportLists, &DeadSymbols);
 
   // Resolve LinkOnce/Weak symbols.
   StringMap<std::map<GlobalValue::GUID, GlobalValue::LinkageTypes>> ResolvedODR;
@@ -593,10 +607,6 @@ void ThinLTOCodeGenerator::promote(Module &TheModule,
 
   thinLTOResolveWeakForLinkerModule(
       TheModule, ModuleToDefinedGVSummaries[ModuleIdentifier]);
-
-  // Convert the preserved symbols set from string to GUID
-  auto GUIDPreservedSymbols = computeGUIDPreservedSymbols(
-      PreservedSymbols, Triple(TheModule.getTargetTriple()));
 
   // Promote the exported values in the index, so that they are promoted
   // in the module.
@@ -623,11 +633,18 @@ void ThinLTOCodeGenerator::crossModuleImport(Module &TheModule,
   StringMap<GVSummaryMapTy> ModuleToDefinedGVSummaries(ModuleCount);
   Index.collectDefinedGVSummariesPerModule(ModuleToDefinedGVSummaries);
 
+  // Convert the preserved symbols set from string to GUID
+  auto GUIDPreservedSymbols = computeGUIDPreservedSymbols(
+      PreservedSymbols, Triple(TheModule.getTargetTriple()));
+
+  // Compute "dead" symbols, we don't want to import/export these!
+  auto DeadSymbols = computeDeadSymbols(Index, GUIDPreservedSymbols);
+
   // Generate import/export list
   StringMap<FunctionImporter::ImportMapTy> ImportLists(ModuleCount);
   StringMap<FunctionImporter::ExportSetTy> ExportLists(ModuleCount);
   ComputeCrossModuleImport(Index, ModuleToDefinedGVSummaries, ImportLists,
-                           ExportLists);
+                           ExportLists, &DeadSymbols);
   auto &ImportList = ImportLists[TheModule.getModuleIdentifier()];
 
   crossImportIntoModule(TheModule, Index, ModuleMap, ImportList);
@@ -697,11 +714,14 @@ void ThinLTOCodeGenerator::internalize(Module &TheModule,
   StringMap<GVSummaryMapTy> ModuleToDefinedGVSummaries(ModuleCount);
   Index.collectDefinedGVSummariesPerModule(ModuleToDefinedGVSummaries);
 
+  // Compute "dead" symbols, we don't want to import/export these!
+  auto DeadSymbols = computeDeadSymbols(Index, GUIDPreservedSymbols);
+
   // Generate import/export list
   StringMap<FunctionImporter::ImportMapTy> ImportLists(ModuleCount);
   StringMap<FunctionImporter::ExportSetTy> ExportLists(ModuleCount);
   ComputeCrossModuleImport(Index, ModuleToDefinedGVSummaries, ImportLists,
-                           ExportLists);
+                           ExportLists, &DeadSymbols);
   auto &ExportList = ExportLists[ModuleIdentifier];
 
   // Be friendly and don't nuke totally the module when the client didn't
@@ -836,17 +856,20 @@ void ThinLTOCodeGenerator::run() {
   StringMap<GVSummaryMapTy> ModuleToDefinedGVSummaries(ModuleCount);
   Index->collectDefinedGVSummariesPerModule(ModuleToDefinedGVSummaries);
 
+  // Convert the preserved symbols set from string to GUID, this is needed for
+  // computing the caching hash and the internalization.
+  auto GUIDPreservedSymbols =
+      computeGUIDPreservedSymbols(PreservedSymbols, TMBuilder.TheTriple);
+
+  // Compute "dead" symbols, we don't want to import/export these!
+  auto DeadSymbols = computeDeadSymbols(*Index, GUIDPreservedSymbols);
+
   // Collect the import/export lists for all modules from the call-graph in the
   // combined index.
   StringMap<FunctionImporter::ImportMapTy> ImportLists(ModuleCount);
   StringMap<FunctionImporter::ExportSetTy> ExportLists(ModuleCount);
   ComputeCrossModuleImport(*Index, ModuleToDefinedGVSummaries, ImportLists,
-                           ExportLists);
-
-  // Convert the preserved symbols set from string to GUID, this is needed for
-  // computing the caching hash and the internalization.
-  auto GUIDPreservedSymbols =
-      computeGUIDPreservedSymbols(PreservedSymbols, TMBuilder.TheTriple);
+                           ExportLists, &DeadSymbols);
 
   // We use a std::map here to be able to have a defined ordering when
   // producing a hash for the cache entry.
