@@ -33,8 +33,8 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dc-sema"
 
-static cl::opt<bool>
-EnableRegSetDiff("enable-dc-regset-diff", cl::desc(""), cl::init(false));
+static cl::opt<bool> EnableRegSetDiff("enable-dc-regset-diff", cl::desc(""),
+                                      cl::init(false));
 
 static cl::opt<bool> EnableInstAddrSave("enable-dc-pc-save", cl::desc(""),
                                         cl::init(false));
@@ -82,16 +82,15 @@ Function *DCFunction::FinalizeFunction() {
 
 void DCFunction::FinalizeBasicBlock() {
   if (!TheBB->getTerminator())
-    BranchInst::Create(getOrCreateBasicBlock(getBasicBlockEndAddress()),
-                       TheBB);
+    BranchInst::Create(getOrCreateBasicBlock(getBasicBlockEndAddress()), TheBB);
   DRS.FinalizeBasicBlock();
   TheBB = nullptr;
   TheMCBB = nullptr;
 }
 
 Function *DCFunction::getOrCreateMainFunction(Function *EntryFn) {
-  Type *MainArgs[] = { Builder->getInt32Ty(),
-                       Builder->getInt8PtrTy()->getPointerTo() };
+  Type *MainArgs[] = {Builder->getInt32Ty(),
+                      Builder->getInt8PtrTy()->getPointerTo()};
   Function *IRMain = cast<Function>(TheModule->getOrInsertFunction(
       "main",
       FunctionType::get(Builder->getInt32Ty(), MainArgs, /*isVarArg=*/false)));
@@ -115,7 +114,7 @@ Function *DCFunction::getOrCreateMainFunction(Function *EntryFn) {
   Stack->setAlignment(64);
 
   Value *StackSize = Builder->getInt32(kStackSize);
-  Value *Idx[2] = { Builder->getInt32(0), Builder->getInt32(0) };
+  Value *Idx[2] = {Builder->getInt32(0), Builder->getInt32(0)};
   Value *StackPtr = Builder->CreateInBoundsGEP(Stack, Idx);
 
   Function::arg_iterator ArgI = IRMain->getArgumentList().begin();
@@ -146,7 +145,7 @@ Function *DCFunction::getOrCreateInitRegSetFunction() {
   // If we need to diff regsets, now's a good time to insert the function.
   // FIXME: bad hijack
   if (EnableRegSetDiff)
-    DRS.getOrCreateRegSetDiffFunction(/*Definition=*/ true);
+    DRS.getOrCreateRegSetDiffFunction(/*Definition=*/true);
 
   return InitFn;
 }
@@ -260,7 +259,8 @@ void DCFunction::SwitchToFunction(const MCFunction *MCFN) {
     ReturnInst::Create(Ctx, ExitBB);
   }
 
-  // Create a br from the entry basic block to the first basic block, at StartAddr.
+  // Create a br from the entry basic block to the first basic block, at
+  // StartAddr.
   Builder->CreateBr(getOrCreateBasicBlock(StartAddr));
 
   DRS.SwitchToFunction(TheFunction);
@@ -312,8 +312,7 @@ BasicBlock *DCFunction::getOrCreateBasicBlock(uint64_t Addr) {
   if (!BB) {
     BB = BasicBlock::Create(Ctx, "bb_" + utohexstr(Addr), TheFunction);
     DCIRBuilder BBBuilder(BB);
-    BBBuilder
-        .CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    BBBuilder.CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
     BBBuilder.CreateUnreachable();
   }
   return BB;
@@ -450,36 +449,92 @@ bool DCFunction::translateOpcode(unsigned Opcode) {
   if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START)
     return translateTargetOpcode(Opcode);
 
-  switch(Opcode) {
-  case ISD::ADD  : translateBinOp(Instruction::Add ); break;
-  case ISD::FADD : translateBinOp(Instruction::FAdd); break;
-  case ISD::SUB  : translateBinOp(Instruction::Sub ); break;
-  case ISD::FSUB : translateBinOp(Instruction::FSub); break;
-  case ISD::MUL  : translateBinOp(Instruction::Mul ); break;
-  case ISD::FMUL : translateBinOp(Instruction::FMul); break;
-  case ISD::UDIV : translateBinOp(Instruction::UDiv); break;
-  case ISD::SDIV : translateBinOp(Instruction::SDiv); break;
-  case ISD::FDIV : translateBinOp(Instruction::FDiv); break;
-  case ISD::UREM : translateBinOp(Instruction::URem); break;
-  case ISD::SREM : translateBinOp(Instruction::SRem); break;
-  case ISD::FREM : translateBinOp(Instruction::FRem); break;
-  case ISD::SHL  : translateBinOp(Instruction::Shl ); break;
-  case ISD::SRL  : translateBinOp(Instruction::LShr); break;
-  case ISD::SRA  : translateBinOp(Instruction::AShr); break;
-  case ISD::AND  : translateBinOp(Instruction::And ); break;
-  case ISD::OR   : translateBinOp(Instruction::Or  ); break;
-  case ISD::XOR  : translateBinOp(Instruction::Xor ); break;
+  switch (Opcode) {
+  case ISD::ADD:
+    translateBinOp(Instruction::Add);
+    break;
+  case ISD::FADD:
+    translateBinOp(Instruction::FAdd);
+    break;
+  case ISD::SUB:
+    translateBinOp(Instruction::Sub);
+    break;
+  case ISD::FSUB:
+    translateBinOp(Instruction::FSub);
+    break;
+  case ISD::MUL:
+    translateBinOp(Instruction::Mul);
+    break;
+  case ISD::FMUL:
+    translateBinOp(Instruction::FMul);
+    break;
+  case ISD::UDIV:
+    translateBinOp(Instruction::UDiv);
+    break;
+  case ISD::SDIV:
+    translateBinOp(Instruction::SDiv);
+    break;
+  case ISD::FDIV:
+    translateBinOp(Instruction::FDiv);
+    break;
+  case ISD::UREM:
+    translateBinOp(Instruction::URem);
+    break;
+  case ISD::SREM:
+    translateBinOp(Instruction::SRem);
+    break;
+  case ISD::FREM:
+    translateBinOp(Instruction::FRem);
+    break;
+  case ISD::SHL:
+    translateBinOp(Instruction::Shl);
+    break;
+  case ISD::SRL:
+    translateBinOp(Instruction::LShr);
+    break;
+  case ISD::SRA:
+    translateBinOp(Instruction::AShr);
+    break;
+  case ISD::AND:
+    translateBinOp(Instruction::And);
+    break;
+  case ISD::OR:
+    translateBinOp(Instruction::Or);
+    break;
+  case ISD::XOR:
+    translateBinOp(Instruction::Xor);
+    break;
 
-  case ISD::TRUNCATE    : translateCastOp(Instruction::Trunc   ); break;
-  case ISD::BITCAST     : translateCastOp(Instruction::BitCast ); break;
-  case ISD::ZERO_EXTEND : translateCastOp(Instruction::ZExt    ); break;
-  case ISD::SIGN_EXTEND : translateCastOp(Instruction::SExt    ); break;
-  case ISD::FP_TO_UINT  : translateCastOp(Instruction::FPToUI  ); break;
-  case ISD::FP_TO_SINT  : translateCastOp(Instruction::FPToSI  ); break;
-  case ISD::UINT_TO_FP  : translateCastOp(Instruction::UIToFP  ); break;
-  case ISD::SINT_TO_FP  : translateCastOp(Instruction::SIToFP  ); break;
-  case ISD::FP_ROUND    : translateCastOp(Instruction::FPTrunc ); break;
-  case ISD::FP_EXTEND   : translateCastOp(Instruction::FPExt   ); break;
+  case ISD::TRUNCATE:
+    translateCastOp(Instruction::Trunc);
+    break;
+  case ISD::BITCAST:
+    translateCastOp(Instruction::BitCast);
+    break;
+  case ISD::ZERO_EXTEND:
+    translateCastOp(Instruction::ZExt);
+    break;
+  case ISD::SIGN_EXTEND:
+    translateCastOp(Instruction::SExt);
+    break;
+  case ISD::FP_TO_UINT:
+    translateCastOp(Instruction::FPToUI);
+    break;
+  case ISD::FP_TO_SINT:
+    translateCastOp(Instruction::FPToSI);
+    break;
+  case ISD::UINT_TO_FP:
+    translateCastOp(Instruction::UIToFP);
+    break;
+  case ISD::SINT_TO_FP:
+    translateCastOp(Instruction::SIToFP);
+    break;
+  case ISD::FP_ROUND:
+    translateCastOp(Instruction::FPTrunc);
+    break;
+  case ISD::FP_EXTEND:
+    translateCastOp(Instruction::FPExt);
+    break;
 
   case ISD::FSQRT: {
     Value *V = getNextOperand();
@@ -523,30 +578,28 @@ bool DCFunction::translateOpcode(unsigned Opcode) {
     EVT Re2EVT = NextVT();
     IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(Ctx));
     IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(Ctx));
-    IntegerType *ResType = IntegerType::get(
-        Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
+    IntegerType *ResType = IntegerType::get(Ctx, LoResType->getBitWidth() +
+                                                     HiResType->getBitWidth());
     Value *Op1 = Builder->CreateSExt(getNextOperand(), ResType);
     Value *Op2 = Builder->CreateSExt(getNextOperand(), ResType);
     Value *Full = Builder->CreateMul(Op1, Op2);
     registerResult(Builder->CreateTrunc(Full, LoResType));
-    registerResult(
-        Builder->CreateTrunc(
-            Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
+    registerResult(Builder->CreateTrunc(
+        Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
     break;
   }
   case ISD::UMUL_LOHI: {
     EVT Re2EVT = NextVT();
     IntegerType *LoResType = cast<IntegerType>(ResEVT.getTypeForEVT(Ctx));
     IntegerType *HiResType = cast<IntegerType>(Re2EVT.getTypeForEVT(Ctx));
-    IntegerType *ResType = IntegerType::get(
-        Ctx, LoResType->getBitWidth() + HiResType->getBitWidth());
+    IntegerType *ResType = IntegerType::get(Ctx, LoResType->getBitWidth() +
+                                                     HiResType->getBitWidth());
     Value *Op1 = Builder->CreateZExt(getNextOperand(), ResType);
     Value *Op2 = Builder->CreateZExt(getNextOperand(), ResType);
     Value *Full = Builder->CreateMul(Op1, Op2);
     registerResult(Builder->CreateTrunc(Full, LoResType));
-    registerResult(
-        Builder->CreateTrunc(
-            Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
+    registerResult(Builder->CreateTrunc(
+        Builder->CreateLShr(Full, LoResType->getBitWidth()), HiResType));
     break;
   }
   case ISD::LOAD: {
@@ -598,8 +651,7 @@ bool DCFunction::translateOpcode(unsigned Opcode) {
       Res = Builder->CreatePtrToInt(Res, RegType);
     if (!Res->getType()->isIntegerTy())
       Res = Builder->CreateBitCast(
-          Res,
-          IntegerType::get(Ctx, Res->getType()->getPrimitiveSizeInBits()));
+          Res, IntegerType::get(Ctx, Res->getType()->getPrimitiveSizeInBits()));
     if (Res->getType()->getPrimitiveSizeInBits() < RegType->getBitWidth())
       Res = DRS.insertBitsInValue(DRS.getRegAsInt(RegNo), Res);
     assert(Res->getType() == RegType);
@@ -686,7 +738,7 @@ bool DCFunction::translateOpcode(unsigned Opcode) {
     Type *ResType = ResEVT.getTypeForEVT(Ctx);
     Value *Op = getNextOperand();
     Value *IntDecl =
-          Intrinsic::getDeclaration(TheModule, Intrinsic::bswap, ResType);
+        Intrinsic::getDeclaration(TheModule, Intrinsic::bswap, ResType);
     registerResult(Builder->CreateCall(IntDecl, Op));
     break;
   }
@@ -740,7 +792,7 @@ bool DCFunction::translatePredicate(unsigned Pred) {
   case TargetOpcode::Predicate::alignedload:
   case TargetOpcode::Predicate::alignedload256:
   case TargetOpcode::Predicate::alignedload512:
-    // FIXME: Take advantage of the implied alignment.
+  // FIXME: Take advantage of the implied alignment.
   case TargetOpcode::Predicate::load: {
     Type *ResPtrTy = ResEVT.getTypeForEVT(Ctx)->getPointerTo();
     Value *Ptr = getNextOperand();
@@ -756,7 +808,7 @@ bool DCFunction::translatePredicate(unsigned Pred) {
   case TargetOpcode::Predicate::alignedstore:
   case TargetOpcode::Predicate::alignedstore256:
   case TargetOpcode::Predicate::alignedstore512:
-    // FIXME: Take advantage of NT/alignment.
+  // FIXME: Take advantage of NT/alignment.
   case TargetOpcode::Predicate::store: {
     Value *Val = getNextOperand();
     Value *Ptr = getNextOperand();

@@ -96,7 +96,7 @@ void X86RegisterSema::FinalizeBasicBlock() {
   clearCCSF();
 }
 
-void X86RegisterSema::FinalizeFunction(BasicBlock* ExitBB) {
+void X86RegisterSema::FinalizeFunction(BasicBlock *ExitBB) {
   DCRegisterSema::FinalizeFunction(ExitBB);
   for (size_t i = 0, e = CCAssignments.size(); i != e; ++i)
     CCAssignments[i] = 0;
@@ -105,36 +105,59 @@ void X86RegisterSema::FinalizeFunction(BasicBlock* ExitBB) {
 }
 
 static StringRef getSFName(X86::StatusFlag SF) {
-  switch(SF) {
-  case X86::SF: return "SF";
-  case X86::CF: return "CF";
-  case X86::PF: return "PF";
-  case X86::AF: return "AF";
-  case X86::ZF: return "ZF";
-  case X86::OF: return "OF";
+  switch (SF) {
+  case X86::SF:
+    return "SF";
+  case X86::CF:
+    return "CF";
+  case X86::PF:
+    return "PF";
+  case X86::AF:
+    return "AF";
+  case X86::ZF:
+    return "ZF";
+  case X86::OF:
+    return "OF";
   }
   llvm_unreachable("Unknown status flag.");
 }
 
 static StringRef getCCName(X86::CondCode CC) {
-  switch(CC) {
-  case X86::COND_NO: return "CC_NO";
-  case X86::COND_O:  return "CC_O";
-  case X86::COND_AE: return "CC_AE";
-  case X86::COND_B:  return "CC_B";
-  case X86::COND_NE: return "CC_NE";
-  case X86::COND_E:  return "CC_E";
-  case X86::COND_NS: return "CC_NS";
-  case X86::COND_S:  return "CC_S";
-  case X86::COND_NP: return "CC_NP";
-  case X86::COND_P:  return "CC_P";
-  case X86::COND_A:  return "CC_A";
-  case X86::COND_BE: return "CC_BE";
-  case X86::COND_GE: return "CC_GE";
-  case X86::COND_L:  return "CC_L";
-  case X86::COND_G:  return "CC_G";
-  case X86::COND_LE: return "CC_LE";
-  default: return "";
+  switch (CC) {
+  case X86::COND_NO:
+    return "CC_NO";
+  case X86::COND_O:
+    return "CC_O";
+  case X86::COND_AE:
+    return "CC_AE";
+  case X86::COND_B:
+    return "CC_B";
+  case X86::COND_NE:
+    return "CC_NE";
+  case X86::COND_E:
+    return "CC_E";
+  case X86::COND_NS:
+    return "CC_NS";
+  case X86::COND_S:
+    return "CC_S";
+  case X86::COND_NP:
+    return "CC_NP";
+  case X86::COND_P:
+    return "CC_P";
+  case X86::COND_A:
+    return "CC_A";
+  case X86::COND_BE:
+    return "CC_BE";
+  case X86::COND_GE:
+    return "CC_GE";
+  case X86::COND_L:
+    return "CC_L";
+  case X86::COND_G:
+    return "CC_G";
+  case X86::COND_LE:
+    return "CC_LE";
+  default:
+    return "";
   }
 }
 
@@ -147,23 +170,51 @@ Value *X86RegisterSema::getCC(X86::CondCode CC) {
   bool XOF = false; // Needs XOR OF
   bool OZF = false; // Needs OR ZF
   X86::StatusFlag SF;
-  switch(CC) {
-  case X86::COND_NO: Inv = true;
-  case X86::COND_O: SF = X86::OF; break;
-  case X86::COND_AE: Inv = true;
-  case X86::COND_B: SF = X86::CF; break;
-  case X86::COND_NE: Inv = true;
-  case X86::COND_E: SF = X86::ZF; break;
-  case X86::COND_NS: Inv = true;
-  case X86::COND_S: SF = X86::SF; break;
-  case X86::COND_NP: Inv = true;
-  case X86::COND_P: SF = X86::PF; break;
-  case X86::COND_A: Inv = true;
-  case X86::COND_BE: SF = X86::CF; OZF = true; break;
-  case X86::COND_GE: Inv = true;
-  case X86::COND_L: SF = X86::SF; XOF = true; break;
-  case X86::COND_G: Inv = true;
-  case X86::COND_LE: SF = X86::SF; XOF = true; OZF = true; break;
+  switch (CC) {
+  case X86::COND_NO:
+    Inv = true;
+  case X86::COND_O:
+    SF = X86::OF;
+    break;
+  case X86::COND_AE:
+    Inv = true;
+  case X86::COND_B:
+    SF = X86::CF;
+    break;
+  case X86::COND_NE:
+    Inv = true;
+  case X86::COND_E:
+    SF = X86::ZF;
+    break;
+  case X86::COND_NS:
+    Inv = true;
+  case X86::COND_S:
+    SF = X86::SF;
+    break;
+  case X86::COND_NP:
+    Inv = true;
+  case X86::COND_P:
+    SF = X86::PF;
+    break;
+  case X86::COND_A:
+    Inv = true;
+  case X86::COND_BE:
+    SF = X86::CF;
+    OZF = true;
+    break;
+  case X86::COND_GE:
+    Inv = true;
+  case X86::COND_L:
+    SF = X86::SF;
+    XOF = true;
+    break;
+  case X86::COND_G:
+    Inv = true;
+  case X86::COND_LE:
+    SF = X86::SF;
+    XOF = true;
+    OZF = true;
+    break;
   case X86::COND_NE_OR_P:
   case X86::COND_E_AND_NP:
   case X86::COND_INVALID:
@@ -194,16 +245,16 @@ Value *X86RegisterSema::getEFLAGSforCMP(Value *LHS, Value *RHS) {
   if (RHS->getType()->isIntegerTy()) {
     // FIXME: the ultimate goal is to make this transparent, depending on the
     // operation that updated the flags.
-    setCC(X86::COND_A,  Builder->CreateICmpUGT(LHS, RHS));
+    setCC(X86::COND_A, Builder->CreateICmpUGT(LHS, RHS));
     setCC(X86::COND_AE, Builder->CreateICmpUGE(LHS, RHS));
-    setCC(X86::COND_B,  Builder->CreateICmpULT(LHS, RHS));
+    setCC(X86::COND_B, Builder->CreateICmpULT(LHS, RHS));
     setCC(X86::COND_BE, Builder->CreateICmpULE(LHS, RHS));
-    setCC(X86::COND_L,  Builder->CreateICmpSLT(LHS, RHS));
+    setCC(X86::COND_L, Builder->CreateICmpSLT(LHS, RHS));
     setCC(X86::COND_LE, Builder->CreateICmpSLE(LHS, RHS));
-    setCC(X86::COND_G,  Builder->CreateICmpSGT(LHS, RHS));
+    setCC(X86::COND_G, Builder->CreateICmpSGT(LHS, RHS));
     setCC(X86::COND_GE, Builder->CreateICmpSGE(LHS, RHS));
-    setCC(X86::COND_E,  Builder->CreateICmpEQ  (LHS, RHS));
-    setCC(X86::COND_NE, Builder->CreateICmpNE (LHS, RHS));
+    setCC(X86::COND_E, Builder->CreateICmpEQ(LHS, RHS));
+    setCC(X86::COND_NE, Builder->CreateICmpNE(LHS, RHS));
     // Per the intel manual, CMP is equivalent to SUB.
     return computeEFLAGSForDef(Builder->CreateSub(LHS, RHS));
   } else {
@@ -255,7 +306,7 @@ Value *X86RegisterSema::computeEFLAGSForDef(Value *Def, bool DontUpdateCF) {
   }
 
   if (BinOp && OverflowIntrinsic && CarryIntrinsic) {
-    Value *Args[] = { BinOp->getOperand(0), BinOp->getOperand(1) };
+    Value *Args[] = {BinOp->getOperand(0), BinOp->getOperand(1)};
     setSF(X86::OF, Builder->CreateExtractValue(
                        Builder->CreateCall(
                            Intrinsic::getDeclaration(
@@ -305,8 +356,8 @@ void X86RegisterSema::setSF(X86::StatusFlag SF, Value *Val) {
   // No need to recreate EFLAGS, because this is only called from updateEFLAGS.
   SFVals[SF] = Val;
   if (!Val->hasName())
-    Val->setName((Twine(getSFName(SF)) + "_" +
-                  utostr(SFAssignments[SF]++)).str());
+    Val->setName(
+        (Twine(getSFName(SF)) + "_" + utostr(SFAssignments[SF]++)).str());
 }
 
 Value *X86RegisterSema::getSF(X86::StatusFlag SF) {
@@ -385,8 +436,9 @@ void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
   IAArgTypes.push_back(RegSetType->getPointerTo());
   IAArgTypes.push_back(ExtFn->getType());
 
-  auto getRegOffset =
-      [this](unsigned Reg) { return getRegSizeOffsetInRegSet(Reg).second; };
+  auto getRegOffset = [this](unsigned Reg) {
+    return getRegSizeOffsetInRegSet(Reg).second;
+  };
 
   std::string IAStr;
   raw_string_ostream(IAStr)
@@ -447,6 +499,6 @@ void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
              "~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{xmm6},~{xmm7}",
       /*hasSideEffects=*/true, /*isAlignStack=*/false);
 
-   Value *RegSetPtr = &*WrapperBB->getParent()->getArgumentList().begin();
-   WBuilder.CreateCall(IA, {RegSetPtr, ExtFn});
+  Value *RegSetPtr = &*WrapperBB->getParent()->getArgumentList().begin();
+  WBuilder.CreateCall(IA, {RegSetPtr, ExtFn});
 }

@@ -20,11 +20,11 @@
 #ifndef LLVM_DC_DCFUNCTION_H
 #define LLVM_DC_DCFUNCTION_H
 
-#include "llvm/DC/DCOpcodes.h"
-#include "llvm/DC/DCRegisterSema.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/DC/DCOpcodes.h"
+#include "llvm/DC/DCRegisterSema.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -68,7 +68,7 @@ public:
 
   void createExternalTailCallBB(uint64_t Addr);
 
-        DCRegisterSema &getDRS()       { return DRS; }
+  DCRegisterSema &getDRS() { return DRS; }
   const DCRegisterSema &getDRS() const { return DRS; }
 
   // Set the callback used for dynamically translating indirect branches/calls.
@@ -128,9 +128,7 @@ protected:
     return Vals[OpIdx];
   }
 
-  void registerResult(Value *ResV) {
-    Vals.push_back(ResV);
-  }
+  void registerResult(Value *ResV) { Vals.push_back(ResV); }
 
   uint64_t getImmOp(unsigned Idx) {
     return CurrentInst->Inst.getOperand(Idx).getImm();

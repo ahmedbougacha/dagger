@@ -8,12 +8,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86DCFunction.h"
-#include "X86RegisterSema.h"
 #include "InstPrinter/X86ATTInstPrinter.h"
 #include "InstPrinter/X86IntelInstPrinter.h"
 #include "MCTargetDesc/X86MCTargetDesc.h"
-#include "X86ISelLowering.h"
 #include "Utils/X86ShuffleDecode.h"
+#include "X86ISelLowering.h"
+#include "X86RegisterSema.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
@@ -22,10 +22,10 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -57,50 +57,114 @@ bool X86DCFunction::translateTargetInst() {
       AtomicRMWInst::BinOp AtomicOpc = AtomicRMWInst::BAD_BINOP;
       Instruction::BinaryOps Opc = Instruction::FAdd; // Invalid initializer
       switch (Opcode) {
-      default: break;
+      default:
+        break;
       case X86::CMPXCHG8rm:
-        translateCMPXCHG(X86::OpTypes::i8mem, X86::AL); return true;
+        translateCMPXCHG(X86::OpTypes::i8mem, X86::AL);
+        return true;
       case X86::CMPXCHG16rm:
-        translateCMPXCHG(X86::OpTypes::i16mem, X86::AX); return true;
+        translateCMPXCHG(X86::OpTypes::i16mem, X86::AX);
+        return true;
       case X86::CMPXCHG32rm:
-        translateCMPXCHG(X86::OpTypes::i32mem, X86::EAX); return true;
+        translateCMPXCHG(X86::OpTypes::i32mem, X86::EAX);
+        return true;
       case X86::CMPXCHG64rm:
-        translateCMPXCHG(X86::OpTypes::i64mem, X86::RAX); return true;
+        translateCMPXCHG(X86::OpTypes::i64mem, X86::RAX);
+        return true;
 
-      case X86::XADD8rm: XADDMemOpType = X86::OpTypes::i8mem; break;
-      case X86::XADD16rm: XADDMemOpType = X86::OpTypes::i16mem; break;
-      case X86::XADD32rm: XADDMemOpType = X86::OpTypes::i32mem; break;
-      case X86::XADD64rm: XADDMemOpType = X86::OpTypes::i64mem; break;
+      case X86::XADD8rm:
+        XADDMemOpType = X86::OpTypes::i8mem;
+        break;
+      case X86::XADD16rm:
+        XADDMemOpType = X86::OpTypes::i16mem;
+        break;
+      case X86::XADD32rm:
+        XADDMemOpType = X86::OpTypes::i32mem;
+        break;
+      case X86::XADD64rm:
+        XADDMemOpType = X86::OpTypes::i64mem;
+        break;
 
-      case X86::INC8m: case X86::INC16m: case X86::INC32m: case X86::INC64m:
+      case X86::INC8m:
+      case X86::INC16m:
+      case X86::INC32m:
+      case X86::INC64m:
         isINCDEC = true; // fallthrough
-      case X86::ADD8mr: case X86::ADD16mr: case X86::ADD32mr: case X86::ADD64mr:
-      case X86::ADD8mi: case X86::ADD16mi: case X86::ADD32mi:
-      case X86::ADD16mi8: case X86::ADD32mi8:
-      case X86::ADD64mi8: case X86::ADD64mi32:
-        AtomicOpc = AtomicRMWInst::Add; Opc = Instruction::Add; break;
-      case X86::DEC8m: case X86::DEC16m: case X86::DEC32m: case X86::DEC64m:
+      case X86::ADD8mr:
+      case X86::ADD16mr:
+      case X86::ADD32mr:
+      case X86::ADD64mr:
+      case X86::ADD8mi:
+      case X86::ADD16mi:
+      case X86::ADD32mi:
+      case X86::ADD16mi8:
+      case X86::ADD32mi8:
+      case X86::ADD64mi8:
+      case X86::ADD64mi32:
+        AtomicOpc = AtomicRMWInst::Add;
+        Opc = Instruction::Add;
+        break;
+      case X86::DEC8m:
+      case X86::DEC16m:
+      case X86::DEC32m:
+      case X86::DEC64m:
         isINCDEC = true; // fallthrough
-      case X86::SUB8mr: case X86::SUB16mr: case X86::SUB32mr: case X86::SUB64mr:
-      case X86::SUB8mi: case X86::SUB16mi: case X86::SUB32mi:
-      case X86::SUB16mi8: case X86::SUB32mi8:
-      case X86::SUB64mi8: case X86::SUB64mi32:
-        AtomicOpc = AtomicRMWInst::Sub; Opc = Instruction::Sub; break;
-      case X86::OR8mr: case X86::OR16mr: case X86::OR32mr: case X86::OR64mr:
-      case X86::OR8mi: case X86::OR16mi: case X86::OR32mi:
-      case X86::OR16mi8: case X86::OR32mi8:
-      case X86::OR64mi8: case X86::OR64mi32:
-        AtomicOpc = AtomicRMWInst::Or; Opc = Instruction::Or; break;
-      case X86::XOR8mr: case X86::XOR16mr: case X86::XOR32mr: case X86::XOR64mr:
-      case X86::XOR8mi: case X86::XOR16mi: case X86::XOR32mi:
-      case X86::XOR16mi8: case X86::XOR32mi8:
-      case X86::XOR64mi8: case X86::XOR64mi32:
-        AtomicOpc = AtomicRMWInst::Xor; Opc = Instruction::Xor; break;
-      case X86::AND8mr: case X86::AND16mr: case X86::AND32mr: case X86::AND64mr:
-      case X86::AND8mi: case X86::AND16mi: case X86::AND32mi:
-      case X86::AND16mi8: case X86::AND32mi8:
-      case X86::AND64mi8: case X86::AND64mi32:
-        AtomicOpc = AtomicRMWInst::And; Opc = Instruction::And; break;
+      case X86::SUB8mr:
+      case X86::SUB16mr:
+      case X86::SUB32mr:
+      case X86::SUB64mr:
+      case X86::SUB8mi:
+      case X86::SUB16mi:
+      case X86::SUB32mi:
+      case X86::SUB16mi8:
+      case X86::SUB32mi8:
+      case X86::SUB64mi8:
+      case X86::SUB64mi32:
+        AtomicOpc = AtomicRMWInst::Sub;
+        Opc = Instruction::Sub;
+        break;
+      case X86::OR8mr:
+      case X86::OR16mr:
+      case X86::OR32mr:
+      case X86::OR64mr:
+      case X86::OR8mi:
+      case X86::OR16mi:
+      case X86::OR32mi:
+      case X86::OR16mi8:
+      case X86::OR32mi8:
+      case X86::OR64mi8:
+      case X86::OR64mi32:
+        AtomicOpc = AtomicRMWInst::Or;
+        Opc = Instruction::Or;
+        break;
+      case X86::XOR8mr:
+      case X86::XOR16mr:
+      case X86::XOR32mr:
+      case X86::XOR64mr:
+      case X86::XOR8mi:
+      case X86::XOR16mi:
+      case X86::XOR32mi:
+      case X86::XOR16mi8:
+      case X86::XOR32mi8:
+      case X86::XOR64mi8:
+      case X86::XOR64mi32:
+        AtomicOpc = AtomicRMWInst::Xor;
+        Opc = Instruction::Xor;
+        break;
+      case X86::AND8mr:
+      case X86::AND16mr:
+      case X86::AND32mr:
+      case X86::AND64mr:
+      case X86::AND8mi:
+      case X86::AND16mi:
+      case X86::AND32mi:
+      case X86::AND16mi8:
+      case X86::AND32mi8:
+      case X86::AND64mi8:
+      case X86::AND64mi32:
+        AtomicOpc = AtomicRMWInst::And;
+        Opc = Instruction::And;
+        break;
       }
 
       Value *PointerOperand = nullptr, *Operand2 = nullptr, *Result = nullptr;
@@ -127,7 +191,8 @@ bool X86DCFunction::translateTargetInst() {
         NextOpc = Next();
         assert(NextOpc == ISD::LOAD &&
                "Expected to load operand for X86 LOCK-prefixed instruction");
-        /*VT=*/Next(); /*PointerOp=*/Next();
+        /*VT=*/Next(); /*PointerOp=*/
+        Next();
 
         // Finally, translate the second operand, if there is one.
         if (isINCDEC) {
@@ -162,10 +227,18 @@ bool X86DCFunction::translateTargetInst() {
         // Ignore the prefix in rep;ret.
         return false;
       }
-      case X86::MOVSQ: SizeInBits = 64; break;
-      case X86::MOVSL: SizeInBits = 32; break;
-      case X86::MOVSW: SizeInBits = 16; break;
-      case X86::MOVSB: SizeInBits = 8;  break;
+      case X86::MOVSQ:
+        SizeInBits = 64;
+        break;
+      case X86::MOVSL:
+        SizeInBits = 32;
+        break;
+      case X86::MOVSW:
+        SizeInBits = 16;
+        break;
+      case X86::MOVSB:
+        SizeInBits = 8;
+        break;
       }
       Type *MemTy = Type::getIntNPtrTy(Builder->getContext(), SizeInBits);
       Value *Dst = Builder->CreateIntToPtr(getReg(X86::RDI), MemTy);
@@ -173,7 +246,7 @@ bool X86DCFunction::translateTargetInst() {
       Value *Len = getReg(X86::RCX);
       // FIXME: Add support for reverse copying, depending on Direction Flag.
       // We don't support CLD/STD yet anyway, so this isn't a big deal for now.
-      Type *MemcpyArgTys[] = { Dst->getType(), Src->getType(), Len->getType() };
+      Type *MemcpyArgTys[] = {Dst->getType(), Src->getType(), Len->getType()};
       Builder->CreateCall(
           Intrinsic::getDeclaration(TheModule, Intrinsic::memcpy, MemcpyArgTys),
           {Dst, Src, Len,
@@ -332,8 +405,7 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     (void)NextVT();
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand(),
           *Op3 = getNextOperand();
-    assert(Op3 == getReg(X86::EFLAGS) &&
-           "SBB borrow register isn't EFLAGS!");
+    assert(Op3 == getReg(X86::EFLAGS) && "SBB borrow register isn't EFLAGS!");
     (void)Op3;
     Value *Borrow = Builder->CreateZExt(X86DRS.getSF(X86::CF), Op1->getType());
     Value *Res = Builder->CreateSub(Op1, Op2);
@@ -366,11 +438,11 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     // If the source is zero, it is undefined behavior as per Intel SDM, but
     // most implementations I'm aware of just leave the destination unchanged.
     assert((CurrentInst->Inst.getOpcode() >= X86::BSF16rm &&
-           CurrentInst->Inst.getOpcode() <= X86::BSF64rr) &&
+            CurrentInst->Inst.getOpcode() <= X86::BSF64rr) &&
            "Unexpected instruction with X86ISD::BSR node!");
     Value *IsSrcZero = Builder->CreateIsNull(Src);
     Value *PrevDstVal = getReg(CurrentInst->Inst.getOperand(0).getReg());
-    Type *ArgTys[] = { PrevDstVal->getType(), Builder->getInt1Ty() };
+    Type *ArgTys[] = {PrevDstVal->getType(), Builder->getInt1Ty()};
     Value *Cttz = Builder->CreateCall(
         Intrinsic::getDeclaration(TheModule, Intrinsic::cttz, ArgTys),
         {Src, /*is_zero_undef:*/ Builder->getInt1(true)});
@@ -387,11 +459,11 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     // If the source is zero, it is undefined behavior as per Intel SDM, but
     // most implementations I'm aware of just leave the destination unchanged.
     assert((CurrentInst->Inst.getOpcode() >= X86::BSR16rm &&
-           CurrentInst->Inst.getOpcode() <= X86::BSR64rr) &&
+            CurrentInst->Inst.getOpcode() <= X86::BSR64rr) &&
            "Unexpected instruction with X86ISD::BSR node!");
     Value *IsSrcZero = Builder->CreateIsNull(Src);
     Value *PrevDstVal = getReg(CurrentInst->Inst.getOperand(0).getReg());
-    Type *ArgTys[] = { PrevDstVal->getType(), Builder->getInt1Ty() };
+    Type *ArgTys[] = {PrevDstVal->getType(), Builder->getInt1Ty()};
     Value *Ctlz = Builder->CreateCall(
         Intrinsic::getDeclaration(TheModule, Intrinsic::ctlz, ArgTys),
         {Src, /*is_zero_undef:*/ Builder->getInt1(true)});
@@ -427,14 +499,30 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
 
     CmpInst::Predicate Pred;
     switch (CC) {
-    case EQ: Pred = CmpInst::FCMP_OEQ; break;
-    case LT: Pred = CmpInst::FCMP_OLT; break;
-    case LE: Pred = CmpInst::FCMP_OLE; break;
-    case UNORD: Pred = CmpInst::FCMP_UNO; break;
-    case NEQ: Pred = CmpInst::FCMP_UNE; break;
-    case NLT: Pred = CmpInst::FCMP_UGE; break;
-    case NLE: Pred = CmpInst::FCMP_UGT; break;
-    case ORD: Pred = CmpInst::FCMP_ORD; break;
+    case EQ:
+      Pred = CmpInst::FCMP_OEQ;
+      break;
+    case LT:
+      Pred = CmpInst::FCMP_OLT;
+      break;
+    case LE:
+      Pred = CmpInst::FCMP_OLE;
+      break;
+    case UNORD:
+      Pred = CmpInst::FCMP_UNO;
+      break;
+    case NEQ:
+      Pred = CmpInst::FCMP_UNE;
+      break;
+    case NLT:
+      Pred = CmpInst::FCMP_UGE;
+      break;
+    case NLE:
+      Pred = CmpInst::FCMP_UGT;
+      break;
+    case ORD:
+      Pred = CmpInst::FCMP_ORD;
+      break;
     }
 
     Type *ResTy = ResEVT.getTypeForEVT(Ctx);
@@ -548,13 +636,17 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     SmallVector<int, 8> Mask;
     switch (Opcode) {
     case X86ISD::MOVLHPS:
-      DecodeMOVLHPSMask(ResEVT.getVectorNumElements(), Mask); break;
+      DecodeMOVLHPSMask(ResEVT.getVectorNumElements(), Mask);
+      break;
     case X86ISD::MOVHLPS:
-      DecodeMOVHLPSMask(ResEVT.getVectorNumElements(), Mask); break;
+      DecodeMOVHLPSMask(ResEVT.getVectorNumElements(), Mask);
+      break;
     case X86ISD::UNPCKL:
-      DecodeUNPCKLMask(ResEVT.getSimpleVT(), Mask); break;
+      DecodeUNPCKLMask(ResEVT.getSimpleVT(), Mask);
+      break;
     case X86ISD::UNPCKH:
-      DecodeUNPCKHMask(ResEVT.getSimpleVT(), Mask); break;
+      DecodeUNPCKHMask(ResEVT.getSimpleVT(), Mask);
+      break;
     };
     translateShuffle(Mask, Src1, Src2);
     break;
@@ -567,11 +659,14 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     SmallVector<int, 8> Mask;
     switch (Opcode) {
     case X86ISD::PSHUFD:
-      DecodePSHUFMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+      DecodePSHUFMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      break;
     case X86ISD::PSHUFHW:
-      DecodePSHUFHWMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+      DecodePSHUFHWMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      break;
     case X86ISD::PSHUFLW:
-      DecodePSHUFLWMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+      DecodePSHUFLWMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      break;
     };
     translateShuffle(Mask, Src);
     break;
@@ -585,9 +680,11 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     DecodePSHUFMask(ResEVT.getSimpleVT(), MaskImm, Mask);
     switch (Opcode) {
     case X86ISD::SHUFP:
-      DecodeSHUFPMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+      DecodeSHUFPMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      break;
     case X86ISD::PALIGNR:
-      DecodePALIGNRMask(ResEVT.getSimpleVT(), MaskImm, Mask); break;
+      DecodePALIGNRMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      break;
     };
     translateShuffle(Mask, Src1, Src2);
     break;
@@ -637,10 +734,18 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     registerResult(Builder->CreateAShr(Src1, Src2->getZExtValue()));
     break;
   }
-  case X86ISD::HSUB:  translateHorizontalBinop(Instruction::Sub);  break;
-  case X86ISD::HADD:  translateHorizontalBinop(Instruction::Add);  break;
-  case X86ISD::FHSUB: translateHorizontalBinop(Instruction::FSub); break;
-  case X86ISD::FHADD: translateHorizontalBinop(Instruction::FAdd); break;
+  case X86ISD::HSUB:
+    translateHorizontalBinop(Instruction::Sub);
+    break;
+  case X86ISD::HADD:
+    translateHorizontalBinop(Instruction::Add);
+    break;
+  case X86ISD::FHSUB:
+    translateHorizontalBinop(Instruction::FSub);
+    break;
+  case X86ISD::FHADD:
+    translateHorizontalBinop(Instruction::FAdd);
+    break;
 
   case X86ISD::CVTSI2P: {
     auto *ResTy = cast<VectorType>(ResEVT.getTypeForEVT(Ctx));
@@ -670,20 +775,36 @@ Value *X86DCFunction::translateCustomOperand(unsigned OperandType,
            << utostr(OperandType) << "\n";
     return nullptr;
 
-  case X86::OpTypes::i8mem : Res = translateAddr(MIOpNo, MVT::i8); break;
-  case X86::OpTypes::i16mem: Res = translateAddr(MIOpNo, MVT::i16); break;
-  case X86::OpTypes::i32mem: Res = translateAddr(MIOpNo, MVT::i32); break;
-  case X86::OpTypes::i64mem: Res = translateAddr(MIOpNo, MVT::i64); break;
-  case X86::OpTypes::f32mem: Res = translateAddr(MIOpNo, MVT::f32); break;
-  case X86::OpTypes::f64mem: Res = translateAddr(MIOpNo, MVT::f64); break;
-  case X86::OpTypes::f80mem: Res = translateAddr(MIOpNo, MVT::f80); break;
+  case X86::OpTypes::i8mem:
+    Res = translateAddr(MIOpNo, MVT::i8);
+    break;
+  case X86::OpTypes::i16mem:
+    Res = translateAddr(MIOpNo, MVT::i16);
+    break;
+  case X86::OpTypes::i32mem:
+    Res = translateAddr(MIOpNo, MVT::i32);
+    break;
+  case X86::OpTypes::i64mem:
+    Res = translateAddr(MIOpNo, MVT::i64);
+    break;
+  case X86::OpTypes::f32mem:
+    Res = translateAddr(MIOpNo, MVT::f32);
+    break;
+  case X86::OpTypes::f64mem:
+    Res = translateAddr(MIOpNo, MVT::f64);
+    break;
+  case X86::OpTypes::f80mem:
+    Res = translateAddr(MIOpNo, MVT::f80);
+    break;
 
   // Just fallback to an integer for the rest, let the user decide the type.
-  case X86::OpTypes::i128mem :
-  case X86::OpTypes::i256mem :
-  case X86::OpTypes::f128mem :
-  case X86::OpTypes::f256mem :
-  case X86::OpTypes::lea64mem: Res = translateAddr(MIOpNo); break;
+  case X86::OpTypes::i128mem:
+  case X86::OpTypes::i256mem:
+  case X86::OpTypes::f128mem:
+  case X86::OpTypes::f256mem:
+  case X86::OpTypes::lea64mem:
+    Res = translateAddr(MIOpNo);
+    break;
 
   case X86::OpTypes::lea64_32mem: {
     Res = Builder->CreateTruncOrBitCast(translateAddr(MIOpNo),
@@ -691,17 +812,39 @@ Value *X86DCFunction::translateCustomOperand(unsigned OperandType,
     break;
   }
 
-  case X86::OpTypes::offset16_8 : Res = translateMemOffset(MIOpNo, MVT::i8); break;
-  case X86::OpTypes::offset32_8 : Res = translateMemOffset(MIOpNo, MVT::i8); break;
-  case X86::OpTypes::offset64_8 : Res = translateMemOffset(MIOpNo, MVT::i8); break;
-  case X86::OpTypes::offset16_16: Res = translateMemOffset(MIOpNo, MVT::i16); break;
-  case X86::OpTypes::offset32_16: Res = translateMemOffset(MIOpNo, MVT::i16); break;
-  case X86::OpTypes::offset64_16: Res = translateMemOffset(MIOpNo, MVT::i16); break;
-  case X86::OpTypes::offset16_32: Res = translateMemOffset(MIOpNo, MVT::i32); break;
-  case X86::OpTypes::offset32_32: Res = translateMemOffset(MIOpNo, MVT::i32); break;
-  case X86::OpTypes::offset64_32: Res = translateMemOffset(MIOpNo, MVT::i32); break;
-  case X86::OpTypes::offset32_64: Res = translateMemOffset(MIOpNo, MVT::i64); break;
-  case X86::OpTypes::offset64_64: Res = translateMemOffset(MIOpNo, MVT::i64); break;
+  case X86::OpTypes::offset16_8:
+    Res = translateMemOffset(MIOpNo, MVT::i8);
+    break;
+  case X86::OpTypes::offset32_8:
+    Res = translateMemOffset(MIOpNo, MVT::i8);
+    break;
+  case X86::OpTypes::offset64_8:
+    Res = translateMemOffset(MIOpNo, MVT::i8);
+    break;
+  case X86::OpTypes::offset16_16:
+    Res = translateMemOffset(MIOpNo, MVT::i16);
+    break;
+  case X86::OpTypes::offset32_16:
+    Res = translateMemOffset(MIOpNo, MVT::i16);
+    break;
+  case X86::OpTypes::offset64_16:
+    Res = translateMemOffset(MIOpNo, MVT::i16);
+    break;
+  case X86::OpTypes::offset16_32:
+    Res = translateMemOffset(MIOpNo, MVT::i32);
+    break;
+  case X86::OpTypes::offset32_32:
+    Res = translateMemOffset(MIOpNo, MVT::i32);
+    break;
+  case X86::OpTypes::offset64_32:
+    Res = translateMemOffset(MIOpNo, MVT::i32);
+    break;
+  case X86::OpTypes::offset32_64:
+    Res = translateMemOffset(MIOpNo, MVT::i64);
+    break;
+  case X86::OpTypes::offset64_64:
+    Res = translateMemOffset(MIOpNo, MVT::i64);
+    break;
 
   case X86::OpTypes::SSECC:
   case X86::OpTypes::u8imm:
@@ -729,8 +872,8 @@ Value *X86DCFunction::translateCustomOperand(unsigned OperandType,
   case X86::OpTypes::brtarget16:
   case X86::OpTypes::brtarget32: {
     // FIXME: use MCInstrAnalysis for this kind of thing?
-    uint64_t Target = getImmOp(MIOpNo) +
-      CurrentInst->Address + CurrentInst->Size;
+    uint64_t Target =
+        getImmOp(MIOpNo) + CurrentInst->Address + CurrentInst->Size;
     Res = Builder->getInt64(Target);
     break;
   }
@@ -843,7 +986,7 @@ void X86DCFunction::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
   assert(VecTy == Src1->getType() && VecTy == Src2->getType());
   unsigned NumElt = VecTy->getVectorNumElements();
   Value *Res = UndefValue::get(VecTy);
-  Value *Srcs[2] = { Src1, Src2 };
+  Value *Srcs[2] = {Src1, Src2};
   for (int opi = 0, ope = 2; opi != ope; ++opi) {
     for (int i = 0, e = NumElt / 2; i != e; ++i) {
       Value *EltL =
@@ -894,9 +1037,9 @@ void X86DCFunction::translateDivRem(bool isThreeOperand, bool isSigned) {
   Divisor = Builder->CreateCast(ExtOp, Divisor, Dividend->getType());
 
   registerResult(Builder->CreateTrunc(
-                     Builder->CreateBinOp(DivOp, Dividend, Divisor), ResType));
+      Builder->CreateBinOp(DivOp, Dividend, Divisor), ResType));
   registerResult(Builder->CreateTrunc(
-                     Builder->CreateBinOp(RemOp, Dividend, Divisor), ResType));
+      Builder->CreateBinOp(RemOp, Dividend, Divisor), ResType));
 }
 
 Value *X86DCFunction::translatePSHUFB(Value *V, Value *Mask) {

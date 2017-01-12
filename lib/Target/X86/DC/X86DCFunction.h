@@ -15,14 +15,14 @@
 
 namespace llvm {
 namespace X86DCISD {
-  enum {
-    FIRST_NUMBER = DCINS::FIRST_TARGET_DC_OPCODE,
-    IDIV,
-    DIV,
-    // Variants for 8bit division (AX div r/m8)
-    IDIV8,
-    DIV8
-  };
+enum {
+  FIRST_NUMBER = DCINS::FIRST_TARGET_DC_OPCODE,
+  IDIV,
+  DIV,
+  // Variants for 8bit division (AX div r/m8)
+  IDIV8,
+  DIV8
+};
 } // end namespace X86DCISD
 
 class X86RegisterSema;

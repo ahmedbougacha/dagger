@@ -11,20 +11,20 @@
 #define LLVM_LIB_TARGET_X86_DC_X86REGISTERSEMA_H
 
 #include "X86InstrInfo.h"
-#include "llvm/DC/DCRegisterSema.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/DC/DCRegisterSema.h"
 
 namespace llvm {
 namespace X86 {
-  enum StatusFlag {
-    CF = 0,
-    PF = 2,
-    AF = 4,
-    ZF = 6,
-    SF = 7,
-    OF = 11,
-    MAX_FLAGS = OF
-  };
+enum StatusFlag {
+  CF = 0,
+  PF = 2,
+  AF = 4,
+  ZF = 6,
+  SF = 7,
+  OF = 11,
+  MAX_FLAGS = OF
+};
 } // end namespace X86
 
 class Value;

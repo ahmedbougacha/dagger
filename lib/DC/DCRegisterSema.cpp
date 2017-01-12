@@ -46,8 +46,8 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
   // FIXME: the best (only) way to know the size of a reg is to find a
   // containing RC.
   // FIXME: This should go in tablegen.
-  for (auto RCI = MRI.regclass_begin(), RCE = MRI.regclass_end();
-       RCI != RCE; ++RCI) {
+  for (auto RCI = MRI.regclass_begin(), RCE = MRI.regclass_end(); RCI != RCE;
+       ++RCI) {
     unsigned SizeInBits = RCI->getSize() * 8;
     Type *RCTy = nullptr;
 
@@ -93,17 +93,17 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
   std::vector<unsigned> RegNumRootUnits(getNumRegs());
 
   for (unsigned RUI = 0, RUE = MRI.getNumRegUnits(); RUI != RUE; ++RUI) {
-   MCRegUnitRootIterator RI(RUI, &MRI);
-   unsigned RURoot = *RI;
+    MCRegUnitRootIterator RI(RUI, &MRI);
+    unsigned RURoot = *RI;
 
-   // Regunits with multiple roots usually involve aliases; don't worry about
-   // those yet.
-   ++RI;
-   if (RI.isValid())
-     llvm_unreachable("Regunits with multiple roots not supported yet");
+    // Regunits with multiple roots usually involve aliases; don't worry about
+    // those yet.
+    ++RI;
+    if (RI.isValid())
+      llvm_unreachable("Regunits with multiple roots not supported yet");
 
-   for (MCSuperRegIterator SI(RURoot, &MRI, true); SI.isValid(); ++SI)
-     ++RegNumRootUnits[*SI];
+    for (MCSuperRegIterator SI(RURoot, &MRI, true); SI.isValid(); ++SI)
+      ++RegNumRootUnits[*SI];
   }
 
   DEBUG(dbgs() << "Computing reg largest supers:\n");
@@ -199,9 +199,7 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
 
 DCRegisterSema::~DCRegisterSema() {}
 
-void DCRegisterSema::SwitchToModule(Module *Mod) {
-  TheModule = Mod;
-}
+void DCRegisterSema::SwitchToModule(Module *Mod) { TheModule = Mod; }
 
 void DCRegisterSema::SwitchToFunction(Function *Fn) { TheFunction = Fn; }
 
@@ -217,8 +215,8 @@ void DCRegisterSema::SwitchToInst(const MCDecodedInst &DecodedInst) {
   CurrentInst = &DecodedInst;
 
   if (EnableMockIntrin) {
-    Function *StartInstIntrin = Intrinsic::getDeclaration(
-        TheModule, Intrinsic::dc_startinst);
+    Function *StartInstIntrin =
+        Intrinsic::getDeclaration(TheModule, Intrinsic::dc_startinst);
     Builder->CreateCall(StartInstIntrin,
                         Builder->getInt64(CurrentInst->Address));
   }
@@ -326,8 +324,9 @@ Value *DCRegisterSema::getRegNoCallback(unsigned RegNo) {
 void DCRegisterSema::setRegValWithName(unsigned RegNo, Value *Val) {
   RegVals[RegNo] = Val;
   if (!Val->hasName())
-    Val->setName((Twine(MRI.getName(RegNo)) + "_" +
-                  utostr(RegAssignments[RegNo]++)).str());
+    Val->setName(
+        (Twine(MRI.getName(RegNo)) + "_" + utostr(RegAssignments[RegNo]++))
+            .str());
 }
 
 void DCRegisterSema::createLocalValueForReg(unsigned RegNo) {
@@ -360,7 +359,7 @@ void DCRegisterSema::createLocalValueForReg(unsigned RegNo) {
     Value *RegSetArg = &TheFunction->getArgumentList().front();
     int OffsetInRegSet = RegOffsetsInSet[RegNo];
     assert(OffsetInRegSet != -1 && "Getting a register not in the regset!");
-    Value *Idx[] = { Builder->getInt32(0), Builder->getInt32(OffsetInRegSet) };
+    Value *Idx[] = {Builder->getInt32(0), Builder->getInt32(OffsetInRegSet)};
     RP = Builder->CreateInBoundsGEP(RegSetArg, Idx);
     RP->setName((RegName + "_ptr").str());
     RI = Builder->CreateLoad(getRegType(RegNo), RP);
@@ -377,8 +376,9 @@ void DCRegisterSema::createLocalValueForReg(unsigned RegNo) {
 Value *DCRegisterSema::extractBitsFromValue(unsigned LoBit, unsigned NumBits,
                                             Value *Val) {
   Value *LShr =
-      (LoBit == 0 ? Val : Builder->CreateLShr(
-                              Val, ConstantInt::get(Val->getType(), LoBit)));
+      (LoBit == 0
+           ? Val
+           : Builder->CreateLShr(Val, ConstantInt::get(Val->getType(), LoBit)));
   return Builder->CreateTruncOrBitCast(LShr, IntegerType::get(Ctx, NumBits));
 }
 
@@ -397,8 +397,8 @@ Value *DCRegisterSema::insertBitsInValue(Value *FullVal, Value *ToInsert,
 
   APInt Mask = ~APInt::getBitsSet(ValType->getBitWidth(), Offset,
                                   Offset + ToInsertType->getBitWidth());
-  return Builder->CreateOr(Cast, Builder->CreateAnd(
-                                     FullVal, ConstantInt::get(ValType, Mask)));
+  return Builder->CreateOr(
+      Cast, Builder->CreateAnd(FullVal, ConstantInt::get(ValType, Mask)));
 }
 
 Value *DCRegisterSema::extractSubRegFromSuper(unsigned Super, unsigned Sub,

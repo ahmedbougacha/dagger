@@ -12,8 +12,7 @@ DCFunction *createX86DCFunction(StringRef TT, DCRegisterSema &DRS,
   return new X86DCFunction(DRS);
 }
 
-DCRegisterSema *createX86DCRegisterSema(StringRef TT,
-                                        LLVMContext &Ctx,
+DCRegisterSema *createX86DCRegisterSema(StringRef TT, LLVMContext &Ctx,
                                         const MCRegisterInfo &MRI,
                                         const MCInstrInfo &MII,
                                         const DataLayout &DL) {
@@ -29,5 +28,4 @@ extern "C" void LLVMInitializeX86TargetDC() {
   // Register the DC register semantic info.
   TargetRegistry::RegisterDCRegisterSema(getTheX86_64Target(),
                                          createX86DCRegisterSema);
-
 }

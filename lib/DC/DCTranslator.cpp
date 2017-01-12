@@ -41,7 +41,6 @@ DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
       EnableIRAnnotation(EnableIRAnnotation), DTIT(), DCF(DCF),
       OptLevel(TransOptLevel) {
 
-
   initializeTranslationModule();
 }
 
@@ -122,7 +121,8 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t EntryAddr) {
     // FIXME: original/effective?
     if (MOS) {
       if (!MOS->isInObject(MOS->getOriginalLoadAddr(Addr))) {
-        DEBUG(dbgs() << "Found external (not in object) function: " << Addr << "\n");
+        DEBUG(dbgs() << "Found external (not in object) function: " << Addr
+                     << "\n");
         DCF.createExternalWrapperFunction(Addr);
         continue;
       }

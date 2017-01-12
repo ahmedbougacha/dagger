@@ -1,4 +1,5 @@
-//===-- AArch64RegisterSema.cpp - AArch64 DC Register Semantics ---------*- C++ -*-===//
+//===-- AArch64RegisterSema.cpp - AArch64 DC Register Semantics ---------*- C++
+//-*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
