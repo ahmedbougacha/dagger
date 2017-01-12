@@ -1,4 +1,4 @@
-//===-- X86InstrSema.cpp - X86 DC Instruction Semantics ---------*- C++ -*-===//
+//===-- X86DCFunction.cpp - X86 Function Translation ------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "X86InstrSema.h"
+#include "X86DCFunction.h"
 #include "X86RegisterSema.h"
 #include "InstPrinter/X86ATTInstPrinter.h"
 #include "InstPrinter/X86IntelInstPrinter.h"
@@ -38,12 +38,12 @@ using namespace llvm;
 
 #define DEBUG_TYPE "x86-dc-sema"
 
-X86InstrSema::X86InstrSema(DCRegisterSema &DRS)
-    : DCInstrSema(X86::OpcodeToSemaIdx, X86::InstSemantics, X86::ConstantArray,
-                  DRS),
+X86DCFunction::X86DCFunction(DCRegisterSema &DRS)
+    : DCFunction(X86::OpcodeToSemaIdx, X86::InstSemantics, X86::ConstantArray,
+                 DRS),
       X86DRS((X86RegisterSema &)DRS), LastPrefix(0) {}
 
-bool X86InstrSema::translateTargetInst() {
+bool X86DCFunction::translateTargetInst() {
   unsigned Opcode = CurrentInst->Inst.getOpcode();
 
   if (LastPrefix) {
@@ -269,7 +269,7 @@ bool X86InstrSema::translateTargetInst() {
   return false;
 }
 
-bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
+bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
   switch (Opcode) {
   default:
     errs() << "Unknown X86 opcode found in semantics: " + utostr(Opcode)
@@ -660,8 +660,8 @@ bool X86InstrSema::translateTargetOpcode(unsigned Opcode) {
   return true;
 }
 
-Value *X86InstrSema::translateCustomOperand(unsigned OperandType,
-                                            unsigned MIOpNo) {
+Value *X86DCFunction::translateCustomOperand(unsigned OperandType,
+                                             unsigned MIOpNo) {
   Value *Res = nullptr;
 
   switch (OperandType) {
@@ -718,7 +718,7 @@ Value *X86InstrSema::translateCustomOperand(unsigned OperandType,
     // FIXME: Is there anything special to do with the sext/zext?
     Type *ResType = ResEVT.getTypeForEVT(Ctx);
     Res = ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOpNo));
-    // FIXME: factor this out in DIS.
+    // FIXME: factor this out in DCF.
     // lets us maintain DTIT info as well.
     break;
   }
@@ -740,7 +740,7 @@ Value *X86InstrSema::translateCustomOperand(unsigned OperandType,
   return Res;
 }
 
-bool X86InstrSema::translateImplicit(unsigned RegNo) {
+bool X86DCFunction::translateImplicit(unsigned RegNo) {
   assert(RegNo == X86::EFLAGS);
   // FIXME: We need to understand instructions that define multiple values.
   Value *Def = 0;
@@ -757,8 +757,8 @@ bool X86InstrSema::translateImplicit(unsigned RegNo) {
   return true;
 }
 
-Value *X86InstrSema::translateAddr(unsigned MIOperandNo,
-                                   MVT::SimpleValueType VT) {
+Value *X86DCFunction::translateAddr(unsigned MIOperandNo,
+                                    MVT::SimpleValueType VT) {
   // FIXME: We should switch to TargetRegisterInfo/InstrInfo instead of MC,
   // first because of all things 64 bit mode (ESP/RSP, size of iPTR, ..).
   // We already depend on codegen in lots of places, maybe completely
@@ -790,8 +790,8 @@ Value *X86InstrSema::translateAddr(unsigned MIOperandNo,
   return Res;
 }
 
-Value *X86InstrSema::translateMemOffset(unsigned MIOperandNo,
-                                        MVT::SimpleValueType VT) {
+Value *X86DCFunction::translateMemOffset(unsigned MIOperandNo,
+                                         MVT::SimpleValueType VT) {
   Value *Offset = Builder->getInt64(getImmOp(MIOperandNo));
   unsigned SegReg = getRegOp(MIOperandNo + 1);
 
@@ -806,7 +806,7 @@ Value *X86InstrSema::translateMemOffset(unsigned MIOperandNo,
   return Offset;
 }
 
-void X86InstrSema::translatePush(Value *Val) {
+void X86DCFunction::translatePush(Value *Val) {
   unsigned OpSize = Val->getType()->getPrimitiveSizeInBits() / 8;
 
   // FIXME: again assumes that we are in 64bit mode.
@@ -821,7 +821,7 @@ void X86InstrSema::translatePush(Value *Val) {
   setReg(X86::RSP, NewSP);
 }
 
-Value *X86InstrSema::translatePop(unsigned OpSize) {
+Value *X86DCFunction::translatePop(unsigned OpSize) {
   // FIXME: again assumes that we are in 64bit mode.
   Value *OldSP = getReg(X86::RSP);
 
@@ -836,7 +836,7 @@ Value *X86InstrSema::translatePop(unsigned OpSize) {
   return Val;
 }
 
-void X86InstrSema::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
+void X86DCFunction::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
   Value *Src1 = getNextOperand(), *Src2 = getNextOperand();
   Type *VecTy = ResEVT.getTypeForEVT(Ctx);
   assert(VecTy->isVectorTy());
@@ -858,7 +858,7 @@ void X86InstrSema::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
   registerResult(Res);
 }
 
-void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
+void X86DCFunction::translateDivRem(bool isThreeOperand, bool isSigned) {
   EVT Re2EVT = NextVT();
   assert(Re2EVT == ResEVT && "X86 division result type mismatch!");
   (void)Re2EVT;
@@ -899,7 +899,7 @@ void X86InstrSema::translateDivRem(bool isThreeOperand, bool isSigned) {
                      Builder->CreateBinOp(RemOp, Dividend, Divisor), ResType));
 }
 
-Value *X86InstrSema::translatePSHUFB(Value *V, Value *Mask) {
+Value *X86DCFunction::translatePSHUFB(Value *V, Value *Mask) {
   assert(V->getType() == Mask->getType());
   assert(V->getType()->getVectorNumElements() == 16);
   assert(V->getType()->getVectorElementType() == Builder->getInt8Ty());
@@ -916,8 +916,8 @@ Value *X86InstrSema::translatePSHUFB(Value *V, Value *Mask) {
   return Res;
 }
 
-void X86InstrSema::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
-                                    Value *V2) {
+void X86DCFunction::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
+                                     Value *V2) {
   Type *VecTy = V1->getType();
   Type *EltTy = VecTy->getVectorElementType();
   unsigned NumElts = VecTy->getVectorNumElements();
@@ -948,7 +948,7 @@ void X86InstrSema::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
       Builder->CreateShuffleVector(V1, V2, ConstantVector::get(MaskCV)));
 }
 
-void X86InstrSema::translateCMPXCHG(unsigned MemOpType, unsigned CmpReg) {
+void X86DCFunction::translateCMPXCHG(unsigned MemOpType, unsigned CmpReg) {
   // First, translate the mem operand.
   Value *PointerOperand = translateCustomOperand(MemOpType, 0);
 

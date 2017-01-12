@@ -1,4 +1,4 @@
-//===-- X86InstrSema.h - X86 DC Instruction Semantics -----------*- C++ -*-===//
+//===-- X86DCFunction.h - X86 Function Translation --------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -10,7 +10,7 @@
 #ifndef LLVM_LIB_TARGET_X86_DC_X86INSTRSEMA_H
 #define LLVM_LIB_TARGET_X86_DC_X86INSTRSEMA_H
 
-#include "llvm/DC/DCInstrSema.h"
+#include "llvm/DC/DCFunction.h"
 #include "llvm/Support/Compiler.h"
 
 namespace llvm {
@@ -27,21 +27,22 @@ namespace X86DCISD {
 
 class X86RegisterSema;
 
-class X86InstrSema : public DCInstrSema {
+class X86DCFunction : public DCFunction {
   // FIXME: This goes away once we have something like TargetMachine.
   X86RegisterSema &X86DRS;
 
   // Prefix instruction encoutered just before. This changes the behavior
   // of translateTargetInst to take into account the prefix.
-  // FIXME: Should we instead support this in DCInstrSema, so we can directly
+  // FIXME: Should we instead support this in DCFunction, so we can directly
   // ask for the next instruction?
   unsigned LastPrefix;
 
 public:
-  X86InstrSema(DCRegisterSema &DRS);
+  X86DCFunction(DCRegisterSema &DRS);
 
   bool translateTargetOpcode(unsigned Opcode) override;
-  Value *translateCustomOperand(unsigned OperandType, unsigned MIOperandNo) override;
+  Value *translateCustomOperand(unsigned OperandType,
+                                unsigned MIOperandNo) override;
   bool translateImplicit(unsigned RegNo) override;
 
   bool translateTargetInst() override;

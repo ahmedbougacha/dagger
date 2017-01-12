@@ -10,7 +10,7 @@
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/DC/DCInstrSema.h"
+#include "llvm/DC/DCFunction.h"
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
@@ -31,14 +31,14 @@ using namespace llvm;
 #define DEBUG_TYPE "dctranslator"
 
 DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
-                           TransOpt::Level TransOptLevel, DCInstrSema &DIS,
+                           TransOpt::Level TransOptLevel, DCFunction &DCF,
                            DCRegisterSema &DRS, MCInstPrinter &IP,
                            const MCSubtargetInfo &STI, MCModule &MCM,
                            MCObjectDisassembler *MCOD, MCObjectSymbolizer *MOS,
                            bool EnableIRAnnotation)
     : Ctx(Ctx), DL(DL), ModuleSet(), MCOD(MCOD), MOS(MOS), MCM(MCM),
       CurrentModule(nullptr), CurrentFPM(),
-      EnableIRAnnotation(EnableIRAnnotation), DTIT(), DIS(DIS),
+      EnableIRAnnotation(EnableIRAnnotation), DTIT(), DCF(DCF),
       OptLevel(TransOptLevel) {
 
 
@@ -73,7 +73,7 @@ void DCTranslator::initializeTranslationModule() {
   if (OptLevel >= TransOpt::Aggressive)
     CurrentFPM->add(createInstructionCombiningPass());
 
-  DIS.SwitchToModule(CurrentModule);
+  DCF.SwitchToModule(CurrentModule);
 
   if (EnableIRAnnotation)
     DTIT.reset(new DCTranslatedInstTracker);
@@ -82,13 +82,13 @@ void DCTranslator::initializeTranslationModule() {
 DCTranslator::~DCTranslator() {}
 
 Function *DCTranslator::getInitRegSetFunction() {
-  return DIS.getOrCreateInitRegSetFunction();
+  return DCF.getOrCreateInitRegSetFunction();
 }
 Function *DCTranslator::getFiniRegSetFunction() {
-  return DIS.getOrCreateFiniRegSetFunction();
+  return DCF.getOrCreateFiniRegSetFunction();
 }
 Function *DCTranslator::createMainFunctionWrapper(Function *Entrypoint) {
-  return DIS.getOrCreateMainFunction(Entrypoint);
+  return DCF.getOrCreateMainFunction(Entrypoint);
 }
 
 static bool
@@ -108,7 +108,7 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t EntryAddr) {
   WorkList.insert(EntryAddr);
   for (size_t i = 0; i < WorkList.size(); ++i) {
     uint64_t Addr = WorkList[i];
-    Function *F = DIS.getFunction(Addr);
+    Function *F = DCF.getFunction(Addr);
     if (F && !F->isDeclaration())
       continue;
 
@@ -123,7 +123,7 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t EntryAddr) {
     if (MOS) {
       if (!MOS->isInObject(MOS->getOriginalLoadAddr(Addr))) {
         DEBUG(dbgs() << "Found external (not in object) function: " << Addr << "\n");
-        DIS.createExternalWrapperFunction(Addr);
+        DCF.createExternalWrapperFunction(Addr);
         continue;
       }
 
@@ -132,7 +132,7 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t EntryAddr) {
       StringRef ExtFnName = MOS->findExternalFunctionAt(Addr);
       if (!ExtFnName.empty()) {
         DEBUG(dbgs() << "Found external function: " << ExtFnName << "\n");
-        DIS.createExternalWrapperFunction(Addr, ExtFnName);
+        DCF.createExternalWrapperFunction(Addr, ExtFnName);
         continue;
       }
     }
@@ -153,7 +153,7 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t EntryAddr) {
     for (uint64_t CallTarget : MCFN->callees())
       WorkList.insert(CallTarget);
   }
-  return DIS.getFunction(EntryAddr);
+  return DCF.getFunction(EntryAddr);
 }
 
 namespace {
@@ -191,17 +191,17 @@ void DCTranslator::translateFunction(const MCFunction &MCFN) {
   AddrPrettyStackTraceEntry X(MCFN.getStartAddr(), "Function");
 
   // If we already translated this function, bail out.
-  if (!DIS.getFunction(MCFN.getStartAddr())->empty())
+  if (!DCF.getFunction(MCFN.getStartAddr())->empty())
     return;
 
-  DIS.SwitchToFunction(&MCFN);
+  DCF.SwitchToFunction(&MCFN);
 
   // First, make sure all basic blocks are created, and sorted.
   std::vector<const MCBasicBlock *> BasicBlocks;
   std::copy(MCFN.begin(), MCFN.end(), std::back_inserter(BasicBlocks));
   std::sort(BasicBlocks.begin(), BasicBlocks.end(), BBBeginAddrLess);
   for (auto &BB : BasicBlocks)
-    DIS.getOrCreateBasicBlock(BB->getStartAddr());
+    DCF.getOrCreateBasicBlock(BB->getStartAddr());
 
   for (auto &BB : MCFN) {
     AddrPrettyStackTraceEntry X(BB->getStartAddr(), "Basic Block");
@@ -209,27 +209,27 @@ void DCTranslator::translateFunction(const MCFunction &MCFN) {
     DEBUG(dbgs() << "Translating basic block starting at "
                  << utohexstr(BB->getStartAddr()) << ", with " << BB->size()
                  << " instructions.\n");
-    DIS.SwitchToBasicBlock(BB);
+    DCF.SwitchToBasicBlock(BB);
     for (auto &I : *BB) {
       InstPrettyStackTraceEntry X(I.Address, I.Inst.getOpcode());
       DEBUG(dbgs() << "Translating instruction:\n "; dbgs() << I.Inst << "\n";);
       DCTranslatedInst TI(I);
-      if (!DIS.translateInst(I, TI)) {
+      if (!DCF.translateInst(I, TI)) {
         errs() << "Cannot translate instruction: \n  "
-               << "  " << DIS.getDRS().MII.getName(I.Inst.getOpcode()) << ": "
+               << "  " << DCF.getDRS().MII.getName(I.Inst.getOpcode()) << ": "
                << I.Inst << "\n";
         llvm_unreachable("Couldn't translate instruction\n");
       }
       if (EnableIRAnnotation)
         DTIT->trackInst(TI);
     }
-    DIS.FinalizeBasicBlock();
+    DCF.FinalizeBasicBlock();
   }
 
   for (uint64_t TailCallTarget : MCFN.tailcallees())
-    DIS.createExternalTailCallBB(TailCallTarget);
+    DCF.createExternalTailCallBB(TailCallTarget);
 
-  Function *Fn = DIS.FinalizeFunction();
+  Function *Fn = DCF.FinalizeFunction();
   {
     // ValueToValueMapTy VMap;
     // Function *OrigFn = CloneFunction(Fn, VMap, false);

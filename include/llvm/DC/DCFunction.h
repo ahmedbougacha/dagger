@@ -1,4 +1,4 @@
-//===-- llvm/DC/DCInstrSema.h - DC Instruction Semantics --------*- C++ -*-===//
+//===-- llvm/DC/DCFunction.h - Function Translation -------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,18 +7,18 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines DCInstrSema, the main interface that can be used to
+// This file defines DCFunction, the main interface that can be used to
 // translate machine code (represented by an MCModule, an MC-level CFG) to IR.
 //
-// DCInstrSema provides various methods - some provided by a Target-specific
+// DCFunction provides various methods - some provided by a Target-specific
 // subclassing implementation - that translate MC-level constructs into
 // corresponding IR, at several granularities: functions inside a module, basic
 // blocks, instructions, and finally instruction operands.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_DC_DCINSTRSEMA_H
-#define LLVM_DC_DCINSTRSEMA_H
+#ifndef LLVM_DC_DCFUNCTION_H
+#define LLVM_DC_DCFUNCTION_H
 
 #include "llvm/DC/DCOpcodes.h"
 #include "llvm/DC/DCRegisterSema.h"
@@ -40,9 +40,9 @@ namespace llvm {
 class MCContext;
 class DCTranslatedInst;
 
-class DCInstrSema {
+class DCFunction {
 public:
-  virtual ~DCInstrSema();
+  virtual ~DCFunction();
 
   bool translateInst(const MCDecodedInst &DecodedInst,
                      DCTranslatedInst &TranslatedInst);
@@ -85,8 +85,8 @@ private:
   const uint64_t *ConstantArray;
 
 protected:
-  DCInstrSema(const unsigned *OpcodeToSemaIdx, const unsigned *SemanticsArray,
-              const uint64_t *ConstantArray, DCRegisterSema &DRS);
+  DCFunction(const unsigned *OpcodeToSemaIdx, const unsigned *SemanticsArray,
+             const uint64_t *ConstantArray, DCRegisterSema &DRS);
 
   // Following members are always valid.
   void *DynTranslateAtCBPtr;

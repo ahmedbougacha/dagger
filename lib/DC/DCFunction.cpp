@@ -1,4 +1,4 @@
-//===-- lib/DC/DCInstrSema.cpp - DC Instruction Semantics -------*- C++ -*-===//
+//===-- lib/DC/DCFunction.cpp - Function Translation ------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/DC/DCInstrSema.h"
+#include "llvm/DC/DCFunction.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
@@ -46,9 +46,9 @@ static cl::opt<bool> TranslateUnknownToUndef(
              "abort."),
     cl::init(false));
 
-DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
-                         const unsigned *SemanticsArray,
-                         const uint64_t *ConstantArray, DCRegisterSema &DRS)
+DCFunction::DCFunction(const unsigned *OpcodeToSemaIdx,
+                       const unsigned *SemanticsArray,
+                       const uint64_t *ConstantArray, DCRegisterSema &DRS)
     : OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
       ConstantArray(ConstantArray), DynTranslateAtCBPtr(0), Ctx(DRS.Ctx),
       TheModule(0), DRS(DRS), FuncType(0), TheFunction(0), TheMCFunction(0),
@@ -56,9 +56,9 @@ DCInstrSema::DCInstrSema(const unsigned *OpcodeToSemaIdx,
       Builder(new DCIRBuilder(Ctx)), Idx(0), ResEVT(), Opcode(0), Vals(),
       CurrentInst(0) {}
 
-DCInstrSema::~DCInstrSema() {}
+DCFunction::~DCFunction() {}
 
-Function *DCInstrSema::FinalizeFunction() {
+Function *DCFunction::FinalizeFunction() {
   for (auto *CallBB : CallBBs) {
     assert(CallBB->size() == 2 &&
            "Call basic block has wrong number of instructions!");
@@ -80,7 +80,7 @@ Function *DCInstrSema::FinalizeFunction() {
   return Fn;
 }
 
-void DCInstrSema::FinalizeBasicBlock() {
+void DCFunction::FinalizeBasicBlock() {
   if (!TheBB->getTerminator())
     BranchInst::Create(getOrCreateBasicBlock(getBasicBlockEndAddress()),
                        TheBB);
@@ -89,7 +89,7 @@ void DCInstrSema::FinalizeBasicBlock() {
   TheMCBB = nullptr;
 }
 
-Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
+Function *DCFunction::getOrCreateMainFunction(Function *EntryFn) {
   Type *MainArgs[] = { Builder->getInt32Ty(),
                        Builder->getInt8PtrTy()->getPointerTo() };
   Function *IRMain = cast<Function>(TheModule->getOrInsertFunction(
@@ -131,7 +131,7 @@ Function *DCInstrSema::getOrCreateMainFunction(Function *EntryFn) {
   return IRMain;
 }
 
-Function *DCInstrSema::getOrCreateInitRegSetFunction() {
+Function *DCFunction::getOrCreateInitRegSetFunction() {
   StructType *RegSetType = DRS.getRegSetType();
 
   Type *InitArgs[] = {RegSetType->getPointerTo(), Builder->getInt8PtrTy(),
@@ -151,7 +151,7 @@ Function *DCInstrSema::getOrCreateInitRegSetFunction() {
   return InitFn;
 }
 
-Function *DCInstrSema::getOrCreateFiniRegSetFunction() {
+Function *DCFunction::getOrCreateFiniRegSetFunction() {
   StructType *RegSetType = DRS.getRegSetType();
 
   Type *FiniArgs[] = {RegSetType->getPointerTo()};
@@ -164,14 +164,14 @@ Function *DCInstrSema::getOrCreateFiniRegSetFunction() {
   return FiniFn;
 }
 
-Function *DCInstrSema::createExternalWrapperFunction(uint64_t Addr,
-                                                     StringRef Name) {
+Function *DCFunction::createExternalWrapperFunction(uint64_t Addr,
+                                                    StringRef Name) {
   Function *ExtFn = cast<Function>(TheModule->getOrInsertFunction(
       Name, FunctionType::get(Builder->getVoidTy(), /*isVarArg=*/false)));
   return createExternalWrapperFunction(Addr, ExtFn);
 }
 
-Function *DCInstrSema::createExternalWrapperFunction(uint64_t Addr) {
+Function *DCFunction::createExternalWrapperFunction(uint64_t Addr) {
   Value *ExtFn = ConstantExpr::getIntToPtr(
       Builder->getInt64(Addr),
       FunctionType::get(Builder->getVoidTy(), /*isVarArg=*/false)
@@ -180,8 +180,8 @@ Function *DCInstrSema::createExternalWrapperFunction(uint64_t Addr) {
   return createExternalWrapperFunction(Addr, ExtFn);
 }
 
-Function *DCInstrSema::createExternalWrapperFunction(uint64_t Addr,
-                                                     Value *ExtFn) {
+Function *DCFunction::createExternalWrapperFunction(uint64_t Addr,
+                                                    Value *ExtFn) {
   Function *Fn = getFunction(Addr);
   if (!Fn->isDeclaration())
     return Fn;
@@ -192,7 +192,7 @@ Function *DCInstrSema::createExternalWrapperFunction(uint64_t Addr,
   return Fn;
 }
 
-void DCInstrSema::createExternalTailCallBB(uint64_t Addr) {
+void DCFunction::createExternalTailCallBB(uint64_t Addr) {
   // First create a basic block for the tail call.
   SwitchToBasicBlock(Addr);
   // Now do the call to that function.
@@ -202,7 +202,7 @@ void DCInstrSema::createExternalTailCallBB(uint64_t Addr) {
   Builder->CreateRetVoid();
 }
 
-void DCInstrSema::SwitchToModule(Module *M) {
+void DCFunction::SwitchToModule(Module *M) {
   TheModule = M;
   DRS.SwitchToModule(TheModule);
   FuncType = FunctionType::get(Type::getVoidTy(Ctx),
@@ -214,7 +214,7 @@ extern "C" uintptr_t __llvm_dc_current_fn = 0;
 extern "C" uintptr_t __llvm_dc_current_bb = 0;
 extern "C" uintptr_t __llvm_dc_current_instr = 0;
 
-void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
+void DCFunction::SwitchToFunction(const MCFunction *MCFN) {
   assert(!MCFN->empty() && "Trying to translate empty MC function");
   const uint64_t StartAddr = MCFN->getStartAddr();
 
@@ -266,19 +266,19 @@ void DCInstrSema::SwitchToFunction(const MCFunction *MCFN) {
   DRS.SwitchToFunction(TheFunction);
 }
 
-void DCInstrSema::prepareBasicBlockForInsertion(BasicBlock *BB) {
+void DCFunction::prepareBasicBlockForInsertion(BasicBlock *BB) {
   assert((BB->size() == 2 && isa<UnreachableInst>(std::next(BB->begin()))) &&
          "Several BBs at the same address?");
   BB->begin()->eraseFromParent();
   BB->begin()->eraseFromParent();
 }
 
-void DCInstrSema::SwitchToBasicBlock(const MCBasicBlock *MCBB) {
+void DCFunction::SwitchToBasicBlock(const MCBasicBlock *MCBB) {
   TheMCBB = MCBB;
   SwitchToBasicBlock(getBasicBlockStartAddress());
 }
 
-void DCInstrSema::SwitchToBasicBlock(uint64_t BeginAddr) {
+void DCFunction::SwitchToBasicBlock(uint64_t BeginAddr) {
   TheBB = getOrCreateBasicBlock(BeginAddr);
   prepareBasicBlockForInsertion(TheBB);
 
@@ -292,22 +292,22 @@ void DCInstrSema::SwitchToBasicBlock(uint64_t BeginAddr) {
   setReg(PC, ConstantInt::get(DRS.getRegType(PC), BeginAddr));
 }
 
-uint64_t DCInstrSema::getBasicBlockStartAddress() const {
+uint64_t DCFunction::getBasicBlockStartAddress() const {
   assert(TheMCBB && "Getting start address without an MC BasicBlock");
   return TheMCBB->getStartAddr();
 }
 
-uint64_t DCInstrSema::getBasicBlockEndAddress() const {
+uint64_t DCFunction::getBasicBlockEndAddress() const {
   assert(TheMCBB && "Getting end address without an MC BasicBlock");
   return TheMCBB->getEndAddr();
 }
 
-Function *DCInstrSema::getFunction(uint64_t Addr) {
+Function *DCFunction::getFunction(uint64_t Addr) {
   std::string Name = "fn_" + utohexstr(Addr);
   return cast<Function>(TheModule->getOrInsertFunction(Name, FuncType));
 }
 
-BasicBlock *DCInstrSema::getOrCreateBasicBlock(uint64_t Addr) {
+BasicBlock *DCFunction::getOrCreateBasicBlock(uint64_t Addr) {
   BasicBlock *&BB = BBByAddr[Addr];
   if (!BB) {
     BB = BasicBlock::Create(Ctx, "bb_" + utohexstr(Addr), TheFunction);
@@ -319,7 +319,7 @@ BasicBlock *DCInstrSema::getOrCreateBasicBlock(uint64_t Addr) {
   return BB;
 }
 
-BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
+BasicBlock *DCFunction::insertCallBB(Value *Target) {
   BasicBlock *CallBB =
       BasicBlock::Create(Ctx, TheBB->getName() + "_call", TheFunction);
   Value *RegSetArg = &TheFunction->getArgumentList().front();
@@ -342,7 +342,7 @@ BasicBlock *DCInstrSema::insertCallBB(Value *Target) {
   return CallBB;
 }
 
-Value *DCInstrSema::insertTranslateAt(Value *OrigTarget) {
+Value *DCFunction::insertTranslateAt(Value *OrigTarget) {
   Value *TranslateAtFn = nullptr;
   // If we don't have access to the dynamic translate_at function, defer to
   // using an intrinsic.
@@ -366,7 +366,7 @@ Value *DCInstrSema::insertTranslateAt(Value *OrigTarget) {
   return Builder->CreateBitCast(Ptr, FuncType->getPointerTo());
 }
 
-void DCInstrSema::insertCall(Value *CallTarget) {
+void DCFunction::insertCall(Value *CallTarget) {
   if (ConstantInt *CI = dyn_cast<ConstantInt>(CallTarget)) {
     uint64_t Target = CI->getValue().getZExtValue();
     CallTarget = getFunction(Target);
@@ -376,7 +376,7 @@ void DCInstrSema::insertCall(Value *CallTarget) {
   insertCallBB(CallTarget);
 }
 
-void DCInstrSema::translateBinOp(Instruction::BinaryOps Opc) {
+void DCFunction::translateBinOp(Instruction::BinaryOps Opc) {
   Value *V1 = getNextOperand();
   Value *V2 = getNextOperand();
   if (Instruction::isShift(Opc) && V2->getType() != V1->getType())
@@ -384,15 +384,14 @@ void DCInstrSema::translateBinOp(Instruction::BinaryOps Opc) {
   registerResult(Builder->CreateBinOp(Opc, V1, V2));
 }
 
-void DCInstrSema::translateCastOp(Instruction::CastOps Opc) {
+void DCFunction::translateCastOp(Instruction::CastOps Opc) {
   Type *ResType = ResEVT.getTypeForEVT(Ctx);
   Value *Val = getNextOperand();
   registerResult(Builder->CreateCast(Opc, Val, ResType));
 }
 
-bool
-DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
-                           DCTranslatedInst &TranslatedInst) {
+bool DCFunction::translateInst(const MCDecodedInst &DecodedInst,
+                               DCTranslatedInst &TranslatedInst) {
   CurrentInst = &DecodedInst;
   CurrentTInst = &TranslatedInst;
   DRS.SwitchToInst(DecodedInst);
@@ -423,7 +422,7 @@ DCInstrSema::translateInst(const MCDecodedInst &DecodedInst,
   return Success;
 }
 
-bool DCInstrSema::tryTranslateInst() {
+bool DCFunction::tryTranslateInst() {
   if (translateTargetInst())
     return true;
 
@@ -446,7 +445,7 @@ bool DCInstrSema::tryTranslateInst() {
   return true;
 }
 
-bool DCInstrSema::translateOpcode(unsigned Opcode) {
+bool DCFunction::translateOpcode(unsigned Opcode) {
   ResEVT = NextVT();
   if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START)
     return translateTargetOpcode(Opcode);
@@ -718,12 +717,12 @@ bool DCInstrSema::translateOpcode(unsigned Opcode) {
   return true;
 }
 
-Value *DCInstrSema::translateComplexPattern(unsigned Pattern) {
+Value *DCFunction::translateComplexPattern(unsigned Pattern) {
   (void)Pattern;
   return nullptr;
 }
 
-bool DCInstrSema::translateExtLoad(Type *MemTy, bool isSExt) {
+bool DCFunction::translateExtLoad(Type *MemTy, bool isSExt) {
   Value *Ptr = getNextOperand();
   Ptr = Builder->CreateBitOrPointerCast(Ptr, MemTy->getPointerTo());
   Value *V = Builder->CreateLoad(MemTy, Ptr);
@@ -733,7 +732,7 @@ bool DCInstrSema::translateExtLoad(Type *MemTy, bool isSExt) {
   return true;
 }
 
-bool DCInstrSema::translatePredicate(unsigned Pred) {
+bool DCFunction::translatePredicate(unsigned Pred) {
   switch (Pred) {
   case TargetOpcode::Predicate::memop:
   case TargetOpcode::Predicate::loadi16:

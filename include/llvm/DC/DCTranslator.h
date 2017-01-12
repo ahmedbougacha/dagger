@@ -39,7 +39,7 @@ class MCObjectSymbolizer;
 
 namespace llvm {
 
-class DCInstrSema;
+class DCFunction;
 class DCRegisterSema;
 
 namespace TransOpt {
@@ -67,13 +67,13 @@ class DCTranslator {
   const bool EnableIRAnnotation;
   std::unique_ptr<DCTranslatedInstTracker> DTIT;
 
-  DCInstrSema &DIS;
+  DCFunction &DCF;
 
   TransOpt::Level OptLevel;
 
 public:
   DCTranslator(LLVMContext &Ctx, const DataLayout &DL, TransOpt::Level OptLevel,
-               DCInstrSema &DIS, DCRegisterSema &DRS, MCInstPrinter &IP,
+               DCFunction &DCF, DCRegisterSema &DRS, MCInstPrinter &IP,
                const MCSubtargetInfo &STI, MCModule &MCM,
                MCObjectDisassembler *MCOD = nullptr,
                MCObjectSymbolizer *MOS = nullptr,

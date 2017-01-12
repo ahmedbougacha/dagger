@@ -1,5 +1,5 @@
 #define DEBUG_TYPE "llvm-dc"
-#include "llvm/DC/DCInstrSema.h"
+#include "llvm/DC/DCFunction.h"
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/ADT/Triple.h"
@@ -181,15 +181,15 @@ int main(int argc, char **argv) {
     errs() << "error: no dc register sema for target " << TripleName << "\n";
     return 1;
   }
-  std::unique_ptr<DCInstrSema> DIS(
-      TheTarget->createDCInstrSema(TripleName, *DRS, *MRI, *MII));
-  if (!DIS) {
+  std::unique_ptr<DCFunction> DCF(
+      TheTarget->createDCFunction(TripleName, *DRS, *MRI, *MII));
+  if (!DCF) {
     errs() << "error: no dc instruction sema for target " << TripleName << "\n";
     return 1;
   }
 
   std::unique_ptr<DCTranslator> DT(
-      new DCTranslator(Ctx, DL, TOLvl, *DIS, *DRS, *MIP, *STI, *MCM,
+      new DCTranslator(Ctx, DL, TOLvl, *DCF, *DRS, *MIP, *STI, *MCM,
                        /*MCOD=*/nullptr, /*MOS=*/nullptr, AnnotateIROutput));
 
   for (auto &F : MCM->funcs())

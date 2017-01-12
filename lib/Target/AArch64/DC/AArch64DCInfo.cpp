@@ -1,16 +1,16 @@
-#include "AArch64InstrSema.h"
+#include "AArch64DCFunction.h"
 #include "AArch64RegisterSema.h"
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
 #include "llvm/Support/TargetRegistry.h"
 
 using namespace llvm;
 
-DCInstrSema *createAArch64DCInstrSema(StringRef TT, DCRegisterSema &DRS,
-                                      const MCRegisterInfo &MRI,
-                                      const MCInstrInfo &MII) {
+DCFunction *createAArch64DCFunction(StringRef TT, DCRegisterSema &DRS,
+                                    const MCRegisterInfo &MRI,
+                                    const MCInstrInfo &MII) {
   (void)MRI;
   (void)MII;
-  return new AArch64InstrSema(DRS);
+  return new AArch64DCFunction(DRS);
 }
 
 DCRegisterSema *createAArch64DCRegisterSema(StringRef TT, LLVMContext &Ctx,
@@ -24,8 +24,8 @@ DCRegisterSema *createAArch64DCRegisterSema(StringRef TT, LLVMContext &Ctx,
 extern "C" void LLVMInitializeAArch64TargetDC() {
   // These are only available for LE AArch64:
   // Register the DC instruction semantic info.
-  TargetRegistry::RegisterDCInstrSema(getTheAArch64leTarget(),
-                                      createAArch64DCInstrSema);
+  TargetRegistry::RegisterDCFunction(getTheAArch64leTarget(),
+                                     createAArch64DCFunction);
 
   // Register the DC register semantic info.
   TargetRegistry::RegisterDCRegisterSema(getTheAArch64leTarget(),

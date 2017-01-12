@@ -1,4 +1,4 @@
-//===-- AArch64InstrSema.cpp - AArch64 DC Instruction Semantics -*- C++ -*-===//
+//===-- AArch64DCFunction.cpp - AArch64 Function Translation ----*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "AArch64InstrSema.h"
+#include "AArch64DCFunction.h"
 #include "AArch64ISelLowering.h"
 #include "AArch64RegisterSema.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
@@ -22,12 +22,12 @@ using namespace llvm;
 
 #define DEBUG_TYPE "aarch64-dc-sema"
 
-AArch64InstrSema::AArch64InstrSema(DCRegisterSema &DRS)
-    : DCInstrSema(AArch64::OpcodeToSemaIdx, AArch64::InstSemantics,
-                  AArch64::ConstantArray, DRS),
+AArch64DCFunction::AArch64DCFunction(DCRegisterSema &DRS)
+    : DCFunction(AArch64::OpcodeToSemaIdx, AArch64::InstSemantics,
+                 AArch64::ConstantArray, DRS),
       AArch64DRS((AArch64RegisterSema &)DRS) {}
 
-bool AArch64InstrSema::translateTargetInst() {
+bool AArch64DCFunction::translateTargetInst() {
   unsigned Opcode = CurrentInst->Inst.getOpcode();
 
   switch (Opcode) {
@@ -40,18 +40,18 @@ bool AArch64InstrSema::translateTargetInst() {
   return false;
 }
 
-bool AArch64InstrSema::translateTargetOpcode(unsigned Opcode) {
+bool AArch64DCFunction::translateTargetOpcode(unsigned Opcode) {
   errs() << "Unknown AArch64 opcode found in semantics: " + utostr(Opcode)
          << "\n";
   return false;
 }
 
-Value *AArch64InstrSema::translateComplexPattern(unsigned Pattern) {
+Value *AArch64DCFunction::translateComplexPattern(unsigned Pattern) {
   return nullptr;
 }
 
-Value *AArch64InstrSema::translateCustomOperand(unsigned OperandType,
-                                                unsigned MIOperandNo) {
+Value *AArch64DCFunction::translateCustomOperand(unsigned OperandType,
+                                                 unsigned MIOperandNo) {
   switch (OperandType) {
   case AArch64::OpTypes::logical_shifted_reg32:
   case AArch64::OpTypes::logical_shifted_reg64: {
@@ -75,6 +75,4 @@ Value *AArch64InstrSema::translateCustomOperand(unsigned OperandType,
   }
 }
 
-bool AArch64InstrSema::translateImplicit(unsigned RegNo) {
-  return false;
-}
+bool AArch64DCFunction::translateImplicit(unsigned RegNo) { return false; }

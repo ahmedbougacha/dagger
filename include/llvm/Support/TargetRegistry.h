@@ -31,7 +31,7 @@
 namespace llvm {
 class AsmPrinter;
 class DataLayout;
-class DCInstrSema;
+class DCFunction;
 class DCRegisterSema;
 class LLVMContext;
 class MCAsmBackend;
@@ -177,10 +177,9 @@ public:
                                                   const MCRegisterInfo &MRI,
                                                   const MCInstrInfo &MII,
                                                   const DataLayout &DL);
-  typedef DCInstrSema *(*DCInstrSemaCtorTy)(StringRef TT,
-                                            DCRegisterSema &DRS,
-                                            const MCRegisterInfo &MRI,
-                                            const MCInstrInfo &MII);
+  typedef DCFunction *(*DCFunctionCtorTy)(StringRef TT, DCRegisterSema &DRS,
+                                          const MCRegisterInfo &MRI,
+                                          const MCInstrInfo &MII);
   typedef MCObjectSymbolizer *(*MCObjectSymbolizerCtorTy)(
       MCContext &Ctx, const object::ObjectFile &Obj,
       std::unique_ptr<MCRelocationInfo> &&RelInfo);
@@ -277,9 +276,9 @@ private:
   /// MCSymbolizer, if registered (default = llvm::createMCSymbolizer)
   MCSymbolizerCtorTy MCSymbolizerCtorFn;
 
-  /// DCInstrSemaCtorFn - Construction function for this target's
-  /// DCInstrSema, if registered.
-  DCInstrSemaCtorTy DCInstrSemaCtorFn = nullptr;
+  /// DCFunctionCtorFn - Construction function for this target's
+  /// DCFunction, if registered.
+  DCFunctionCtorTy DCFunctionCtorFn = nullptr;
 
   /// DCRegisterSemaCtorFn - Construction function for this target's
   /// DCRegisterSema, if registered.
@@ -591,16 +590,14 @@ public:
     return nullptr;
   }
 
-  /// createDCInstrSema - Create a target specific DCInstrSema.
+  /// createDCFunction - Create a target specific DCFunction.
   ///
   /// \param TT The target triple.
-  DCInstrSema *
-  createDCInstrSema(StringRef TT,
-                    DCRegisterSema &DRS,
-                    const MCRegisterInfo &MRI,
-                    const MCInstrInfo &MII) const {
-    if (DCInstrSemaCtorFn)
-      return DCInstrSemaCtorFn(TT, DRS, MRI, MII);
+  DCFunction *createDCFunction(StringRef TT, DCRegisterSema &DRS,
+                               const MCRegisterInfo &MRI,
+                               const MCInstrInfo &MII) const {
+    if (DCFunctionCtorFn)
+      return DCFunctionCtorFn(TT, DRS, MRI, MII);
     return nullptr;
   }
 
@@ -937,7 +934,7 @@ struct TargetRegistry {
     T.DCRegisterSemaCtorFn = Fn;
   }
 
-  /// RegisterDCInstrSema - Register an DCInstrSema
+  /// RegisterDCFunction - Register an DCFunction
   /// implementation for the given target.
   ///
   /// Clients are responsible for ensuring that registration doesn't occur
@@ -945,9 +942,9 @@ struct TargetRegistry {
   /// this is done by initializing all targets at program startup.
   ///
   /// @param T - The target being registered.
-  /// @param Fn - A function to construct a DCInstrSema for the target.
-  static void RegisterDCInstrSema(Target &T, Target::DCInstrSemaCtorTy Fn) {
-    T.DCInstrSemaCtorFn = Fn;
+  /// @param Fn - A function to construct a DCFunction for the target.
+  static void RegisterDCFunction(Target &T, Target::DCFunctionCtorTy Fn) {
+    T.DCFunctionCtorFn = Fn;
   }
 
   /// RegisterMCObjectSymbolizer - Register an MCObjectSymbolizer

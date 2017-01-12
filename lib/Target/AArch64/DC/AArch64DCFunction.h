@@ -1,4 +1,4 @@
-//===-- AArch64InstrSema.h - AArch64 DC Instruction Semantics ---*- C++ -*-===//
+//===-- AArch64DCFunction.h - AArch64 Function Translation ------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -10,19 +10,19 @@
 #ifndef LLVM_LIB_TARGET_AARCH64_DC_AARCH64INSTRSEMA_H
 #define LLVM_LIB_TARGET_AARCH64_DC_AARCH64INSTRSEMA_H
 
-#include "llvm/DC/DCInstrSema.h"
+#include "llvm/DC/DCFunction.h"
 #include "llvm/Support/Compiler.h"
 
 namespace llvm {
 
 class AArch64RegisterSema;
 
-class AArch64InstrSema : public DCInstrSema {
+class AArch64DCFunction : public DCFunction {
   // FIXME: This goes away once we have something like TargetMachine.
   AArch64RegisterSema &AArch64DRS;
 
 public:
-  AArch64InstrSema(DCRegisterSema &DRS);
+  AArch64DCFunction(DCRegisterSema &DRS);
 
   bool translateTargetInst() override;
   bool translateTargetOpcode(unsigned Opcode) override;
