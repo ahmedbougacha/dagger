@@ -8,11 +8,11 @@
 //===----------------------------------------------------------------------===//
 //
 // This file defines the DCTranslator class, a wrapper around the DC library
-// to drive the translation of a Machine Code program (represented as an MC CFG,
-// implemented by an MCModule), to LLVM IR.
+// to drive the translation of a Machine Code function (represented as an MC CFG,
+// implemented by an MCFunction), to LLVM IR.
 //
-// It provides the execution context necessary for the translated IR, such as
-// a wrapper "main" function that sets up a Register Set and a Stack.
+// It can also provide the execution context necessary for the translated IR,
+// such as a wrapper "main" function that sets up a Register Set and a Stack.
 //
 //===----------------------------------------------------------------------===//
 
@@ -21,20 +21,17 @@
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/DC/DCAnnotationWriter.h"
 #include "llvm/DC/DCTranslatedInstTracker.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
-#include "llvm/MC/MCAnalysis/MCModule.h"
 #include <vector>
 
 namespace llvm {
 class MCFunction;
 class MCInstPrinter;
-class MCModule;
-class MCObjectDisassembler;
-class MCObjectSymbolizer;
 }
 
 namespace llvm {
@@ -57,10 +54,6 @@ class DCTranslator {
 
   std::vector<std::unique_ptr<Module>> ModuleSet;
 
-  MCObjectDisassembler *MCOD;
-  MCObjectSymbolizer *MOS;
-  MCModule &MCM;
-
   Module *CurrentModule;
   std::unique_ptr<legacy::FunctionPassManager> CurrentFPM;
 
@@ -74,9 +67,7 @@ class DCTranslator {
 public:
   DCTranslator(LLVMContext &Ctx, const DataLayout &DL, TransOpt::Level OptLevel,
                DCFunction &DCF, DCRegisterSema &DRS, MCInstPrinter &IP,
-               const MCSubtargetInfo &STI, MCModule &MCM,
-               MCObjectDisassembler *MCOD = nullptr,
-               MCObjectSymbolizer *MOS = nullptr,
+               const MCSubtargetInfo &STI,
                bool EnableIRAnnotation = false);
   ~DCTranslator();
 
@@ -103,11 +94,11 @@ public:
   Module *finalizeTranslationModule(
       std::unique_ptr<DCTranslatedInstTracker> *OldDTIT = nullptr);
 
-  Function *translateRecursivelyAt(uint64_t EntryAddr);
+  Function *translateFunction(const MCFunction &MCFN);
+
+  Function *getFunction(StringRef Name);
 
 private:
-  void translateFunction(const MCFunction &MCFN);
-
   // Create and setup a new module for translation.
   void initializeTranslationModule();
 };

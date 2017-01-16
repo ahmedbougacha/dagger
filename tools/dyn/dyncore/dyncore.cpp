@@ -6,6 +6,7 @@
 #include "llvm/DC/DCFunction.h"
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/DC/DCTranslator.h"
+#include "llvm/DC/DCTranslatorUtils.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/LambdaResolver.h"
@@ -209,6 +210,9 @@ static uint64_t loadRegFromSet(uint8_t *RegSet, unsigned Offset, unsigned Size){
 }
 
 static DCTranslator *__dc_DT;
+static MCModule *__dc_MCM;
+static MCObjectSymbolizer *__dc_MOS;
+static MCObjectDisassembler *__dc_MCOD;
 static DYNJIT *__dc_JIT;
 
 // FIXME: We need to handle cache invalidation when functions are freed.
@@ -216,7 +220,7 @@ static DYNJIT *__dc_JIT;
 
 static void *__llvm_dc_translate_at(void *addr) {
   void *ptr = nullptr;
-  Function *F = __dc_DT->translateRecursivelyAt((uint64_t)addr);
+  Function *F = translateRecursivelyAt((uint64_t)addr, *__dc_DT, *__dc_MCM, __dc_MCOD, __dc_MOS);
   DEBUG(dbgs() << "__llvm_dc_translate_at " << addr << "\n");
   DEBUG(dbgs() << "Jumping to " << F->getName() << "\n");
   ptr = (void*)__dc_JIT->findUnmangledSymbol(F->getName()).getAddress();
@@ -395,10 +399,12 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
   DYNJIT J(*TM);
 
   std::unique_ptr<DCTranslator> DT(new DCTranslator(Ctx, DL, TransOpt::Default,
-                                                    *DCF, *DRS, *MIP, *STI,
-                                                    *MCM, OD.get(), MOS.get()));
+                                                    *DCF, *DRS, *MIP, *STI));
 
   __dc_DT = DT.get();
+  __dc_MCM = MCM.get();
+  __dc_MOS = MOS.get();
+  __dc_MCOD = OD.get();
   __dc_JIT = &J;
 
   // Now run it !
@@ -447,8 +453,8 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
     std::vector<Function *> TranslatedFns;
     TranslatedFns.reserve(Fns.size());
     for (auto FnAddr : Fns)
-      TranslatedFns.push_back(
-          DT->translateRecursivelyAt(MOS->getEffectiveLoadAddr(FnAddr)));
+      TranslatedFns.push_back(translateRecursivelyAt(
+          MOS->getEffectiveLoadAddr(FnAddr), *DT, *MCM, OD.get(), MOS.get()));
 
     // Add these to the JIT, and run them.
     Module *M = DT->finalizeTranslationModule();
@@ -476,7 +482,8 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
   uint64_t CurPC = MOS->getEffectiveLoadAddr(*MainEntrypoint);
   assert(dlsym(RTLD_MAIN_ONLY, "main") == (void *)CurPC);
   do {
-    Function *Fn = DT->translateRecursivelyAt(CurPC);
+    Function *Fn =
+        translateRecursivelyAt(CurPC, *DT, *MCM, OD.get(), MOS.get());
     DEBUG(dbgs() << "Executing function " << Fn->getName() << "\n");
     J.addModule(DT->finalizeTranslationModule());
     RunIRFunction(Fn);

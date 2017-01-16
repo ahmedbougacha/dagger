@@ -2,6 +2,7 @@
 #include "llvm/DC/DCFunction.h"
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/DC/DCTranslator.h"
+#include "llvm/DC/DCTranslatorUtils.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/MC/MCAnalysis/MCCachingDisassembler.h"
@@ -188,12 +189,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  std::unique_ptr<DCTranslator> DT(
-      new DCTranslator(Ctx, DL, TOLvl, *DCF, *DRS, *MIP, *STI, *MCM,
-                       /*MCOD=*/nullptr, /*MOS=*/nullptr, AnnotateIROutput));
+  std::unique_ptr<DCTranslator> DT(new DCTranslator(
+      Ctx, DL, TOLvl, *DCF, *DRS, *MIP, *STI, AnnotateIROutput));
 
   for (auto &F : MCM->funcs())
-    DT->translateRecursivelyAt(F->getStartAddr());
+    translateRecursivelyAt(F->getStartAddr(), *DT, *MCM);
 
   std::unique_ptr<DCTranslatedInstTracker> DTIT;
   Module *M = DT->finalizeTranslationModule(&DTIT);

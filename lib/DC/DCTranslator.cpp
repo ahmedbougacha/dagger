@@ -13,7 +13,6 @@
 #include "llvm/DC/DCFunction.h"
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
-#include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
 #include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
 #include "llvm/MC/MCInstrInfo.h"
@@ -33,10 +32,9 @@ using namespace llvm;
 DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                            TransOpt::Level TransOptLevel, DCFunction &DCF,
                            DCRegisterSema &DRS, MCInstPrinter &IP,
-                           const MCSubtargetInfo &STI, MCModule &MCM,
-                           MCObjectDisassembler *MCOD, MCObjectSymbolizer *MOS,
+                           const MCSubtargetInfo &STI,
                            bool EnableIRAnnotation)
-    : Ctx(Ctx), DL(DL), ModuleSet(), MCOD(MCOD), MOS(MOS), MCM(MCM),
+    : Ctx(Ctx), DL(DL), ModuleSet(),
       CurrentModule(nullptr), CurrentFPM(),
       EnableIRAnnotation(EnableIRAnnotation), DTIT(), DCF(DCF),
       OptLevel(TransOptLevel) {
@@ -90,74 +88,10 @@ Function *DCTranslator::createMainFunctionWrapper(Function *Entrypoint) {
   return DCF.getOrCreateMainFunction(Entrypoint);
 }
 
-static bool
-isDefinedInModuleSet(std::vector<std::unique_ptr<Module>> &ModuleSet,
-                     Function *F) {
-  for (auto &M : ModuleSet) {
-    if (Function *MF = M->getFunction(F->getName())) {
-      if (!MF->isDeclaration())
-        return true;
-    }
-  }
-  return false;
-
 Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr,
                                                       Value *ExtFn) {
   return DCF.createExternalWrapperFunction(Addr, ExtFn);
 }
-
-Function *DCTranslator::translateRecursivelyAt(uint64_t EntryAddr) {
-  SmallSetVector<uint64_t, 16> WorkList;
-  WorkList.insert(EntryAddr);
-  for (size_t i = 0; i < WorkList.size(); ++i) {
-    uint64_t Addr = WorkList[i];
-    Function *F = DCF.getFunction(Addr);
-    if (F && !F->isDeclaration())
-      continue;
-
-    if (isDefinedInModuleSet(ModuleSet, F))
-      continue;
-
-    DEBUG(dbgs() << "Translating function at " << utohexstr(Addr) << "\n");
-
-    // Look for an external function.
-    // If the function isn't even in the main object, just call it by address.
-    // FIXME: original/effective?
-    if (MOS) {
-      if (!MOS->isInObject(MOS->getOriginalLoadAddr(Addr))) {
-        DEBUG(dbgs() << "Found external (not in object) function: " << Addr
-                     << "\n");
-        DCF.createExternalWrapperFunction(Addr);
-        continue;
-      }
-
-      // If the function is explicitly referenced by the main object, emit a
-      // direct call to the function, by name.
-      StringRef ExtFnName = MOS->findExternalFunctionAt(Addr);
-      if (!ExtFnName.empty()) {
-        DEBUG(dbgs() << "Found external function: " << ExtFnName << "\n");
-        DCF.createExternalWrapperFunction(Addr, ExtFnName);
-        continue;
-      }
-    }
-
-    // Now look for the function if it was already in the module.
-    MCFunction *MCFN = MCM.findFunctionAt(Addr);
-    // If it wasn't, we need to disassemble it.
-    if (!MCFN) {
-      if (!MCOD)
-        report_fatal_error(("Unable to translate unknown function at " +
-                            utohexstr(Addr) + " without a disassembler!")
-                               .c_str());
-      MCFN = MCOD->createFunction(&MCM, Addr);
-    }
-    assert(MCFN && "Wasn't able to translate function!");
-
-    translateFunction(*MCFN);
-    for (uint64_t CallTarget : MCFN->callees())
-      WorkList.insert(CallTarget);
-  }
-  return DCF.getFunction(EntryAddr);
 
 Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr,
                                                       StringRef Name) {
@@ -205,12 +139,14 @@ static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
   return LHS->getStartAddr() < RHS->getStartAddr();
 }
 
-void DCTranslator::translateFunction(const MCFunction &MCFN) {
+Function *DCTranslator::translateFunction(const MCFunction &MCFN) {
   AddrPrettyStackTraceEntry X(MCFN.getStartAddr(), "Function");
 
   // If we already translated this function, bail out.
-  if (!DCF.getFunction(MCFN.getStartAddr())->empty())
-    return;
+  // FIXME: The naming logic belongs in a 'DCModule'.
+  if (Function *F = getFunction(getDCFunctionName(MCFN.getStartAddr())))
+    if (!F->isDeclaration())
+      return F;
 
   DCF.SwitchToFunction(&MCFN);
 
@@ -255,4 +191,5 @@ void DCTranslator::translateFunction(const MCFunction &MCFN) {
     // CurrentModule->getFunctionList().push_back(OrigFn);
     CurrentFPM->run(*Fn);
   }
+  return Fn;
 }

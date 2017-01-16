@@ -4,6 +4,7 @@
 #include "llvm/DC/DCFunction.h"
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/DC/DCTranslator.h"
+#include "llvm/DC/DCTranslatorUtils.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCAnalysis/MCCachingDisassembler.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
@@ -225,20 +226,19 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  std::unique_ptr<DCTranslator> DT(
-      new DCTranslator(Ctx, DL, TOLvl, *DCF, *DRS, *MIP, *STI, *MCM, OD.get(),
-                       MOS.get(), AnnotateIROutput));
+  std::unique_ptr<DCTranslator> DT(new DCTranslator(
+      Ctx, DL, TOLvl, *DCF, *DRS, *MIP, *STI, AnnotateIROutput));
 
   if (!TranslationEntrypoint) {
     if (auto MainEntrypoint = MOS->getMainEntrypoint())
       TranslationEntrypoint = *MainEntrypoint;
   }
 
-  DT->createMainFunctionWrapper(
-      DT->translateRecursivelyAt(TranslationEntrypoint));
+  DT->createMainFunctionWrapper(translateRecursivelyAt(
+      TranslationEntrypoint, *DT, *MCM, OD.get(), MOS.get()));
 
   for (auto &F : MCM->funcs())
-    DT->translateRecursivelyAt(F->getStartAddr());
+    translateRecursivelyAt(F->getStartAddr(), *DT, *MCM, OD.get(), MOS.get());
 
   std::unique_ptr<DCTranslatedInstTracker> DTIT;
   Module *M = DT->finalizeTranslationModule(&DTIT);
