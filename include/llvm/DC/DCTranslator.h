@@ -80,9 +80,18 @@ public:
                bool EnableIRAnnotation = false);
   ~DCTranslator();
 
+  // FIXME: These belong in a 'DCModule'.
   Function *getInitRegSetFunction();
   Function *getFiniRegSetFunction();
   Function *createMainFunctionWrapper(Function *Entrypoint);
+
+  Function *createExternalWrapperFunction(uint64_t Addr, Value *ExtFn);
+  Function *createExternalWrapperFunction(uint64_t Addr, StringRef Name);
+  Function *createExternalWrapperFunction(uint64_t Addr);
+
+  std::string getDCFunctionName(uint64_t Addr) {
+    return "fn_" + utohexstr(Addr);
+  }
 
   // Finalize the current translation module for usage. This does a number of
   // things, including running optimizations.

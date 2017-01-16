@@ -100,6 +100,10 @@ isDefinedInModuleSet(std::vector<std::unique_ptr<Module>> &ModuleSet,
     }
   }
   return false;
+
+Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr,
+                                                      Value *ExtFn) {
+  return DCF.createExternalWrapperFunction(Addr, ExtFn);
 }
 
 Function *DCTranslator::translateRecursivelyAt(uint64_t EntryAddr) {
@@ -154,8 +158,22 @@ Function *DCTranslator::translateRecursivelyAt(uint64_t EntryAddr) {
       WorkList.insert(CallTarget);
   }
   return DCF.getFunction(EntryAddr);
+
+Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr,
+                                                      StringRef Name) {
+  return DCF.createExternalWrapperFunction(Addr, Name);
 }
 
+Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr) {
+  return DCF.createExternalWrapperFunction(Addr);
+}
+
+Function *DCTranslator::getFunction(StringRef Name) {
+  for (auto &M : ModuleSet)
+    if (Function *F = M->getFunction(Name))
+      return F;
+  return nullptr;
+}
 namespace {
 class AddrPrettyStackTraceEntry : public PrettyStackTraceEntry {
 public:
