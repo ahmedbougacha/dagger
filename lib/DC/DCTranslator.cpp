@@ -31,9 +31,7 @@ using namespace llvm;
 
 DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                            TransOpt::Level TransOptLevel, DCFunction &DCF,
-                           DCRegisterSema &DRS, MCInstPrinter &IP,
-                           const MCSubtargetInfo &STI,
-                           bool EnableIRAnnotation)
+                           DCRegisterSema &DRS, bool EnableIRAnnotation)
     : Ctx(Ctx), DL(DL), ModuleSet(),
       CurrentModule(nullptr), CurrentFPM(),
       EnableIRAnnotation(EnableIRAnnotation), DTIT(), DCF(DCF),

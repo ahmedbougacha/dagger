@@ -189,8 +189,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  std::unique_ptr<DCTranslator> DT(new DCTranslator(
-      Ctx, DL, TOLvl, *DCF, *DRS, *MIP, *STI, AnnotateIROutput));
+  std::unique_ptr<DCTranslator> DT(
+      new DCTranslator(Ctx, DL, TOLvl, *DCF, *DRS, AnnotateIROutput));
 
   for (auto &F : MCM->funcs())
     translateRecursivelyAt(F->getStartAddr(), *DT, *MCM);

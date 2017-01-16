@@ -66,8 +66,7 @@ class DCTranslator {
 
 public:
   DCTranslator(LLVMContext &Ctx, const DataLayout &DL, TransOpt::Level OptLevel,
-               DCFunction &DCF, DCRegisterSema &DRS, MCInstPrinter &IP,
-               const MCSubtargetInfo &STI,
+               DCFunction &DCF, DCRegisterSema &DRS,
                bool EnableIRAnnotation = false);
   ~DCTranslator();
 
