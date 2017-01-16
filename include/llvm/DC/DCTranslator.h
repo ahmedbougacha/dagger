@@ -1,4 +1,4 @@
-//===-- llvm/DC/DCTranslator.cpp - DC Translation Engine --------*- C++ -*-===//
+//===-- llvm/DC/DCTranslator.h - DC Translation Engine ----------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
