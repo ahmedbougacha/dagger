@@ -47,10 +47,6 @@ TranslationEntrypoint("entrypoint",
                       cl::desc("Address to start translating from "
                                "(default = object entrypoint)"));
 
-static cl::opt<bool>
-AnnotateIROutput("annot", cl::desc("Enable IR output anotations"),
-                 cl::init(false));
-
 static cl::opt<unsigned>
 TransOptLevel("O",
               cl::desc("Optimization level. [-O0, -O1, -O2, or -O3] "
@@ -227,7 +223,7 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<DCTranslator> DT(
-      new DCTranslator(Ctx, DL, TOLvl, *DCF, *DRS, AnnotateIROutput));
+      new DCTranslator(Ctx, DL, TOLvl, *DCF, *DRS));
 
   if (!TranslationEntrypoint) {
     if (auto MainEntrypoint = MOS->getMainEntrypoint())
@@ -240,14 +236,8 @@ int main(int argc, char **argv) {
   for (auto &F : MCM->funcs())
     translateRecursivelyAt(F->getStartAddr(), *DT, *MCM, OD.get(), MOS.get());
 
-  std::unique_ptr<DCTranslatedInstTracker> DTIT;
-  Module *M = DT->finalizeTranslationModule(&DTIT);
-  std::unique_ptr<DCAnnotationWriter> AnnotWriter;
-  if (AnnotateIROutput) {
-    assert(DTIT.get() && "Unexpected missing translated inst tracker!");
-    AnnotWriter.reset(new DCAnnotationWriter(*DTIT, *MRI, *MIP, *STI));
-  }
-  M->print(outs(), AnnotWriter.get());
+  Module *M = DT->finalizeTranslationModule();
+  M->print(outs(), /*AnnotWriter=*/nullptr);
 
   return 0;
 }

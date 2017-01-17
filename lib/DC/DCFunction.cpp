@@ -12,7 +12,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/DC/DCRegisterSema.h"
-#include "llvm/DC/DCTranslatedInstTracker.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -389,10 +388,8 @@ void DCFunction::translateCastOp(Instruction::CastOps Opc) {
   registerResult(Builder->CreateCast(Opc, Val, ResType));
 }
 
-bool DCFunction::translateInst(const MCDecodedInst &DecodedInst,
-                               DCTranslatedInst &TranslatedInst) {
+bool DCFunction::translateInst(const MCDecodedInst &DecodedInst) {
   CurrentInst = &DecodedInst;
-  CurrentTInst = &TranslatedInst;
   DRS.SwitchToInst(DecodedInst);
 
   if (EnableInstAddrSave) {
@@ -417,7 +414,6 @@ bool DCFunction::translateInst(const MCDecodedInst &DecodedInst,
 
   Vals.clear();
   CurrentInst = nullptr;
-  CurrentTInst = nullptr;
   return Success;
 }
 
@@ -656,14 +652,12 @@ bool DCFunction::translateOpcode(unsigned Opcode) {
       Res = DRS.insertBitsInValue(DRS.getRegAsInt(RegNo), Res);
     assert(Res->getType() == RegType);
     setReg(RegNo, Res);
-    CurrentTInst->addRegOpDef(MIOperandNo, Res);
     break;
   }
   case DCINS::PUT_REG: {
     unsigned RegNo = Next();
     Value *Res = getNextOperand();
     setReg(RegNo, Res);
-    CurrentTInst->addImpDef(RegNo, Res);
     break;
   }
   case DCINS::GET_RC: {
@@ -677,14 +671,12 @@ bool DCFunction::translateOpcode(unsigned Opcode) {
     if (!ResType->isIntegerTy())
       Reg = Builder->CreateBitCast(Reg, ResType);
     registerResult(Reg);
-    CurrentTInst->addRegOpUse(MIOperandNo, Reg);
     break;
   }
   case DCINS::GET_REG: {
     unsigned RegNo = Next();
     Value *RegVal = getReg(RegNo);
     registerResult(RegVal);
-    CurrentTInst->addImpUse(RegNo, RegVal);
     break;
   }
   case DCINS::CUSTOM_OP: {
@@ -693,7 +685,6 @@ bool DCFunction::translateOpcode(unsigned Opcode) {
     if (!Op)
       return false;
     registerResult(Op);
-    CurrentTInst->addOpUse(MIOperandNo, OperandType, Op);
     break;
   }
   case DCINS::COMPLEX_PATTERN: {
@@ -716,7 +707,6 @@ bool DCFunction::translateOpcode(unsigned Opcode) {
     Value *Cst =
         ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOperandNo));
     registerResult(Cst);
-    CurrentTInst->addImmOpUse(MIOperandNo, Cst);
     break;
   }
   case DCINS::MOV_CONSTANT: {

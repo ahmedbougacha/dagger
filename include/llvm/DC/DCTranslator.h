@@ -22,8 +22,6 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/DC/DCAnnotationWriter.h"
-#include "llvm/DC/DCTranslatedInstTracker.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
@@ -57,17 +55,13 @@ class DCTranslator {
   Module *CurrentModule;
   std::unique_ptr<legacy::FunctionPassManager> CurrentFPM;
 
-  const bool EnableIRAnnotation;
-  std::unique_ptr<DCTranslatedInstTracker> DTIT;
-
   DCFunction &DCF;
 
   TransOpt::Level OptLevel;
 
 public:
   DCTranslator(LLVMContext &Ctx, const DataLayout &DL, TransOpt::Level OptLevel,
-               DCFunction &DCF, DCRegisterSema &DRS,
-               bool EnableIRAnnotation = false);
+               DCFunction &DCF, DCRegisterSema &DRS);
   ~DCTranslator();
 
   // FIXME: These belong in a 'DCModule'.
@@ -88,10 +82,7 @@ public:
   // The DCTranslator retains ownership of the module, but it will not be used
   // for translation anymore.  A new module will be created to be used for
   // future translation.
-  // If EnableIRAnnotation was true and \p OldDTIT is non-null, the translation
-  // tracker for the module is returned in \p OldDTIT.
-  Module *finalizeTranslationModule(
-      std::unique_ptr<DCTranslatedInstTracker> *OldDTIT = nullptr);
+  Module *finalizeTranslationModule();
 
   Function *translateFunction(const MCFunction &MCFN);
 

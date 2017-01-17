@@ -38,14 +38,12 @@
 
 namespace llvm {
 class MCContext;
-class DCTranslatedInst;
 
 class DCFunction {
 public:
   virtual ~DCFunction();
 
-  bool translateInst(const MCDecodedInst &DecodedInst,
-                     DCTranslatedInst &TranslatedInst);
+  bool translateInst(const MCDecodedInst &DecodedInst);
 
   void SwitchToModule(Module *TheModule);
   void SwitchToFunction(const MCFunction *MCFN);
@@ -117,7 +115,6 @@ protected:
   unsigned Opcode;
   SmallVector<Value *, 16> Vals;
   const MCDecodedInst *CurrentInst;
-  DCTranslatedInst *CurrentTInst;
 
   unsigned Next() { return SemanticsArray[Idx++]; }
   EVT NextVT() { return EVT(MVT::SimpleValueType(Next())); }

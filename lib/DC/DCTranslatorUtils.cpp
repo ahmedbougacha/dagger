@@ -13,6 +13,7 @@
 #include "llvm/DC/DCTranslatorUtils.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/DC/DCTranslator.h"
+#include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
 #include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"

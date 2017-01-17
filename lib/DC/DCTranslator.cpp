@@ -31,24 +31,18 @@ using namespace llvm;
 
 DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                            TransOpt::Level TransOptLevel, DCFunction &DCF,
-                           DCRegisterSema &DRS, bool EnableIRAnnotation)
+                           DCRegisterSema &DRS)
     : Ctx(Ctx), DL(DL), ModuleSet(),
-      CurrentModule(nullptr), CurrentFPM(),
-      EnableIRAnnotation(EnableIRAnnotation), DTIT(), DCF(DCF),
+      CurrentModule(nullptr), CurrentFPM(), DCF(DCF),
       OptLevel(TransOptLevel) {
 
   initializeTranslationModule();
 }
 
-Module *DCTranslator::finalizeTranslationModule(
-    std::unique_ptr<DCTranslatedInstTracker> *OldDTIT) {
+Module *DCTranslator::finalizeTranslationModule() {
   Module *OldModule = CurrentModule;
   assert(OldModule);
   DEBUG(OldModule->dump());
-
-  // If we have IR annotation enabled, return the old tracker if needed.
-  if (EnableIRAnnotation && OldDTIT)
-    *OldDTIT = std::move(DTIT);
 
   initializeTranslationModule();
   return OldModule;
@@ -69,9 +63,6 @@ void DCTranslator::initializeTranslationModule() {
     CurrentFPM->add(createInstructionCombiningPass());
 
   DCF.SwitchToModule(CurrentModule);
-
-  if (EnableIRAnnotation)
-    DTIT.reset(new DCTranslatedInstTracker);
 }
 
 DCTranslator::~DCTranslator() {}
@@ -165,15 +156,12 @@ Function *DCTranslator::translateFunction(const MCFunction &MCFN) {
     for (auto &I : *BB) {
       InstPrettyStackTraceEntry X(I.Address, I.Inst.getOpcode());
       DEBUG(dbgs() << "Translating instruction:\n "; dbgs() << I.Inst << "\n";);
-      DCTranslatedInst TI(I);
-      if (!DCF.translateInst(I, TI)) {
+      if (!DCF.translateInst(I)) {
         errs() << "Cannot translate instruction: \n  "
                << "  " << DCF.getDRS().MII.getName(I.Inst.getOpcode()) << ": "
                << I.Inst << "\n";
         llvm_unreachable("Couldn't translate instruction\n");
       }
-      if (EnableIRAnnotation)
-        DTIT->trackInst(TI);
     }
     DCF.FinalizeBasicBlock();
   }
