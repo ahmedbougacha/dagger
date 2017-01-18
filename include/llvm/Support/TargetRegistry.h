@@ -31,8 +31,7 @@
 namespace llvm {
 class AsmPrinter;
 class DataLayout;
-class DCFunction;
-class DCRegisterSema;
+class DCTranslator;
 class LLVMContext;
 class MCAsmBackend;
 class MCAsmInfo;
@@ -172,17 +171,13 @@ public:
       std::unique_ptr<MCRelocationInfo> &&RelInfo);
 
 
-  typedef DCRegisterSema *(*DCRegisterSemaCtorTy)(StringRef TT,
-                                                  LLVMContext &Ctx,
-                                                  const MCRegisterInfo &MRI,
-                                                  const MCInstrInfo &MII,
-                                                  const DataLayout &DL);
-  typedef DCFunction *(*DCFunctionCtorTy)(StringRef TT, DCRegisterSema &DRS,
-                                          const MCRegisterInfo &MRI,
-                                          const MCInstrInfo &MII);
   typedef MCObjectSymbolizer *(*MCObjectSymbolizerCtorTy)(
       MCContext &Ctx, const object::ObjectFile &Obj,
       std::unique_ptr<MCRelocationInfo> &&RelInfo);
+
+  typedef DCTranslator *(*DCTranslatorCtorTy)(
+      const Triple &TT, LLVMContext &Ctx, const DataLayout &DL,
+      unsigned OptLevel, const MCInstrInfo &MII, const MCRegisterInfo &MRI);
 
 private:
   /// Next - The next registered target in the linked list, maintained by the
@@ -276,18 +271,14 @@ private:
   /// MCSymbolizer, if registered (default = llvm::createMCSymbolizer)
   MCSymbolizerCtorTy MCSymbolizerCtorFn;
 
-  /// DCFunctionCtorFn - Construction function for this target's
-  /// DCFunction, if registered.
-  DCFunctionCtorTy DCFunctionCtorFn = nullptr;
-
-  /// DCRegisterSemaCtorFn - Construction function for this target's
-  /// DCRegisterSema, if registered.
-  DCRegisterSemaCtorTy DCRegisterSemaCtorFn = nullptr;
-
   /// MCObjectSymbolizerCtorFn - Construction function for this target's
   /// MCObjectSymbolizer, if registered
   /// (default = llvm::createMCObjectSymbolizer)
   MCObjectSymbolizerCtorTy MCObjectSymbolizerCtorFn = nullptr;
+
+  /// DCTranslatorCtorFn - Construction function for this target's
+  /// DCTranslator, if registered.
+  DCTranslatorCtorTy DCTranslatorCtorFn = nullptr;
 
 public:
   Target()
@@ -576,30 +567,6 @@ public:
               std::move(RelInfo));
   }
 
-  /// createDCRegisterSema - Create a target specific DCRegisterSema.
-  ///
-  /// \param TT The target triple.
-  DCRegisterSema *
-  createDCRegisterSema(StringRef TT,
-                       LLVMContext &Ctx,
-                       const MCRegisterInfo &MRI,
-                       const MCInstrInfo &MII,
-                       const DataLayout &DL) const {
-    if (DCRegisterSemaCtorFn)
-      return DCRegisterSemaCtorFn(TT, Ctx, MRI, MII, DL);
-    return nullptr;
-  }
-
-  /// createDCFunction - Create a target specific DCFunction.
-  ///
-  /// \param TT The target triple.
-  DCFunction *createDCFunction(StringRef TT, DCRegisterSema &DRS,
-                               const MCRegisterInfo &MRI,
-                               const MCInstrInfo &MII) const {
-    if (DCFunctionCtorFn)
-      return DCFunctionCtorFn(TT, DRS, MRI, MII);
-    return nullptr;
-  }
 
   /// Create a target specific MCObjectSymbolizer.
   MCObjectSymbolizer *createMCObjectSymbolizer(
@@ -611,6 +578,23 @@ public:
     return Fn(Ctx, Obj, std::move(RelInfo));
   }
 
+  /// createDCTranslator - Create a target specific DCTranslator.
+  ///
+  /// \param TT   The target triple.
+  /// \param Ctx  The LLVMContext to emit the IR with.
+  /// \param DL   The DataLayout to use for the produced IR.
+  /// \param OptLevel How optimized the output should be (0-3).
+  /// \param MII  The target-provided instruction info.
+  /// \param MRI  The target-provided register info.
+  DCTranslator *createDCTranslator(const Triple &TT, LLVMContext &Ctx,
+                                   const DataLayout &DL,
+                                   unsigned OptLevel,
+                                   const MCInstrInfo &MII,
+                                   const MCRegisterInfo &MRI) const {
+    if (DCTranslatorCtorFn)
+      return DCTranslatorCtorFn(TT, Ctx, DL, OptLevel, MII, MRI);
+    return nullptr;
+  }
 
   /// @}
 };
@@ -920,7 +904,7 @@ struct TargetRegistry {
     T.MCSymbolizerCtorFn = Fn;
   }
 
-  /// RegisterDCRegisterSema - Register an DCRegisterSema
+  /// RegisterDCTranslator - Register an DCTranslator
   /// implementation for the given target.
   ///
   /// Clients are responsible for ensuring that registration doesn't occur
@@ -928,23 +912,9 @@ struct TargetRegistry {
   /// this is done by initializing all targets at program startup.
   ///
   /// @param T - The target being registered.
-  /// @param Fn - A function to construct a DCRegisterSema for the target.
-  static void RegisterDCRegisterSema(Target &T,
-                                     Target::DCRegisterSemaCtorTy Fn) {
-    T.DCRegisterSemaCtorFn = Fn;
-  }
-
-  /// RegisterDCFunction - Register an DCFunction
-  /// implementation for the given target.
-  ///
-  /// Clients are responsible for ensuring that registration doesn't occur
-  /// while another thread is attempting to access the registry. Typically
-  /// this is done by initializing all targets at program startup.
-  ///
-  /// @param T - The target being registered.
-  /// @param Fn - A function to construct a DCFunction for the target.
-  static void RegisterDCFunction(Target &T, Target::DCFunctionCtorTy Fn) {
-    T.DCFunctionCtorFn = Fn;
+  /// @param Fn - A function to construct a DCTranslator for the target.
+  static void RegisterDCTranslator(Target &T, Target::DCTranslatorCtorTy Fn) {
+    T.DCTranslatorCtorFn = Fn;
   }
 
   /// RegisterMCObjectSymbolizer - Register an MCObjectSymbolizer

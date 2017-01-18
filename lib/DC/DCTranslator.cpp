@@ -30,13 +30,9 @@ using namespace llvm;
 #define DEBUG_TYPE "dctranslator"
 
 DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
-                           unsigned OptLevel, DCFunction &DCF,
-                           DCRegisterSema &DRS)
-    : Ctx(Ctx), DL(DL), ModuleSet(),
-      CurrentModule(nullptr), CurrentFPM(), DCF(DCF),
+                           unsigned OptLevel)
+    : Ctx(Ctx), DL(DL), ModuleSet(), CurrentModule(nullptr), CurrentFPM(),
       OptLevel(OptLevel) {
-
-  initializeTranslationModule();
 }
 
 Module *DCTranslator::finalizeTranslationModule() {
@@ -62,33 +58,33 @@ void DCTranslator::initializeTranslationModule() {
   if (OptLevel >= 3)
     CurrentFPM->add(createInstructionCombiningPass());
 
-  DCF.SwitchToModule(CurrentModule);
+  getDCF().SwitchToModule(CurrentModule);
 }
 
 DCTranslator::~DCTranslator() {}
 
 Function *DCTranslator::getInitRegSetFunction() {
-  return DCF.getOrCreateInitRegSetFunction();
+  return getDCF().getOrCreateInitRegSetFunction();
 }
 Function *DCTranslator::getFiniRegSetFunction() {
-  return DCF.getOrCreateFiniRegSetFunction();
+  return getDCF().getOrCreateFiniRegSetFunction();
 }
 Function *DCTranslator::createMainFunctionWrapper(Function *Entrypoint) {
-  return DCF.getOrCreateMainFunction(Entrypoint);
+  return getDCF().getOrCreateMainFunction(Entrypoint);
 }
 
 Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr,
                                                       Value *ExtFn) {
-  return DCF.createExternalWrapperFunction(Addr, ExtFn);
+  return getDCF().createExternalWrapperFunction(Addr, ExtFn);
 }
 
 Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr,
                                                       StringRef Name) {
-  return DCF.createExternalWrapperFunction(Addr, Name);
+  return getDCF().createExternalWrapperFunction(Addr, Name);
 }
 
 Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr) {
-  return DCF.createExternalWrapperFunction(Addr);
+  return getDCF().createExternalWrapperFunction(Addr);
 }
 
 Function *DCTranslator::getFunction(StringRef Name) {
@@ -129,6 +125,7 @@ static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
 }
 
 Function *DCTranslator::translateFunction(const MCFunction &MCFN) {
+  auto &DCF = getDCF();
   AddrPrettyStackTraceEntry X(MCFN.getStartAddr(), "Function");
 
   // If we already translated this function, bail out.

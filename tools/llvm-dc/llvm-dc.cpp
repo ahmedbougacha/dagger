@@ -166,21 +166,13 @@ int main(int argc, char **argv) {
   DataLayout DL("");
 
   LLVMContext Ctx;
-  std::unique_ptr<DCRegisterSema> DRS(
-      TheTarget->createDCRegisterSema(TripleName, Ctx, *MRI, *MII, DL));
-  if (!DRS) {
-    errs() << "error: no dc register sema for target " << TripleName << "\n";
-    return 1;
-  }
-  std::unique_ptr<DCFunction> DCF(
-      TheTarget->createDCFunction(TripleName, *DRS, *MRI, *MII));
-  if (!DCF) {
-    errs() << "error: no dc instruction sema for target " << TripleName << "\n";
-    return 1;
-  }
 
-  std::unique_ptr<DCTranslator> DT(
-      new DCTranslator(Ctx, DL, TransOptLevel, *DCF, *DRS));
+  std::unique_ptr<DCTranslator> DT(TheTarget->createDCTranslator(
+      Triple(TripleName), Ctx, DL, TransOptLevel, *MII, *MRI));
+  if (!DT) {
+    errs() << "error: no dc translator for target " << TripleName << "\n";
+    return 1;
+  }
 
   for (auto &F : MCM->funcs())
     translateRecursivelyAt(F->getStartAddr(), *DT, *MCM);

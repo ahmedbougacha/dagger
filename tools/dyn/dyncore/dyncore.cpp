@@ -374,20 +374,14 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
   const DataLayout DL = TM->createDataLayout();
   LLVMContext Ctx;
 
-  std::unique_ptr<DCRegisterSema> DRS(
-      TheTarget->createDCRegisterSema(TripleName, Ctx, *MRI, *MII, DL));
-  if (!DRS) {
-    errs() << "error: no dc register sema for target " << TripleName << "\n";
-    exit(1);
-  }
-  std::unique_ptr<DCFunction> DCF(
-      TheTarget->createDCFunction(TripleName, *DRS, *MRI, *MII));
-  if (!DCF) {
-    errs() << "error: no dc instruction sema for target " << TripleName << "\n";
+  std::unique_ptr<DCTranslator> DT(TheTarget->createDCTranslator(
+      Triple(TripleName), Ctx, DL, /*OptLevel=*/2, *MII, *MRI));
+  if (!DT) {
+    errs() << "error: no dc translator for target " << TripleName << "\n";
     exit(1);
   }
 
-  DCF->setDynTranslateAtCallback(
+  DT->getDCF().setDynTranslateAtCallback(
       reinterpret_cast<void *>(&__llvm_dc_translate_at));
 
   // Add the program's symbols into the JIT's search space.
@@ -397,9 +391,6 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
   }
 
   DYNJIT J(*TM);
-
-  std::unique_ptr<DCTranslator> DT(
-      new DCTranslator(Ctx, DL, /*OptLevel=*/2, *DCF, *DRS));
 
   __dc_DT = DT.get();
   __dc_MCM = MCM.get();
@@ -416,14 +407,15 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
   // Add these to the JIT.
   J.addModule(DT->finalizeTranslationModule());
 
-  const StructLayout *SL = DL.getStructLayout(DRS->getRegSetType());
+  const StructLayout *SL =
+      DL.getStructLayout(DT->getDCF().getDRS().getRegSetType());
   std::vector<uint8_t> RegSet(SL->getSizeInBytes());
   const unsigned StackSize = 4096 * 1024;
   std::vector<uint8_t> StackPtr(StackSize);
 
   unsigned RegSetPCSize, RegSetPCOffset;
   std::tie(RegSetPCSize, RegSetPCOffset) =
-      DRS->getRegSizeOffsetInRegSet(MRI->getProgramCounter());
+      DT->getDCF().getDRS().getRegSizeOffsetInRegSet(MRI->getProgramCounter());
 
   auto InitRegSetFnFP =
       (void (*)(uint8_t *, uint8_t *, uint32_t, uint32_t, char **))

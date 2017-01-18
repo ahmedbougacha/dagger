@@ -46,8 +46,6 @@ class DCTranslator {
   Module *CurrentModule;
   std::unique_ptr<legacy::FunctionPassManager> CurrentFPM;
 
-  DCFunction &DCF;
-
   unsigned OptLevel;
 
 public:
@@ -55,12 +53,8 @@ public:
   /// \param Ctx  The LLVMContext to emit the IR with.
   /// \param DL   The DataLayout to use for the produced IR.
   /// \param OptLevel How optimized the output should be (0-3).
-  /// \param DCF  The target-provided DCFunction, for instruction translation.
-  /// \param DRS  The target-provided register semantics.
-  DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
-               unsigned OptLevel, DCFunction &DCF,
-               DCRegisterSema &DRS);
-  ~DCTranslator();
+  DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel);
+  virtual ~DCTranslator();
 
   // FIXME: These belong in a 'DCModule'.
   Function *getInitRegSetFunction();
@@ -75,6 +69,9 @@ public:
     return "fn_" + utohexstr(Addr);
   }
 
+  // Temporarily expose the target DCF.
+  virtual DCFunction &getDCF() = 0;
+
   // Finalize the current translation module for usage. This does a number of
   // things, including running optimizations.
   // The DCTranslator retains ownership of the module, but it will not be used
@@ -86,7 +83,7 @@ public:
 
   Function *getFunction(StringRef Name);
 
-private:
+protected:
   // Create and setup a new module for translation.
   void initializeTranslationModule();
 };
