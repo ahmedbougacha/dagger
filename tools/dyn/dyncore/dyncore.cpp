@@ -399,7 +399,7 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
   DYNJIT J(*TM);
 
   std::unique_ptr<DCTranslator> DT(
-      new DCTranslator(Ctx, DL, TransOpt::Default, *DCF, *DRS));
+      new DCTranslator(Ctx, DL, /*OptLevel=*/2, *DCF, *DRS));
 
   __dc_DT = DT.get();
   __dc_MCM = MCM.get();

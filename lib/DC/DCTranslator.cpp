@@ -30,11 +30,11 @@ using namespace llvm;
 #define DEBUG_TYPE "dctranslator"
 
 DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
-                           TransOpt::Level TransOptLevel, DCFunction &DCF,
+                           unsigned OptLevel, DCFunction &DCF,
                            DCRegisterSema &DRS)
     : Ctx(Ctx), DL(DL), ModuleSet(),
       CurrentModule(nullptr), CurrentFPM(), DCF(DCF),
-      OptLevel(TransOptLevel) {
+      OptLevel(OptLevel) {
 
   initializeTranslationModule();
 }
@@ -55,11 +55,11 @@ void DCTranslator::initializeTranslationModule() {
   CurrentModule->setDataLayout(DL);
 
   CurrentFPM.reset(new legacy::FunctionPassManager(CurrentModule));
-  if (OptLevel >= TransOpt::Less)
+  if (OptLevel >= 1)
     CurrentFPM->add(createPromoteMemoryToRegisterPass());
-  if (OptLevel >= TransOpt::Default)
+  if (OptLevel >= 2)
     CurrentFPM->add(createDeadCodeEliminationPass());
-  if (OptLevel >= TransOpt::Aggressive)
+  if (OptLevel >= 3)
     CurrentFPM->add(createInstructionCombiningPass());
 
   DCF.SwitchToModule(CurrentModule);

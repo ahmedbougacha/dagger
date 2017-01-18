@@ -157,15 +157,9 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  TransOpt::Level TOLvl;
-  switch (TransOptLevel) {
-  default:
+  if (TransOptLevel > 3) {
     errs() << ToolName << ": invalid optimization level.\n";
     return 1;
-  case 0: TOLvl = TransOpt::None; break;
-  case 1: TOLvl = TransOpt::Less; break;
-  case 2: TOLvl = TransOpt::Default; break;
-  case 3: TOLvl = TransOpt::Aggressive; break;
   }
 
   // FIXME: should we have a non-default datalayout?
@@ -186,7 +180,7 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<DCTranslator> DT(
-      new DCTranslator(Ctx, DL, TOLvl, *DCF, *DRS));
+      new DCTranslator(Ctx, DL, TransOptLevel, *DCF, *DRS));
 
   for (auto &F : MCM->funcs())
     translateRecursivelyAt(F->getStartAddr(), *DT, *MCM);

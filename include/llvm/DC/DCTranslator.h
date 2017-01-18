@@ -37,15 +37,6 @@ namespace llvm {
 class DCFunction;
 class DCRegisterSema;
 
-namespace TransOpt {
-enum Level {
-  None,      // Generate everything as-is
-  Less,      // Enable mem2reg
-  Default,   //        + dce
-  Aggressive //        + instcombine, ..
-};
-}
-
 class DCTranslator {
   LLVMContext &Ctx;
   const DataLayout DL;
@@ -57,11 +48,18 @@ class DCTranslator {
 
   DCFunction &DCF;
 
-  TransOpt::Level OptLevel;
+  unsigned OptLevel;
 
 public:
-  DCTranslator(LLVMContext &Ctx, const DataLayout &DL, TransOpt::Level OptLevel,
-               DCFunction &DCF, DCRegisterSema &DRS);
+  /// Construct a DCTranslator for a target.
+  /// \param Ctx  The LLVMContext to emit the IR with.
+  /// \param DL   The DataLayout to use for the produced IR.
+  /// \param OptLevel How optimized the output should be (0-3).
+  /// \param DCF  The target-provided DCFunction, for instruction translation.
+  /// \param DRS  The target-provided register semantics.
+  DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
+               unsigned OptLevel, DCFunction &DCF,
+               DCRegisterSema &DRS);
   ~DCTranslator();
 
   // FIXME: These belong in a 'DCModule'.
