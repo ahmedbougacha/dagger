@@ -7,6 +7,7 @@
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/DC/DCTranslatorUtils.h"
+#include "llvm/DC/LowerDCTranslateAt.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/LambdaResolver.h"
@@ -128,6 +129,8 @@ static OwningBinary<MachOObjectFile> openObjectFileAtPath(StringRef Path) {
   return OwningBinary<MachOObjectFile>(std::move(MOOF), std::move(Buf));
 }
 
+static void *__llvm_dc_translate_at(void *addr);
+
 template <typename T>
 static std::vector<T> singletonSet(T t) {
   std::vector<T> Vec;
@@ -144,7 +147,8 @@ public:
   typedef LazyEmitLayerT::ModuleSetHandleT ModuleHandleT;
 
   DYNJIT(TargetMachine &TM)
-      : DL(TM.createDataLayout()), CompileLayer(ObjectLayer, SimpleCompiler(TM)),
+      : DL(TM.createDataLayout()),
+        CompileLayer(ObjectLayer, SimpleCompiler(TM)),
         LazyEmitLayer(CompileLayer) {}
 
   std::string mangle(const std::string &Name) {
@@ -156,9 +160,33 @@ public:
     return MangledName;
   }
 
+  void runPassesOnModule(Module &M) {
+    if (!LowerDCTranslateAtPass) {
+      auto *PI8Ty = Type::getInt8PtrTy(M.getContext());
+      auto *I64Ty = Type::getInt64Ty(M.getContext());
+
+      FunctionType *CallbackType =
+          FunctionType::get(PI8Ty, PI8Ty, /*isVarArg=*/false);
+
+      Value *TranslateAtFn = ConstantExpr::getIntToPtr(
+          ConstantInt::get(
+              I64Ty, reinterpret_cast<uintptr_t>(&__llvm_dc_translate_at)),
+          CallbackType->getPointerTo());
+
+      LowerDCTranslateAtPass.reset(createLowerDCTranslateAtPass(TranslateAtFn));
+
+      PM.add(LowerDCTranslateAtPass.get());
+    }
+
+    PM.run(M);
+  }
+
   ModuleHandleT addModule(Module *M) {
     // Dump the IR we found.
     DEBUG(M->dump());
+
+    runPassesOnModule(*M);
+
     // We need a memory manager to allocate memory and resolve symbols for this
     // new module. Create one that resolves symbols by looking back into the
     // JIT.
@@ -193,6 +221,9 @@ private:
   ObjLayerT ObjectLayer;
   CompileLayerT CompileLayer;
   LazyEmitLayerT LazyEmitLayer;
+
+  std::unique_ptr<Pass> LowerDCTranslateAtPass;
+  legacy::PassManager PM;
 };
 
 static uint64_t loadRegFromSet(uint8_t *RegSet, unsigned Offset, unsigned Size){
@@ -380,9 +411,6 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
     errs() << "error: no dc translator for target " << TripleName << "\n";
     exit(1);
   }
-
-  DT->getDCF().setDynTranslateAtCallback(
-      reinterpret_cast<void *>(&__llvm_dc_translate_at));
 
   // Add the program's symbols into the JIT's search space.
   if (sys::DynamicLibrary::LoadLibraryPermanently(nullptr)) {

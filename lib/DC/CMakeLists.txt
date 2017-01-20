@@ -4,6 +4,7 @@ add_llvm_library(LLVMDC
   DCRegisterSetDesc.cpp
   DCTranslator.cpp
   DCTranslatorUtils.cpp
+  LowerDCTranslateAt.cpp
   )
 
 add_dependencies(LLVMDC intrinsics_gen)

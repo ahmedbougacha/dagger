@@ -49,7 +49,7 @@ DCFunction::DCFunction(const unsigned *OpcodeToSemaIdx,
                        const unsigned *SemanticsArray,
                        const uint64_t *ConstantArray, DCRegisterSema &DRS)
     : OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
-      ConstantArray(ConstantArray), DynTranslateAtCBPtr(0), Ctx(DRS.Ctx),
+      ConstantArray(ConstantArray), Ctx(DRS.Ctx),
       TheModule(0), DRS(DRS), FuncType(0), TheFunction(0), TheMCFunction(0),
       BBByAddr(), ExitBB(0), CallBBs(), TheBB(0), TheMCBB(0),
       Builder(new DCIRBuilder(Ctx)), Idx(0), ResEVT(), Opcode(0), Vals(),
@@ -341,25 +341,8 @@ BasicBlock *DCFunction::insertCallBB(Value *Target) {
 }
 
 Value *DCFunction::insertTranslateAt(Value *OrigTarget) {
-  Value *TranslateAtFn = nullptr;
-  // If we don't have access to the dynamic translate_at function, defer to
-  // using an intrinsic.
-  // FIXME: A better target would be a dedicated IR function with just trap+
-  // unreachable, which would make it possible to debug more easily.
-  // FIXME: We should be able generate a table with all possible call targets
-  // from the symbol table.
-  if (DynTranslateAtCBPtr) {
-    FunctionType *CallbackType = FunctionType::get(
-        FuncType->getPointerTo(), Builder->getInt8PtrTy(), /*isVarArg=*/false);
-    TranslateAtFn =
-        DRS.getCallTargetForExtFn(CallbackType, DynTranslateAtCBPtr);
-  } else {
-    TranslateAtFn =
-        Intrinsic::getDeclaration(TheModule, Intrinsic::dc_translate_at);
-  }
-
   Value *Ptr = Builder->CreateCall(
-      TranslateAtFn,
+      Intrinsic::getDeclaration(TheModule, Intrinsic::dc_translate_at),
       {Builder->CreateIntToPtr(OrigTarget, Builder->getInt8PtrTy())});
   return Builder->CreateBitCast(Ptr, FuncType->getPointerTo());
 }
