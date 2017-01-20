@@ -10,6 +10,7 @@
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/DC/DCRegisterSetDesc.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
@@ -32,167 +33,20 @@ static cl::opt<bool>
 
 DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
                                const MCInstrInfo &MII, const DataLayout &DL,
-                               const MVT::SimpleValueType *RegClassVTs)
-    : MRI(MRI), MII(MII), DL(DL), Ctx(Ctx), RegSetType(0),
-      NumRegs(MRI.getNumRegs()), NumLargest(0), RegSizes(NumRegs),
-      RegTypes(NumRegs), RegLargestSupers(NumRegs), RegAliased(NumRegs),
-      RegOffsetsInSet(NumRegs, -1), LargestRegs(), RegConstantVals(NumRegs),
-      TheModule(0), Builder(new DCIRBuilder(Ctx)), RegPtrs(NumRegs),
-      RegAllocas(NumRegs), RegInits(NumRegs), RegAssignments(NumRegs),
-      TheFunction(0), RegVals(NumRegs), CurrentInst(0) {
-
-  // First, determine the (spill) size of each register, in bits.
-  // FIXME: the best (only) way to know the size of a reg is to find a
-  // containing RC.
-  // FIXME: This should go in tablegen.
-  for (auto RCI = MRI.regclass_begin(), RCE = MRI.regclass_end(); RCI != RCE;
-       ++RCI) {
-    unsigned SizeInBits = RCI->getSize() * 8;
-    Type *RCTy = nullptr;
-
-    EVT RCVT = RegClassVTs[RCI->getID()];
-    if (RCVT == MVT::Untyped)
-      RCTy = IntegerType::get(Ctx, SizeInBits);
-    else
-      RCTy = RCVT.getTypeForEVT(Ctx);
-
-    for (auto Reg : *RCI) {
-      if (SizeInBits > RegSizes[Reg]) {
-        RegSizes[Reg] = SizeInBits;
-        RegTypes[Reg] = RCTy;
-      }
-    }
-  }
-
-  // Now we have all the sizes we need, determine the largest super registers.
-  // Do that in two steps: first, look at all regunit roots to determine which
-  // registers are super-registers of multiple regunit roots.
-  //
-  // Use that as a tie-breaker: if a register has multiple super-registers with
-  // the same size, pick the unique super-register that is a super-register of
-  // the least number of regunit roots.
-  //
-  // In other words, say we have (on AArch64):
-  //     W0       W1
-  //       \     / | \
-  //        W0_W1 X1  W1_W2
-  //          |  /   \ |
-  //        X0_X1     X1_X2
-  //
-  // We want to pick X1 as the largest super of W1, because the others all
-  // overlap and can't be expressed (short of having one value for the entire
-  // register file).
-  //
-  // FIXME: We should eventually materialize the ignored super-registers from
-  // their sub-registers on get, and split them on set.
-  std::vector<unsigned> RegNumRootUnits(getNumRegs());
-
-  for (unsigned RUI = 0, RUE = MRI.getNumRegUnits(); RUI != RUE; ++RUI) {
-    MCRegUnitRootIterator RI(RUI, &MRI);
-    unsigned RURoot = *RI;
-
-    // Regunits with multiple roots usually involve aliases; don't worry about
-    // those yet.
-    ++RI;
-    if (RI.isValid())
-      llvm_unreachable("Regunits with multiple roots not supported yet");
-
-    for (MCSuperRegIterator SI(RURoot, &MRI, true); SI.isValid(); ++SI)
-      ++RegNumRootUnits[*SI];
-  }
-
-  DEBUG(dbgs() << "Computing reg largest supers:\n");
-  for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
-    DEBUG(dbgs() << " - For " << MRI.getName(RI) << ":\n");
-    if (RegSizes[RI] == 0)
-      continue;
-    unsigned &Largest = RegLargestSupers[RI];
-    Largest = RI;
-
-    // Gather all super-registers of RI.
-    SmallVector<unsigned, 4> SuperRegs;
-    for (MCSuperRegIterator SRI(RI, &MRI); SRI.isValid(); ++SRI) {
-      if (RegSizes[*SRI] == 0)
-        continue;
-      DEBUG(dbgs() << "   Considering: " << MRI.getName(*SRI) << "\n");
-      SuperRegs.push_back(*SRI);
-    }
-
-    // If there are no super-registers, there's no largest super-register.
-    if (SuperRegs.empty())
-      continue;
-
-    // Order them by size, then number of roots, then register number.
-    std::stable_sort(SuperRegs.begin(), SuperRegs.end(),
-                     [&](unsigned LR, unsigned RR) {
-                       return RegSizes[LR] == RegSizes[RR]
-                                  ? RegNumRootUnits[LR] < RegNumRootUnits[RR]
-                                  : RegSizes[LR] < RegSizes[RR];
-                     });
-
-    // Pick the largest super: go through the ordered list of super-registers
-    // by iterating on groups of same-size super-registers.
-    for (int SRI = 0, SRE = SuperRegs.size(); SRI != SRE; ++SRI) {
-      unsigned SR = SuperRegs[SRI];
-      unsigned SRSize = RegSizes[SR];
-
-      // If this is the last super-register, it's trivially the largest.
-      if ((SRI + 1) == SRE) {
-        Largest = SR;
-        break;
-      }
-
-      // If there are multiple super-registers, and one (and only one) has less
-      // units, it's a candidate to being the largest super-register.
-      unsigned NSR = SuperRegs[SRI + 1];
-      if (RegSizes[NSR] == SRSize) {
-        // If there are multiple super-registers with the same number of units,
-        // we can't look through the aliasing and bail out.
-        if (RegNumRootUnits[NSR] == RegNumRootUnits[SR]) {
-          RegAliased[SR] = true;
-          while ((SRI + 1) != SRE)
-            RegAliased[SuperRegs[++SRI]] = true;
-          break;
-        }
-        Largest = SR;
-      }
-
-      while ((SRI + 1) != SRE && RegSizes[SuperRegs[SRI + 1]] == SRSize)
-        RegAliased[SuperRegs[++SRI]] = true;
-    }
-
-    DEBUG(dbgs() << "   Picked largest: " << MRI.getName(Largest) << "\n");
-  }
-
-  for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
-    if (RegAliased[RI])
-      RegLargestSupers[RI] = 0;
-  }
-
-  LargestRegs.resize(RegLargestSupers.size());
-  std::copy(RegLargestSupers.begin(), RegLargestSupers.end(),
-            LargestRegs.begin());
-  std::sort(LargestRegs.begin(), LargestRegs.end());
-  LargestRegs.erase(std::unique(LargestRegs.begin(), LargestRegs.end()),
-                    LargestRegs.end());
-  // Now we have a sorted, uniqued vector of the largest registers to keep,
-  // starting with register index 0, which we again don't care about.
-  NumLargest = LargestRegs.size();
-
-  for (unsigned I = 1, E = getNumLargest(); I != E; ++I) {
-    assert(RegSizes[LargestRegs[I]] != 0 &&
-           "Largest super-register doesn't have a type!");
-    RegOffsetsInSet[LargestRegs[I]] = I - 1;
-  }
-
-  std::vector<Type *> LargestRegTypes(getNumLargest() - 1);
-  for (unsigned I = 1, E = getNumLargest(); I != E; ++I)
-    LargestRegTypes[I - 1] = getRegType(LargestRegs[I]);
-
-  RegSetType = StructType::create(LargestRegTypes, "regset");
-}
+                               const DCRegisterSetDesc &RegSetDesc)
+    : MRI(MRI), MII(MII), DL(DL), Ctx(Ctx), RegSetDesc(RegSetDesc),
+      TheModule(0), Builder(new DCIRBuilder(Ctx)), RegPtrs(getNumRegs()),
+      RegAllocas(getNumRegs()), RegInits(getNumRegs()),
+      RegAssignments(getNumRegs()), TheFunction(0), RegVals(getNumRegs()),
+      CurrentInst(0) {}
 
 DCRegisterSema::~DCRegisterSema() {}
+
+unsigned DCRegisterSema::getNumRegs() const { return getRegSetDesc().NumRegs; }
+
+StructType *DCRegisterSema::getRegSetType() const {
+  return getRegSetDesc().RegSetType;
+}
 
 void DCRegisterSema::SwitchToModule(Module *Mod) { TheModule = Mod; }
 
@@ -200,7 +54,7 @@ void DCRegisterSema::SwitchToFunction(Function *Fn) { TheFunction = Fn; }
 
 void DCRegisterSema::SwitchToBasicBlock(BasicBlock *TheBB) {
   // Clear all local values.
-  for (unsigned RI = 1, RE = NumRegs; RI != RE; ++RI) {
+  for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
     RegVals[RI] = 0;
   }
   Builder->SetInsertPoint(TheBB);
@@ -223,7 +77,7 @@ void DCRegisterSema::saveAllLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
   for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
     if (!RegAllocas[RI])
       continue;
-    int OffsetInSet = RegOffsetsInSet[RI];
+    int OffsetInSet = getRegSetDesc().RegOffsetsInSet[RI];
     if (OffsetInSet != -1)
       LocalBuilder.CreateStore(LocalBuilder.CreateLoad(RegAllocas[RI]),
                                RegPtrs[RI]);
@@ -237,7 +91,7 @@ void DCRegisterSema::restoreLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
   for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
     if (!RegAllocas[RI])
       continue;
-    int OffsetInSet = RegOffsetsInSet[RI];
+    int OffsetInSet = getRegSetDesc().RegOffsetsInSet[RI];
     if (OffsetInSet != -1)
       setReg(RI, Builder->CreateLoad(RegPtrs[RI]));
   }
@@ -273,7 +127,7 @@ void DCRegisterSema::FinalizeBasicBlock() {
 }
 
 Value *DCRegisterSema::getReg(unsigned RegNo) {
-  if (RegNo == 0 || RegNo > NumRegs)
+  if (RegNo == 0 || RegNo > getNumRegs())
     return 0;
 
   if (EnableMockIntrin) {
@@ -284,7 +138,7 @@ Value *DCRegisterSema::getReg(unsigned RegNo) {
     return Builder->CreateCall(GetRegIntrin, MDRegName);
   }
 
-  if (Constant *C = RegConstantVals[RegNo])
+  if (Constant *C = getRegSetDesc().RegConstantVals[RegNo])
     return C;
 
   getRegNoCallback(RegNo);
@@ -293,10 +147,10 @@ Value *DCRegisterSema::getReg(unsigned RegNo) {
 }
 
 Value *DCRegisterSema::getRegNoCallback(unsigned RegNo) {
-  if (RegAliased[RegNo])
+  if (getRegSetDesc().RegAliased[RegNo])
     llvm_unreachable("Access to aliased registers not implemented yet");
 
-  if (RegConstantVals[RegNo])
+  if (getRegSetDesc().RegConstantVals[RegNo])
     llvm_unreachable("Can't set constant register!");
 
   Value *&RV = RegVals[RegNo];
@@ -338,7 +192,7 @@ void DCRegisterSema::createLocalValueForReg(unsigned RegNo) {
   assert(RI == 0 && "Register has a start value but no local value!");
   IRBuilderBase::InsertPoint CurIP = Builder->saveIP();
   BasicBlock *EntryBB = &TheFunction->getEntryBlock();
-  unsigned LargestSuper = RegLargestSupers[RegNo];
+  unsigned LargestSuper = getRegSetDesc().RegLargestSupers[RegNo];
   if (LargestSuper != RegNo) {
     // If the reg has a super-register, extract from it.
     RV = extractSubRegFromSuper(LargestSuper, RegNo);
@@ -352,7 +206,7 @@ void DCRegisterSema::createLocalValueForReg(unsigned RegNo) {
     Builder->SetInsertPoint(EntryBB->getTerminator());
     // First, extract the register's value from the incoming regset.
     Value *RegSetArg = &TheFunction->getArgumentList().front();
-    int OffsetInRegSet = RegOffsetsInSet[RegNo];
+    int OffsetInRegSet = getRegSetDesc().RegOffsetsInSet[RegNo];
     assert(OffsetInRegSet != -1 && "Getting a register not in the regset!");
     Value *Idx[] = {Builder->getInt32(0), Builder->getInt32(OffsetInRegSet)};
     RP = Builder->CreateInBoundsGEP(RegSetArg, Idx);
@@ -430,13 +284,13 @@ Value *DCRegisterSema::recreateSuperRegFromSub(unsigned Super, unsigned Sub) {
 
 void DCRegisterSema::defineAllSubSuperRegs(unsigned RegNo) {
   for (MCSuperRegIterator SRI(RegNo, &MRI); SRI.isValid(); ++SRI) {
-    if (RegAliased[*SRI])
+    if (getRegSetDesc().RegAliased[*SRI])
       continue;
     setRegNoSubSuper(*SRI, recreateSuperRegFromSub(*SRI, RegNo));
   }
 
   for (MCSubRegIterator SRI(RegNo, &MRI); SRI.isValid(); ++SRI) {
-    if (RegAliased[*SRI])
+    if (getRegSetDesc().RegAliased[*SRI])
       continue;
     setRegNoSubSuper(*SRI, extractSubRegFromSuper(RegNo, *SRI));
   }
@@ -460,7 +314,7 @@ void DCRegisterSema::setReg(unsigned RegNo, Value *Val) {
     return;
   }
 
-  if (RegAliased[RegNo])
+  if (getRegSetDesc().RegAliased[RegNo])
     llvm_unreachable("Access to aliased registers not implemented yet");
 
   setRegNoSubSuper(RegNo, Val);
@@ -468,23 +322,23 @@ void DCRegisterSema::setReg(unsigned RegNo, Value *Val) {
 }
 
 Type *DCRegisterSema::getRegType(unsigned RegNo) {
-  if (Type *Ty = RegTypes[RegNo])
+  if (Type *Ty = getRegSetDesc().RegTypes[RegNo])
     return Ty;
   return getRegIntType(RegNo);
 }
 
 IntegerType *DCRegisterSema::getRegIntType(unsigned RegNo) {
-  return IntegerType::get(Ctx, RegSizes[RegNo]);
+  return IntegerType::get(Ctx, getRegSetDesc().RegSizes[RegNo]);
 }
 
 std::pair<size_t, size_t>
 DCRegisterSema::getRegSizeOffsetInRegSet(unsigned RegNo) const {
   size_t Size, Offset;
-  Size = RegSizes[RegNo] / 8;
+  Size = getRegSetDesc().RegSizes[RegNo] / 8;
 
-  const StructLayout *SL = DL.getStructLayout(RegSetType);
-  unsigned Largest = RegLargestSupers[RegNo];
-  unsigned Idx = RegOffsetsInSet[Largest];
+  const StructLayout *SL = DL.getStructLayout(getRegSetDesc().RegSetType);
+  unsigned Largest = getRegSetDesc().RegLargestSupers[RegNo];
+  unsigned Idx = getRegSetDesc().RegOffsetsInSet[Largest];
   Offset = SL->getElementOffset(Idx);
   if (Largest != RegNo) {
     unsigned SubRegIdx = MRI.getSubRegIndex(Largest, RegNo);
@@ -525,7 +379,7 @@ extern "C" void __llvm_dc_print_reg_diff(char *Name, uint8_t *v1, uint8_t *v2,
 
 Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
   Type *I8PtrTy = Builder->getInt8PtrTy();
-  Type *RegSetPtrTy = RegSetType->getPointerTo();
+  Type *RegSetPtrTy = getRegSetDesc().RegSetType->getPointerTo();
 
   Type *RSDiffArgTys[] = {I8PtrTy, RegSetPtrTy, RegSetPtrTy};
   Function *RSDiffFn = cast<Function>(TheModule->getOrInsertFunction(
@@ -564,10 +418,10 @@ Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
   Value *RegDiffFnPtr =
       getCallTargetForExtFn(RegDiffFnType, &__llvm_dc_print_reg_diff);
 
-  for (auto Reg : LargestRegs) {
+  for (auto Reg : getRegSetDesc().LargestRegs) {
     if (Reg == 0)
       continue;
-    int OffsetInRegSet = RegOffsetsInSet[Reg];
+    int OffsetInRegSet = getRegSetDesc().RegOffsetsInSet[Reg];
     assert(OffsetInRegSet != -1 && "Getting a register not in the regset!");
     Value *Idx[] = {Builder->getInt32(0), Builder->getInt32(OffsetInRegSet)};
     Value *Reg1Ptr =
@@ -578,8 +432,9 @@ Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
     Value *RegName = Builder->CreateBitCast(
         Builder->CreateGlobalString(MRI.getName(Reg)), I8PtrTy);
 
-    Builder->CreateCall(RegDiffFnPtr, {RegName, Reg1Ptr, Reg2Ptr,
-                                       Builder->getInt32(RegSizes[Reg] / 8)});
+    Builder->CreateCall(RegDiffFnPtr,
+                        {RegName, Reg1Ptr, Reg2Ptr,
+                         Builder->getInt32(getRegSetDesc().RegSizes[Reg] / 8)});
   }
 
   Builder->CreateRetVoid();

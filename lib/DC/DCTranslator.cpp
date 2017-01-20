@@ -30,10 +30,10 @@ using namespace llvm;
 #define DEBUG_TYPE "dctranslator"
 
 DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
-                           unsigned OptLevel)
-    : Ctx(Ctx), DL(DL), ModuleSet(), CurrentModule(nullptr), CurrentFPM(),
-      OptLevel(OptLevel) {
-}
+                           unsigned OptLevel,
+                           const DCRegisterSetDesc RegSetDesc)
+    : Ctx(Ctx), DL(DL), RegSetDesc(RegSetDesc), ModuleSet(),
+      CurrentModule(nullptr), CurrentFPM(), OptLevel(OptLevel) {}
 
 Module *DCTranslator::finalizeTranslationModule() {
   Module *OldModule = CurrentModule;

@@ -22,10 +22,7 @@ class X86DCTranslator final : public DCTranslator {
 
 public:
   X86DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel,
-                  const MCInstrInfo &MII, const MCRegisterInfo &MRI)
-      : DCTranslator(Ctx, DL, OptLevel), DRS(Ctx, MRI, MII, DL), DCF(DRS) {
-    initializeTranslationModule();
-  }
+                  const MCInstrInfo &MII, const MCRegisterInfo &MRI);
 
   virtual ~X86DCTranslator();
 

@@ -11,10 +11,9 @@
 #include "AArch64RegisterSema.h"
 #include "AArch64.h"
 #include "AArch64InstrInfo.h"
+#include "llvm/DC/DCRegisterSetDesc.h"
 #include "llvm/IR/Intrinsics.h"
 
-#define GET_REGISTER_SEMA
-#include "AArch64GenSema.inc"
 using namespace llvm;
 
 #define DEBUG_TYPE "aarch64-dc-regsema"
@@ -22,13 +21,9 @@ using namespace llvm;
 AArch64RegisterSema::AArch64RegisterSema(LLVMContext &Ctx,
                                          const MCRegisterInfo &MRI,
                                          const MCInstrInfo &MII,
-                                         const DataLayout &DL)
-    : DCRegisterSema(Ctx, MRI, MII, DL, AArch64::RegClassVTs) {
-  RegConstantVals[AArch64::XZR] =
-      Constant::getNullValue(IntegerType::get(Ctx, 64));
-  RegConstantVals[AArch64::WZR] =
-      Constant::getNullValue(IntegerType::get(Ctx, 32));
-}
+                                         const DataLayout &DL,
+                                         const DCRegisterSetDesc &RegSetDesc)
+    : DCRegisterSema(Ctx, MRI, MII, DL, RegSetDesc) {}
 
 bool AArch64RegisterSema::doesSubRegIndexClearSuper(unsigned Idx) const {
   switch (Idx) {
@@ -65,9 +60,9 @@ void AArch64RegisterSema::insertInitRegSetCode(Function *InitFn) {
                        Builder->CreateIntToPtr(SP, I64Ty->getPointerTo()));
 
   auto InitRegTo = [&](unsigned RegNo, Value *Val) {
-    unsigned RegLargestSuper = RegLargestSupers[RegNo];
+    unsigned RegLargestSuper = getRegSetDesc().RegLargestSupers[RegNo];
     assert(RegLargestSuper == RegNo);
-    unsigned RegOffsetInSet = RegOffsetsInSet[RegLargestSuper];
+    unsigned RegOffsetInSet = getRegSetDesc().RegOffsetsInSet[RegLargestSuper];
     Value *Idx[] = {Builder->getInt32(0), Builder->getInt32(RegOffsetInSet)};
     Builder->CreateStore(Val, Builder->CreateInBoundsGEP(RegSet, Idx));
   };
@@ -93,7 +88,9 @@ void AArch64RegisterSema::insertFiniRegSetCode(Function *FiniFn) {
   Value *RegSet = &*ArgI;
 
   // Result comes out of W0
-  Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[AArch64::W0]]);
+  Idx[1] = Builder->getInt32(
+      getRegSetDesc()
+          .RegOffsetsInSet[getRegSetDesc().RegLargestSupers[AArch64::W0]]);
   Builder->CreateRet(Builder->CreateTrunc(
       Builder->CreateLoad(Builder->CreateInBoundsGEP(RegSet, Idx)),
       Builder->getInt32Ty()));

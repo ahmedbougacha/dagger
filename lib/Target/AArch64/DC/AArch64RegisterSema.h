@@ -23,7 +23,8 @@ class MCRegisterInfo;
 class AArch64RegisterSema : public DCRegisterSema {
 public:
   AArch64RegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
-                      const MCInstrInfo &MII, const DataLayout &DL);
+                      const MCInstrInfo &MII, const DataLayout &DL,
+                      const DCRegisterSetDesc &RegSetDesc);
 
   bool doesSubRegIndexClearSuper(unsigned Idx) const override;
 

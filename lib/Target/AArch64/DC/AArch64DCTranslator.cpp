@@ -9,6 +9,29 @@
 
 #include "AArch64DCTranslator.h"
 
+#define GET_REGISTER_SEMA
+#include "AArch64GenSema.inc"
+
 using namespace llvm;
+
+static DCRegisterSetDesc buildAArch64RegSetDesc(LLVMContext &Ctx,
+                                                const MCRegisterInfo &MRI) {
+  DCRegisterSetDesc RegSetDesc(Ctx, MRI, AArch64::RegClassVTs);
+
+  RegSetDesc.RegConstantVals[AArch64::XZR] =
+      Constant::getNullValue(IntegerType::get(Ctx, 64));
+  RegSetDesc.RegConstantVals[AArch64::WZR] =
+      Constant::getNullValue(IntegerType::get(Ctx, 32));
+  return RegSetDesc;
+}
+
+AArch64DCTranslator::AArch64DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
+                                         unsigned OptLevel,
+                                         const MCInstrInfo &MII,
+                                         const MCRegisterInfo &MRI)
+    : DCTranslator(Ctx, DL, OptLevel, buildAArch64RegSetDesc(Ctx, MRI)),
+      DRS(Ctx, MRI, MII, DL, getRegSetDesc()), DCF(DRS) {
+  initializeTranslationModule();
+}
 
 AArch64DCTranslator::~AArch64DCTranslator() {}

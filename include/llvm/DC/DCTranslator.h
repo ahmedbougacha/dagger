@@ -19,9 +19,10 @@
 #ifndef LLVM_DC_DCTRANSLATOR_H
 #define LLVM_DC_DCTRANSLATOR_H
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
-#include "llvm/ADT/StringExtras.h"
+#include "llvm/DC/DCRegisterSetDesc.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
@@ -41,6 +42,8 @@ class DCTranslator {
   LLVMContext &Ctx;
   const DataLayout DL;
 
+  const DCRegisterSetDesc RegSetDesc;
+
   std::vector<std::unique_ptr<Module>> ModuleSet;
 
   Module *CurrentModule;
@@ -53,7 +56,8 @@ public:
   /// \param Ctx  The LLVMContext to emit the IR with.
   /// \param DL   The DataLayout to use for the produced IR.
   /// \param OptLevel How optimized the output should be (0-3).
-  DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel);
+  DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel,
+               const DCRegisterSetDesc RegSetDesc);
   virtual ~DCTranslator();
 
   // FIXME: These belong in a 'DCModule'.
@@ -71,6 +75,8 @@ public:
 
   // Temporarily expose the target DCF.
   virtual DCFunction &getDCF() = 0;
+
+  const DCRegisterSetDesc &getRegSetDesc() const { return RegSetDesc; }
 
   // Finalize the current translation module for usage. This does a number of
   // things, including running optimizations.

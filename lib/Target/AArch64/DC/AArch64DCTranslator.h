@@ -22,11 +22,7 @@ class AArch64DCTranslator final : public DCTranslator {
 
 public:
   AArch64DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel,
-                      const MCInstrInfo &MII, const MCRegisterInfo &MRI)
-      : DCTranslator(Ctx, DL, OptLevel), DRS(Ctx, MRI, MII, DL), DCF(DRS) {
-    initializeTranslationModule();
-  }
-
+                      const MCInstrInfo &MII, const MCRegisterInfo &MRI);
   virtual ~AArch64DCTranslator();
 
   AArch64DCFunction &getDCF() override { return DCF; }

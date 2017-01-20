@@ -11,6 +11,7 @@
 #include "X86.h"
 #include "X86InstrInfo.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/DC/DCRegisterSetDesc.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
@@ -26,12 +27,12 @@ using namespace llvm;
 #define DEBUG_TYPE "x86-dc-regsema"
 
 X86RegisterSema::X86RegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
-                                 const MCInstrInfo &MII, const DataLayout &DL)
-    : DCRegisterSema(Ctx, MRI, MII, DL, X86::RegClassVTs),
-      LastEFLAGSChangingDef(0), LastEFLAGSDef(0),
-      LastEFLAGSDefWasPartialINCDEC(false), SFVals(X86::MAX_FLAGS + 1),
-      SFAssignments(X86::MAX_FLAGS + 1), CCVals(X86::COND_INVALID),
-      CCAssignments(X86::COND_INVALID) {}
+                                 const MCInstrInfo &MII, const DataLayout &DL,
+                                 const DCRegisterSetDesc &RegSetDesc)
+    : DCRegisterSema(Ctx, MRI, MII, DL, RegSetDesc), LastEFLAGSChangingDef(0),
+      LastEFLAGSDef(0), LastEFLAGSDefWasPartialINCDEC(false),
+      SFVals(X86::MAX_FLAGS + 1), SFAssignments(X86::MAX_FLAGS + 1),
+      CCVals(X86::COND_INVALID), CCAssignments(X86::COND_INVALID) {}
 
 bool X86RegisterSema::doesSubRegIndexClearSuper(unsigned SubRegIdx) const {
   if (SubRegIdx == X86::sub_32bit)
@@ -383,9 +384,9 @@ void X86RegisterSema::insertInitRegSetCode(Function *InitFn) {
                        Builder->CreateIntToPtr(RSP, I64Ty->getPointerTo()));
 
   auto InitRegTo = [&](unsigned RegNo, Value *Val) {
-    unsigned RegLargestSuper = RegLargestSupers[RegNo];
+    unsigned RegLargestSuper = getRegSetDesc().RegLargestSupers[RegNo];
     assert(RegLargestSuper == RegNo);
-    unsigned RegOffsetInSet = RegOffsetsInSet[RegLargestSuper];
+    unsigned RegOffsetInSet = getRegSetDesc().RegOffsetsInSet[RegLargestSuper];
     Value *Idx[] = {Builder->getInt32(0), Builder->getInt32(RegOffsetInSet)};
     Builder->CreateStore(Val, Builder->CreateInBoundsGEP(RegSet, Idx));
   };
@@ -412,7 +413,9 @@ void X86RegisterSema::insertFiniRegSetCode(Function *FiniFn) {
   Value *RegSet = &*ArgI;
 
   // Result comes out of EAX
-  Idx[1] = Builder->getInt32(RegOffsetsInSet[RegLargestSupers[X86::EAX]]);
+  Idx[1] = Builder->getInt32(
+      getRegSetDesc()
+          .RegOffsetsInSet[getRegSetDesc().RegLargestSupers[X86::EAX]]);
   Builder->CreateRet(Builder->CreateTrunc(
       Builder->CreateLoad(Builder->CreateInBoundsGEP(RegSet, Idx)),
       Builder->getInt32Ty()));
@@ -423,7 +426,7 @@ void X86RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
   DCIRBuilder WBuilder(WrapperBB);
 
   SmallVector<Type *, 20> IAArgTypes;
-  IAArgTypes.push_back(RegSetType->getPointerTo());
+  IAArgTypes.push_back(getRegSetType()->getPointerTo());
   IAArgTypes.push_back(ExtFn->getType());
 
   auto getRegOffset = [this](unsigned Reg) {
