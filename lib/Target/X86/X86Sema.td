@@ -1,4 +1,22 @@
+//===- X86Sema.td - Describe Additional X86 Semantics -------*- tablegen -*-==//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file describes X86 instruction and register semantics that aren't
+// already described by the regular register file and instruction descriptions.
+//
+//===----------------------------------------------------------------------===//
+
 include "llvm/DC/Semantics.td"
+
+//===----------------------------------------------------------------------===//
+// Semantics-specific register definitions
+//
 
 // Sema-specific EFLAGS register, containing only the Control and System bits
 // of EFLAGS (i.e., with the status bits assumed to be 0).
@@ -7,6 +25,10 @@ def CtlSysCCR : RegisterClass<"X86", [i32], 32, (add CtlSysEFLAGS)> {
   let CopyCost = -1;  // Don't allow copying of status registers.
   let isAllocatable = 0;
 }
+
+//===----------------------------------------------------------------------===//
+// Semantics-specific instruction patterns
+//
 
 def SDTX86DCDiv : SDTypeProfile<2, 3, [
   SDTCisSameAs<0, 1>, SDTCisSameAs<0, 2>,
