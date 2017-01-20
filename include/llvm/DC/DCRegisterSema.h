@@ -54,13 +54,9 @@ private:
   void operator=(const DCRegisterSema &) = delete;
 
 public:
-  typedef std::vector<unsigned> RegSizeTy;
-  typedef void (*InitSpecialRegSizesFnTy)(RegSizeTy &RegSizes);
-
   DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
                  const MCInstrInfo &MII, const DataLayout &DL,
-                 const MVT::SimpleValueType *RegClassVTs,
-                 InitSpecialRegSizesFnTy InitSpecialRegSizesFn = 0);
+                 const MVT::SimpleValueType *RegClassVTs);
   virtual ~DCRegisterSema();
 
   const MCRegisterInfo &MRI;
@@ -81,7 +77,7 @@ protected:
   unsigned getNumLargest() const { return NumLargest; }
 
   // The size of each register, in bits.
-  RegSizeTy RegSizes;
+  std::vector<unsigned> RegSizes;
 
   // The type of each register (the first type of the last register class
   // containing the register).

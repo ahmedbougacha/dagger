@@ -26,6 +26,18 @@ def CtlSysCCR : RegisterClass<"X86", [i32], 32, (add CtlSysEFLAGS)> {
   let isAllocatable = 0;
 }
 
+// Sema-specific EIP register class, to give it a proper size/type.
+def IPR32 : RegisterClass<"X86", [i32], 32, (add EIP)> {
+  let CopyCost = -1;
+  let isAllocatable = 0;
+}
+
+// Sema-specific IP register class, to give it a proper size/type.
+def IPR16 : RegisterClass<"X86", [i16], 16, (add IP)> {
+  let CopyCost = -1;
+  let isAllocatable = 0;
+}
+
 //===----------------------------------------------------------------------===//
 // Semantics-specific instruction patterns
 //

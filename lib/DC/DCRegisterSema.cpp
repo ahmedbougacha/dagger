@@ -32,8 +32,7 @@ static cl::opt<bool>
 
 DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
                                const MCInstrInfo &MII, const DataLayout &DL,
-                               const MVT::SimpleValueType *RegClassVTs,
-                               InitSpecialRegSizesFnTy InitSpecialRegSizesFn)
+                               const MVT::SimpleValueType *RegClassVTs)
     : MRI(MRI), MII(MII), DL(DL), Ctx(Ctx), RegSetType(0),
       NumRegs(MRI.getNumRegs()), NumLargest(0), RegSizes(NumRegs),
       RegTypes(NumRegs), RegLargestSupers(NumRegs), RegAliased(NumRegs),
@@ -64,10 +63,6 @@ DCRegisterSema::DCRegisterSema(LLVMContext &Ctx, const MCRegisterInfo &MRI,
       }
     }
   }
-
-  // Let the target-specific implementation set the size of special registers..
-  if (InitSpecialRegSizesFn)
-    InitSpecialRegSizesFn(RegSizes);
 
   // Now we have all the sizes we need, determine the largest super registers.
   // Do that in two steps: first, look at all regunit roots to determine which
