@@ -429,21 +429,21 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
   // Now run it !
 
   // First, get the init/fini functions.
-  Function *InitRegSetFn = DT->getInitRegSetFunction();
-  Function *FiniRegSetFn = DT->getFiniRegSetFunction();
+  Function *InitRegSetFn = DT->getDCModule()->getOrCreateInitRegSetFunction();
+  Function *FiniRegSetFn = DT->getDCModule()->getOrCreateFiniRegSetFunction();
 
   // Add these to the JIT.
   J.addModule(DT->finalizeTranslationModule());
 
-  const StructLayout *SL =
-      DL.getStructLayout(DT->getDCF().getDRS().getRegSetType());
+  const StructLayout *SL = DL.getStructLayout(DT->getRegSetDesc().RegSetType);
   std::vector<uint8_t> RegSet(SL->getSizeInBytes());
   const unsigned StackSize = 4096 * 1024;
   std::vector<uint8_t> StackPtr(StackSize);
 
   unsigned RegSetPCSize, RegSetPCOffset;
   std::tie(RegSetPCSize, RegSetPCOffset) =
-      DT->getDCF().getDRS().getRegSizeOffsetInRegSet(MRI->getProgramCounter());
+      DT->getRegSetDesc().getRegSizeOffsetInRegSet(MRI->getProgramCounter(), DL,
+                                                   *MRI);
 
   auto InitRegSetFnFP =
       (void (*)(uint8_t *, uint8_t *, uint32_t, uint32_t, char **))

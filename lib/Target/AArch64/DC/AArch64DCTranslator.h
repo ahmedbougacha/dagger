@@ -18,14 +18,18 @@ namespace llvm {
 
 class AArch64DCTranslator final : public DCTranslator {
   AArch64RegisterSema DRS;
-  AArch64DCFunction DCF;
 
 public:
   AArch64DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel,
                       const MCInstrInfo &MII, const MCRegisterInfo &MRI);
   virtual ~AArch64DCTranslator();
 
-  AArch64DCFunction &getDCF() override { return DCF; }
+  AArch64RegisterSema &getDRS() override { return DRS; }
+
+  std::unique_ptr<DCModule> createDCModule(Module &M) override;
+
+  std::unique_ptr<DCFunction> createDCFunction(DCModule &DCM,
+                                               const MCFunction &MCF) override;
 };
 
 } // end llvm namespace

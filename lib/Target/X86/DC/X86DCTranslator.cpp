@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86DCTranslator.h"
+#include "X86DCFunction.h"
+#include "X86DCModule.h"
 
 #define GET_REGISTER_SEMA
 #include "X86GenSema.inc"
@@ -19,8 +21,17 @@ X86DCTranslator::X86DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                                  const MCRegisterInfo &MRI)
     : DCTranslator(Ctx, DL, OptLevel,
                    DCRegisterSetDesc(Ctx, MRI, X86::RegClassVTs)),
-      DRS(Ctx, MRI, MII, DL, getRegSetDesc()), DCF(DRS) {
+      DRS(Ctx, MRI, MII, DL, getRegSetDesc()) {
   initializeTranslationModule();
 }
 
 X86DCTranslator::~X86DCTranslator() {}
+
+std::unique_ptr<DCModule> X86DCTranslator::createDCModule(Module &M) {
+  return make_unique<X86DCModule>(*this, M);
+}
+
+std::unique_ptr<DCFunction>
+X86DCTranslator::createDCFunction(DCModule &DCM, const MCFunction &MCF) {
+  return make_unique<X86DCFunction>(DCM, MCF, DRS);
+}

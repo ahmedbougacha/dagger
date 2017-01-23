@@ -105,13 +105,9 @@ public:
   unsigned getNumRegs() const;
   StructType *getRegSetType() const;
 
-  // Compute the register's offset in bytes from the start of the regset.
-  // Also return it's size in bytes.
-  std::pair<size_t, size_t> getRegSizeOffsetInRegSet(unsigned RegNo) const;
-
   // Returns the regset diff function, that prints to stderr:
   //     void @__llvm_dc_print_regset_diff(i8* fn, %regset* v1, %regset* v2)
-  Function *getOrCreateRegSetDiffFunction(bool Definition = false);
+  Function *getOrCreateRegSetDiffFunction();
 
   virtual void SwitchToModule(Module *TheModule);
   virtual void SwitchToFunction(Function *TheFunction);
@@ -144,11 +140,6 @@ public:
   Value *getRegAsInt(unsigned RegNo) {
     return Builder->CreateBitCast(getReg(RegNo), getRegIntType(RegNo));
   }
-
-  // Fill 2 functions, main_{init,fini}_regset, to initialize a regset from
-  // a stack pointer and ac/av, and to extract the return value.
-  virtual void insertInitRegSetCode(Function *InitFn) = 0;
-  virtual void insertFiniRegSetCode(Function *FiniFn) = 0;
 
   virtual void insertExternalWrapperAsm(BasicBlock *WrapperBB,
                                         Value *ExtFn) = 0;

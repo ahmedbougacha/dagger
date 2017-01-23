@@ -214,7 +214,7 @@ int main(int argc, char **argv) {
       TranslationEntrypoint = *MainEntrypoint;
   }
 
-  DT->createMainFunctionWrapper(translateRecursivelyAt(
+  DT->getDCModule()->getOrCreateMainFunction(translateRecursivelyAt(
       TranslationEntrypoint, *DT, *MCM, OD.get(), MOS.get()));
 
   for (auto &F : MCM->funcs())

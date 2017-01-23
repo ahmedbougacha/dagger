@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "AArch64DCTranslator.h"
+#include "AArch64DCFunction.h"
+#include "AArch64DCModule.h"
 
 #define GET_REGISTER_SEMA
 #include "AArch64GenSema.inc"
@@ -30,8 +32,17 @@ AArch64DCTranslator::AArch64DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                                          const MCInstrInfo &MII,
                                          const MCRegisterInfo &MRI)
     : DCTranslator(Ctx, DL, OptLevel, buildAArch64RegSetDesc(Ctx, MRI)),
-      DRS(Ctx, MRI, MII, DL, getRegSetDesc()), DCF(DRS) {
+      DRS(Ctx, MRI, MII, DL, getRegSetDesc()) {
   initializeTranslationModule();
 }
 
 AArch64DCTranslator::~AArch64DCTranslator() {}
+
+std::unique_ptr<DCFunction>
+AArch64DCTranslator::createDCFunction(DCModule &DCM, const MCFunction &MCF) {
+  return make_unique<AArch64DCFunction>(DCM, MCF, DRS);
+}
+
+std::unique_ptr<DCModule> AArch64DCTranslator::createDCModule(Module &M) {
+  return make_unique<AArch64DCModule>(*this, M);
+}

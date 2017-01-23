@@ -38,7 +38,7 @@ class X86DCFunction : public DCFunction {
   unsigned LastPrefix;
 
 public:
-  X86DCFunction(DCRegisterSema &DRS);
+  X86DCFunction(DCModule &DCM, const MCFunction &MCF, DCRegisterSema &DRS);
 
   bool translateTargetOpcode(unsigned Opcode) override;
   Value *translateCustomOperand(unsigned OperandType,

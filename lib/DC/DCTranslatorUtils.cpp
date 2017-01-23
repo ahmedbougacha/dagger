@@ -27,11 +27,12 @@ Function *llvm::translateRecursivelyAt(uint64_t EntryAddr, DCTranslator &DCT,
                                        MCModule &MCM,
                                        MCObjectDisassembler *MCOD,
                                        MCObjectSymbolizer *MOS) {
+  DCModule &DCM = *DCT.getDCModule();
   SmallSetVector<uint64_t, 16> WorkList;
   WorkList.insert(EntryAddr);
   for (size_t i = 0; i < WorkList.size(); ++i) {
     uint64_t Addr = WorkList[i];
-    Function *F = DCT.getFunction(DCT.getDCFunctionName(Addr));
+    Function *F = DCM.getOrCreateFunction(Addr);
     if (F && !F->isDeclaration())
       continue;
 
@@ -44,7 +45,7 @@ Function *llvm::translateRecursivelyAt(uint64_t EntryAddr, DCTranslator &DCT,
       if (!MOS->isInObject(MOS->getOriginalLoadAddr(Addr))) {
         DEBUG(dbgs() << "Found external (not in object) function: " << Addr
                      << "\n");
-        DCT.createExternalWrapperFunction(Addr);
+        DCM.createExternalWrapperFunction(Addr);
         continue;
       }
 
@@ -53,7 +54,7 @@ Function *llvm::translateRecursivelyAt(uint64_t EntryAddr, DCTranslator &DCT,
       StringRef ExtFnName = MOS->findExternalFunctionAt(Addr);
       if (!ExtFnName.empty()) {
         DEBUG(dbgs() << "Found external function: " << ExtFnName << "\n");
-        DCT.createExternalWrapperFunction(Addr, ExtFnName);
+        DCM.createExternalWrapperFunction(Addr, ExtFnName);
         continue;
       }
     }
@@ -74,5 +75,5 @@ Function *llvm::translateRecursivelyAt(uint64_t EntryAddr, DCTranslator &DCT,
     for (uint64_t CallTarget : MCFN->callees())
       WorkList.insert(CallTarget);
   }
-  return DCT.getFunction(DCT.getDCFunctionName(EntryAddr));
+  return DCM.getOrCreateFunction(EntryAddr);
 }

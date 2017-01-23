@@ -28,9 +28,6 @@ public:
 
   bool doesSubRegIndexClearSuper(unsigned Idx) const override;
 
-  void insertInitRegSetCode(Function *InitFn) override;
-  void insertFiniRegSetCode(Function *FiniFn) override;
-
   void insertExternalWrapperAsm(BasicBlock *WrapperBB, Value *ExtFn) override;
 };
 

@@ -45,9 +45,6 @@ public:
 
   void updateEFLAGS(Value *Def, bool IsINCDEC = false);
 
-  void insertInitRegSetCode(Function *InitFn) override;
-  void insertFiniRegSetCode(Function *FiniFn) override;
-
 private:
   bool doesSubRegIndexClearSuper(unsigned SubRegIdx) const override;
 

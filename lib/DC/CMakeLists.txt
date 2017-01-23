@@ -1,5 +1,6 @@
 add_llvm_library(LLVMDC
   DCFunction.cpp
+  DCModule.cpp
   DCRegisterSema.cpp
   DCRegisterSetDesc.cpp
   DCTranslator.cpp

@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/DC/DCModule.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -38,9 +39,10 @@ using namespace llvm;
 
 #define DEBUG_TYPE "x86-dc-sema"
 
-X86DCFunction::X86DCFunction(DCRegisterSema &DRS)
-    : DCFunction(X86::OpcodeToSemaIdx, X86::InstSemantics, X86::ConstantArray,
-                 DRS),
+X86DCFunction::X86DCFunction(DCModule &DCM, const MCFunction &MCF,
+                             DCRegisterSema &DRS)
+    : DCFunction(DCM, MCF, X86::OpcodeToSemaIdx, X86::InstSemantics,
+                 X86::ConstantArray, DRS),
       X86DRS((X86RegisterSema &)DRS), LastPrefix(0) {}
 
 bool X86DCFunction::translateTargetInst() {
@@ -247,11 +249,11 @@ bool X86DCFunction::translateTargetInst() {
       // FIXME: Add support for reverse copying, depending on Direction Flag.
       // We don't support CLD/STD yet anyway, so this isn't a big deal for now.
       Type *MemcpyArgTys[] = {Dst->getType(), Src->getType(), Len->getType()};
-      Builder->CreateCall(
-          Intrinsic::getDeclaration(TheModule, Intrinsic::memcpy, MemcpyArgTys),
-          {Dst, Src, Len,
-           /*Align=*/Builder->getInt32(1),
-           /*isVolatile=*/Builder->getInt1(false)});
+      Builder->CreateCall(Intrinsic::getDeclaration(
+                              getModule(), Intrinsic::memcpy, MemcpyArgTys),
+                          {Dst, Src, Len,
+                           /*Align=*/Builder->getInt32(1),
+                           /*isVolatile=*/Builder->getInt1(false)});
 
       return true;
     }
@@ -310,25 +312,29 @@ bool X86DCFunction::translateTargetInst() {
   case X86::CPUID: {
     // FIXME: There's no reason to have a function, this is just a hack to get
     // it working.
-    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateCall(
+        Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
     Builder->CreateUnreachable();
     return true;
   }
   case X86::XGETBV: {
     // FIXME: XCR[0] support is missing, they're not even in X86RegisterInfo.td
-    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateCall(
+        Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
     Builder->CreateUnreachable();
     return true;
   }
   case X86::XSAVE: {
     // FIXME: See XGETBV.
-    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateCall(
+        Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
     Builder->CreateUnreachable();
     return true;
   }
   case X86::XRSTOR: {
     // FIXME: See XGETBV.
-    Builder->CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::trap));
+    Builder->CreateCall(
+        Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
     Builder->CreateUnreachable();
     return true;
   }
@@ -424,7 +430,8 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     Type *EFLAGSTy = OldEFLAGS->getType();
     APInt Mask = APInt::getAllOnesValue(EFLAGSTy->getPrimitiveSizeInBits());
     Mask.clearBit(X86::CF);
-    OldEFLAGS = Builder->CreateAnd(OldEFLAGS, ConstantInt::get(Ctx, Mask));
+    OldEFLAGS =
+        Builder->CreateAnd(OldEFLAGS, ConstantInt::get(getContext(), Mask));
 
     Bit = Builder->CreateZExt(Bit, EFLAGSTy);
     Bit = Builder->CreateLShr(Bit, X86::CF);
@@ -444,7 +451,7 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     Value *PrevDstVal = getReg(CurrentInst->Inst.getOperand(0).getReg());
     Type *ArgTys[] = {PrevDstVal->getType(), Builder->getInt1Ty()};
     Value *Cttz = Builder->CreateCall(
-        Intrinsic::getDeclaration(TheModule, Intrinsic::cttz, ArgTys),
+        Intrinsic::getDeclaration(getModule(), Intrinsic::cttz, ArgTys),
         {Src, /*is_zero_undef:*/ Builder->getInt1(true)});
     registerResult(Builder->CreateSelect(IsSrcZero, PrevDstVal, Cttz));
 
@@ -465,7 +472,7 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     Value *PrevDstVal = getReg(CurrentInst->Inst.getOperand(0).getReg());
     Type *ArgTys[] = {PrevDstVal->getType(), Builder->getInt1Ty()};
     Value *Ctlz = Builder->CreateCall(
-        Intrinsic::getDeclaration(TheModule, Intrinsic::ctlz, ArgTys),
+        Intrinsic::getDeclaration(getModule(), Intrinsic::ctlz, ArgTys),
         {Src, /*is_zero_undef:*/ Builder->getInt1(true)});
     registerResult(Builder->CreateSelect(IsSrcZero, PrevDstVal, Ctlz));
 
@@ -525,7 +532,7 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
       break;
     }
 
-    Type *ResTy = ResEVT.getTypeForEVT(Ctx);
+    Type *ResTy = ResEVT.getTypeForEVT(getContext());
     assert(ResTy->isFloatingPointTy());
 
     Value *Cmp = Builder->CreateFCmp(Pred, LHS, RHS);
@@ -559,7 +566,7 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::MOVSS: {
     Value *Src1 = getNextOperand();
     Value *Src2 = getNextOperand();
-    Type *VecTy = ResEVT.getTypeForEVT(Ctx);
+    Type *VecTy = ResEVT.getTypeForEVT(getContext());
     assert(VecTy->isVectorTy() && VecTy == Src1->getType() &&
            VecTy == Src2->getType() &&
            "Operands to MOV/UNPCK shuffle aren't vectors!");
@@ -690,7 +697,7 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     break;
   }
   case X86ISD::PCMPGT: {
-    Type *ResType = ResEVT.getTypeForEVT(Ctx);
+    Type *ResType = ResEVT.getTypeForEVT(getContext());
     Value *Src1 = getNextOperand();
     Value *Src2 = getNextOperand();
     Constant *Ones = Constant::getAllOnesValue(ResType);
@@ -700,7 +707,7 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     break;
   }
   case X86ISD::PCMPEQ: { // FIXME
-    Type *ResType = ResEVT.getTypeForEVT(Ctx);
+    Type *ResType = ResEVT.getTypeForEVT(getContext());
     Value *Src1 = getNextOperand();
     Value *Src2 = getNextOperand();
     Constant *Ones = Constant::getAllOnesValue(ResType);
@@ -713,7 +720,7 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::ANDNP: {
     Value *LHS = getNextOperand();
     Value *RHS = getNextOperand();
-    Type *VecTy = ResEVT.getTypeForEVT(Ctx);
+    Type *VecTy = ResEVT.getTypeForEVT(getContext());
     (void)VecTy;
     assert(VecTy->isVectorTy() && VecTy->isIntOrIntVectorTy() &&
            VecTy == LHS->getType() && VecTy == RHS->getType() &&
@@ -748,7 +755,7 @@ bool X86DCFunction::translateTargetOpcode(unsigned Opcode) {
     break;
 
   case X86ISD::CVTSI2P: {
-    auto *ResTy = cast<VectorType>(ResEVT.getTypeForEVT(Ctx));
+    auto *ResTy = cast<VectorType>(ResEVT.getTypeForEVT(getContext()));
     Value *Src = getNextOperand();
     auto *SrcTy = cast<VectorType>(Src->getType());
 
@@ -859,7 +866,7 @@ Value *X86DCFunction::translateCustomOperand(unsigned OperandType,
   case X86::OpTypes::i64i32imm:
   case X86::OpTypes::i64imm: {
     // FIXME: Is there anything special to do with the sext/zext?
-    Type *ResType = ResEVT.getTypeForEVT(Ctx);
+    Type *ResType = ResEVT.getTypeForEVT(getContext());
     Res = ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOpNo));
     // FIXME: factor this out in DCF.
     // lets us maintain DTIT info as well.
@@ -926,7 +933,7 @@ Value *X86DCFunction::translateAddr(unsigned MIOperandNo,
   assert(Res);
 
   if (VT != MVT::iPTRAny) {
-    Type *PtrTy = EVT(VT).getTypeForEVT(Ctx)->getPointerTo();
+    Type *PtrTy = EVT(VT).getTypeForEVT(getContext())->getPointerTo();
     Res = Builder->CreateIntToPtr(Res, PtrTy);
   }
 
@@ -942,7 +949,7 @@ Value *X86DCFunction::translateMemOffset(unsigned MIOperandNo,
     report_fatal_error("Segments are unsupported!");
 
   if (VT != MVT::iPTRAny) {
-    Type *PtrTy = EVT(VT).getTypeForEVT(Ctx)->getPointerTo();
+    Type *PtrTy = EVT(VT).getTypeForEVT(getContext())->getPointerTo();
     Offset = Builder->CreateIntToPtr(Offset, PtrTy);
   }
 
@@ -956,7 +963,8 @@ void X86DCFunction::translatePush(Value *Val) {
   Value *OldSP = getReg(X86::RSP);
 
   Value *OpSizeVal = ConstantInt::get(
-      IntegerType::get(Ctx, OldSP->getType()->getIntegerBitWidth()), OpSize);
+      IntegerType::get(getContext(), OldSP->getType()->getIntegerBitWidth()),
+      OpSize);
   Value *NewSP = Builder->CreateSub(OldSP, OpSizeVal);
   Value *SPPtr = Builder->CreateIntToPtr(NewSP, Val->getType()->getPointerTo());
   Builder->CreateStore(Val, SPPtr);
@@ -968,9 +976,10 @@ Value *X86DCFunction::translatePop(unsigned OpSize) {
   // FIXME: again assumes that we are in 64bit mode.
   Value *OldSP = getReg(X86::RSP);
 
-  Type *OpTy = IntegerType::get(Ctx, OpSize * 8);
+  Type *OpTy = IntegerType::get(getContext(), OpSize * 8);
   Value *OpSizeVal = ConstantInt::get(
-      IntegerType::get(Ctx, OldSP->getType()->getIntegerBitWidth()), OpSize);
+      IntegerType::get(getContext(), OldSP->getType()->getIntegerBitWidth()),
+      OpSize);
   Value *NewSP = Builder->CreateAdd(OldSP, OpSizeVal);
   Value *SPPtr = Builder->CreateIntToPtr(OldSP, OpTy->getPointerTo());
   Value *Val = Builder->CreateLoad(SPPtr);
@@ -981,7 +990,7 @@ Value *X86DCFunction::translatePop(unsigned OpSize) {
 
 void X86DCFunction::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
   Value *Src1 = getNextOperand(), *Src2 = getNextOperand();
-  Type *VecTy = ResEVT.getTypeForEVT(Ctx);
+  Type *VecTy = ResEVT.getTypeForEVT(getContext());
   assert(VecTy->isVectorTy());
   assert(VecTy == Src1->getType() && VecTy == Src2->getType());
   unsigned NumElt = VecTy->getVectorNumElements();
@@ -1005,7 +1014,7 @@ void X86DCFunction::translateDivRem(bool isThreeOperand, bool isSigned) {
   EVT Re2EVT = NextVT();
   assert(Re2EVT == ResEVT && "X86 division result type mismatch!");
   (void)Re2EVT;
-  Type *ResType = ResEVT.getTypeForEVT(Ctx);
+  Type *ResType = ResEVT.getTypeForEVT(getContext());
 
   Instruction::CastOps ExtOp;
   Instruction::BinaryOps DivOp, RemOp;
@@ -1024,7 +1033,7 @@ void X86DCFunction::translateDivRem(bool isThreeOperand, bool isSigned) {
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
     IntegerType *HalfType = cast<IntegerType>(ResType);
     unsigned HalfBits = HalfType->getPrimitiveSizeInBits();
-    IntegerType *FullType = IntegerType::get(Ctx, HalfBits * 2);
+    IntegerType *FullType = IntegerType::get(getContext(), HalfBits * 2);
     Value *DivHi = Builder->CreateCast(Instruction::ZExt, Op1, FullType);
     Value *DivLo = Builder->CreateCast(Instruction::ZExt, Op2, FullType);
     Dividend = Builder->CreateOr(

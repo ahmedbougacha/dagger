@@ -50,6 +50,10 @@ void DCTranslator::initializeTranslationModule() {
           (Twine("dct module #") + utohexstr(ModuleSet.size())).str(), Ctx));
   CurrentModule->setDataLayout(DL);
 
+  DCM = createDCModule(*CurrentModule);
+
+  getDRS().SwitchToModule(CurrentModule);
+
   CurrentFPM.reset(new legacy::FunctionPassManager(CurrentModule));
   if (OptLevel >= 1)
     CurrentFPM->add(createPromoteMemoryToRegisterPass());
@@ -57,35 +61,9 @@ void DCTranslator::initializeTranslationModule() {
     CurrentFPM->add(createDeadCodeEliminationPass());
   if (OptLevel >= 3)
     CurrentFPM->add(createInstructionCombiningPass());
-
-  getDCF().SwitchToModule(CurrentModule);
 }
 
 DCTranslator::~DCTranslator() {}
-
-Function *DCTranslator::getInitRegSetFunction() {
-  return getDCF().getOrCreateInitRegSetFunction();
-}
-Function *DCTranslator::getFiniRegSetFunction() {
-  return getDCF().getOrCreateFiniRegSetFunction();
-}
-Function *DCTranslator::createMainFunctionWrapper(Function *Entrypoint) {
-  return getDCF().getOrCreateMainFunction(Entrypoint);
-}
-
-Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr,
-                                                      Value *ExtFn) {
-  return getDCF().createExternalWrapperFunction(Addr, ExtFn);
-}
-
-Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr,
-                                                      StringRef Name) {
-  return getDCF().createExternalWrapperFunction(Addr, Name);
-}
-
-Function *DCTranslator::createExternalWrapperFunction(uint64_t Addr) {
-  return getDCF().createExternalWrapperFunction(Addr);
-}
 
 Function *DCTranslator::getFunction(StringRef Name) {
   for (auto &M : ModuleSet)
@@ -125,54 +103,54 @@ static bool BBBeginAddrLess(const MCBasicBlock *LHS, const MCBasicBlock *RHS) {
 }
 
 Function *DCTranslator::translateFunction(const MCFunction &MCFN) {
-  auto &DCF = getDCF();
-  AddrPrettyStackTraceEntry X(MCFN.getStartAddr(), "Function");
+  Function *F = DCM->getOrCreateFunction(MCFN.getStartAddr());
+  if (F->isDeclaration()) {
+    AddrPrettyStackTraceEntry X(MCFN.getStartAddr(), "Function");
+    std::unique_ptr<DCFunction> DCF = createDCFunction(*DCM, MCFN);
 
-  // If we already translated this function, bail out.
-  // FIXME: The naming logic belongs in a 'DCModule'.
-  if (Function *F = getFunction(getDCFunctionName(MCFN.getStartAddr())))
-    if (!F->isDeclaration())
-      return F;
+    assert(F == DCF->getFunction() &&
+           "DCFunction unexpectedly created a new function");
+    getDRS().SwitchToFunction(F);
 
-  DCF.SwitchToFunction(&MCFN);
+    // First, make sure all basic blocks are created, and sorted.
+    std::vector<const MCBasicBlock *> BasicBlocks;
+    std::copy(MCFN.begin(), MCFN.end(), std::back_inserter(BasicBlocks));
+    std::sort(BasicBlocks.begin(), BasicBlocks.end(), BBBeginAddrLess);
+    for (auto &BB : BasicBlocks)
+      DCF->getOrCreateBasicBlock(BB->getStartAddr());
 
-  // First, make sure all basic blocks are created, and sorted.
-  std::vector<const MCBasicBlock *> BasicBlocks;
-  std::copy(MCFN.begin(), MCFN.end(), std::back_inserter(BasicBlocks));
-  std::sort(BasicBlocks.begin(), BasicBlocks.end(), BBBeginAddrLess);
-  for (auto &BB : BasicBlocks)
-    DCF.getOrCreateBasicBlock(BB->getStartAddr());
+    for (auto &BB : MCFN) {
+      AddrPrettyStackTraceEntry X(BB->getStartAddr(), "Basic Block");
 
-  for (auto &BB : MCFN) {
-    AddrPrettyStackTraceEntry X(BB->getStartAddr(), "Basic Block");
-
-    DEBUG(dbgs() << "Translating basic block starting at "
-                 << utohexstr(BB->getStartAddr()) << ", with " << BB->size()
-                 << " instructions.\n");
-    DCF.SwitchToBasicBlock(BB);
-    for (auto &I : *BB) {
-      InstPrettyStackTraceEntry X(I.Address, I.Inst.getOpcode());
-      DEBUG(dbgs() << "Translating instruction:\n "; dbgs() << I.Inst << "\n";);
-      if (!DCF.translateInst(I)) {
-        errs() << "Cannot translate instruction: \n  "
-               << "  " << DCF.getDRS().MII.getName(I.Inst.getOpcode()) << ": "
-               << I.Inst << "\n";
-        llvm_unreachable("Couldn't translate instruction\n");
+      DEBUG(dbgs() << "Translating basic block starting at "
+                   << utohexstr(BB->getStartAddr()) << ", with " << BB->size()
+                   << " instructions.\n");
+      DCF->SwitchToBasicBlock(BB);
+      for (auto &I : *BB) {
+        InstPrettyStackTraceEntry X(I.Address, I.Inst.getOpcode());
+        DEBUG(dbgs() << "Translating instruction:\n ";
+              dbgs() << I.Inst << "\n";);
+        if (!DCF->translateInst(I)) {
+          errs() << "Cannot translate instruction: \n  "
+                 << "  " << DCF->getDRS().MII.getName(I.Inst.getOpcode())
+                 << ": " << I.Inst << "\n";
+          llvm_unreachable("Couldn't translate instruction\n");
+        }
       }
+      DCF->FinalizeBasicBlock();
     }
-    DCF.FinalizeBasicBlock();
+
+    for (uint64_t TailCallTarget : MCFN.tailcallees())
+      DCF->createExternalTailCallBB(TailCallTarget);
   }
 
-  for (uint64_t TailCallTarget : MCFN.tailcallees())
-    DCF.createExternalTailCallBB(TailCallTarget);
-
-  Function *Fn = DCF.FinalizeFunction();
+  // Now that the DCFunction is out of scope and complete, we can optimize it.
   {
     // ValueToValueMapTy VMap;
     // Function *OrigFn = CloneFunction(Fn, VMap, false);
     // OrigFn->setName(Fn->getName() + "_orig");
     // CurrentModule->getFunctionList().push_back(OrigFn);
-    CurrentFPM->run(*Fn);
+    CurrentFPM->run(*F);
   }
-  return Fn;
+  return F;
 }

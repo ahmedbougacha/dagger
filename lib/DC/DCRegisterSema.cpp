@@ -331,26 +331,6 @@ IntegerType *DCRegisterSema::getRegIntType(unsigned RegNo) {
   return IntegerType::get(Ctx, getRegSetDesc().RegSizes[RegNo]);
 }
 
-std::pair<size_t, size_t>
-DCRegisterSema::getRegSizeOffsetInRegSet(unsigned RegNo) const {
-  size_t Size, Offset;
-  Size = getRegSetDesc().RegSizes[RegNo] / 8;
-
-  const StructLayout *SL = DL.getStructLayout(getRegSetDesc().RegSetType);
-  unsigned Largest = getRegSetDesc().RegLargestSupers[RegNo];
-  unsigned Idx = getRegSetDesc().RegOffsetsInSet[Largest];
-  Offset = SL->getElementOffset(Idx);
-  if (Largest != RegNo) {
-    unsigned SubRegIdx = MRI.getSubRegIndex(Largest, RegNo);
-    assert(SubRegIdx &&
-           "Couldn't determine register's offset in super-register.");
-    unsigned OffsetInSuper = MRI.getSubRegIdxOffset(SubRegIdx);
-    assert(((OffsetInSuper % 8) == 0) && "Register isn't byte aligned!");
-    Offset += (OffsetInSuper / 8);
-  }
-  return std::make_pair(Size, Offset);
-}
-
 extern "C" void __llvm_dc_print_reg_diff_fn(void *FPtr) {
   printf("Different Registers for '");
   Dl_info DLI;
@@ -377,7 +357,7 @@ extern "C" void __llvm_dc_print_reg_diff(char *Name, uint8_t *v1, uint8_t *v2,
   printf("\n");
 }
 
-Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
+Function *DCRegisterSema::getOrCreateRegSetDiffFunction() {
   Type *I8PtrTy = Builder->getInt8PtrTy();
   Type *RegSetPtrTy = getRegSetDesc().RegSetType->getPointerTo();
 
@@ -387,8 +367,8 @@ Function *DCRegisterSema::getOrCreateRegSetDiffFunction(bool Definition) {
       FunctionType::get(Builder->getVoidTy(), RSDiffArgTys,
                         /*isVarArg=*/false)));
 
-  // If we were just asked for a declaration, return it.
-  if (!Definition)
+  // If we already defined the function, return it.
+  if (!RSDiffFn->isDeclaration())
     return RSDiffFn;
 
   IRBuilderBase::InsertPointGuard IPG(*Builder);

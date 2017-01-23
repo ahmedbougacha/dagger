@@ -18,11 +18,8 @@ namespace llvm {
 class AArch64RegisterSema;
 
 class AArch64DCFunction : public DCFunction {
-  // FIXME: This goes away once we have something like TargetMachine.
-  AArch64RegisterSema &AArch64DRS;
-
 public:
-  AArch64DCFunction(DCRegisterSema &DRS);
+  AArch64DCFunction(DCModule &DCM, const MCFunction &MCF, DCRegisterSema &DRS);
 
   bool translateTargetInst() override;
   bool translateTargetOpcode(unsigned Opcode) override;

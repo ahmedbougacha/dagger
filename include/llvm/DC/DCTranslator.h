@@ -22,6 +22,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/DC/DCModule.h"
 #include "llvm/DC/DCRegisterSetDesc.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -51,6 +52,8 @@ class DCTranslator {
 
   unsigned OptLevel;
 
+  std::unique_ptr<DCModule> DCM;
+
 public:
   /// Construct a DCTranslator for a target.
   /// \param Ctx  The LLVMContext to emit the IR with.
@@ -60,23 +63,11 @@ public:
                const DCRegisterSetDesc RegSetDesc);
   virtual ~DCTranslator();
 
-  // FIXME: These belong in a 'DCModule'.
-  Function *getInitRegSetFunction();
-  Function *getFiniRegSetFunction();
-  Function *createMainFunctionWrapper(Function *Entrypoint);
-
-  Function *createExternalWrapperFunction(uint64_t Addr, Value *ExtFn);
-  Function *createExternalWrapperFunction(uint64_t Addr, StringRef Name);
-  Function *createExternalWrapperFunction(uint64_t Addr);
-
-  std::string getDCFunctionName(uint64_t Addr) {
-    return "fn_" + utohexstr(Addr);
-  }
-
-  // Temporarily expose the target DCF.
-  virtual DCFunction &getDCF() = 0;
+  virtual DCRegisterSema &getDRS() = 0;
 
   const DCRegisterSetDesc &getRegSetDesc() const { return RegSetDesc; }
+
+  DCModule *getDCModule() { return DCM.get(); }
 
   // Finalize the current translation module for usage. This does a number of
   // things, including running optimizations.
@@ -90,6 +81,11 @@ public:
   Function *getFunction(StringRef Name);
 
 protected:
+  virtual std::unique_ptr<DCModule> createDCModule(Module &M) = 0;
+
+  virtual std::unique_ptr<DCFunction>
+  createDCFunction(DCModule &DCM, const MCFunction &MCF) = 0;
+
   // Create and setup a new module for translation.
   void initializeTranslationModule();
 };

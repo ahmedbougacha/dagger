@@ -22,10 +22,10 @@ using namespace llvm;
 
 #define DEBUG_TYPE "aarch64-dc-sema"
 
-AArch64DCFunction::AArch64DCFunction(DCRegisterSema &DRS)
-    : DCFunction(AArch64::OpcodeToSemaIdx, AArch64::InstSemantics,
-                 AArch64::ConstantArray, DRS),
-      AArch64DRS((AArch64RegisterSema &)DRS) {}
+AArch64DCFunction::AArch64DCFunction(DCModule &DCM, const MCFunction &MCF,
+                                     DCRegisterSema &DRS)
+    : DCFunction(DCM, MCF, AArch64::OpcodeToSemaIdx, AArch64::InstSemantics,
+                 AArch64::ConstantArray, DRS) {}
 
 bool AArch64DCFunction::translateTargetInst() {
   unsigned Opcode = CurrentInst->Inst.getOpcode();

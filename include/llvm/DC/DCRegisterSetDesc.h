@@ -14,10 +14,12 @@
 
 #include "llvm/CodeGen/MachineValueType.h"
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace llvm {
 class Constant;
+class DataLayout;
 class LLVMContext;
 class MCRegisterInfo;
 class StructType;
@@ -62,6 +64,12 @@ public:
 
   DCRegisterSetDesc(LLVMContext &Ctx, const MCRegisterInfo &MRI,
                     const MVT::SimpleValueType *RegClassVTs);
+
+  // Compute the register's offset in bytes from the start of the regset.
+  // Also return it's size in bytes.
+  std::pair<size_t, size_t>
+  getRegSizeOffsetInRegSet(unsigned RegNo, const DataLayout &DL,
+                           const MCRegisterInfo &MRI) const;
 };
 
 } // end namespace llvm
