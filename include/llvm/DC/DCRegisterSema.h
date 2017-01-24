@@ -117,6 +117,7 @@ public:
   virtual void FinalizeFunction(BasicBlock *ExitBB);
   virtual void FinalizeBasicBlock();
 
+  void saveAllLiveRegs();
   void saveAllLocalRegs(BasicBlock *BB, BasicBlock::iterator IP);
   void restoreLocalRegs(BasicBlock *BB, BasicBlock::iterator IP);
 

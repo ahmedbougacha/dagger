@@ -81,7 +81,7 @@ public:
   const MCFunction &TheMCFunction;
   std::map<uint64_t, BasicBlock *> BBByAddr;
   BasicBlock *ExitBB;
-  std::vector<BasicBlock *> CallBBs;
+  std::vector<BasicBlock::iterator> Calls;
 
   // Following members are valid only inside a Basic Block
   BasicBlock *TheBB;
@@ -146,8 +146,6 @@ private:
   void translateCastOp(Instruction::CastOps Opc);
 
   bool translateExtLoad(Type *MemTy, bool isSExt = false);
-
-  BasicBlock *insertCallBB(Value *CallTarget);
 
   void prepareBasicBlockForInsertion(BasicBlock *BB);
 

@@ -9,8 +9,6 @@ ret
 
 # CHECK-LABEL: bb_0:
 # CHECK: store i64 42, i64* %RDI
-# CHECK: br label %bb_0_call
-# CHECK-LABEL: bb_0_call:
 # CHECK: [[RDI_save:%[0-9]+]] = load i64, i64* %RDI
 # CHECK: store i64 [[RDI_save]], i64* %RDI_ptr
 # CHECK: call void @fn_C(%regset* %0)
@@ -19,8 +17,6 @@ ret
 ## Also check that the subregister was extracted.
 # CHECK-DAG: [[EDI_trunc:%EDI_[0-9]+]] = trunc i64 [[RDI_reload]] to i32
 # CHECK-DAG: store i32 [[EDI_trunc]], i32* %EDI
-# CHECK: br label %bb_c7
-# CHECK-LABEL: bb_c7:
 # CHECK: br label %exit_fn_0
 
 .global callee

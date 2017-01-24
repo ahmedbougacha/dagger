@@ -52,7 +52,7 @@ DCFunction::DCFunction(DCModule &DCM, const MCFunction &MCF,
     : OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
       ConstantArray(ConstantArray), DCM(DCM), DRS(DRS),
       TheFunction(*DCM.getOrCreateFunction(MCF.getStartAddr())),
-      TheMCFunction(MCF), BBByAddr(), ExitBB(0), CallBBs(), TheBB(0),
+      TheMCFunction(MCF), BBByAddr(), ExitBB(0), Calls(), TheBB(0),
       TheMCBB(0), Builder(new DCIRBuilder(getContext())), Idx(0), ResEVT(),
       Opcode(0), Vals(), CurrentInst(0) {
 
@@ -106,12 +106,9 @@ DCFunction::DCFunction(DCModule &DCM, const MCFunction &MCF,
 }
 
 DCFunction::~DCFunction() {
-  for (auto *CallBB : CallBBs) {
-    assert(CallBB->size() == 2 &&
-           "Call basic block has wrong number of instructions!");
-    auto CallI = CallBB->begin();
-    DRS.saveAllLocalRegs(CallBB, CallI);
-    DRS.restoreLocalRegs(CallBB, ++CallI);
+  for (auto CallI : Calls) {
+    DRS.saveAllLocalRegs(CallI->getParent(), CallI);
+    DRS.restoreLocalRegs(CallI->getParent(), ++CallI);
   }
 
   DRS.FinalizeFunction(ExitBB);
@@ -129,7 +126,7 @@ void DCFunction::createExternalTailCallBB(uint64_t Addr) {
   // First create a basic block for the tail call.
   SwitchToBasicBlock(Addr);
   // Now do the call to that function.
-  insertCallBB(DCM.getOrCreateFunction(Addr));
+  insertCall(DCM.getOrCreateFunction(Addr));
   // FIXME: should this still insert a regset diffing call?
   // Finally, return directly, bypassing the ExitBB.
   Builder->CreateRetVoid();
@@ -188,30 +185,6 @@ BasicBlock *DCFunction::getOrCreateBasicBlock(uint64_t Addr) {
   return BB;
 }
 
-BasicBlock *DCFunction::insertCallBB(Value *Target) {
-  BasicBlock *CallBB = BasicBlock::Create(
-      getContext(), TheBB->getName() + "_call", getFunction());
-  Value *RegSetArg = &getFunction()->getArgumentList().front();
-  DCIRBuilder CallBuilder(CallBB);
-  CallBuilder.CreateCall(Target, {RegSetArg});
-  Builder->CreateBr(CallBB);
-  assert(Builder->GetInsertPoint() == TheBB->end() &&
-         "Call basic blocks can't be inserted at the middle of a basic block!");
-  StringRef BBName = TheBB->getName();
-  BBName = BBName.substr(0, BBName.find_first_of("_c"));
-  std::string CallInstAddr = CurrentInst ? utohexstr(CurrentInst->Address) : "";
-  TheBB = BasicBlock::Create(getContext(), BBName + "_c" + CallInstAddr,
-                             getFunction());
-  DRS.FinalizeBasicBlock();
-  DRS.SwitchToBasicBlock(TheBB);
-  Builder->SetInsertPoint(TheBB);
-  CallBuilder.CreateBr(TheBB);
-  CallBBs.push_back(CallBB);
-  // FIXME: Insert return address checking, to unwind back to the translator if
-  // the call returned to an unexpected address.
-  return CallBB;
-}
-
 Value *DCFunction::insertTranslateAt(Value *OrigTarget) {
   Value *Ptr = Builder->CreateCall(
       Intrinsic::getDeclaration(getModule(), Intrinsic::dc_translate_at),
@@ -219,14 +192,22 @@ Value *DCFunction::insertTranslateAt(Value *OrigTarget) {
   return Builder->CreateBitCast(Ptr, DCM.getFuncTy()->getPointerTo());
 }
 
-void DCFunction::insertCall(Value *CallTarget) {
-  if (ConstantInt *CI = dyn_cast<ConstantInt>(CallTarget)) {
-    uint64_t Target = CI->getValue().getZExtValue();
-    CallTarget = DCM.getOrCreateFunction(Target);
+void DCFunction::insertCall(Value *Target) {
+  if (ConstantInt *CI = dyn_cast<ConstantInt>(Target)) {
+    uint64_t TargetC = CI->getValue().getZExtValue();
+    Target = DCM.getOrCreateFunction(TargetC);
   } else {
-    CallTarget = insertTranslateAt(CallTarget);
+    Target = insertTranslateAt(Target);
   }
-  insertCallBB(CallTarget);
+  Value *RegSetArg = &getFunction()->getArgumentList().front();
+
+  // Flush all live registers before doing the call.
+  // Saving/restoring from the alloca to the regset will be done for all calls,
+  // when finalizing the function.
+  DRS.saveAllLiveRegs();
+  Calls.push_back(Builder->CreateCall(Target, {RegSetArg})->getIterator());
+  // FIXME: Insert return address checking, to unwind back to the translator if
+  // the call returned to an unexpected address.
 }
 
 void DCFunction::translateBinOp(Instruction::BinaryOps Opc) {

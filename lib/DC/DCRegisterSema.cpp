@@ -85,7 +85,6 @@ void DCRegisterSema::saveAllLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
 }
 
 void DCRegisterSema::restoreLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
-  SwitchToBasicBlock(BB);
   Builder->SetInsertPoint(BB, IP);
 
   for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
@@ -95,7 +94,19 @@ void DCRegisterSema::restoreLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
     if (OffsetInSet != -1)
       setReg(RI, Builder->CreateLoad(RegPtrs[RI]));
   }
-  FinalizeBasicBlock();
+  saveAllLiveRegs();
+}
+
+void DCRegisterSema::saveAllLiveRegs() {
+  for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
+    onRegisterGet(RI);
+    if (!RegVals[RI])
+      continue;
+    if (RegAllocas[RI])
+      Builder->CreateStore(Builder->CreateBitCast(RegVals[RI], getRegType(RI)),
+                           RegAllocas[RI]);
+    RegVals[RI] = 0;
+  }
 }
 
 void DCRegisterSema::FinalizeFunction(BasicBlock *ExitBB) {
@@ -114,15 +125,7 @@ void DCRegisterSema::FinalizeFunction(BasicBlock *ExitBB) {
 void DCRegisterSema::FinalizeBasicBlock() {
   if (Instruction *TI = Builder->GetInsertBlock()->getTerminator())
     Builder->SetInsertPoint(TI);
-  for (unsigned RI = 1, RE = getNumRegs(); RI != RE; ++RI) {
-    onRegisterGet(RI);
-    if (!RegVals[RI])
-      continue;
-    if (RegAllocas[RI])
-      Builder->CreateStore(Builder->CreateBitCast(RegVals[RI], getRegType(RI)),
-                           RegAllocas[RI]);
-    RegVals[RI] = 0;
-  }
+  saveAllLiveRegs();
   CurrentInst = nullptr;
 }
 
