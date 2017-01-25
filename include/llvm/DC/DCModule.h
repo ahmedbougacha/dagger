@@ -16,13 +16,14 @@
 #define LLVM_DC_DCMODULE_H
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/DC/DCTranslator.h"
 #include "llvm/IR/Module.h"
 #include <cstdint>
 #include <string>
 
 namespace llvm {
 class FunctionType;
-class DCTranslator;
+class DCRegisterSema;
 class Value;
 
 class DCModule {
@@ -41,6 +42,7 @@ public:
   std::string getFunctionName(uint64_t Addr);
   Function *getOrCreateFunction(uint64_t Addr);
 
+  DCRegisterSema &getDRS() { return getTranslator().getDRS(); }
   DCTranslator &getTranslator() { return DCT; }
   Module *getModule() { return &TheModule; }
   LLVMContext &getContext() { return getModule()->getContext(); }

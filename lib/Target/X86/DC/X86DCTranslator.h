@@ -31,6 +31,12 @@ private:
 
   std::unique_ptr<DCFunction> createDCFunction(DCModule &DCM,
                                                const MCFunction &MCF) override;
+
+  std::unique_ptr<DCBasicBlock>
+  createDCBasicBlock(DCFunction &DCF, const MCBasicBlock &MCB) override;
+
+  std::unique_ptr<DCInstruction>
+  createDCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI) override;
 };
 
 } // end llvm namespace

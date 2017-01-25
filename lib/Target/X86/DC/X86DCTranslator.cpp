@@ -8,7 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86DCTranslator.h"
+#include "X86DCBasicBlock.h"
 #include "X86DCFunction.h"
+#include "X86DCInstruction.h"
 #include "X86DCModule.h"
 
 #define GET_REGISTER_SEMA
@@ -33,5 +35,16 @@ std::unique_ptr<DCModule> X86DCTranslator::createDCModule(Module &M) {
 
 std::unique_ptr<DCFunction>
 X86DCTranslator::createDCFunction(DCModule &DCM, const MCFunction &MCF) {
-  return make_unique<X86DCFunction>(DCM, MCF, DRS);
+  return make_unique<X86DCFunction>(DCM, MCF);
+}
+
+std::unique_ptr<DCBasicBlock>
+X86DCTranslator::createDCBasicBlock(DCFunction &DCF, const MCBasicBlock &MCB) {
+  return make_unique<X86DCBasicBlock>(DCF, MCB);
+}
+
+std::unique_ptr<DCInstruction>
+X86DCTranslator::createDCInstruction(DCBasicBlock &DCB,
+                                     const MCDecodedInst &MCI) {
+  return make_unique<X86DCInstruction>(DCB, MCI);
 }

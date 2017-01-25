@@ -19,14 +19,7 @@ class AArch64RegisterSema;
 
 class AArch64DCFunction : public DCFunction {
 public:
-  AArch64DCFunction(DCModule &DCM, const MCFunction &MCF, DCRegisterSema &DRS);
-
-  bool translateTargetInst() override;
-  bool translateTargetOpcode(unsigned Opcode) override;
-  Value *translateComplexPattern(unsigned CP) override;
-  Value *translateCustomOperand(unsigned OperandType,
-                                unsigned MIOperandNo) override;
-  bool translateImplicit(unsigned RegNo) override;
+  AArch64DCFunction(DCModule &DCM, const MCFunction &MCF);
 };
 
 } // end namespace llvm

@@ -10,7 +10,10 @@
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/DC/DCBasicBlock.h"
 #include "llvm/DC/DCFunction.h"
+#include "llvm/DC/DCInstruction.h"
+#include "llvm/DC/DCModule.h"
 #include "llvm/DC/DCRegisterSema.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
@@ -110,7 +113,6 @@ Function *DCTranslator::translateFunction(const MCFunction &MCFN) {
 
     assert(F == DCF->getFunction() &&
            "DCFunction unexpectedly created a new function");
-    getDRS().SwitchToFunction(F);
 
     // First, make sure all basic blocks are created, and sorted.
     std::vector<const MCBasicBlock *> BasicBlocks;
@@ -121,23 +123,27 @@ Function *DCTranslator::translateFunction(const MCFunction &MCFN) {
 
     for (auto &BB : MCFN) {
       AddrPrettyStackTraceEntry X(BB->getStartAddr(), "Basic Block");
-
       DEBUG(dbgs() << "Translating basic block starting at "
                    << utohexstr(BB->getStartAddr()) << ", with " << BB->size()
                    << " instructions.\n");
-      DCF->SwitchToBasicBlock(BB);
+
+      std::unique_ptr<DCBasicBlock> DCB = createDCBasicBlock(*DCF, *BB);
+
       for (auto &I : *BB) {
         InstPrettyStackTraceEntry X(I.Address, I.Inst.getOpcode());
         DEBUG(dbgs() << "Translating instruction:\n ";
               dbgs() << I.Inst << "\n";);
-        if (!DCF->translateInst(I)) {
+
+
+        std::unique_ptr<DCInstruction> DCI = createDCInstruction(*DCB, I);
+
+        if (!DCI->translate()) {
           errs() << "Cannot translate instruction: \n  "
-                 << "  " << DCF->getDRS().MII.getName(I.Inst.getOpcode())
+                 << "  " << getDRS().MII.getName(I.Inst.getOpcode())
                  << ": " << I.Inst << "\n";
           llvm_unreachable("Couldn't translate instruction\n");
         }
       }
-      DCF->FinalizeBasicBlock();
     }
 
     for (uint64_t TailCallTarget : MCFN.tailcallees())

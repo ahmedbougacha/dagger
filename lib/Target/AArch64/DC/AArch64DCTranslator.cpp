@@ -8,7 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "AArch64DCTranslator.h"
+#include "AArch64DCBasicBlock.h"
 #include "AArch64DCFunction.h"
+#include "AArch64DCInstruction.h"
 #include "AArch64DCModule.h"
 
 #define GET_REGISTER_SEMA
@@ -40,9 +42,21 @@ AArch64DCTranslator::~AArch64DCTranslator() {}
 
 std::unique_ptr<DCFunction>
 AArch64DCTranslator::createDCFunction(DCModule &DCM, const MCFunction &MCF) {
-  return make_unique<AArch64DCFunction>(DCM, MCF, DRS);
+  return make_unique<AArch64DCFunction>(DCM, MCF);
 }
 
 std::unique_ptr<DCModule> AArch64DCTranslator::createDCModule(Module &M) {
   return make_unique<AArch64DCModule>(*this, M);
+}
+
+std::unique_ptr<DCBasicBlock>
+AArch64DCTranslator::createDCBasicBlock(DCFunction &DCF,
+                                        const MCBasicBlock &MCB) {
+  return make_unique<AArch64DCBasicBlock>(DCF, MCB);
+}
+
+std::unique_ptr<DCInstruction>
+AArch64DCTranslator::createDCInstruction(DCBasicBlock &DCB,
+                                         const MCDecodedInst &MCI) {
+  return make_unique<AArch64DCInstruction>(DCB, MCI);
 }

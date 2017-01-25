@@ -22,7 +22,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
-#include "llvm/DC/DCModule.h"
 #include "llvm/DC/DCRegisterSetDesc.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -30,14 +29,15 @@
 #include <vector>
 
 namespace llvm {
+class DCBasicBlock;
+class DCFunction;
+class DCInstruction;
+class DCModule;
+class DCRegisterSema;
+class MCBasicBlock;
+class MCDecodedInst;
 class MCFunction;
 class MCInstPrinter;
-}
-
-namespace llvm {
-
-class DCFunction;
-class DCRegisterSema;
 
 class DCTranslator {
   LLVMContext &Ctx;
@@ -85,6 +85,12 @@ protected:
 
   virtual std::unique_ptr<DCFunction>
   createDCFunction(DCModule &DCM, const MCFunction &MCF) = 0;
+
+  virtual std::unique_ptr<DCBasicBlock>
+  createDCBasicBlock(DCFunction &DCF, const MCBasicBlock &MCB) = 0;
+
+  virtual std::unique_ptr<DCInstruction>
+  createDCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI) = 0;
 
   // Create and setup a new module for translation.
   void initializeTranslationModule();

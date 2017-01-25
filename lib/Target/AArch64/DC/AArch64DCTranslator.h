@@ -11,7 +11,6 @@
 #define LLVM_LIB_TARGET_AARCH64_AARCH64DCTRANSLATOR_H
 
 #include "llvm/DC/DCTranslator.h"
-#include "AArch64DCFunction.h"
 #include "AArch64RegisterSema.h"
 
 namespace llvm {
@@ -30,6 +29,12 @@ public:
 
   std::unique_ptr<DCFunction> createDCFunction(DCModule &DCM,
                                                const MCFunction &MCF) override;
+
+  std::unique_ptr<DCBasicBlock>
+  createDCBasicBlock(DCFunction &DCF, const MCBasicBlock &MCB) override;
+
+  std::unique_ptr<DCInstruction>
+  createDCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI) override;
 };
 
 } // end llvm namespace

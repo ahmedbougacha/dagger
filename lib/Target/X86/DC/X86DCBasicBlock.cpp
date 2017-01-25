@@ -1,4 +1,4 @@
-//===-- X86DCFunction.cpp - X86 Function Translation ------------*- C++ -*-===//
+//===-- X86DCBasicBlock.cpp - X86 Targeting of DCBasicBlock -----*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,9 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "X86DCFunction.h"
+#include "X86DCBasicBlock.h"
 
 using namespace llvm;
 
-X86DCFunction::X86DCFunction(DCModule &DCM, const MCFunction &MCF)
-    : DCFunction(DCM, MCF) {}
+X86DCBasicBlock::X86DCBasicBlock(DCFunction &DCF, const MCBasicBlock &MCB)
+    : DCBasicBlock(DCF, MCB), LastPrefix(0) {}
