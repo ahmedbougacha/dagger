@@ -6,8 +6,10 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[X16_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[X16_1:%.+]] = inttoptr i64 [[X16_0]] to i8*
+; CHECK-NEXT: [[X16_2:%.+]] = call i8* @llvm.dc.translate.at(i8* [[X16_1]])
+; CHECK-NEXT: [[X16_3:%.+]] = bitcast i8* [[X16_2]] to void (%regset*)*
+; CHECK-NEXT: call void [[X16_3]](%regset* {{.+}})
 blr	x16
 
 ret
