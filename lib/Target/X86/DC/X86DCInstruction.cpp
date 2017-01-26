@@ -39,6 +39,10 @@ using namespace llvm;
 
 #define DEBUG_TYPE "x86-dc-sema"
 
+static MVT getSimpleVTForType(Type *Ty) {
+  return EVT::getEVT(Ty).getSimpleVT();
+}
+
 X86DCInstruction::X86DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI)
     : DCInstruction(DCB, MCI, X86::OpcodeToSemaIdx, X86::InstSemantics,
                     X86::ConstantArray) {}
@@ -403,7 +407,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     break;
   }
   case X86ISD::SBB: {
-    (void)NextVT();
+    (void)NextTy();
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand(),
           *Op3 = getNextOperand();
     assert(Op3 == getReg(X86::EFLAGS) && "SBB borrow register isn't EFLAGS!");
@@ -435,7 +439,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   }
 
   case X86ISD::BSF: {
-    (void)NextVT();
+    (void)NextTy();
     Value *Src = getNextOperand();
     // If the source is zero, it is undefined behavior as per Intel SDM, but
     // most implementations I'm aware of just leave the destination unchanged.
@@ -456,7 +460,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     break;
   }
   case X86ISD::BSR: {
-    (void)NextVT();
+    (void)NextTy();
     Value *Src = getNextOperand();
     // If the source is zero, it is undefined behavior as per Intel SDM, but
     // most implementations I'm aware of just leave the destination unchanged.
@@ -527,7 +531,6 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
       break;
     }
 
-    Type *ResTy = ResEVT.getTypeForEVT(getContext());
     assert(ResTy->isFloatingPointTy());
 
     Value *Cmp = Builder.CreateFCmp(Pred, LHS, RHS);
@@ -561,7 +564,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::MOVSS: {
     Value *Src1 = getNextOperand();
     Value *Src2 = getNextOperand();
-    Type *VecTy = ResEVT.getTypeForEVT(getContext());
+    Type *VecTy = ResTy;
     assert(VecTy->isVectorTy() && VecTy == Src1->getType() &&
            VecTy == Src2->getType() &&
            "Operands to MOV/UNPCK shuffle aren't vectors!");
@@ -592,7 +595,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::PSHUFB: {
     Value *Src = getNextOperand();
     Value *Mask = getNextOperand();
-    const unsigned NumElts = ResEVT.getVectorNumElements();
+    const unsigned NumElts = ResTy->getVectorNumElements();
 
     // If the high bit (7) of the byte is set, the element is zeroed.
     // Do that on the entire vector first.
@@ -638,16 +641,16 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     SmallVector<int, 8> Mask;
     switch (Opcode) {
     case X86ISD::MOVLHPS:
-      DecodeMOVLHPSMask(ResEVT.getVectorNumElements(), Mask);
+      DecodeMOVLHPSMask(ResTy->getVectorNumElements(), Mask);
       break;
     case X86ISD::MOVHLPS:
-      DecodeMOVHLPSMask(ResEVT.getVectorNumElements(), Mask);
+      DecodeMOVHLPSMask(ResTy->getVectorNumElements(), Mask);
       break;
     case X86ISD::UNPCKL:
-      DecodeUNPCKLMask(ResEVT.getSimpleVT(), Mask);
+      DecodeUNPCKLMask(getSimpleVTForType(ResTy), Mask);
       break;
     case X86ISD::UNPCKH:
-      DecodeUNPCKHMask(ResEVT.getSimpleVT(), Mask);
+      DecodeUNPCKHMask(getSimpleVTForType(ResTy), Mask);
       break;
     };
     translateShuffle(Mask, Src1, Src2);
@@ -661,13 +664,13 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     SmallVector<int, 8> Mask;
     switch (Opcode) {
     case X86ISD::PSHUFD:
-      DecodePSHUFMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      DecodePSHUFMask(getSimpleVTForType(ResTy), MaskImm, Mask);
       break;
     case X86ISD::PSHUFHW:
-      DecodePSHUFHWMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      DecodePSHUFHWMask(getSimpleVTForType(ResTy), MaskImm, Mask);
       break;
     case X86ISD::PSHUFLW:
-      DecodePSHUFLWMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      DecodePSHUFLWMask(getSimpleVTForType(ResTy), MaskImm, Mask);
       break;
     };
     translateShuffle(Mask, Src);
@@ -679,34 +682,32 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     Value *Src2 = getNextOperand();
     unsigned MaskImm = cast<ConstantInt>(getNextOperand())->getZExtValue();
     SmallVector<int, 8> Mask;
-    DecodePSHUFMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+    DecodePSHUFMask(getSimpleVTForType(ResTy), MaskImm, Mask);
     switch (Opcode) {
     case X86ISD::SHUFP:
-      DecodeSHUFPMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      DecodeSHUFPMask(getSimpleVTForType(ResTy), MaskImm, Mask);
       break;
     case X86ISD::PALIGNR:
-      DecodePALIGNRMask(ResEVT.getSimpleVT(), MaskImm, Mask);
+      DecodePALIGNRMask(getSimpleVTForType(ResTy), MaskImm, Mask);
       break;
     };
     translateShuffle(Mask, Src1, Src2);
     break;
   }
   case X86ISD::PCMPGT: {
-    Type *ResType = ResEVT.getTypeForEVT(getContext());
     Value *Src1 = getNextOperand();
     Value *Src2 = getNextOperand();
-    Constant *Ones = Constant::getAllOnesValue(ResType);
-    Constant *Zero = Constant::getNullValue(ResType);
+    Constant *Ones = Constant::getAllOnesValue(ResTy);
+    Constant *Zero = Constant::getNullValue(ResTy);
     registerResult(
         Builder.CreateSelect(Builder.CreateICmpSGT(Src1, Src2), Ones, Zero));
     break;
   }
   case X86ISD::PCMPEQ: { // FIXME
-    Type *ResType = ResEVT.getTypeForEVT(getContext());
     Value *Src1 = getNextOperand();
     Value *Src2 = getNextOperand();
-    Constant *Ones = Constant::getAllOnesValue(ResType);
-    Constant *Zero = Constant::getNullValue(ResType);
+    Constant *Ones = Constant::getAllOnesValue(ResTy);
+    Constant *Zero = Constant::getNullValue(ResTy);
     registerResult(
         Builder.CreateSelect(Builder.CreateICmpEQ(Src1, Src2), Ones, Zero));
     break;
@@ -715,7 +716,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::ANDNP: {
     Value *LHS = getNextOperand();
     Value *RHS = getNextOperand();
-    Type *VecTy = ResEVT.getTypeForEVT(getContext());
+    Type *VecTy = ResTy;
     (void)VecTy;
     assert(VecTy->isVectorTy() && VecTy->isIntOrIntVectorTy() &&
            VecTy == LHS->getType() && VecTy == RHS->getType() &&
@@ -750,7 +751,6 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     break;
 
   case X86ISD::CVTSI2P: {
-    auto *ResTy = cast<VectorType>(ResEVT.getTypeForEVT(getContext()));
     Value *Src = getNextOperand();
     auto *SrcTy = cast<VectorType>(Src->getType());
 
@@ -861,8 +861,7 @@ Value *X86DCInstruction::translateCustomOperand(unsigned OperandType,
   case X86::OpTypes::i64i32imm:
   case X86::OpTypes::i64imm: {
     // FIXME: Is there anything special to do with the sext/zext?
-    Type *ResType = ResEVT.getTypeForEVT(getContext());
-    Res = ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOpNo));
+    Res = ConstantInt::get(cast<IntegerType>(ResTy), getImmOp(MIOpNo));
     // FIXME: factor this out in DCF.
     // lets us maintain DTIT info as well.
     break;
@@ -984,7 +983,7 @@ Value *X86DCInstruction::translatePop(unsigned OpSize) {
 
 void X86DCInstruction::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
   Value *Src1 = getNextOperand(), *Src2 = getNextOperand();
-  Type *VecTy = ResEVT.getTypeForEVT(getContext());
+  Type *VecTy = ResTy;
   assert(VecTy->isVectorTy());
   assert(VecTy == Src1->getType() && VecTy == Src2->getType());
   unsigned NumElt = VecTy->getVectorNumElements();
@@ -1005,10 +1004,9 @@ void X86DCInstruction::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
 }
 
 void X86DCInstruction::translateDivRem(bool isThreeOperand, bool isSigned) {
-  EVT Re2EVT = NextVT();
-  assert(Re2EVT == ResEVT && "X86 division result type mismatch!");
-  (void)Re2EVT;
-  Type *ResType = ResEVT.getTypeForEVT(getContext());
+  Type *Res2Ty = NextTy();
+  assert(Res2Ty == ResTy && "X86 division result type mismatch!");
+  (void)Res2Ty;
 
   Instruction::CastOps ExtOp;
   Instruction::BinaryOps DivOp, RemOp;
@@ -1025,7 +1023,7 @@ void X86DCInstruction::translateDivRem(bool isThreeOperand, bool isSigned) {
   Value *Dividend;
   if (isThreeOperand) {
     Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
-    IntegerType *HalfType = cast<IntegerType>(ResType);
+    IntegerType *HalfType = cast<IntegerType>(ResTy);
     unsigned HalfBits = HalfType->getPrimitiveSizeInBits();
     IntegerType *FullType = IntegerType::get(getContext(), HalfBits * 2);
     Value *DivHi = Builder.CreateCast(Instruction::ZExt, Op1, FullType);
@@ -1040,9 +1038,9 @@ void X86DCInstruction::translateDivRem(bool isThreeOperand, bool isSigned) {
   Divisor = Builder.CreateCast(ExtOp, Divisor, Dividend->getType());
 
   registerResult(Builder.CreateTrunc(
-      Builder.CreateBinOp(DivOp, Dividend, Divisor), ResType));
+      Builder.CreateBinOp(DivOp, Dividend, Divisor), ResTy));
   registerResult(Builder.CreateTrunc(
-      Builder.CreateBinOp(RemOp, Dividend, Divisor), ResType));
+      Builder.CreateBinOp(RemOp, Dividend, Divisor), ResTy));
 }
 
 Value *X86DCInstruction::translatePSHUFB(Value *V, Value *Mask) {

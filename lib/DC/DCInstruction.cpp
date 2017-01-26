@@ -49,7 +49,7 @@ DCInstruction::DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI,
                              const unsigned *SemanticsArray,
                              const uint64_t *ConstantArray)
     : DCB(DCB), TheMCInst(MCI), Builder(DCB.getBasicBlock()),
-      SemaIdx(OpcodeToSemaIdx[MCI.Inst.getOpcode()]), ResEVT(), Vals(),
+      SemaIdx(OpcodeToSemaIdx[MCI.Inst.getOpcode()]), ResTy(nullptr), Vals(),
       OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
       ConstantArray(ConstantArray) {
 
@@ -83,6 +83,22 @@ bool DCInstruction::translate() {
 
   Builder.ClearInsertionPoint();
   return Success;
+}
+
+Type *DCInstruction::NextTy() {
+  auto NextVT = (MVT::SimpleValueType)Next();
+  switch (NextVT) {
+  case MVT::Other:
+    return Builder.getVoidTy();
+  case MVT::iPTR:
+    // FIXME: This assumes 64-bit pointers; we have no way of knowing otherwise.
+    assert(Builder.getInt64Ty() ==
+               getModule()->getDataLayout().getIntPtrType(getContext()) &&
+           "Target DataLayout disagrees on pointer width");
+    return Builder.getInt64Ty();
+  default:
+    return EVT(NextVT).getTypeForEVT(getContext());
+  }
 }
 
 void DCInstruction::insertCall(Value *CallTarget) {
@@ -121,9 +137,8 @@ void DCInstruction::translateBinOp(Instruction::BinaryOps Opc) {
 }
 
 void DCInstruction::translateCastOp(Instruction::CastOps Opc) {
-  Type *ResType = ResEVT.getTypeForEVT(getContext());
   Value *Val = getNextOperand();
-  registerResult(Builder.CreateCast(Opc, Val, ResType));
+  registerResult(Builder.CreateCast(Opc, Val, ResTy));
 }
 
 bool DCInstruction::tryTranslateInst() {
@@ -151,7 +166,7 @@ bool DCInstruction::tryTranslateInst() {
 }
 
 bool DCInstruction::translateOpcode(unsigned Opcode) {
-  ResEVT = NextVT();
+  ResTy = NextTy();
   if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START)
     return translateTargetOpcode(Opcode);
 
@@ -281,11 +296,9 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
   }
 
   case ISD::SMUL_LOHI: {
-    EVT Re2EVT = NextVT();
-    IntegerType *LoResType =
-        cast<IntegerType>(ResEVT.getTypeForEVT(getContext()));
-    IntegerType *HiResType =
-        cast<IntegerType>(Re2EVT.getTypeForEVT(getContext()));
+    Type *Res2Ty = NextTy();
+    IntegerType *LoResType = cast<IntegerType>(ResTy);
+    IntegerType *HiResType = cast<IntegerType>(Res2Ty);
     IntegerType *ResType = IntegerType::get(
         getContext(), LoResType->getBitWidth() + HiResType->getBitWidth());
     Value *Op1 = Builder.CreateSExt(getNextOperand(), ResType);
@@ -297,11 +310,9 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::UMUL_LOHI: {
-    EVT Re2EVT = NextVT();
-    IntegerType *LoResType =
-        cast<IntegerType>(ResEVT.getTypeForEVT(getContext()));
-    IntegerType *HiResType =
-        cast<IntegerType>(Re2EVT.getTypeForEVT(getContext()));
+    Type *Res2Ty = NextTy();
+    IntegerType *LoResType = cast<IntegerType>(ResTy);
+    IntegerType *HiResType = cast<IntegerType>(Res2Ty);
     IntegerType *ResType = IntegerType::get(
         getContext(), LoResType->getBitWidth() + HiResType->getBitWidth());
     Value *Op1 = Builder.CreateZExt(getNextOperand(), ResType);
@@ -313,7 +324,7 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::LOAD: {
-    Type *ResPtrTy = ResEVT.getTypeForEVT(getContext())->getPointerTo();
+    Type *ResPtrTy = ResTy->getPointerTo();
     Value *Ptr = getNextOperand();
     if (!Ptr->getType()->isPointerTy())
       Ptr = Builder.CreateIntToPtr(Ptr, ResPtrTy);
@@ -378,15 +389,13 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
   }
   case DCINS::GET_RC: {
     unsigned MIOperandNo = Next();
-    Type *ResType = ResEVT.getTypeForEVT(getContext());
     Value *Reg = getDRS().getRegAsInt(getRegOp(MIOperandNo));
-    if (ResType->getPrimitiveSizeInBits() <
+    if (ResTy->getPrimitiveSizeInBits() <
         Reg->getType()->getPrimitiveSizeInBits())
       Reg = Builder.CreateTrunc(
-          Reg,
-          IntegerType::get(getContext(), ResType->getPrimitiveSizeInBits()));
-    if (!ResType->isIntegerTy())
-      Reg = Builder.CreateBitCast(Reg, ResType);
+          Reg, IntegerType::get(getContext(), ResTy->getPrimitiveSizeInBits()));
+    if (!ResTy->isIntegerTy())
+      Reg = Builder.CreateBitCast(Reg, ResTy);
     registerResult(Reg);
     break;
   }
@@ -420,21 +429,24 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
   }
   case DCINS::CONSTANT_OP: {
     unsigned MIOperandNo = Next();
-    Type *ResType = ResEVT.getTypeForEVT(getContext());
     Value *Cst =
-        ConstantInt::get(cast<IntegerType>(ResType), getImmOp(MIOperandNo));
+        ConstantInt::get(cast<IntegerType>(ResTy), getImmOp(MIOperandNo));
     registerResult(Cst);
     break;
   }
   case DCINS::MOV_CONSTANT: {
     uint64_t ValIdx = Next();
-    Type *ResType = nullptr;
-    if (ResEVT.getSimpleVT() == MVT::iPTR)
-      // FIXME: what should we do here? Maybe use DL's intptr type?
-      ResType = Builder.getInt64Ty();
-    else
-      ResType = ResEVT.getTypeForEVT(getContext());
-    registerResult(ConstantInt::get(ResType, ConstantArray[ValIdx]));
+
+    const DataLayout &DL = getModule()->getDataLayout();
+    Type *CTy = ResTy;
+    if (!CTy->isIntegerTy())
+      CTy = Builder.getIntNTy(DL.getTypeSizeInBits(CTy));
+    Constant *C = ConstantInt::get(CTy, ConstantArray[ValIdx]);
+    C = ConstantExpr::getCast(CastInst::getCastOpcode(C, /*SrcIsSigned=*/false,
+                                                      ResTy,
+                                                      /*DstIsSigned=*/false),
+                              C, ResTy);
+    registerResult(C);
     break;
   }
   case DCINS::IMPLICIT: {
@@ -442,10 +454,9 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::BSWAP: {
-    Type *ResType = ResEVT.getTypeForEVT(getContext());
     Value *Op = getNextOperand();
     Value *IntDecl =
-        Intrinsic::getDeclaration(getModule(), Intrinsic::bswap, ResType);
+        Intrinsic::getDeclaration(getModule(), Intrinsic::bswap, ResTy);
     registerResult(Builder.CreateCall(IntDecl, Op));
     break;
   }
@@ -485,9 +496,8 @@ bool DCInstruction::translateExtLoad(Type *MemTy, bool isSExt) {
   Value *Ptr = getNextOperand();
   Ptr = Builder.CreateBitOrPointerCast(Ptr, MemTy->getPointerTo());
   Value *V = Builder.CreateLoad(MemTy, Ptr);
-  Type *ResType = ResEVT.getTypeForEVT(getContext());
-  registerResult(isSExt ? Builder.CreateSExt(V, ResType)
-                        : Builder.CreateZExt(V, ResType));
+  registerResult(isSExt ? Builder.CreateSExt(V, ResTy)
+                        : Builder.CreateZExt(V, ResTy));
   return true;
 }
 
@@ -501,7 +511,7 @@ bool DCInstruction::translatePredicate(unsigned Pred) {
   case TargetOpcode::Predicate::alignedload512:
   // FIXME: Take advantage of the implied alignment.
   case TargetOpcode::Predicate::load: {
-    Type *ResPtrTy = ResEVT.getTypeForEVT(getContext())->getPointerTo();
+    Type *ResPtrTy = ResTy->getPointerTo();
     Value *Ptr = getNextOperand();
     if (!Ptr->getType()->isPointerTy())
       Ptr = Builder.CreateIntToPtr(Ptr, ResPtrTy);
