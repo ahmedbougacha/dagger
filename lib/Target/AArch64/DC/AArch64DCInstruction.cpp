@@ -57,6 +57,15 @@ bool AArch64DCInstruction::translateTargetInst() {
 }
 
 bool AArch64DCInstruction::translateTargetOpcode(unsigned Opcode) {
+  switch (Opcode) {
+  case AArch64ISD::CALL: {
+    Value *Op1 = getNextOperand();
+    insertCall(Op1);
+    return true;
+  }
+  default:
+    break;
+  }
   errs() << "Unknown AArch64 opcode found in semantics: " + utostr(Opcode)
          << "\n";
   return false;
@@ -69,6 +78,11 @@ Value *AArch64DCInstruction::translateComplexPattern(unsigned Pattern) {
 Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
                                                     unsigned MIOperandNo) {
   switch (OperandType) {
+  case AArch64::OpTypes::am_bl_target: {
+    auto *ResTy = Builder.getInt8PtrTy();
+    Value *ImmV = Builder.getInt64(getImmOp(MIOperandNo));
+    return Builder.CreateIntToPtr(ImmV, ResTy);
+  }
   case AArch64::OpTypes::logical_shifted_reg32:
   case AArch64::OpTypes::logical_shifted_reg64: {
     Value *R = getReg(getRegOp(MIOperandNo));
@@ -86,9 +100,24 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
 
     return R;
   }
+  case AArch64::OpTypes::simm7s4: {
+    return translateScaledIndexOperand(MIOperandNo, 4, true);
+  }
+  case AArch64::OpTypes::simm7s8: {
+    return translateScaledIndexOperand(MIOperandNo, 8, true);
+  }
+  case AArch64::OpTypes::simm7s16: {
+    return translateScaledIndexOperand(MIOperandNo, 16, true);
+  }
   default:
     return nullptr;
   }
 }
 
 bool AArch64DCInstruction::translateImplicit(unsigned RegNo) { return false; }
+
+Value *AArch64DCInstruction::translateScaledIndexOperand(unsigned MIOperandNo, unsigned scale, bool isSigned) {
+  APInt val = APInt(32, getImmOp(MIOperandNo), isSigned);
+  APInt apScale = APInt(32, scale, false);
+  return Builder.getInt(val * apScale);
+}

@@ -27,6 +27,7 @@ public:
                                 unsigned MIOperandNo) override;
   bool translateImplicit(unsigned RegNo) override;
 
+
   AArch64DCBasicBlock &getParent() {
     return static_cast<AArch64DCBasicBlock &>(DCInstruction::getParent());
   }
@@ -35,6 +36,9 @@ private:
   AArch64RegisterSema &getDRS() {
     return static_cast<AArch64RegisterSema &>(DCInstruction::getDRS());
   }
+  Value *translateScaledIndexOperand(unsigned MIOperandNo,
+                                     unsigned scale,
+                                     bool isSigned);
 };
 
 } // end llvm namespace
