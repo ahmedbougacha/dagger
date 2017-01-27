@@ -36,7 +36,7 @@ public:
                                 unsigned MIOperandNo) override;
   bool translateImplicit(unsigned RegNo) override;
 
-  bool translateTargetInst() override;
+  bool translateTargetInst(unsigned &InstOpcode) override;
 
   X86DCBasicBlock &getParent() {
     return static_cast<X86DCBasicBlock &>(DCInstruction::getParent());

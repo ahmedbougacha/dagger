@@ -142,10 +142,11 @@ void DCInstruction::translateCastOp(Instruction::CastOps Opc) {
 }
 
 bool DCInstruction::tryTranslateInst() {
-  if (translateTargetInst())
+  unsigned InstOpcode = TheMCInst.Inst.getOpcode();
+  if (translateTargetInst(InstOpcode))
     return true;
 
-  SemaIdx = OpcodeToSemaIdx[TheMCInst.Inst.getOpcode()];
+  SemaIdx = OpcodeToSemaIdx[InstOpcode];
   if (SemaIdx == ~0U)
     return false;
 

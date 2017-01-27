@@ -20,7 +20,7 @@ class AArch64DCInstruction final : public DCInstruction {
 public:
   AArch64DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI);
 
-  bool translateTargetInst() override;
+  bool translateTargetInst(unsigned &InstOpcode) override;
   bool translateTargetOpcode(unsigned Opcode) override;
   Value *translateComplexPattern(unsigned CP) override;
   Value *translateCustomOperand(unsigned OperandType,

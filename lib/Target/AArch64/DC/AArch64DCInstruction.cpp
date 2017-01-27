@@ -43,10 +43,8 @@ AArch64DCInstruction::AArch64DCInstruction(DCBasicBlock &DCB,
     : DCInstruction(DCB, MCI, AArch64::OpcodeToSemaIdx, AArch64::InstSemantics,
                     AArch64::ConstantArray) {}
 
-bool AArch64DCInstruction::translateTargetInst() {
-  unsigned Opcode = TheMCInst.Inst.getOpcode();
-
-  switch (Opcode) {
+bool AArch64DCInstruction::translateTargetInst(unsigned &InstOpcode) {
+  switch (InstOpcode) {
   case AArch64::RET: {
     setReg(AArch64::PC, getReg(getRegOp(0)));
     Builder.CreateBr(getParent().getParent().getExitBlock());

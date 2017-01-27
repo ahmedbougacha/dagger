@@ -98,10 +98,12 @@ public:
   virtual Value *translateComplexPattern(unsigned Pattern);
   virtual bool translatePredicate(unsigned Pred);
 
-  // Try to do a custom translation of a full instruction.
-  // Called before translating an instruction.
-  // Return true if the translation shouldn't proceed.
-  virtual bool translateTargetInst() { return false; }
+  /// Try to do a custom translation of a full instruction.
+  /// Called before translating an instruction.
+  /// Return true if the translation shouldn't proceed.
+  /// The \p InstOpcode can be modified by the implementation to proceed with
+  /// the translation as if that was the currently translated instruction.
+  virtual bool translateTargetInst(unsigned &InstOpcode) { return false; }
 
 private:
   bool tryTranslateInst();

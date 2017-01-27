@@ -47,9 +47,7 @@ X86DCInstruction::X86DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI)
     : DCInstruction(DCB, MCI, X86::OpcodeToSemaIdx, X86::InstSemantics,
                     X86::ConstantArray) {}
 
-bool X86DCInstruction::translateTargetInst() {
-  unsigned Opcode = TheMCInst.Inst.getOpcode();
-
+bool X86DCInstruction::translateTargetInst(unsigned &InstOpcode) {
   if (getParent().LastPrefix) {
     unsigned Prefix = getParent().LastPrefix;
     // Reset the prefix.
@@ -57,13 +55,51 @@ bool X86DCInstruction::translateTargetInst() {
 
     if (Prefix == X86::LOCK_PREFIX) {
       unsigned XADDMemOpType = X86::OpTypes::OPERAND_TYPE_INVALID;
-      bool isINCDEC = false;
       AtomicRMWInst::BinOp AtomicOpc = AtomicRMWInst::BAD_BINOP;
       Instruction::BinaryOps Opc = Instruction::FAdd; // Invalid initializer
-      switch (Opcode) {
+      switch (InstOpcode) {
       default:
         break;
-      case X86::CMPXCHG8rm:
+
+#define LOCK_PREFIXED(Opc)                                                     \
+  X86::Opc : InstOpcode = X86::LOCK_##Opc;                                     \
+  return false
+
+      case LOCK_PREFIXED(ADD16mi); case LOCK_PREFIXED(ADD16mi8);
+          case LOCK_PREFIXED(ADD16mr); case LOCK_PREFIXED(ADD32mi);
+          case LOCK_PREFIXED(ADD32mi8); case LOCK_PREFIXED(ADD32mr);
+          case LOCK_PREFIXED(ADD64mi32); case LOCK_PREFIXED(ADD64mi8);
+          case LOCK_PREFIXED(ADD64mr); case LOCK_PREFIXED(ADD8mi);
+          case LOCK_PREFIXED(ADD8mr); case LOCK_PREFIXED(AND16mi);
+          case LOCK_PREFIXED(AND16mi8); case LOCK_PREFIXED(AND16mr);
+          case LOCK_PREFIXED(AND32mi); case LOCK_PREFIXED(AND32mi8);
+          case LOCK_PREFIXED(AND32mr); case LOCK_PREFIXED(AND64mi32);
+          case LOCK_PREFIXED(AND64mi8); case LOCK_PREFIXED(AND64mr);
+          case LOCK_PREFIXED(AND8mi); case LOCK_PREFIXED(AND8mr);
+          case LOCK_PREFIXED(DEC16m); case LOCK_PREFIXED(DEC32m);
+          case LOCK_PREFIXED(DEC64m); case LOCK_PREFIXED(DEC8m);
+          case LOCK_PREFIXED(INC16m); case LOCK_PREFIXED(INC32m);
+          case LOCK_PREFIXED(INC64m); case LOCK_PREFIXED(INC8m);
+          case LOCK_PREFIXED(OR16mi); case LOCK_PREFIXED(OR16mi8);
+          case LOCK_PREFIXED(OR16mr); case LOCK_PREFIXED(OR32mi);
+          case LOCK_PREFIXED(OR32mi8); case LOCK_PREFIXED(OR32mr);
+          case LOCK_PREFIXED(OR64mi32); case LOCK_PREFIXED(OR64mi8);
+          case LOCK_PREFIXED(OR64mr); case LOCK_PREFIXED(OR8mi);
+          case LOCK_PREFIXED(OR8mr); case LOCK_PREFIXED(SUB16mi);
+          case LOCK_PREFIXED(SUB16mi8); case LOCK_PREFIXED(SUB16mr);
+          case LOCK_PREFIXED(SUB32mi); case LOCK_PREFIXED(SUB32mi8);
+          case LOCK_PREFIXED(SUB32mr); case LOCK_PREFIXED(SUB64mi32);
+          case LOCK_PREFIXED(SUB64mi8); case LOCK_PREFIXED(SUB64mr);
+          case LOCK_PREFIXED(SUB8mi); case LOCK_PREFIXED(SUB8mr);
+          case LOCK_PREFIXED(XOR16mi); case LOCK_PREFIXED(XOR16mi8);
+          case LOCK_PREFIXED(XOR16mr); case LOCK_PREFIXED(XOR32mi);
+          case LOCK_PREFIXED(XOR32mi8); case LOCK_PREFIXED(XOR32mr);
+          case LOCK_PREFIXED(XOR64mi32); case LOCK_PREFIXED(XOR64mi8);
+          case LOCK_PREFIXED(XOR64mr); case LOCK_PREFIXED(XOR8mi);
+          case LOCK_PREFIXED(XOR8mr);
+#undef LOCK_PREFIXED
+
+          case X86::CMPXCHG8rm:
         translateCMPXCHG(X86::OpTypes::i8mem, X86::AL);
         return true;
       case X86::CMPXCHG16rm:
@@ -88,143 +124,31 @@ bool X86DCInstruction::translateTargetInst() {
       case X86::XADD64rm:
         XADDMemOpType = X86::OpTypes::i64mem;
         break;
-
-      case X86::INC8m:
-      case X86::INC16m:
-      case X86::INC32m:
-      case X86::INC64m:
-        isINCDEC = true; // fallthrough
-      case X86::ADD8mr:
-      case X86::ADD16mr:
-      case X86::ADD32mr:
-      case X86::ADD64mr:
-      case X86::ADD8mi:
-      case X86::ADD16mi:
-      case X86::ADD32mi:
-      case X86::ADD16mi8:
-      case X86::ADD32mi8:
-      case X86::ADD64mi8:
-      case X86::ADD64mi32:
-        AtomicOpc = AtomicRMWInst::Add;
-        Opc = Instruction::Add;
-        break;
-      case X86::DEC8m:
-      case X86::DEC16m:
-      case X86::DEC32m:
-      case X86::DEC64m:
-        isINCDEC = true; // fallthrough
-      case X86::SUB8mr:
-      case X86::SUB16mr:
-      case X86::SUB32mr:
-      case X86::SUB64mr:
-      case X86::SUB8mi:
-      case X86::SUB16mi:
-      case X86::SUB32mi:
-      case X86::SUB16mi8:
-      case X86::SUB32mi8:
-      case X86::SUB64mi8:
-      case X86::SUB64mi32:
-        AtomicOpc = AtomicRMWInst::Sub;
-        Opc = Instruction::Sub;
-        break;
-      case X86::OR8mr:
-      case X86::OR16mr:
-      case X86::OR32mr:
-      case X86::OR64mr:
-      case X86::OR8mi:
-      case X86::OR16mi:
-      case X86::OR32mi:
-      case X86::OR16mi8:
-      case X86::OR32mi8:
-      case X86::OR64mi8:
-      case X86::OR64mi32:
-        AtomicOpc = AtomicRMWInst::Or;
-        Opc = Instruction::Or;
-        break;
-      case X86::XOR8mr:
-      case X86::XOR16mr:
-      case X86::XOR32mr:
-      case X86::XOR64mr:
-      case X86::XOR8mi:
-      case X86::XOR16mi:
-      case X86::XOR32mi:
-      case X86::XOR16mi8:
-      case X86::XOR32mi8:
-      case X86::XOR64mi8:
-      case X86::XOR64mi32:
-        AtomicOpc = AtomicRMWInst::Xor;
-        Opc = Instruction::Xor;
-        break;
-      case X86::AND8mr:
-      case X86::AND16mr:
-      case X86::AND32mr:
-      case X86::AND64mr:
-      case X86::AND8mi:
-      case X86::AND16mi:
-      case X86::AND32mi:
-      case X86::AND16mi8:
-      case X86::AND32mi8:
-      case X86::AND64mi8:
-      case X86::AND64mi32:
-        AtomicOpc = AtomicRMWInst::And;
-        Opc = Instruction::And;
-        break;
       }
 
       Value *PointerOperand = nullptr, *Operand2 = nullptr, *Result = nullptr;
 
-      // Either to a manual translation for XADD, or reuse the opcodes for
-      // normal prefixed instructions.
-      if (XADDMemOpType != X86::OpTypes::OPERAND_TYPE_INVALID) {
-        AtomicOpc = AtomicRMWInst::Add;
-        Opc = Instruction::Add;
-        PointerOperand = translateCustomOperand(XADDMemOpType, 0);
-        Operand2 = getReg(getRegOp(5));
-      } else {
-        if (AtomicOpc == AtomicRMWInst::BAD_BINOP)
-          llvm_unreachable("Unknown LOCK-prefixed instruction");
-
-        // First, translate the memory operand.
-        unsigned NextOpc = Next();
-        assert(NextOpc == DCINS::CUSTOM_OP &&
-               "Expected X86 memory operand for LOCK-prefixed instruction");
-        translateOpcode(NextOpc);
-        PointerOperand = Vals.back();
-
-        // Then, ignore the LOAD from that operand
-        NextOpc = Next();
-        assert(NextOpc == ISD::LOAD &&
-               "Expected to load operand for X86 LOCK-prefixed instruction");
-        /*VT=*/Next(); /*PointerOp=*/
-        Next();
-
-        // Finally, translate the second operand, if there is one.
-        if (isINCDEC) {
-          Operand2 = ConstantInt::get(
-              PointerOperand->getType()->getPointerElementType(), 1);
-        } else {
-          NextOpc = Next();
-          translateOpcode(NextOpc);
-          Operand2 = Vals.back();
-        }
-      }
+      // Do a manual translation for XADD.
+      AtomicOpc = AtomicRMWInst::Add;
+      Opc = Instruction::Add;
+      PointerOperand = translateCustomOperand(XADDMemOpType, 0);
+      Operand2 = getReg(getRegOp(5));
 
       // Translate LOCK-prefix into monotonic ordering.
       Value *Old = Builder.CreateAtomicRMW(AtomicOpc, PointerOperand, Operand2,
                                            AtomicOrdering::Monotonic);
 
-      // If this was a XADD instruction, set the register to the old value.
-      if (XADDMemOpType != X86::OpTypes::OPERAND_TYPE_INVALID)
-        setReg(getRegOp(5), Old);
+      // Set the register to the old value.
+      setReg(getRegOp(5), Old);
 
       // Finally, update EFLAGS.
       // FIXME: add support to X86DRS::updateEFLAGS for atomicrmw.
       Result = Builder.CreateBinOp(Opc, Old, Operand2);
-      getDRS().updateEFLAGS(Result, /*DontUpdateCF=*/isINCDEC);
+      getDRS().updateEFLAGS(Result);
       return true;
     } else if (Prefix == X86::REP_PREFIX) {
       unsigned SizeInBits = 0;
-      switch (Opcode) {
+      switch (InstOpcode) {
       default:
         llvm_unreachable("Unknown rep-prefixed instruction");
       case X86::RETQ: {
@@ -263,7 +187,7 @@ bool X86DCInstruction::translateTargetInst() {
     return false;
   }
 
-  switch (Opcode) {
+  switch (InstOpcode) {
   default:
     break;
   case X86::XCHG8rr:
@@ -285,7 +209,7 @@ bool X86DCInstruction::translateTargetInst() {
   case X86::XCHG64ar: {
     unsigned R1 = getRegOp(0);
     unsigned R2;
-    switch (Opcode) {
+    switch (InstOpcode) {
     case X86::XCHG16ar:
       R2 = X86::AX;
       break;
@@ -339,7 +263,7 @@ bool X86DCInstruction::translateTargetInst() {
 
   case X86::REP_PREFIX:
   case X86::LOCK_PREFIX: {
-    getParent().LastPrefix = Opcode;
+    getParent().LastPrefix = InstOpcode;
     return true;
   }
   }
