@@ -134,10 +134,9 @@ public:
   // As well as its first def index.
   unsigned LastDefNo = ~0U;
 
-  // Whether these semantics use an intrinsic.
-  bool HasIntrinsic = false;
-  // Whether these semantics use a complex pattern.
-  bool HasComplexPattern = false;
+  // Whether these semantics are unsupported, using constructs such as
+  // intrinsics or complex patterns.
+  bool IsUnsupported = false;
 };
 
 /// The core of the Pattern->Semantics translation: a linearization of the
@@ -176,7 +175,7 @@ private:
       if (Ty != MVT::isVoid)
         ++CurDefNo;
       if (Ty == MVT::Untyped)
-        I.HasIntrinsic = true;
+        I.IsUnsupported = true;
     }
     if (FirstDefNo != CurDefNo) {
       I.LastDefNo = FirstDefNo;
@@ -223,7 +222,9 @@ private:
     } else if (OpRec->isSubClassOf("RegisterClass")) {
       Op.Opcode = "DCINS::GET_RC";
     } else {
-      llvm_unreachable("Unknown operand type");
+      // Bail out if we encounter an operand that we don't understand.
+      I.IsUnsupported = true;
+      return LSResult(CurDefNo, Op.Types[0]);
     }
     LSResult R(CurDefNo, Op.Types[0]);
     Op.addOperand(utostr(OpInfo->MIOperandNo));
@@ -263,7 +264,10 @@ private:
       Op.Opcode = "DCINS::GET_REG";
       Op.addOperand(CGI.Namespace + "::" + OpRec->getName().str());
     } else {
-      llvm_unreachable("Unknown operand type");
+      // Bail out if we encounter a leaf that we don't understand.
+      // For instance, some nodes have VT operands, as leaf children.
+      I.IsUnsupported = true;
+      return LSResult(CurDefNo, Op.Types[0]);
     }
     LSResult R(CurDefNo, Op.Types[0]);
     addSemantics(Op);
@@ -339,13 +343,11 @@ private:
   LSResults flattenSDNode(const TreePatternNode &TPN) {
     LSNode NS(TPN);
 
+    if (TPN.getIntrinsicInfo(Target.CGPatterns))
+      I.IsUnsupported = true;
+
     Record *Operator = TPN.getOperator();
     if (Operator->isSubClassOf("ComplexPattern")) {
-
-      if (TPN.getIntrinsicInfo(Target.CGPatterns))
-        I.HasIntrinsic = true;
-      I.HasComplexPattern = false;
-
       NS.Opcode = "DCINS::COMPLEX_PATTERN";
       NS.addOperand(CGI.Namespace + "::ComplexPattern::" +
                     sanitizeSelectFuncToEnumVal(*Operator, Target.CGPatterns));
@@ -371,7 +373,7 @@ private:
         if (ResVT != MVT::isVoid)
           R.emplace_back(CurDefNo + i, ResVT);
         if (ResVT == MVT::Untyped)
-          I.HasIntrinsic = true;
+          I.IsUnsupported = true;
       }
 
       addSemantics(NS);
@@ -380,11 +382,6 @@ private:
 
     if (!Operator->isSubClassOf("SDNode"))
       llvm_unreachable("Unable to handle operator.");
-
-    if (TPN.getIntrinsicInfo(Target.CGPatterns))
-      I.HasIntrinsic = true;
-    if (TPN.getComplexPatternInfo(Target.CGPatterns))
-      I.HasComplexPattern = true;
 
     const SDNodeInfo &SDNI = Target.CGPatterns.getSDNodeInfo(Operator);
     NS.Opcode = SDNI.getEnumName();
@@ -539,9 +536,10 @@ SemanticsEmitter::SemanticsEmitter(RecordKeeper &Records)
     const CodeGenInstruction &CGI = *CGIByEnum[i];
     Record *TheDef = CGI.TheDef;
     const DAGInstruction &DI = CGPatterns.getInstruction(TheDef);
+
     if (InstIdx[i] != ~0U)
       continue;
-    if (DI.getPattern() && !CGI.isCodeGenOnly)
+    if (DI.getPattern() && !CGI.isPseudo)
       parseInstSemantics(i, CGI, *DI.getPattern());
   }
 }
@@ -556,9 +554,8 @@ void SemanticsEmitter::parseInstSemantics(unsigned InstEnumValue,
     Flat.flatten(*TPN);
   Flat.computeImplicitDefs();
 
-  // Ignore semantics that would involve intrinsics or complex patterns, as
-  // we don't really support either yet.
-  if (Sema.HasIntrinsic || Sema.HasComplexPattern)
+  // Ignore semantics that we don't support yet.
+  if (Sema.IsUnsupported)
     return;
 
   // Ignore semantics that imp-def multiple registers.
