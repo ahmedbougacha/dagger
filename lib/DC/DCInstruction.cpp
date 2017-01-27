@@ -46,10 +46,10 @@ extern "C" uintptr_t __llvm_dc_current_instr = 0;
 
 DCInstruction::DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI,
                              const unsigned *OpcodeToSemaIdx,
-                             const unsigned *SemanticsArray,
+                             const uint16_t *SemanticsArray,
                              const uint64_t *ConstantArray)
     : DCB(DCB), TheMCInst(MCI), Builder(DCB.getBasicBlock()),
-      SemaIdx(OpcodeToSemaIdx[MCI.Inst.getOpcode()]), ResTy(nullptr), Vals(),
+      SemaIdx(OpcodeToSemaIdx[MCI.Inst.getOpcode()]), ResTys(), Vals(),
       OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
       ConstantArray(ConstantArray) {
 
@@ -101,6 +101,11 @@ Type *DCInstruction::NextTy() {
   }
 }
 
+void DCInstruction::prepareOperands() {
+  for (unsigned OpI = 0; OpI != Ops.size(); ++OpI)
+    Ops[OpI] = Vals[Next()];
+}
+
 void DCInstruction::insertCall(Value *CallTarget) {
   if (ConstantInt *CI = dyn_cast<ConstantInt>(CallTarget)) {
     uint64_t Target = CI->getValue().getZExtValue();
@@ -129,16 +134,15 @@ void DCInstruction::insertCall(Value *CallTarget) {
 }
 
 void DCInstruction::translateBinOp(Instruction::BinaryOps Opc) {
-  Value *V1 = getNextOperand();
-  Value *V2 = getNextOperand();
-  if (Instruction::isShift(Opc) && V2->getType() != V1->getType())
-    V2 = Builder.CreateZExt(V2, V1->getType());
-  registerResult(Builder.CreateBinOp(Opc, V1, V2));
+  Value *V0 = getOperand(0);
+  Value *V1 = getOperand(1);
+  if (Instruction::isShift(Opc) && V1->getType() != V0->getType())
+    V1 = Builder.CreateZExt(V1, V0->getType());
+  addResult(Builder.CreateBinOp(Opc, V0, V1));
 }
 
 void DCInstruction::translateCastOp(Instruction::CastOps Opc) {
-  Value *Val = getNextOperand();
-  registerResult(Builder.CreateCast(Opc, Val, ResTy));
+  addResult(Builder.CreateCast(Opc, getOperand(0), getResultTy(0)));
 }
 
 bool DCInstruction::tryTranslateInst() {
@@ -165,10 +169,154 @@ bool DCInstruction::tryTranslateInst() {
   return true;
 }
 
+bool DCInstruction::translateDCOp(uint16_t Opcode) {
+  switch (Opcode) {
+  case DCINS::PUT_RC: {
+    unsigned MIOperandNo = Next();
+    unsigned RegNo = getRegOp(MIOperandNo);
+    Value *Res = Vals[Next()];
+    IntegerType *RegType = getDRS().getRegIntType(RegNo);
+    if (Res->getType()->isPointerTy())
+      Res = Builder.CreatePtrToInt(Res, RegType);
+    if (!Res->getType()->isIntegerTy())
+      Res = Builder.CreateBitCast(
+          Res, IntegerType::get(getContext(),
+                                Res->getType()->getPrimitiveSizeInBits()));
+    if (Res->getType()->getPrimitiveSizeInBits() < RegType->getBitWidth())
+      Res = getDRS().insertBitsInValue(getDRS().getRegAsInt(RegNo), Res);
+    assert(Res->getType() == RegType);
+    setReg(RegNo, Res);
+    break;
+  }
+  case DCINS::PUT_REG: {
+    unsigned RegNo = Next();
+    Value *Res = Vals[Next()];
+    setReg(RegNo, Res);
+    break;
+  }
+  case DCINS::GET_RC: {
+    unsigned MIOperandNo = Next();
+    Value *Reg = getDRS().getRegAsInt(getRegOp(MIOperandNo));
+    if (getResultTy(0)->getPrimitiveSizeInBits() <
+        Reg->getType()->getPrimitiveSizeInBits())
+      Reg = Builder.CreateTrunc(
+          Reg, IntegerType::get(getContext(),
+                                getResultTy(0)->getPrimitiveSizeInBits()));
+    if (!getResultTy(0)->isIntegerTy())
+      Reg = Builder.CreateBitCast(Reg, getResultTy(0));
+    addResult(Reg);
+    break;
+  }
+  case DCINS::GET_REG: {
+    unsigned RegNo = Next();
+    Value *RegVal = getReg(RegNo);
+    addResult(RegVal);
+    break;
+  }
+  case DCINS::CUSTOM_OP: {
+    unsigned OperandType = Next(), MIOperandNo = Next();
+    Value *Op = translateCustomOperand(OperandType, MIOperandNo);
+    if (!Op)
+      return false;
+    addResult(Op);
+    break;
+  }
+  case DCINS::COMPLEX_PATTERN: {
+    unsigned Pattern = Next();
+    // Fill the operands array, taking care to remove our Pattern operand.
+    Ops.pop_back();
+    prepareOperands();
+    Value *Op = translateComplexPattern(Pattern);
+    if (!Op)
+      return false;
+    addResult(Op);
+    break;
+  }
+  case DCINS::PREDICATE: {
+    unsigned Pred = Next();
+    // Fill the operands array, taking care to remove our Pred operand.
+    Ops.pop_back();
+    prepareOperands();
+    if (!translatePredicate(Pred))
+      return false;
+    break;
+  }
+  case DCINS::CONSTANT_OP: {
+    unsigned MIOperandNo = Next();
+    Value *Cst = ConstantInt::get(cast<IntegerType>(getResultTy(0)),
+                                  getImmOp(MIOperandNo));
+    addResult(Cst);
+    break;
+  }
+  case DCINS::MOV_CONSTANT: {
+    uint64_t ValIdx = Next();
+
+    const DataLayout &DL = getModule()->getDataLayout();
+    Type *CTy = getResultTy(0);
+    if (!CTy->isIntegerTy())
+      CTy = Builder.getIntNTy(DL.getTypeSizeInBits(CTy));
+    Constant *C = ConstantInt::get(CTy, ConstantArray[ValIdx]);
+    C = ConstantExpr::getCast(CastInst::getCastOpcode(C, /*SrcIsSigned=*/false,
+                                                      getResultTy(0),
+                                                      /*DstIsSigned=*/false),
+                              C, getResultTy(0));
+    addResult(C);
+    break;
+  }
+  case DCINS::IMPLICIT: {
+    translateImplicit(Next());
+    break;
+  }
+  default:
+    llvm_unreachable("Unexpected non-DCINS opcode");
+  }
+  return true;
+}
+
 bool DCInstruction::translateOpcode(unsigned Opcode) {
-  ResTy = NextTy();
-  if (Opcode >= ISD::BUILTIN_OP_END && Opcode < DCINS::DC_OPCODE_START)
-    return translateTargetOpcode(Opcode);
+  // We already ate the opcode; the next element in the semantics array is the
+  // "signature", with:
+  // - in the high 8 bits: the number of results
+  // - in the low 8 bits: the number of Value operands.
+  const uint16_t Signature = Next();
+  const uint8_t NumResults = Signature >> 8;
+  const uint8_t NumOperands = Signature & 0xFF;
+
+  // Prepare our result type array.
+  ResTys.clear();
+  ResTys.resize(NumResults);
+
+  // Prepare our operand array.
+  Ops.clear();
+  Ops.resize(NumOperands);
+
+  // Next in the semantics array are the NumResults result types.
+  for (unsigned ResI = 0; ResI != NumResults; ++ResI)
+    ResTys[ResI] = NextTy();
+
+  // We promised to generate NumResults results.  Make sure we didn't lie.
+  const unsigned OldNumVals = Vals.size();
+  auto DoAndCheckResults = [&](bool Success) {
+    assert((!Success ||
+        (Vals.size() == OldNumVals + NumResults)) &&
+        "Operation didn't define as many results as declared in its signature");
+    return Success;
+  };
+
+  // Next are the operands, which are always an index in the table of previously
+  // produced results, except for the special DCINS builtin operations, which
+  // have operation-specific behavior.  Deal with those first.
+  if (Opcode >= DCINS::DC_OPCODE_START && Opcode <= DCINS::END_OF_INSTRUCTION)
+    return DoAndCheckResults(translateDCOp(Opcode));
+
+  // Finally, handle the regular (ISD) operations.  The remaining elements in
+  // the semantics array entry is the index of each operand in the Vals table.
+  prepareOperands();
+
+  // At this point, we prepared the types and operands.  We just need to do
+  // the translation, starting with the target-specific nodes.
+  if (Opcode >= ISD::BUILTIN_OP_END)
+    return DoAndCheckResults(translateTargetOpcode(Opcode));
 
   switch (Opcode) {
   case ISD::ADD:
@@ -258,21 +406,21 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
     break;
 
   case ISD::FSQRT: {
-    Value *V = getNextOperand();
-    registerResult(Builder.CreateCall(
+    Value *V = getOperand(0);
+    addResult(Builder.CreateCall(
         Intrinsic::getDeclaration(getModule(), Intrinsic::sqrt, V->getType()),
         {V}));
     break;
   }
 
   case ISD::ROTL: {
-    Value *LHS = getNextOperand();
+    Value *LHS = getOperand(0);
     Type *Ty = LHS->getType();
     assert(Ty->isIntegerTy());
-    Value *RHS = Builder.CreateZExt(getNextOperand(), Ty);
+    Value *RHS = Builder.CreateZExt(getOperand(1), Ty);
     // FIXME: RHS needs to be tweaked to avoid undefined results.
     Value *Shl = Builder.CreateShl(LHS, RHS);
-    registerResult(Builder.CreateOr(
+    addResult(Builder.CreateOr(
         Shl,
         Builder.CreateLShr(
             LHS, Builder.CreateSub(
@@ -281,61 +429,59 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
   }
 
   case ISD::INSERT_VECTOR_ELT: {
-    Value *Vec = getNextOperand();
-    Value *Val = getNextOperand();
-    Value *Idx = getNextOperand();
-    registerResult(Builder.CreateInsertElement(Vec, Val, Idx));
+    Value *Vec = getOperand(0);
+    Value *Val = getOperand(1);
+    Value *Idx = getOperand(2);
+    addResult(Builder.CreateInsertElement(Vec, Val, Idx));
     break;
   }
 
   case ISD::EXTRACT_VECTOR_ELT: {
-    Value *Val = getNextOperand();
-    Value *Idx = getNextOperand();
-    registerResult(Builder.CreateExtractElement(Val, Idx));
+    Value *Val = getOperand(0);
+    Value *Idx = getOperand(1);
+    addResult(Builder.CreateExtractElement(Val, Idx));
     break;
   }
 
   case ISD::SMUL_LOHI: {
-    Type *Res2Ty = NextTy();
-    IntegerType *LoResType = cast<IntegerType>(ResTy);
-    IntegerType *HiResType = cast<IntegerType>(Res2Ty);
+    IntegerType *LoResType = cast<IntegerType>(getResultTy(0));
+    IntegerType *HiResType = cast<IntegerType>(getResultTy(1));
     IntegerType *ResType = IntegerType::get(
         getContext(), LoResType->getBitWidth() + HiResType->getBitWidth());
-    Value *Op1 = Builder.CreateSExt(getNextOperand(), ResType);
-    Value *Op2 = Builder.CreateSExt(getNextOperand(), ResType);
-    Value *Full = Builder.CreateMul(Op1, Op2);
-    registerResult(Builder.CreateTrunc(Full, LoResType));
-    registerResult(Builder.CreateTrunc(
+    Value *Op0 = Builder.CreateSExt(getOperand(0), ResType);
+    Value *Op2 = Builder.CreateSExt(getOperand(1), ResType);
+    Value *Full = Builder.CreateMul(Op0, Op2);
+    addResult(Builder.CreateTrunc(Full, LoResType));
+    addResult(Builder.CreateTrunc(
         Builder.CreateLShr(Full, LoResType->getBitWidth()), HiResType));
     break;
   }
   case ISD::UMUL_LOHI: {
-    Type *Res2Ty = NextTy();
-    IntegerType *LoResType = cast<IntegerType>(ResTy);
-    IntegerType *HiResType = cast<IntegerType>(Res2Ty);
+    IntegerType *LoResType = cast<IntegerType>(getResultTy(0));
+    IntegerType *HiResType = cast<IntegerType>(getResultTy(1));
     IntegerType *ResType = IntegerType::get(
         getContext(), LoResType->getBitWidth() + HiResType->getBitWidth());
-    Value *Op1 = Builder.CreateZExt(getNextOperand(), ResType);
-    Value *Op2 = Builder.CreateZExt(getNextOperand(), ResType);
-    Value *Full = Builder.CreateMul(Op1, Op2);
-    registerResult(Builder.CreateTrunc(Full, LoResType));
-    registerResult(Builder.CreateTrunc(
+    Value *Op0 = Builder.CreateZExt(getOperand(0), ResType);
+    Value *Op2 = Builder.CreateZExt(getOperand(1), ResType);
+    Value *Full = Builder.CreateMul(Op0, Op2);
+    addResult(Builder.CreateTrunc(Full, LoResType));
+    addResult(Builder.CreateTrunc(
         Builder.CreateLShr(Full, LoResType->getBitWidth()), HiResType));
     break;
   }
   case ISD::LOAD: {
-    Type *ResPtrTy = ResTy->getPointerTo();
-    Value *Ptr = getNextOperand();
+    Type *ResPtrTy = getResultTy(0)->getPointerTo();
+    Value *Ptr = getOperand(0);
     if (!Ptr->getType()->isPointerTy())
       Ptr = Builder.CreateIntToPtr(Ptr, ResPtrTy);
     else if (Ptr->getType() != ResPtrTy)
       Ptr = Builder.CreateBitCast(Ptr, ResPtrTy);
-    registerResult(Builder.CreateAlignedLoad(Ptr, 1));
+    addResult(Builder.CreateAlignedLoad(Ptr, 1));
     break;
   }
   case ISD::STORE: {
-    Value *Val = getNextOperand();
-    Value *Ptr = getNextOperand();
+    Value *Val = getOperand(0);
+    Value *Ptr = getOperand(1);
     Type *ValPtrTy = Val->getType()->getPointerTo();
     Type *PtrTy = Ptr->getType();
     if (!PtrTy->isPointerTy())
@@ -346,16 +492,16 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
     break;
   }
   case ISD::BRIND: {
-    Value *Op1 = getNextOperand();
-    setReg(getDRS().MRI.getProgramCounter(), Op1);
-    insertCall(Op1);
+    Value *Op0 = getOperand(0);
+    setReg(getDRS().MRI.getProgramCounter(), Op0);
+    insertCall(Op0);
     Builder.CreateBr(getParent().getParent().getExitBlock());
     break;
   }
   case ISD::BR: {
-    Value *Op1 = getNextOperand();
-    uint64_t Target = cast<ConstantInt>(Op1)->getValue().getZExtValue();
-    setReg(getDRS().MRI.getProgramCounter(), Op1);
+    Value *Op0 = getOperand(0);
+    uint64_t Target = cast<ConstantInt>(Op0)->getValue().getZExtValue();
+    setReg(getDRS().MRI.getProgramCounter(), Op0);
     Builder.CreateBr(getParent().getParent().getOrCreateBasicBlock(Target));
     break;
   }
@@ -364,106 +510,17 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
         Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
     break;
   }
-  case DCINS::PUT_RC: {
-    unsigned MIOperandNo = Next();
-    unsigned RegNo = getRegOp(MIOperandNo);
-    Value *Res = getNextOperand();
-    IntegerType *RegType = getDRS().getRegIntType(RegNo);
-    if (Res->getType()->isPointerTy())
-      Res = Builder.CreatePtrToInt(Res, RegType);
-    if (!Res->getType()->isIntegerTy())
-      Res = Builder.CreateBitCast(
-          Res, IntegerType::get(getContext(),
-                                Res->getType()->getPrimitiveSizeInBits()));
-    if (Res->getType()->getPrimitiveSizeInBits() < RegType->getBitWidth())
-      Res = getDRS().insertBitsInValue(getDRS().getRegAsInt(RegNo), Res);
-    assert(Res->getType() == RegType);
-    setReg(RegNo, Res);
-    break;
-  }
-  case DCINS::PUT_REG: {
-    unsigned RegNo = Next();
-    Value *Res = getNextOperand();
-    setReg(RegNo, Res);
-    break;
-  }
-  case DCINS::GET_RC: {
-    unsigned MIOperandNo = Next();
-    Value *Reg = getDRS().getRegAsInt(getRegOp(MIOperandNo));
-    if (ResTy->getPrimitiveSizeInBits() <
-        Reg->getType()->getPrimitiveSizeInBits())
-      Reg = Builder.CreateTrunc(
-          Reg, IntegerType::get(getContext(), ResTy->getPrimitiveSizeInBits()));
-    if (!ResTy->isIntegerTy())
-      Reg = Builder.CreateBitCast(Reg, ResTy);
-    registerResult(Reg);
-    break;
-  }
-  case DCINS::GET_REG: {
-    unsigned RegNo = Next();
-    Value *RegVal = getReg(RegNo);
-    registerResult(RegVal);
-    break;
-  }
-  case DCINS::CUSTOM_OP: {
-    unsigned OperandType = Next(), MIOperandNo = Next();
-    Value *Op = translateCustomOperand(OperandType, MIOperandNo);
-    if (!Op)
-      return false;
-    registerResult(Op);
-    break;
-  }
-  case DCINS::COMPLEX_PATTERN: {
-    unsigned Pattern = Next();
-    Value *Op = translateComplexPattern(Pattern);
-    if (!Op)
-      return false;
-    registerResult(Op);
-    break;
-  }
-  case DCINS::PREDICATE: {
-    unsigned Pred = Next();
-    if (!translatePredicate(Pred))
-      return false;
-    break;
-  }
-  case DCINS::CONSTANT_OP: {
-    unsigned MIOperandNo = Next();
-    Value *Cst =
-        ConstantInt::get(cast<IntegerType>(ResTy), getImmOp(MIOperandNo));
-    registerResult(Cst);
-    break;
-  }
-  case DCINS::MOV_CONSTANT: {
-    uint64_t ValIdx = Next();
-
-    const DataLayout &DL = getModule()->getDataLayout();
-    Type *CTy = ResTy;
-    if (!CTy->isIntegerTy())
-      CTy = Builder.getIntNTy(DL.getTypeSizeInBits(CTy));
-    Constant *C = ConstantInt::get(CTy, ConstantArray[ValIdx]);
-    C = ConstantExpr::getCast(CastInst::getCastOpcode(C, /*SrcIsSigned=*/false,
-                                                      ResTy,
-                                                      /*DstIsSigned=*/false),
-                              C, ResTy);
-    registerResult(C);
-    break;
-  }
-  case DCINS::IMPLICIT: {
-    translateImplicit(Next());
-    break;
-  }
   case ISD::BSWAP: {
-    Value *Op = getNextOperand();
-    Value *IntDecl =
-        Intrinsic::getDeclaration(getModule(), Intrinsic::bswap, ResTy);
-    registerResult(Builder.CreateCall(IntDecl, Op));
+    Value *Op = getOperand(0);
+    Value *IntDecl = Intrinsic::getDeclaration(getModule(), Intrinsic::bswap,
+                                               getResultTy(0));
+    addResult(Builder.CreateCall(IntDecl, Op));
     break;
   }
 
   case ISD::ATOMIC_FENCE: {
-    uint64_t OrdV = cast<ConstantInt>(getNextOperand())->getZExtValue();
-    uint64_t ScopeV = cast<ConstantInt>(getNextOperand())->getZExtValue();
+    uint64_t OrdV = cast<ConstantInt>(getOperand(0))->getZExtValue();
+    uint64_t ScopeV = cast<ConstantInt>(getOperand(1))->getZExtValue();
 
     if (OrdV <= (uint64_t)AtomicOrdering::NotAtomic ||
         OrdV > (uint64_t)AtomicOrdering::SequentiallyConsistent)
@@ -482,9 +539,9 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
     errs() << "  " << getDRS().MII.getName(TheMCInst.Inst.getOpcode()) << ": "
            << TheMCInst.Inst << "\n";
     errs() << "Opcode: " << Opcode << "\n";
-    return false;
+    return DoAndCheckResults(false);
   }
-  return true;
+  return DoAndCheckResults(true);
 }
 
 Value *DCInstruction::translateComplexPattern(unsigned Pattern) {
@@ -493,11 +550,11 @@ Value *DCInstruction::translateComplexPattern(unsigned Pattern) {
 }
 
 bool DCInstruction::translateExtLoad(Type *MemTy, bool isSExt) {
-  Value *Ptr = getNextOperand();
+  Value *Ptr = getOperand(0);
   Ptr = Builder.CreateBitOrPointerCast(Ptr, MemTy->getPointerTo());
   Value *V = Builder.CreateLoad(MemTy, Ptr);
-  registerResult(isSExt ? Builder.CreateSExt(V, ResTy)
-                        : Builder.CreateZExt(V, ResTy));
+  addResult(isSExt ? Builder.CreateSExt(V, getResultTy(0))
+                   : Builder.CreateZExt(V, getResultTy(0)));
   return true;
 }
 
@@ -511,13 +568,13 @@ bool DCInstruction::translatePredicate(unsigned Pred) {
   case TargetOpcode::Predicate::alignedload512:
   // FIXME: Take advantage of the implied alignment.
   case TargetOpcode::Predicate::load: {
-    Type *ResPtrTy = ResTy->getPointerTo();
-    Value *Ptr = getNextOperand();
+    Type *ResPtrTy = getResultTy(0)->getPointerTo();
+    Value *Ptr = getOperand(0);
     if (!Ptr->getType()->isPointerTy())
       Ptr = Builder.CreateIntToPtr(Ptr, ResPtrTy);
     else if (Ptr->getType() != ResPtrTy)
       Ptr = Builder.CreateBitCast(Ptr, ResPtrTy);
-    registerResult(Builder.CreateAlignedLoad(Ptr, 1));
+    addResult(Builder.CreateAlignedLoad(Ptr, 1));
     return true;
   }
   case TargetOpcode::Predicate::alignednontemporalstore:
@@ -527,8 +584,8 @@ bool DCInstruction::translatePredicate(unsigned Pred) {
   case TargetOpcode::Predicate::alignedstore512:
   // FIXME: Take advantage of NT/alignment.
   case TargetOpcode::Predicate::store: {
-    Value *Val = getNextOperand();
-    Value *Ptr = getNextOperand();
+    Value *Val = getOperand(0);
+    Value *Ptr = getOperand(1);
     Type *ValPtrTy = Val->getType()->getPointerTo();
     Type *PtrTy = Ptr->getType();
     if (!PtrTy->isPointerTy())

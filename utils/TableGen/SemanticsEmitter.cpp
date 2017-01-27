@@ -31,7 +31,8 @@ using namespace llvm;
 
 namespace {
 
-static std::string sanitizeSelectFuncToEnumVal(Record &CP, const CodeGenDAGPatterns &CGP) {
+static std::string sanitizeSelectFuncToEnumVal(Record &CP,
+                                               const CodeGenDAGPatterns &CGP) {
   const ComplexPattern &CPI = CGP.getComplexPattern(&CP);
   StringRef F = CPI.getSelectFunc();
 
@@ -67,15 +68,15 @@ public:
   DenseMap<Record *, Record *> SDNodeEquiv;
 
   /// Unique constant integers, keeping track of the order they appeared in.
-  /// This is done so that the generated semantics table is an unsigned[],
-  /// with uint64_t constants only being an unsigned index to this table.
+  /// This is done so that the generated semantics table is an uint16_t[],
+  /// with uint64_t constants only being an uint16_t index to this table.
   /// Use an std::map instead of:
   /// - SetVector, because knowing whether a key exists isn't enough,
   ///   we also need an efficient way to get its index.
   /// - DenseMap, because there is no acceptable tombstone key.
   /// There is no element at index 0.
-  std::map<uint64_t, unsigned> ConstantIdx;
-  unsigned CurConstantIdx;
+  std::map<uint64_t, uint16_t> ConstantIdx;
+  uint16_t CurConstantIdx;
 
   SemanticsTarget(RecordKeeper &Records);
 };
@@ -110,12 +111,8 @@ struct LSNode {
   void addOperand(std::string Op) { Operands.push_back(Op); }
 
   LSNode(const TreePatternNode &TPN) : TPN(&TPN) {
-    if (TPN.getNumTypes()) {
-      for (auto &Ty : TPN.getExtTypes())
-        Types.push_back(Ty.getConcrete());
-    } else {
-      Types.push_back(MVT::isVoid);
-    }
+    for (auto &Ty : TPN.getExtTypes())
+      Types.push_back(Ty.getConcrete());
   }
 };
 
@@ -237,7 +234,7 @@ private:
   /// - if \p TPN is a compile-time constant, generate:
   ///     DCINS::MOV_CONSTANT, <inferred type>, <Constant index>
   ///   The constant index points in an uint64_t array, where all compile-time
-  ///   constants are uniqued (so that the semantics array remains unsigned[].)
+  ///   constants are uniqued (so that the semantics array remains uint16_t[].)
   ///
   LSResult flattenLeaf(const TreePatternNode &TPN) {
     LSNode Op(TPN);
@@ -248,7 +245,7 @@ private:
     if (OpDef == nullptr) {
       IntInit *OpInt = cast<IntInit>(TPN.getLeafValue());
       Op.Opcode = "DCINS::MOV_CONSTANT";
-      unsigned &Idx = Target.ConstantIdx[OpInt->getValue()];
+      uint16_t &Idx = Target.ConstantIdx[OpInt->getValue()];
       if (Idx == 0)
         Idx = ++Target.CurConstantIdx;
       Op.addOperand(utostr(Idx - 1));
@@ -637,7 +634,7 @@ void SemanticsEmitter::run(raw_ostream &OS) {
     OS << "  " << CPK << ",\n";
   OS << "};\n} // End ComplexPattern namespace\n\n";
 
-  OS << "const unsigned InstSemantics[] = {\n";
+  OS << "const uint16_t InstSemantics[] = {\n";
   OS << "  DCINS::END_OF_INSTRUCTION,\n";
   CurSemaOffset = 1;
   for (unsigned I = 1, E = InstIdx.size(); I != E; ++I) {
@@ -646,8 +643,7 @@ void SemanticsEmitter::run(raw_ostream &OS) {
       continue;
     InstSemantics &Sema = InstSemas[InstIdx[I]];
     InstIdx[I] = CurSemaOffset++;
-    OS << "  // " << CGIByEnum[I]->TheDef->getName() << "\n";
-    if (Sema.Pattern && 0) {
+    if (Sema.Pattern) {
       OS << "  /*\n";
       Sema.Pattern->print(OS);
       OS << "  */\n";
@@ -662,6 +658,11 @@ void SemanticsEmitter::run(raw_ostream &OS) {
       LSNode &NS = Sema.Semantics[I];
       OS.indent(2) << NS.Opcode;
       ++CurSemaOffset;
+
+      // Emit the number of results/operands.
+      OS << ", (" << NS.Types.size() << "<<8)|" << NS.Operands.size() << "";
+      ++CurSemaOffset;
+
       for (auto &Ty : NS.Types)
         OS << ", " << llvm::getEnumName(Ty);
       CurSemaOffset += NS.Types.size();
@@ -677,8 +678,8 @@ void SemanticsEmitter::run(raw_ostream &OS) {
       assert(Sema.LastDefNo != ~0U &&
              "Can't handle IMPLICIT without any other def!");
       Record *R = Sema.ImplicitDefs[0];
-      OS << "  DCINS::IMPLICIT, MVT::isVoid, "
-         << TGName << "::" << RegBank.getReg(R)->getName();
+      OS << "  DCINS::IMPLICIT, 0, " << TGName
+         << "::" << RegBank.getReg(R)->getName();
       CurSemaOffset += 3;
       OS << ",\n";
     }

@@ -189,7 +189,7 @@ bool X86DCInstruction::translateTargetInst() {
         assert(NextOpc == DCINS::CUSTOM_OP &&
                "Expected X86 memory operand for LOCK-prefixed instruction");
         translateOpcode(NextOpc);
-        PointerOperand = Vals.back();
+        PointerOperand = getLastDef();
 
         // Then, ignore the LOAD from that operand
         NextOpc = Next();
@@ -205,7 +205,7 @@ bool X86DCInstruction::translateTargetInst() {
         } else {
           NextOpc = Next();
           translateOpcode(NextOpc);
-          Operand2 = Vals.back();
+          Operand2 = getLastDef();
         }
       }
 
@@ -353,37 +353,35 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
            << "\n";
     return false;
   case X86ISD::CMOV: {
-    Value *Op1 = getNextOperand(), *Op2 = getNextOperand(),
-          *Op3 = getNextOperand(), *Op4 = getNextOperand();
-    assert(Op4 == getReg(X86::EFLAGS) &&
+    Value *Op0 = getOperand(0), *Op1 = getOperand(1), *Op2 = getOperand(2),
+          *Op3 = getOperand(3);
+    assert(Op3 == getReg(X86::EFLAGS) &&
            "Conditional mov predicate register isn't EFLAGS!");
-    (void)Op4;
-    unsigned CC = cast<ConstantInt>(Op3)->getValue().getZExtValue();
+    (void)Op3;
+    unsigned CC = cast<ConstantInt>(Op2)->getValue().getZExtValue();
     Value *Pred = getDRS().getCC((X86::CondCode)CC);
-    registerResult(Builder.CreateSelect(Pred, Op2, Op1));
+    addResult(Builder.CreateSelect(Pred, Op1, Op0));
     break;
   }
   case X86ISD::RET_FLAG: {
     // FIXME: Handle ret arg.
-    /* unsigned Op1 = */ Next();
     setReg(X86::RIP, translatePop(8));
     Builder.CreateBr(getParent().getParent().getExitBlock());
     break;
   }
   case X86ISD::CMP: {
-    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
-    registerResult(getDRS().getEFLAGSforCMP(Op1, Op2));
+    Value *Op0 = getOperand(0), *Op1 = getOperand(1);
+    addResult(getDRS().getEFLAGSforCMP(Op0, Op1));
     break;
   }
   case X86ISD::BRCOND: {
-    Value *Op1 = getNextOperand(), *Op2 = getNextOperand(),
-          *Op3 = getNextOperand();
-    assert(Op3 == getReg(X86::EFLAGS) &&
+    Value *Op0 = getOperand(0), *Op1 = getOperand(1), *Op2 = getOperand(2);
+    assert(Op2 == getReg(X86::EFLAGS) &&
            "Conditional branch predicate register isn't EFLAGS!");
-    (void)Op3;
-    uint64_t Target = cast<ConstantInt>(Op1)->getValue().getZExtValue();
-    unsigned CC = cast<ConstantInt>(Op2)->getValue().getZExtValue();
-    setReg(X86::RIP, Op1);
+    (void)Op2;
+    uint64_t Target = cast<ConstantInt>(Op0)->getValue().getZExtValue();
+    unsigned CC = cast<ConstantInt>(Op1)->getValue().getZExtValue();
+    setReg(X86::RIP, Op0);
     Builder.CreateCondBr(getDRS().getCC((X86::CondCode)CC),
                          getParent().getParent().getOrCreateBasicBlock(Target),
                          getParent().getParent().getOrCreateBasicBlock(
@@ -391,37 +389,35 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     break;
   }
   case X86ISD::CALL: {
-    Value *Op1 = getNextOperand();
+    Value *Op0 = getOperand(0);
     translatePush(Builder.getInt64(TheMCInst.Address + TheMCInst.Size));
-    insertCall(Op1);
+    insertCall(Op0);
     break;
   }
   case X86ISD::SETCC: {
-    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
-    assert(Op2 == getReg(X86::EFLAGS) &&
+    Value *Op0 = getOperand(0), *Op1 = getOperand(1);
+    assert(Op1 == getReg(X86::EFLAGS) &&
            "SetCC predicate register isn't EFLAGS!");
-    (void)Op2;
-    unsigned CC = cast<ConstantInt>(Op1)->getValue().getZExtValue();
+    (void)Op1;
+    unsigned CC = cast<ConstantInt>(Op0)->getValue().getZExtValue();
     Value *Pred = getDRS().getCC((X86::CondCode)CC);
-    registerResult(Builder.CreateZExt(Pred, Builder.getInt8Ty()));
+    addResult(Builder.CreateZExt(Pred, Builder.getInt8Ty()));
     break;
   }
   case X86ISD::SBB: {
-    (void)NextTy();
-    Value *Op1 = getNextOperand(), *Op2 = getNextOperand(),
-          *Op3 = getNextOperand();
-    assert(Op3 == getReg(X86::EFLAGS) && "SBB borrow register isn't EFLAGS!");
-    (void)Op3;
-    Value *Borrow = Builder.CreateZExt(getDRS().getSF(X86::CF), Op1->getType());
-    Value *Res = Builder.CreateSub(Op1, Op2);
-    registerResult(Builder.CreateSub(Res, Borrow));
-    registerResult(getReg(X86::EFLAGS));
+    Value *Op0 = getOperand(0), *Op1 = getOperand(1), *Op2 = getOperand(2);
+    assert(Op2 == getReg(X86::EFLAGS) && "SBB borrow register isn't EFLAGS!");
+    (void)Op2;
+    Value *Borrow = Builder.CreateZExt(getDRS().getSF(X86::CF), Op0->getType());
+    Value *Res = Builder.CreateSub(Op0, Op1);
+    addResult(Builder.CreateSub(Res, Borrow));
+    addResult(getReg(X86::EFLAGS));
     break;
   }
   case X86ISD::BT: {
-    Value *Base = getNextOperand();
-    Value *Op2 = getNextOperand();
-    Value *Offset = Builder.CreateZExtOrBitCast(Op2, Base->getType());
+    Value *Base = getOperand(0);
+    Value *Op1 = getOperand(1);
+    Value *Offset = Builder.CreateZExtOrBitCast(Op1, Base->getType());
     Value *Bit = Builder.CreateTrunc(Builder.CreateShl(Base, Offset),
                                      Builder.getInt1Ty());
 
@@ -434,13 +430,12 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
 
     Bit = Builder.CreateZExt(Bit, EFLAGSTy);
     Bit = Builder.CreateLShr(Bit, X86::CF);
-    registerResult(Builder.CreateOr(OldEFLAGS, Bit));
+    addResult(Builder.CreateOr(OldEFLAGS, Bit));
     break;
   }
 
   case X86ISD::BSF: {
-    (void)NextTy();
-    Value *Src = getNextOperand();
+    Value *Src = getOperand(0);
     // If the source is zero, it is undefined behavior as per Intel SDM, but
     // most implementations I'm aware of just leave the destination unchanged.
     assert((TheMCInst.Inst.getOpcode() >= X86::BSF16rm &&
@@ -452,16 +447,15 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     Value *Cttz = Builder.CreateCall(
         Intrinsic::getDeclaration(getModule(), Intrinsic::cttz, ArgTys),
         {Src, /*is_zero_undef:*/ Builder.getInt1(true)});
-    registerResult(Builder.CreateSelect(IsSrcZero, PrevDstVal, Cttz));
+    addResult(Builder.CreateSelect(IsSrcZero, PrevDstVal, Cttz));
 
     // We also need to update ZF in EFLAGS.
     Value *OldEFLAGS = getReg(X86::EFLAGS);
-    registerResult(getDRS().insertBitsInValue(OldEFLAGS, IsSrcZero, X86::ZF));
+    addResult(getDRS().insertBitsInValue(OldEFLAGS, IsSrcZero, X86::ZF));
     break;
   }
   case X86ISD::BSR: {
-    (void)NextTy();
-    Value *Src = getNextOperand();
+    Value *Src = getOperand(0);
     // If the source is zero, it is undefined behavior as per Intel SDM, but
     // most implementations I'm aware of just leave the destination unchanged.
     assert((TheMCInst.Inst.getOpcode() >= X86::BSR16rm &&
@@ -473,11 +467,11 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     Value *Ctlz = Builder.CreateCall(
         Intrinsic::getDeclaration(getModule(), Intrinsic::ctlz, ArgTys),
         {Src, /*is_zero_undef:*/ Builder.getInt1(true)});
-    registerResult(Builder.CreateSelect(IsSrcZero, PrevDstVal, Ctlz));
+    addResult(Builder.CreateSelect(IsSrcZero, PrevDstVal, Ctlz));
 
     // We also need to update ZF in EFLAGS.
     Value *OldEFLAGS = getReg(X86::EFLAGS);
-    registerResult(getDRS().insertBitsInValue(OldEFLAGS, IsSrcZero, X86::ZF));
+    addResult(getDRS().insertBitsInValue(OldEFLAGS, IsSrcZero, X86::ZF));
     break;
   }
 
@@ -496,8 +490,8 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
 
   case X86ISD::FSETCC: {
     enum SSECC { EQ, LT, LE, UNORD, NEQ, NLT, NLE, ORD, LastCC = ORD };
-    Value *LHS = getNextOperand(), *RHS = getNextOperand();
-    Value *CCV = getNextOperand();
+    Value *LHS = getOperand(0), *RHS = getOperand(1);
+    Value *CCV = getOperand(2);
 
     const unsigned CCI = cast<ConstantInt>(CCV)->getZExtValue();
     assert(CCI <= SSECC::LastCC && "Invalid SSE CC!");
@@ -531,12 +525,12 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
       break;
     }
 
-    assert(ResTy->isFloatingPointTy());
+    assert(getResultTy(0)->isFloatingPointTy());
 
     Value *Cmp = Builder.CreateFCmp(Pred, LHS, RHS);
     Cmp = Builder.CreateSExt(
-        Cmp, Builder.getIntNTy(ResTy->getPrimitiveSizeInBits()));
-    registerResult(Builder.CreateBitCast(Cmp, ResTy));
+        Cmp, Builder.getIntNTy(getResultTy(0)->getPrimitiveSizeInBits()));
+    addResult(Builder.CreateBitCast(Cmp, getResultTy(0)));
     break;
   }
 
@@ -546,15 +540,15 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     // care about sNaN, since it's really missing from LLVM.
     // The result defaults to the second operand, so we do a backwards
     // fcmp+select.
-    Value *Src1 = getNextOperand();
-    Value *Src2 = getNextOperand();
+    Value *Src0 = getOperand(0);
+    Value *Src1 = getOperand(1);
     CmpInst::Predicate Pred;
     if (Opcode == X86ISD::FMAX)
       Pred = CmpInst::FCMP_ULE;
     else
       Pred = CmpInst::FCMP_UGE;
-    registerResult(
-        Builder.CreateSelect(Builder.CreateFCmp(Pred, Src1, Src2), Src2, Src1));
+    addResult(
+        Builder.CreateSelect(Builder.CreateFCmp(Pred, Src0, Src1), Src1, Src0));
     break;
   }
   case X86ISD::MOVLHPD:
@@ -562,11 +556,11 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::MOVLPD:
   case X86ISD::MOVSD:
   case X86ISD::MOVSS: {
-    Value *Src1 = getNextOperand();
-    Value *Src2 = getNextOperand();
-    Type *VecTy = ResTy;
-    assert(VecTy->isVectorTy() && VecTy == Src1->getType() &&
-           VecTy == Src2->getType() &&
+    Value *Src0 = getOperand(0);
+    Value *Src1 = getOperand(1);
+    Type *VecTy = getResultTy(0);
+    assert(VecTy->isVectorTy() && VecTy == Src0->getType() &&
+           VecTy == Src1->getType() &&
            "Operands to MOV/UNPCK shuffle aren't vectors!");
     unsigned NumElt = VecTy->getVectorNumElements();
     SmallVector<Constant *, 16> Mask;
@@ -588,14 +582,14 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
       break;
     }
     }
-    registerResult(
-        Builder.CreateShuffleVector(Src1, Src2, ConstantVector::get(Mask)));
+    addResult(
+        Builder.CreateShuffleVector(Src0, Src1, ConstantVector::get(Mask)));
     break;
   }
   case X86ISD::PSHUFB: {
-    Value *Src = getNextOperand();
-    Value *Mask = getNextOperand();
-    const unsigned NumElts = ResTy->getVectorNumElements();
+    Value *Src = getOperand(0);
+    Value *Mask = getOperand(1);
+    const unsigned NumElts = getResultTy(0)->getVectorNumElements();
 
     // If the high bit (7) of the byte is set, the element is zeroed.
     // Do that on the entire vector first.
@@ -611,7 +605,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     // For AVX vectors with 32 bytes the base of the shuffle is the half of
     // the vector we're inside. Split the whole vector to avoid lane selects.
     if (NumElts == 16) {
-      registerResult(translatePSHUFB(Src, Mask));
+      addResult(translatePSHUFB(Src, Mask));
       break;
     }
 
@@ -629,48 +623,48 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     Value *ResLo = translatePSHUFB(SrcLo, MaskLo);
     Value *ResHi = translatePSHUFB(SrcHi, MaskHi);
 
-    registerResult(Builder.CreateShuffleVector(ResLo, ResHi, ShufMask));
+    addResult(Builder.CreateShuffleVector(ResLo, ResHi, ShufMask));
     break;
   }
   case X86ISD::UNPCKL:
   case X86ISD::UNPCKH:
   case X86ISD::MOVLHPS:
   case X86ISD::MOVHLPS: {
-    Value *Src1 = getNextOperand();
-    Value *Src2 = getNextOperand();
+    Value *Src0 = getOperand(0);
+    Value *Src1 = getOperand(1);
     SmallVector<int, 8> Mask;
     switch (Opcode) {
     case X86ISD::MOVLHPS:
-      DecodeMOVLHPSMask(ResTy->getVectorNumElements(), Mask);
+      DecodeMOVLHPSMask(getResultTy(0)->getVectorNumElements(), Mask);
       break;
     case X86ISD::MOVHLPS:
-      DecodeMOVHLPSMask(ResTy->getVectorNumElements(), Mask);
+      DecodeMOVHLPSMask(getResultTy(0)->getVectorNumElements(), Mask);
       break;
     case X86ISD::UNPCKL:
-      DecodeUNPCKLMask(getSimpleVTForType(ResTy), Mask);
+      DecodeUNPCKLMask(getSimpleVTForType(getResultTy(0)), Mask);
       break;
     case X86ISD::UNPCKH:
-      DecodeUNPCKHMask(getSimpleVTForType(ResTy), Mask);
+      DecodeUNPCKHMask(getSimpleVTForType(getResultTy(0)), Mask);
       break;
     };
-    translateShuffle(Mask, Src1, Src2);
+    translateShuffle(Mask, Src0, Src1);
     break;
   }
   case X86ISD::PSHUFD:
   case X86ISD::PSHUFHW:
   case X86ISD::PSHUFLW: {
-    Value *Src = getNextOperand();
-    unsigned MaskImm = cast<ConstantInt>(getNextOperand())->getZExtValue();
+    Value *Src = getOperand(0);
+    unsigned MaskImm = cast<ConstantInt>(getOperand(1))->getZExtValue();
     SmallVector<int, 8> Mask;
     switch (Opcode) {
     case X86ISD::PSHUFD:
-      DecodePSHUFMask(getSimpleVTForType(ResTy), MaskImm, Mask);
+      DecodePSHUFMask(getSimpleVTForType(getResultTy(0)), MaskImm, Mask);
       break;
     case X86ISD::PSHUFHW:
-      DecodePSHUFHWMask(getSimpleVTForType(ResTy), MaskImm, Mask);
+      DecodePSHUFHWMask(getSimpleVTForType(getResultTy(0)), MaskImm, Mask);
       break;
     case X86ISD::PSHUFLW:
-      DecodePSHUFLWMask(getSimpleVTForType(ResTy), MaskImm, Mask);
+      DecodePSHUFLWMask(getSimpleVTForType(getResultTy(0)), MaskImm, Mask);
       break;
     };
     translateShuffle(Mask, Src);
@@ -678,63 +672,63 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   }
   case X86ISD::SHUFP:
   case X86ISD::PALIGNR: {
-    Value *Src1 = getNextOperand();
-    Value *Src2 = getNextOperand();
-    unsigned MaskImm = cast<ConstantInt>(getNextOperand())->getZExtValue();
+    Value *Src0 = getOperand(0);
+    Value *Src1 = getOperand(1);
+    unsigned MaskImm = cast<ConstantInt>(getOperand(2))->getZExtValue();
     SmallVector<int, 8> Mask;
-    DecodePSHUFMask(getSimpleVTForType(ResTy), MaskImm, Mask);
+    DecodePSHUFMask(getSimpleVTForType(getResultTy(0)), MaskImm, Mask);
     switch (Opcode) {
     case X86ISD::SHUFP:
-      DecodeSHUFPMask(getSimpleVTForType(ResTy), MaskImm, Mask);
+      DecodeSHUFPMask(getSimpleVTForType(getResultTy(0)), MaskImm, Mask);
       break;
     case X86ISD::PALIGNR:
-      DecodePALIGNRMask(getSimpleVTForType(ResTy), MaskImm, Mask);
+      DecodePALIGNRMask(getSimpleVTForType(getResultTy(0)), MaskImm, Mask);
       break;
     };
-    translateShuffle(Mask, Src1, Src2);
+    translateShuffle(Mask, Src0, Src1);
     break;
   }
   case X86ISD::PCMPGT: {
-    Value *Src1 = getNextOperand();
-    Value *Src2 = getNextOperand();
-    Constant *Ones = Constant::getAllOnesValue(ResTy);
-    Constant *Zero = Constant::getNullValue(ResTy);
-    registerResult(
-        Builder.CreateSelect(Builder.CreateICmpSGT(Src1, Src2), Ones, Zero));
+    Value *Src0 = getOperand(0);
+    Value *Src1 = getOperand(1);
+    Constant *Ones = Constant::getAllOnesValue(getResultTy(0));
+    Constant *Zero = Constant::getNullValue(getResultTy(0));
+    addResult(
+        Builder.CreateSelect(Builder.CreateICmpSGT(Src0, Src1), Ones, Zero));
     break;
   }
   case X86ISD::PCMPEQ: { // FIXME
-    Value *Src1 = getNextOperand();
-    Value *Src2 = getNextOperand();
-    Constant *Ones = Constant::getAllOnesValue(ResTy);
-    Constant *Zero = Constant::getNullValue(ResTy);
-    registerResult(
-        Builder.CreateSelect(Builder.CreateICmpEQ(Src1, Src2), Ones, Zero));
+    Value *Src0 = getOperand(0);
+    Value *Src1 = getOperand(1);
+    Constant *Ones = Constant::getAllOnesValue(getResultTy(0));
+    Constant *Zero = Constant::getNullValue(getResultTy(0));
+    addResult(
+        Builder.CreateSelect(Builder.CreateICmpEQ(Src0, Src1), Ones, Zero));
     break;
   }
 
   case X86ISD::ANDNP: {
-    Value *LHS = getNextOperand();
-    Value *RHS = getNextOperand();
-    Type *VecTy = ResTy;
+    Value *LHS = getOperand(0);
+    Value *RHS = getOperand(1);
+    Type *VecTy = getResultTy(0);
     (void)VecTy;
     assert(VecTy->isVectorTy() && VecTy->isIntOrIntVectorTy() &&
            VecTy == LHS->getType() && VecTy == RHS->getType() &&
            "Operands to ANDNP shuffle aren't vectors!");
-    registerResult(Builder.CreateAnd(Builder.CreateNot(LHS), RHS));
+    addResult(Builder.CreateAnd(Builder.CreateNot(LHS), RHS));
     break;
   }
 
   case X86ISD::VSHLI: {
-    Value *Src1 = getNextOperand();
-    auto *Src2 = cast<ConstantInt>(getNextOperand());
-    registerResult(Builder.CreateShl(Src1, Src2->getZExtValue()));
+    Value *Src0 = getOperand(0);
+    auto *Src1 = cast<ConstantInt>(getOperand(1));
+    addResult(Builder.CreateShl(Src0, Src1->getZExtValue()));
     break;
   }
   case X86ISD::VSRAI: {
-    Value *Src1 = getNextOperand();
-    auto *Src2 = cast<ConstantInt>(getNextOperand());
-    registerResult(Builder.CreateAShr(Src1, Src2->getZExtValue()));
+    Value *Src0 = getOperand(0);
+    auto *Src1 = cast<ConstantInt>(getOperand(1));
+    addResult(Builder.CreateAShr(Src0, Src1->getZExtValue()));
     break;
   }
   case X86ISD::HSUB:
@@ -751,15 +745,15 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     break;
 
   case X86ISD::CVTSI2P: {
-    Value *Src = getNextOperand();
+    Value *Src = getOperand(0);
     auto *SrcTy = cast<VectorType>(Src->getType());
 
-    SmallVector<unsigned, 4> SrcMask(ResTy->getVectorNumElements());
+    SmallVector<unsigned, 4> SrcMask(getResultTy(0)->getVectorNumElements());
     std::iota(SrcMask.begin(), SrcMask.end(), 0);
 
-    registerResult(Builder.CreateSIToFP(
+    addResult(Builder.CreateSIToFP(
         Builder.CreateShuffleVector(Src, UndefValue::get(SrcTy), SrcMask),
-        ResTy));
+        getResultTy(0)));
     break;
   }
   }
@@ -861,7 +855,7 @@ Value *X86DCInstruction::translateCustomOperand(unsigned OperandType,
   case X86::OpTypes::i64i32imm:
   case X86::OpTypes::i64imm: {
     // FIXME: Is there anything special to do with the sext/zext?
-    Res = ConstantInt::get(cast<IntegerType>(ResTy), getImmOp(MIOpNo));
+    Res = ConstantInt::get(cast<IntegerType>(getResultTy(0)), getImmOp(MIOpNo));
     // FIXME: factor this out in DCF.
     // lets us maintain DTIT info as well.
     break;
@@ -886,15 +880,7 @@ Value *X86DCInstruction::translateCustomOperand(unsigned OperandType,
 bool X86DCInstruction::translateImplicit(unsigned RegNo) {
   assert(RegNo == X86::EFLAGS);
   // FIXME: We need to understand instructions that define multiple values.
-  Value *Def = 0;
-
-  // Look for the last definition
-  for (int i = Vals.size() - 1; i >= 0; --i) {
-    if (Vals[i] != 0) {
-      Def = Vals[i];
-      break;
-    }
-  }
+  Value *Def = getLastDef();
   assert(Def && "Nothing was defined in an instruction with implicit EFLAGS?");
   getDRS().updateEFLAGS(Def);
   return true;
@@ -982,13 +968,13 @@ Value *X86DCInstruction::translatePop(unsigned OpSize) {
 }
 
 void X86DCInstruction::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
-  Value *Src1 = getNextOperand(), *Src2 = getNextOperand();
-  Type *VecTy = ResTy;
+  Value *Src0 = getOperand(0), *Src1 = getOperand(1);
+  Type *VecTy = getResultTy(0);
   assert(VecTy->isVectorTy());
-  assert(VecTy == Src1->getType() && VecTy == Src2->getType());
+  assert(VecTy == Src0->getType() && VecTy == Src1->getType());
   unsigned NumElt = VecTy->getVectorNumElements();
   Value *Res = UndefValue::get(VecTy);
-  Value *Srcs[2] = {Src1, Src2};
+  Value *Srcs[2] = {Src0, Src1};
   for (int opi = 0, ope = 2; opi != ope; ++opi) {
     for (int i = 0, e = NumElt / 2; i != e; ++i) {
       Value *EltL =
@@ -1000,13 +986,12 @@ void X86DCInstruction::translateHorizontalBinop(Instruction::BinaryOps BinOp) {
                                         Builder.getInt32(i + opi * NumElt));
     }
   }
-  registerResult(Res);
+  addResult(Res);
 }
 
 void X86DCInstruction::translateDivRem(bool isThreeOperand, bool isSigned) {
-  Type *Res2Ty = NextTy();
-  assert(Res2Ty == ResTy && "X86 division result type mismatch!");
-  (void)Res2Ty;
+  assert(getResultTy(1) == getResultTy(0) &&
+         "X86 division result type mismatch!");
 
   Instruction::CastOps ExtOp;
   Instruction::BinaryOps DivOp, RemOp;
@@ -1020,27 +1005,28 @@ void X86DCInstruction::translateDivRem(bool isThreeOperand, bool isSigned) {
     RemOp = Instruction::URem;
   }
 
-  Value *Dividend;
+  Value *Dividend, *Divisor;
   if (isThreeOperand) {
-    Value *Op1 = getNextOperand(), *Op2 = getNextOperand();
-    IntegerType *HalfType = cast<IntegerType>(ResTy);
+    Value *Op0 = getOperand(0), *Op1 = getOperand(1);
+    IntegerType *HalfType = cast<IntegerType>(getResultTy(0));
     unsigned HalfBits = HalfType->getPrimitiveSizeInBits();
     IntegerType *FullType = IntegerType::get(getContext(), HalfBits * 2);
-    Value *DivHi = Builder.CreateCast(Instruction::ZExt, Op1, FullType);
-    Value *DivLo = Builder.CreateCast(Instruction::ZExt, Op2, FullType);
+    Value *DivHi = Builder.CreateCast(Instruction::ZExt, Op0, FullType);
+    Value *DivLo = Builder.CreateCast(Instruction::ZExt, Op1, FullType);
     Dividend = Builder.CreateOr(
         Builder.CreateShl(DivHi, ConstantInt::get(FullType, HalfBits)), DivLo);
+    Divisor = getOperand(2);
   } else {
-    Dividend = getNextOperand();
+    Dividend = getOperand(0);
+    Divisor = getOperand(1);
   }
 
-  Value *Divisor = getNextOperand();
   Divisor = Builder.CreateCast(ExtOp, Divisor, Dividend->getType());
 
-  registerResult(Builder.CreateTrunc(
-      Builder.CreateBinOp(DivOp, Dividend, Divisor), ResTy));
-  registerResult(Builder.CreateTrunc(
-      Builder.CreateBinOp(RemOp, Dividend, Divisor), ResTy));
+  addResult(Builder.CreateTrunc(Builder.CreateBinOp(DivOp, Dividend, Divisor),
+                                getResultTy(0)));
+  addResult(Builder.CreateTrunc(Builder.CreateBinOp(RemOp, Dividend, Divisor),
+                                getResultTy(0)));
 }
 
 Value *X86DCInstruction::translatePSHUFB(Value *V, Value *Mask) {
@@ -1060,19 +1046,19 @@ Value *X86DCInstruction::translatePSHUFB(Value *V, Value *Mask) {
   return Res;
 }
 
-void X86DCInstruction::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
-                                        Value *V2) {
-  Type *VecTy = V1->getType();
+void X86DCInstruction::translateShuffle(SmallVectorImpl<int> &Mask, Value *V0,
+                                        Value *V1) {
+  Type *VecTy = V0->getType();
   Type *EltTy = VecTy->getVectorElementType();
   unsigned NumElts = VecTy->getVectorNumElements();
 
   SmallVector<Constant *, 8> MaskCV(NumElts);
 
-  bool V2IsZero = false;
+  bool V1IsZero = false;
 
   for (size_t i = 0; i < Mask.size(); ++i) {
     if (Mask[i] == SM_SentinelZero) {
-      V2IsZero = true;
+      V1IsZero = true;
       MaskCV[i] = Builder.getInt32(NumElts);
     } else if (Mask[i] == SM_SentinelUndef)
       MaskCV[i] = UndefValue::get(EltTy);
@@ -1080,16 +1066,15 @@ void X86DCInstruction::translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
       MaskCV[i] = Builder.getInt32(Mask[i]);
   }
 
-  assert((!V2IsZero || !V2) &&
+  assert((!V1IsZero || !V1) &&
          "Second shuffle input can't be zero and an operand at the same time!");
 
-  if (!V2)
-    V2 = UndefValue::get(V1->getType());
-  if (V2IsZero)
-    V2 = Constant::getNullValue(VecTy);
+  if (!V1)
+    V1 = UndefValue::get(V0->getType());
+  if (V1IsZero)
+    V1 = Constant::getNullValue(VecTy);
 
-  registerResult(
-      Builder.CreateShuffleVector(V1, V2, ConstantVector::get(MaskCV)));
+  addResult(Builder.CreateShuffleVector(V0, V1, ConstantVector::get(MaskCV)));
 }
 
 void X86DCInstruction::translateCMPXCHG(unsigned MemOpType, unsigned CmpReg) {

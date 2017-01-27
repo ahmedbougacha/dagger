@@ -21,9 +21,9 @@
 namespace llvm {
 namespace DCINS {
 
-enum DCOpcodes {
+enum DCOpcodes : uint16_t {
   // We live in the same space as *ISD, this doesn't overlap.
-  DC_OPCODE_START = 0xFFFFFF00,
+  DC_OPCODE_START = 0xFF00,
   /// Get the value of a register operand, only defined by its Register Class.
   GET_RC,
 
@@ -54,11 +54,11 @@ enum DCOpcodes {
   /// An ISD operation predicate (an ISD opcode variant of sorts).
   PREDICATE,
 
-  END_OF_INSTRUCTION
-};
+  END_OF_INSTRUCTION,
 
-/// Target-specific DC opcodes start at this value.
-static const int FIRST_TARGET_DC_OPCODE = ISD::FIRST_TARGET_MEMORY_OPCODE + 500;
+  /// Target-specific DC opcodes start at this value.
+  FIRST_TARGET_DC_OPCODE
+};
 
 } // end namespace DCINS
 

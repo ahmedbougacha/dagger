@@ -57,8 +57,8 @@ private:
   void translateDivRem(bool isThreeOperand, bool isSigned);
   void translateHorizontalBinop(Instruction::BinaryOps BinOp);
 
-  void translateShuffle(SmallVectorImpl<int> &Mask, Value *V1,
-                        Value *V2 = nullptr);
+  void translateShuffle(SmallVectorImpl<int> &Mask, Value *V0,
+                        Value *V1 = nullptr);
   Value *translatePSHUFB(Value *V, Value *Mask);
 
   void translateCMPXCHG(unsigned MemOpType, unsigned CmpReg);
