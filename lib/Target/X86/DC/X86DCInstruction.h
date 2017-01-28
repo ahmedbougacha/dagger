@@ -31,6 +31,11 @@ class X86DCInstruction final : public DCInstruction {
 public:
   X86DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI);
 
+  X86DCBasicBlock &getParent() {
+    return static_cast<X86DCBasicBlock &>(DCInstruction::getParent());
+  }
+
+protected:
   bool translateTargetOpcode(unsigned Opcode) override;
   Value *translateCustomOperand(unsigned OperandType,
                                 unsigned MIOperandNo) override;
@@ -38,9 +43,10 @@ public:
 
   bool translateTargetInst() override;
 
-  X86DCBasicBlock &getParent() {
-    return static_cast<X86DCBasicBlock &>(DCInstruction::getParent());
-  }
+  StringRef getDCOpcodeName(unsigned Opcode) const override;
+  StringRef getDCCustomOpName(unsigned OperandKind) const override;
+  StringRef getDCPredicateName(unsigned PredicateKind) const override;
+  StringRef getDCComplexPatternName(unsigned CPKind) const override;
 
 private:
   X86RegisterSema &getDRS() {

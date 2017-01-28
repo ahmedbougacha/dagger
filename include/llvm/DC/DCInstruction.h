@@ -90,6 +90,7 @@ public:
 
   DCBasicBlock &getParent() { return DCB; }
 
+protected:
   uint64_t getImmOp(unsigned Idx) {
     return TheMCInst.Inst.getOperand(Idx).getImm();
   }
@@ -105,17 +106,25 @@ public:
   bool translateOpcode(unsigned Opcode);
 
   virtual bool translateTargetOpcode(unsigned Opcode) = 0;
-  virtual Value *translateCustomOperand(unsigned OperandType,
+  virtual Value *translateCustomOperand(unsigned OperandKind,
                                         unsigned MIOperandNo) = 0;
   virtual bool translateImplicit(unsigned RegNo) = 0;
 
-  virtual Value *translateComplexPattern(unsigned Pattern);
-  virtual bool translatePredicate(unsigned Pred);
+  virtual Value *translateComplexPattern(unsigned PatternKind);
+  virtual bool translatePredicate(unsigned PredicateKind);
 
   // Try to do a custom translation of a full instruction.
   // Called before translating an instruction.
   // Return true if the translation shouldn't proceed.
   virtual bool translateTargetInst() { return false; }
+
+  /// Returns a string containing the name of each construct, for dump purposes.
+  /// @{
+  virtual StringRef getDCOpcodeName(unsigned Opcode) const = 0;
+  virtual StringRef getDCCustomOpName(unsigned OperandKind) const = 0;
+  virtual StringRef getDCPredicateName(unsigned PredicateKind) const = 0;
+  virtual StringRef getDCComplexPatternName(unsigned CPKind) const = 0;
+  /// @}
 
 private:
   bool tryTranslateInst();
@@ -136,6 +145,12 @@ private:
   /// Fill the Ops array with the proper Values, copied from the Vals array,
   /// indexed with the elements in the semantics array.
   void prepareOperands();
+
+  /// Dump to dbgs(), an operation \p Opcode, producing \p ResultTypes, and
+  /// taking \p Operands, defined in SemanticsArray starting at \p SemaStartIdx.
+  void dumpOperation(StringRef Opcode, ArrayRef<Type *> ResultTypes,
+                     ArrayRef<Value *> Operands,
+                     unsigned SemaStartIdx) LLVM_DUMP_METHOD;
 
 protected:
   /// Get the next raw value in the semantics array.

@@ -27,6 +27,7 @@
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
@@ -106,6 +107,47 @@ void DCInstruction::prepareOperands() {
     Ops[OpI] = Vals[Next()];
 }
 
+void DCInstruction::dumpOperation(StringRef Opcode,
+                                  ArrayRef<Type *> ResultTypes,
+                                  ArrayRef<Value *> Operands,
+                                  unsigned SemaStartIdx) {
+  SemaStartIdx += 2;
+  unsigned NumVal = Vals.size();
+  dbgs() << "  - ";
+  bool PrintComma = false;
+  for (auto *Ty : ResultTypes) {
+    if (PrintComma)
+      dbgs() << ", ";
+    dbgs() << '<' << NumVal++ << ">(";
+    ++SemaStartIdx;
+    if (Ty)
+      Ty->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
+    else
+      dbgs() << "<null>";
+    dbgs() << ')';
+    PrintComma = true;
+  }
+
+  if (!ResultTypes.empty())
+    dbgs() << " = ";
+
+  dbgs() << Opcode << "(";
+
+  PrintComma = false;
+  for (auto *Op : Operands) {
+    if (PrintComma)
+      dbgs() << ", ";
+    dbgs() << '<' << SemanticsArray[SemaStartIdx++] << ">(";
+    if (Op)
+      Op->printAsOperand(dbgs(), /*PrintType=*/true, getModule());
+    else
+      dbgs() << "<null>";
+    dbgs() << ')';
+    PrintComma = true;
+  }
+  dbgs() << ")\n";
+}
+
 void DCInstruction::insertCall(Value *CallTarget) {
   if (ConstantInt *CI = dyn_cast<ConstantInt>(CallTarget)) {
     uint64_t Target = CI->getValue().getZExtValue();
@@ -173,8 +215,17 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
   switch (Opcode) {
   case DCINS::PUT_RC: {
     unsigned MIOperandNo = Next();
+    unsigned ResOpIdx = Next();
     unsigned RegNo = getRegOp(MIOperandNo);
-    Value *Res = Vals[Next()];
+    Value *Res = Vals[ResOpIdx];
+
+    DEBUG({
+      dbgs() << "  - " << getDRS().MRI.getName(RegNo) << " = PUT_RC <"
+             << ResOpIdx << ">(";
+      Res->printAsOperand(dbgs());
+      dbgs() << ")\n";
+    });
+
     IntegerType *RegType = getDRS().getRegIntType(RegNo);
     if (Res->getType()->isPointerTy())
       Res = Builder.CreatePtrToInt(Res, RegType);
@@ -190,13 +241,30 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
   }
   case DCINS::PUT_REG: {
     unsigned RegNo = Next();
-    Value *Res = Vals[Next()];
+    unsigned ResOpIdx = Next();
+    Value *Res = Vals[ResOpIdx];
+
+    DEBUG({
+      dbgs() << "  - " << getDRS().MRI.getName(RegNo) << " = PUT_REG <"
+             << ResOpIdx << ">(";
+      Res->printAsOperand(dbgs());
+      dbgs() << ")\n";
+    });
+
     setReg(RegNo, Res);
     break;
   }
   case DCINS::GET_RC: {
     unsigned MIOperandNo = Next();
-    Value *Reg = getDRS().getRegAsInt(getRegOp(MIOperandNo));
+    unsigned RegNo = getRegOp(MIOperandNo);
+
+    DEBUG({
+      dbgs() << "  - <" << Vals.size() << ">(";
+      ResTys[0]->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
+      dbgs() << ") = GET_RC " << getDRS().MRI.getName(RegNo) << "\n";
+    });
+
+    Value *Reg = getDRS().getRegAsInt(RegNo);
     if (getResultTy(0)->getPrimitiveSizeInBits() <
         Reg->getType()->getPrimitiveSizeInBits())
       Reg = Builder.CreateTrunc(
@@ -209,35 +277,60 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
   }
   case DCINS::GET_REG: {
     unsigned RegNo = Next();
+
+    DEBUG({
+      dbgs() << "  - <" << Vals.size() << ">(";
+      ResTys[0]->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
+      dbgs() << ") = GET_REG " << getDRS().MRI.getName(RegNo) << "\n";
+    });
+
     Value *RegVal = getReg(RegNo);
     addResult(RegVal);
     break;
   }
   case DCINS::CUSTOM_OP: {
-    unsigned OperandType = Next(), MIOperandNo = Next();
-    Value *Op = translateCustomOperand(OperandType, MIOperandNo);
+    unsigned OperandKind = Next(), MIOperandNo = Next();
+
+    DEBUG({
+      dbgs() << "  - <" << Vals.size() << ">(";
+      ResTys[0]->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
+      dbgs() << ") = CUSTOM_OP " << getDCCustomOpName(OperandKind) << " "
+             << MIOperandNo << "\n";
+    });
+
+    Value *Op = translateCustomOperand(OperandKind, MIOperandNo);
     if (!Op)
       return false;
     addResult(Op);
     break;
   }
   case DCINS::COMPLEX_PATTERN: {
-    unsigned Pattern = Next();
-    // Fill the operands array, taking care to remove our Pattern operand.
+    unsigned PatternKind = Next();
+    // Fill the operands array, taking care to remove our PatternKind operand.
     Ops.pop_back();
     prepareOperands();
-    Value *Op = translateComplexPattern(Pattern);
+
+    DEBUG(dumpOperation(
+        ("COMPLEX_PATTERN " + getDCComplexPatternName(PatternKind)).str(),
+        ResTys, Ops, SemaIdx - Ops.size() - ResTys.size() - 3));
+
+    Value *Op = translateComplexPattern(PatternKind);
     if (!Op)
       return false;
     addResult(Op);
     break;
   }
   case DCINS::PREDICATE: {
-    unsigned Pred = Next();
-    // Fill the operands array, taking care to remove our Pred operand.
+    unsigned PredicateKind = Next();
+    // Fill the operands array, taking care to remove our PredicateKind operand.
     Ops.pop_back();
     prepareOperands();
-    if (!translatePredicate(Pred))
+
+    DEBUG(dumpOperation(
+        ("PREDICATE " + getDCPredicateName(PredicateKind)).str(),
+        ResTys, Ops, SemaIdx - Ops.size() - ResTys.size() - 3));
+
+    if (!translatePredicate(PredicateKind))
       return false;
     break;
   }
@@ -245,11 +338,23 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
     unsigned MIOperandNo = Next();
     Value *Cst = ConstantInt::get(cast<IntegerType>(getResultTy(0)),
                                   getImmOp(MIOperandNo));
+
+    DEBUG({
+      dbgs() << "  - <" << Vals.size() << ">(";
+      ResTys[0]->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
+      dbgs() << ") = CONSTANT_OP ";
+      Cst->printAsOperand(dbgs(), /*PrintType=*/false, getModule());
+    });
+
     addResult(Cst);
     break;
   }
   case DCINS::MOV_CONSTANT: {
     uint64_t ValIdx = Next();
+
+    DEBUG(dbgs() << "  - <" << Vals.size() << ">(";
+          ResTys[0]->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
+          dbgs() << ") = MOV_CONSTANT " << ValIdx << "\n");
 
     const DataLayout &DL = getModule()->getDataLayout();
     Type *CTy = getResultTy(0);
@@ -264,7 +369,11 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
     break;
   }
   case DCINS::IMPLICIT: {
-    translateImplicit(Next());
+    const unsigned RegNo = Next();
+
+    DEBUG(dbgs() << "  - " << getDRS().MRI.getName(RegNo) << " = IMPLICIT\n");
+
+    translateImplicit(RegNo);
     break;
   }
   default:
@@ -312,6 +421,9 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
   // Finally, handle the regular (ISD) operations.  The remaining elements in
   // the semantics array entry is the index of each operand in the Vals table.
   prepareOperands();
+
+  DEBUG(dumpOperation(getDCOpcodeName(Opcode), ResTys, Ops,
+                      SemaIdx - NumOperands - NumResults - 2));
 
   // At this point, we prepared the types and operands.  We just need to do
   // the translation, starting with the target-specific nodes.
@@ -544,8 +656,7 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
   return DoAndCheckResults(true);
 }
 
-Value *DCInstruction::translateComplexPattern(unsigned Pattern) {
-  (void)Pattern;
+Value *DCInstruction::translateComplexPattern(unsigned) {
   return nullptr;
 }
 
@@ -558,8 +669,9 @@ bool DCInstruction::translateExtLoad(Type *MemTy, bool isSExt) {
   return true;
 }
 
-bool DCInstruction::translatePredicate(unsigned Pred) {
-  switch (Pred) {
+bool DCInstruction::translatePredicate(unsigned PredicateKind) {
+  switch (PredicateKind) {
+  case TargetOpcode::Predicate::memop64:
   case TargetOpcode::Predicate::memop:
   case TargetOpcode::Predicate::loadi16:
   case TargetOpcode::Predicate::loadi32:

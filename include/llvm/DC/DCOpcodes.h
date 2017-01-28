@@ -90,6 +90,7 @@ enum {
   loadi16,
   loadi32,
   memop,
+  memop64,
   mgatherv16i32,
   mgatherv2i64,
   mgatherv4i32,

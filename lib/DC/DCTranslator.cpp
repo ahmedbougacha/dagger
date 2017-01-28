@@ -90,8 +90,8 @@ public:
 class InstPrettyStackTraceEntry : public PrettyStackTraceEntry {
 public:
   uint64_t Addr;
-  unsigned Opcode;
-  InstPrettyStackTraceEntry(uint64_t Addr, unsigned Opcode)
+  StringRef Opcode;
+  InstPrettyStackTraceEntry(uint64_t Addr, StringRef Opcode)
       : PrettyStackTraceEntry(), Addr(Addr), Opcode(Opcode) {}
 
   void print(raw_ostream &OS) const override {
@@ -130,17 +130,17 @@ Function *DCTranslator::translateFunction(const MCFunction &MCFN) {
       std::unique_ptr<DCBasicBlock> DCB = createDCBasicBlock(*DCF, *BB);
 
       for (auto &I : *BB) {
-        InstPrettyStackTraceEntry X(I.Address, I.Inst.getOpcode());
+        StringRef InstName = getDRS().MII.getName(I.Inst.getOpcode());
+        InstPrettyStackTraceEntry X(I.Address, InstName);
         DEBUG(dbgs() << "Translating instruction:\n ";
-              dbgs() << I.Inst << "\n";);
+              dbgs() << InstName << ": " << I.Inst << "\n";);
 
 
         std::unique_ptr<DCInstruction> DCI = createDCInstruction(*DCB, I);
 
         if (!DCI->translate()) {
           errs() << "Cannot translate instruction: \n  "
-                 << "  " << getDRS().MII.getName(I.Inst.getOpcode())
-                 << ": " << I.Inst << "\n";
+                 << "  " << InstName << ": " << I.Inst << "\n";
           llvm_unreachable("Couldn't translate instruction\n");
         }
       }

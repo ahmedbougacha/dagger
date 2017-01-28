@@ -78,6 +78,10 @@ public:
   std::map<uint64_t, uint16_t> ConstantIdx;
   uint16_t CurConstantIdx;
 
+  /// The set of encountered predicate (PatFrag) records, in order of emission.
+  /// We later emit a debug dump function for each of these.
+  SetVector<Record *> EncounteredPredicates;
+
   SemanticsTarget(RecordKeeper &Records);
 };
 
@@ -403,6 +407,7 @@ private:
       // should add a Namespace field to PatFrag to be able to distinguish
       // between targets.
       NS.addOperand("TargetOpcode::Predicate::" + PredRec->getName().str());
+      Target.EncounteredPredicates.insert(PredRec);
     }
 
     for (unsigned i = 0, e = TPN.getNumChildren(); i != e; ++i) {
@@ -612,10 +617,6 @@ void SemanticsEmitter::run(raw_ostream &OS) {
   CodeGenRegBank &RegBank = Target.getRegBank();
 
   OS << "namespace llvm {\n";
-
-  OS << "namespace " << TGName << " {\n";
-  OS << "namespace {\n\n";
-
   OS << "#ifdef GET_INSTR_SEMA\n";
 
   std::vector<Record *> CPs = Records.getAllDerivedDefinitions("ComplexPattern");
@@ -628,12 +629,15 @@ void SemanticsEmitter::run(raw_ostream &OS) {
   std::stable_sort(CPKinds.begin(), CPKinds.end());
   CPKinds.erase(std::unique(CPKinds.begin(), CPKinds.end()), CPKinds.end());
 
+  OS << "namespace " << TGName << " {\n";
   OS << "namespace ComplexPattern {\n";
   OS << "enum {\n";
   for (auto &CPK : CPKinds)
     OS << "  " << CPK << ",\n";
   OS << "};\n} // End ComplexPattern namespace\n\n";
 
+  // Now, emit the anonymous data structures.
+  OS << "namespace {\n\n";
   OS << "const uint16_t InstSemantics[] = {\n";
   OS << "  DCINS::END_OF_INSTRUCTION,\n";
   CurSemaOffset = 1;
@@ -707,9 +711,59 @@ void SemanticsEmitter::run(raw_ostream &OS) {
     OS.indent(2) << Constant << "ULL,\n";
   OS << "};\n\n";
 
+  OS << "\n} // end anonymous namespace\n";
+  OS << "} // end namespace " << TGName << "\n";
+
+  // Emit the various debug dump helpers.
+  OS << "StringRef " << TGName
+     << "DCInstruction::getDCComplexPatternName(unsigned CPKind) const {\n"
+   << "  switch(CPKind) {\n";
+  for (auto &CPK : CPKinds)
+    OS << "  case " << TGName << "::ComplexPattern::" << CPK << ": return \""
+       << CPK << "\";\n";
+  OS << "  default: return \"<unknown>\";\n  }\n}\n\n";
+
+  OS << "StringRef " << TGName
+     << "DCInstruction::getDCPredicateName(unsigned PredKind) const {\n"
+     << "  switch(PredKind) {\n";
+  for (auto *Pred : SemaTarget.EncounteredPredicates) {
+    StringRef PredName = Pred->getName();
+    OS << "  case TargetOpcode::Predicate::" << PredName << ": return \""
+       << PredName << "\";\n";
+  }
+  OS << "  default: return \"<unknown>\";\n  }\n}\n\n";
+
+  OS << "StringRef " << TGName
+     << "DCInstruction::getDCCustomOpName(unsigned CustomOpKind) const {\n"
+     << "  switch(CustomOpKind) {\n";
+  for (auto *Op : Records.getAllDerivedDefinitions("Operand"))
+    if (!Op->isAnonymous())
+      OS << "  case " << TGName << "::OpTypes::" << Op->getName()
+         << ": return \"" << Op->getName() << "\";\n";
+  OS << "  default: return \"<unknown>\";\n  }\n}\n\n";
+
+  {
+    SetVector<StringRef> UniqueSDNodeNames;
+    for (auto *SDNodeRec : Records.getAllDerivedDefinitions("SDNode")) {
+      StringRef EnumName = CGPatterns.getSDNodeInfo(SDNodeRec).getEnumName();
+      // Some targets have weird invalid SDNodes. Ignore them.
+      if (!EnumName.contains("::"))
+        continue;
+      UniqueSDNodeNames.insert(EnumName);
+    }
+    OS << "StringRef " << TGName
+       << "DCInstruction::getDCOpcodeName(unsigned Opcode) const {\n"
+       << "  switch(Opcode) {";
+    for (StringRef SDNodeName : UniqueSDNodeNames)
+      OS << "  case " << SDNodeName << ":\n"
+         << "    return \"" << SDNodeName << "\";\n";
+    OS << "  default: return \"<unknown op>\";\n  }\n}\n";
+  }
   OS << "#endif // GET_INSTR_SEMA\n";
 
   OS << "#ifdef GET_REGISTER_SEMA\n";
+  OS << "namespace " << TGName << " {\n";
+  OS << "namespace {\n\n";
 
   // FIXME: Also generate the rest of DCRegisterSema here
   OS << "const MVT::SimpleValueType RegClassVTs[] = {\n";
@@ -725,10 +779,10 @@ void SemanticsEmitter::run(raw_ostream &OS) {
     OS.indent(2) << llvm::getName(VT) << ", // " << RC->getName() << " \n";
   }
   OS << "};\n\n";
-  OS << "#endif // GET_REGISTER_SEMA\n";
-
   OS << "\n} // end anonymous namespace\n";
   OS << "} // end namespace " << TGName << "\n";
+  OS << "#endif // GET_REGISTER_SEMA\n";
+
   OS << "} // end namespace llvm\n";
 }
 

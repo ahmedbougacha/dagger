@@ -20,6 +20,11 @@ class AArch64DCInstruction final : public DCInstruction {
 public:
   AArch64DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI);
 
+  AArch64DCBasicBlock &getParent() {
+    return static_cast<AArch64DCBasicBlock &>(DCInstruction::getParent());
+  }
+
+protected:
   bool translateTargetInst() override;
   bool translateTargetOpcode(unsigned Opcode) override;
   Value *translateComplexPattern(unsigned CP) override;
@@ -27,9 +32,10 @@ public:
                                 unsigned MIOperandNo) override;
   bool translateImplicit(unsigned RegNo) override;
 
-  AArch64DCBasicBlock &getParent() {
-    return static_cast<AArch64DCBasicBlock &>(DCInstruction::getParent());
-  }
+  StringRef getDCOpcodeName(unsigned Opcode) const override;
+  StringRef getDCCustomOpName(unsigned OperandKind) const override;
+  StringRef getDCPredicateName(unsigned PredicateKind) const override;
+  StringRef getDCComplexPatternName(unsigned CPKind) const override;
 
 private:
   AArch64RegisterSema &getDRS() {
