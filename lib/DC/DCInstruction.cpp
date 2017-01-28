@@ -334,7 +334,7 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
       return false;
     break;
   }
-  case DCINS::CONSTANT_OP: {
+  case DCINS::GET_IMMEDIATE: {
     unsigned MIOperandNo = Next();
     Value *Cst = ConstantInt::get(cast<IntegerType>(getResultTy(0)),
                                   getImmOp(MIOperandNo));
@@ -342,19 +342,19 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
     DEBUG({
       dbgs() << "  - <" << Vals.size() << ">(";
       ResTys[0]->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
-      dbgs() << ") = CONSTANT_OP ";
+      dbgs() << ") = GET_IMMEDIATE ";
       Cst->printAsOperand(dbgs(), /*PrintType=*/false, getModule());
     });
 
     addResult(Cst);
     break;
   }
-  case DCINS::MOV_CONSTANT: {
+  case DCINS::GET_CONSTANT: {
     uint64_t ValIdx = Next();
 
     DEBUG(dbgs() << "  - <" << Vals.size() << ">(";
           ResTys[0]->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
-          dbgs() << ") = MOV_CONSTANT " << ValIdx << "\n");
+          dbgs() << ") = GET_CONSTANT " << ValIdx << "\n");
 
     const DataLayout &DL = getModule()->getDataLayout();
     Type *CTy = getResultTy(0);

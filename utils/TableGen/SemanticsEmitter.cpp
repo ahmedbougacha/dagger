@@ -194,7 +194,7 @@ private:
   ///       <the Operand type as a Target::OpTypes:: enum value>,
   ///       <MIOperandNo of the first MI operand for this Operand>
   /// - if \p TPN is an OPERAND_IMMEDIATE Operand, generate:
-  ///     DCINS::CONSTANT_OP, <inferred type>, <MIOperandNo of the Operand>
+  ///     DCINS::GET_IMMEDIATE, <inferred type>, <MIOperandNo of the Operand>
   ///
   LSResult flattenOperand(const TreePatternNode &TPN,
                           const CGIOperandList::OperandInfo *OpInfo) {
@@ -209,7 +209,7 @@ private:
 
     if (OpRec->isSubClassOf("Operand")) {
       if (OpInfo->OperandType == "OPERAND_IMMEDIATE") {
-        Op.Opcode = "DCINS::CONSTANT_OP";
+        Op.Opcode = "DCINS::GET_IMMEDIATE";
       } else {
         Op.Opcode = "DCINS::CUSTOM_OP";
         Op.addOperand(CGI.Namespace + "::OpTypes::" + OpRec->getName().str());
@@ -236,7 +236,7 @@ private:
   /// - if \p TPN is an explicit Register, generate:
   ///     DCINS::GET_REG, <inferred type>, Target::RegName
   /// - if \p TPN is a compile-time constant, generate:
-  ///     DCINS::MOV_CONSTANT, <inferred type>, <Constant index>
+  ///     DCINS::GET_CONSTANT, <inferred type>, <Constant index>
   ///   The constant index points in an uint64_t array, where all compile-time
   ///   constants are uniqued (so that the semantics array remains uint16_t[].)
   ///
@@ -248,7 +248,7 @@ private:
 
     if (OpDef == nullptr) {
       IntInit *OpInt = cast<IntInit>(TPN.getLeafValue());
-      Op.Opcode = "DCINS::MOV_CONSTANT";
+      Op.Opcode = "DCINS::GET_CONSTANT";
       uint16_t &Idx = Target.ConstantIdx[OpInt->getValue()];
       if (Idx == 0)
         Idx = ++Target.CurConstantIdx;

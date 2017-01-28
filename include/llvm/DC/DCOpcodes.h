@@ -40,10 +40,10 @@ enum DCOpcodes : uint16_t {
   CUSTOM_OP,
 
   /// Get the value of an immediate operand.
-  CONSTANT_OP,
+  GET_IMMEDIATE,
 
   /// Get a constant value.
-  MOV_CONSTANT,
+  GET_CONSTANT,
 
   /// Update an implicitly defined register, as defined by the target.
   IMPLICIT,
