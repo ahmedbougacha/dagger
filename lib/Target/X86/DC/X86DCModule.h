@@ -25,6 +25,9 @@ protected:
 
   Value *insertCodeForFiniRegSet(BasicBlock *InsertAtEnd,
                                  Value *RegSet) override;
+
+  void insertExternalWrapperAsm(BasicBlock *InsertAtEnd, Value *ExternalFunc,
+                                Value *RegSet) override;
 };
 
 } // end namespace llvm

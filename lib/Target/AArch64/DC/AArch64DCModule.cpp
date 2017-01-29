@@ -69,3 +69,9 @@ Value *AArch64DCModule::insertCodeForFiniRegSet(BasicBlock *InsertAtEnd,
       Builder.CreateLoad(Builder.CreateInBoundsGEP(RegSet, Idx)),
       Builder.getInt32Ty());
 }
+
+void AArch64DCModule::insertExternalWrapperAsm(BasicBlock *InsertAtEnd,
+                                               Value *ExternalFunc,
+                                               Value *RegSet) {
+  llvm_unreachable("Implement");
+}

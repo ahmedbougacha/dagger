@@ -54,7 +54,8 @@ Function *DCModule::createExternalWrapperFunction(uint64_t Addr, Value *ExtFn) {
     return Fn;
 
   BasicBlock *BB = BasicBlock::Create(getContext(), "", Fn);
-  DCT.getDRS().insertExternalWrapperAsm(BB, ExtFn);
+  Value *RegSet = &*Fn->getArgumentList().begin();
+  insertExternalWrapperAsm(BB, ExtFn, RegSet);
   ReturnInst::Create(getContext(), BB);
   return Fn;
 }

@@ -72,6 +72,7 @@ public:
   const MCInstrInfo &getMII() const { return MII; }
   const MCRegisterInfo &getMRI() const { return MRI; }
   const DCRegisterSetDesc &getRegSetDesc() const { return RegSetDesc; }
+  const DataLayout &getDataLayout() const { return DL; }
 
   DCModule *getDCModule() { return DCM.get(); }
 

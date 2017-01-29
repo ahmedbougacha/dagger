@@ -74,8 +74,6 @@ private:
 
   Value *computeEFLAGSForDef(Value *Def, bool DontUpdateCF = false);
   Value *createEFLAGSFromSFs();
-
-  void insertExternalWrapperAsm(BasicBlock *WrapperBB, Value *ExtFn) override;
 };
 
 } // end namespace llvm

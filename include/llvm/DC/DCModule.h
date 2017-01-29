@@ -62,6 +62,15 @@ protected:
   virtual Value *insertCodeForFiniRegSet(BasicBlock *InsertAtEnd,
                                          Value *RegSet) = 0;
 
+  /// Insert, at the end of basic block \p InsertAtEnd, the target-specific
+  /// context-switching code to expose the register set \p RegSet to the native
+  /// external function \p ExternalFunc, call it, and return to the translated
+  /// code, saving the native register state to \p RegSet.
+  /// This is only well-defined when translating to the same target as the
+  /// original code, but can be made to work in limited cross-translation cases.
+  virtual void insertExternalWrapperAsm(BasicBlock *InsertAtEnd,
+                                        Value *ExternalFunc, Value *RegSet) = 0;
+
 private:
   DCTranslator &DCT;
   Module &TheModule;

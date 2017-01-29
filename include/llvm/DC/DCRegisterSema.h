@@ -142,9 +142,6 @@ public:
     return Builder->CreateBitCast(getReg(RegNo), getRegIntType(RegNo));
   }
 
-  virtual void insertExternalWrapperAsm(BasicBlock *WrapperBB,
-                                        Value *ExtFn) = 0;
-
 public:
   // Helper methods.
   // FIXME: These should move out of DCRegisterSema.

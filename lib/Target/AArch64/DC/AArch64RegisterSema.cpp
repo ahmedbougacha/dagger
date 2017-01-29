@@ -36,8 +36,3 @@ bool AArch64RegisterSema::doesSubRegIndexClearSuper(unsigned Idx) const {
   }
   return false;
 }
-
-void AArch64RegisterSema::insertExternalWrapperAsm(BasicBlock *WrapperBB,
-                                                   Value *ExtFn) {
-  llvm_unreachable("Implement");
-}

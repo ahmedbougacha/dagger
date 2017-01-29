@@ -27,8 +27,6 @@ public:
                       const DCRegisterSetDesc &RegSetDesc);
 
   bool doesSubRegIndexClearSuper(unsigned Idx) const override;
-
-  void insertExternalWrapperAsm(BasicBlock *WrapperBB, Value *ExtFn) override;
 };
 
 } // end namespace llvm
