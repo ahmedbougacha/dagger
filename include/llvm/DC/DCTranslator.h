@@ -37,11 +37,14 @@ class DCRegisterSema;
 class MCBasicBlock;
 class MCDecodedInst;
 class MCFunction;
-class MCInstPrinter;
+class MCInstrInfo;
+class MCRegisterInfo;
 
 class DCTranslator {
   LLVMContext &Ctx;
   const DataLayout DL;
+  const MCInstrInfo &MII;
+  const MCRegisterInfo &MRI;
 
   const DCRegisterSetDesc RegSetDesc;
 
@@ -60,11 +63,14 @@ public:
   /// \param DL   The DataLayout to use for the produced IR.
   /// \param OptLevel How optimized the output should be (0-3).
   DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel,
+               const MCInstrInfo &MII, const MCRegisterInfo &MRI,
                const DCRegisterSetDesc RegSetDesc);
   virtual ~DCTranslator();
 
   virtual DCRegisterSema &getDRS() = 0;
 
+  const MCInstrInfo &getMII() const { return MII; }
+  const MCRegisterInfo &getMRI() const { return MRI; }
   const DCRegisterSetDesc &getRegSetDesc() const { return RegSetDesc; }
 
   DCModule *getDCModule() { return DCM.get(); }

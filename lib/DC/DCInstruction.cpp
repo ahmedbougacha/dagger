@@ -74,8 +74,9 @@ bool DCInstruction::translate() {
 
   if (!Success && TranslateUnknownToUndef) {
     errs() << "Couldn't translate instruction: \n  ";
-    errs() << "  " << getDRS().MII.getName(TheMCInst.Inst.getOpcode()) << ": "
-           << TheMCInst.Inst << "\n";
+    errs() << "  "
+           << getTranslator().getMII().getName(TheMCInst.Inst.getOpcode())
+           << ": " << TheMCInst.Inst << "\n";
     Builder.CreateCall(
         Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
     Builder.CreateUnreachable();

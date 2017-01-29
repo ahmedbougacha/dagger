@@ -33,7 +33,8 @@ AArch64DCTranslator::AArch64DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                                          unsigned OptLevel,
                                          const MCInstrInfo &MII,
                                          const MCRegisterInfo &MRI)
-    : DCTranslator(Ctx, DL, OptLevel, buildAArch64RegSetDesc(Ctx, MRI)),
+    : DCTranslator(Ctx, DL, OptLevel, MII, MRI,
+                   buildAArch64RegSetDesc(Ctx, MRI)),
       DRS(Ctx, MRI, MII, DL, getRegSetDesc()) {
   initializeTranslationModule();
 }

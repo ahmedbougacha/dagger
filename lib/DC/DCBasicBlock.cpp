@@ -29,7 +29,7 @@ DCBasicBlock::DCBasicBlock(DCFunction &DCF, const MCBasicBlock &MCB)
   getDRS().SwitchToBasicBlock(getBasicBlock());
 
   // The PC at the start of the basic block is known, just set it.
-  const unsigned PC = getDRS().MRI.getProgramCounter();
+  const unsigned PC = getTranslator().getMRI().getProgramCounter();
   getDRS().setReg(
       PC, ConstantInt::get(getDRS().getRegType(PC), TheMCBB.getStartAddr()));
 }
