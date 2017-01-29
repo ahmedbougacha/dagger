@@ -366,7 +366,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::RET_FLAG: {
     // FIXME: Handle ret arg.
     setReg(X86::RIP, translatePop(8));
-    Builder.CreateBr(getParent().getParent().getExitBlock());
+    Builder.CreateBr(getParentFunction().getExitBlock());
     break;
   }
   case X86ISD::CMP: {
@@ -383,8 +383,8 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     unsigned CC = cast<ConstantInt>(Op1)->getValue().getZExtValue();
     setReg(X86::RIP, Op0);
     Builder.CreateCondBr(getDRS().getCC((X86::CondCode)CC),
-                         getParent().getParent().getOrCreateBasicBlock(Target),
-                         getParent().getParent().getOrCreateBasicBlock(
+                         getParentFunction().getOrCreateBasicBlock(Target),
+                         getParentFunction().getOrCreateBasicBlock(
                              TheMCInst.Address + TheMCInst.Size));
     break;
   }

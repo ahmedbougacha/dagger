@@ -47,6 +47,8 @@ public:
   BasicBlock *getBasicBlock() { return &TheBB; }
 
   DCFunction &getParent() { return DCF; }
+  DCModule &getParentModule() { return getParent().getParent(); }
+  DCTranslator &getTranslator() { return getParentModule().getTranslator(); }
 };
 
 } // end namespace llvm

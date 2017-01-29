@@ -89,6 +89,9 @@ public:
   Function *getFunction() { return getParent().getFunction(); }
 
   DCBasicBlock &getParent() { return DCB; }
+  DCFunction &getParentFunction() { return getParent().getParent(); }
+  DCModule &getParentModule() { return getParentFunction().getParent(); }
+  DCTranslator &getTranslator() { return getParentModule().getTranslator(); }
 
 protected:
   uint64_t getImmOp(unsigned Idx) {

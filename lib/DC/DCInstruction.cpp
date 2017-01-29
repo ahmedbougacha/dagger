@@ -151,15 +151,13 @@ void DCInstruction::dumpOperation(StringRef Opcode,
 void DCInstruction::insertCall(Value *CallTarget) {
   if (ConstantInt *CI = dyn_cast<ConstantInt>(CallTarget)) {
     uint64_t Target = CI->getValue().getZExtValue();
-    CallTarget =
-        getParent().getParent().getParent().getOrCreateFunction(Target);
+    CallTarget = getParentModule().getOrCreateFunction(Target);
   } else {
     CallTarget = Builder.CreateCall(
         Intrinsic::getDeclaration(getModule(), Intrinsic::dc_translate_at),
         {Builder.CreateIntToPtr(CallTarget, Builder.getInt8PtrTy())});
     CallTarget = Builder.CreateBitCast(
-        CallTarget,
-        getParent().getParent().getParent().getFuncTy()->getPointerTo());
+        CallTarget, getParentModule().getFuncTy()->getPointerTo());
   }
   // Flush all live registers before doing the call.
   // Saving/restoring from the alloca to the regset will be done for all calls,
@@ -169,7 +167,7 @@ void DCInstruction::insertCall(Value *CallTarget) {
   // Now do the call to the resolved target.
   Value *RegSetArg = &getFunction()->getArgumentList().front();
   auto *CI = Builder.CreateCall(CallTarget, {RegSetArg});
-  getParent().getParent().addCallForRegSetSaveRestore(CI);
+  getParentFunction().addCallForRegSetSaveRestore(CI);
 
   // FIXME: Insert return address checking, to unwind back to the translator if
   // the call returned to an unexpected address.
@@ -607,14 +605,14 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
     Value *Op0 = getOperand(0);
     setReg(getDRS().MRI.getProgramCounter(), Op0);
     insertCall(Op0);
-    Builder.CreateBr(getParent().getParent().getExitBlock());
+    Builder.CreateBr(getParentFunction().getExitBlock());
     break;
   }
   case ISD::BR: {
     Value *Op0 = getOperand(0);
     uint64_t Target = cast<ConstantInt>(Op0)->getValue().getZExtValue();
     setReg(getDRS().MRI.getProgramCounter(), Op0);
-    Builder.CreateBr(getParent().getParent().getOrCreateBasicBlock(Target));
+    Builder.CreateBr(getParentFunction().getOrCreateBasicBlock(Target));
     break;
   }
   case ISD::TRAP: {
