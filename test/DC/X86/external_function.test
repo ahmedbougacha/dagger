@@ -1,0 +1,24 @@
+# RUN: llvm-dec %p/Inputs/symbol_stub.macho-x86_64 | FileCheck %s
+
+# A basic object containing a symbol stub pointing to an external function.
+# 
+# The .dylib contains:
+#   .global _external_func
+#   _external_func:
+#   retq
+# 
+# The main executable contains:
+#   .global _main
+#   _main:
+#   callq _external_func
+#   retq
+
+# CHECK-LABEL: define void @fn_100000F90(%regset* noalias nocapture)
+# CHECK:         call void @fn_100000F96(%regset* %0)
+
+# CHECK-LABEL: define void @fn_100000F96(%regset*) {
+# CHECK-NEXT:    call void asm sideeffect "mov $0, %r12  \0Amov $1, %r13  \0Amov %rsp, %r14\0Amov 88(%r12), %rsp  \0Apop %rax                                          \0Amov %rax, 72(%r12)  \0Amov 56(%r12), %rdi  \0Amov 80(%r12), %rsi  \0Amov 64(%r12), %rdx  \0Amov 48(%r12), %rcx  \0Amov 576(%r12), %r8   \0Amov 584(%r12), %r9   \0Amovaps 768(%r12), %xmm0 \0Amovaps 832(%r12), %xmm1 \0Amovaps 896(%r12), %xmm2 \0Amovaps 960(%r12), %xmm3 \0Amovaps 1024(%r12), %xmm4 \0Amovaps 1088(%r12), %xmm5 \0Amovaps 1152(%r12), %xmm6 \0Amovaps 1216(%r12), %xmm7 \0Amov 24(%r12), %rax   \0Acall *%r13\0Amov %rax, 24(%r12)   \0Amov %rdx, 64(%r12)   \0Amovaps %xmm0, 768(%r12) \0Amovaps %xmm1, 832(%r12) \0Amovaps %xmm2, 896(%r12) \0Amovaps %xmm3, 960(%r12) \0Amovaps %xmm4, 1024(%r12) \0Amovaps %xmm5, 1088(%r12) \0Amovaps %xmm6, 1152(%r12) \0Amovaps %xmm7, 1216(%r12) \0Amov %rsp, 88(%r12)      \0Amov %r14, %rsp\0A", "r,r,~{rax},~{rdi},~{rsi},~{rdx},~{rcx},~{r8},~{r9},~{r10},~{r11},~{r12},~{r13},~{r14},~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{xmm6},~{xmm7}"(%regset* %0, void ()* @external_func)
+# CHECK-NEXT:    ret void
+# CHECK-NEXT:  }
+
+# CHECK-LABEL: declare void @external_func()
