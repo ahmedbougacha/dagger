@@ -1,4 +1,5 @@
 #include "X86DCTranslator.h"
+#include "MCTargetDesc/X86MCTargetDesc.h"
 #include "llvm/Support/TargetRegistry.h"
 
 using namespace llvm;

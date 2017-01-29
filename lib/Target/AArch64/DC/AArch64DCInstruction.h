@@ -11,7 +11,6 @@
 #define LLVM_LIB_TARGET_AARCH64_AARCH64DCINSTRUCTION_H
 
 #include "AArch64DCBasicBlock.h"
-#include "AArch64RegisterSema.h"
 #include "llvm/DC/DCInstruction.h"
 
 namespace llvm {
@@ -32,15 +31,12 @@ protected:
                                 unsigned MIOperandNo) override;
   bool translateImplicit(unsigned RegNo) override;
 
+  bool doesSubRegIndexClearSuper(unsigned SubRegIdx) override;
+
   StringRef getDCOpcodeName(unsigned Opcode) const override;
   StringRef getDCCustomOpName(unsigned OperandKind) const override;
   StringRef getDCPredicateName(unsigned PredicateKind) const override;
   StringRef getDCComplexPatternName(unsigned CPKind) const override;
-
-private:
-  AArch64RegisterSema &getDRS() {
-    return static_cast<AArch64RegisterSema &>(DCInstruction::getDRS());
-  }
 };
 
 } // end llvm namespace

@@ -11,7 +11,7 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
-#include "llvm/DC/DCRegisterSema.h"
+#include "llvm/DC/RegisterValueUtils.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -33,6 +33,13 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dc-sema"
 
+namespace llvm {
+cl::opt<bool>
+    EnableMockIntrin("enable-dc-reg-mock-intrin",
+                     cl::desc("Mock register accesses using intrinsics"),
+                     cl::init(false));
+}
+
 static cl::opt<bool> TranslateUnknownToUndef(
     "dc-translate-unknown-to-undef",
     cl::desc("Translate unknown instruction or unknown opcode in an "
@@ -49,12 +56,16 @@ DCInstruction::DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI,
                              const unsigned *OpcodeToSemaIdx,
                              const uint16_t *SemanticsArray,
                              const uint64_t *ConstantArray)
-    : DCB(DCB), TheMCInst(MCI), Builder(DCB.getBasicBlock()),
+    : DCB(DCB), TheMCInst(MCI), Builder(DCB.getBasicBlock()->getTerminator()),
       SemaIdx(OpcodeToSemaIdx[MCI.Inst.getOpcode()]), ResTys(), Vals(),
       OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
       ConstantArray(ConstantArray) {
 
-  getDRS().SwitchToInst(TheMCInst);
+  if (EnableMockIntrin) {
+    Function *StartInstIntrin =
+        Intrinsic::getDeclaration(getModule(), Intrinsic::dc_startinst);
+    Builder.CreateCall(StartInstIntrin, Builder.getInt64(TheMCInst.Address));
+  }
 }
 
 DCInstruction::~DCInstruction() {
@@ -160,10 +171,11 @@ void DCInstruction::insertCall(Value *CallTarget) {
     CallTarget = Builder.CreateBitCast(
         CallTarget, getParentModule().getFuncTy()->getPointerTo());
   }
+
   // Flush all live registers before doing the call.
   // Saving/restoring from the alloca to the regset will be done for all calls,
   // when finalizing the function.
-  getDRS().saveAllLiveRegs();
+  DCB.saveAllLiveRegs();
 
   // Now do the call to the resolved target.
   Value *RegSetArg = &getFunction()->getArgumentList().front();
@@ -196,10 +208,10 @@ bool DCInstruction::tryTranslateInst() {
 
   {
     // Increment the PC before anything.
-    Value *OldPC = getReg(getDRS().MRI.getProgramCounter());
-    setReg(getDRS().MRI.getProgramCounter(),
-           Builder.CreateAdd(
-               OldPC, ConstantInt::get(OldPC->getType(), TheMCInst.Size)));
+    const unsigned PCReg = getTranslator().getMRI().getProgramCounter();
+    Value *OldPC = getReg(PCReg);
+    setReg(PCReg, Builder.CreateAdd(OldPC, ConstantInt::get(OldPC->getType(),
+                                                            TheMCInst.Size)));
   }
 
   unsigned Opcode;
@@ -211,6 +223,8 @@ bool DCInstruction::tryTranslateInst() {
 }
 
 bool DCInstruction::translateDCOp(uint16_t Opcode) {
+  auto &MRI = getTranslator().getMRI();
+
   switch (Opcode) {
   case DCINS::PUT_RC: {
     unsigned MIOperandNo = Next();
@@ -219,13 +233,13 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
     Value *Res = Vals[ResOpIdx];
 
     DEBUG({
-      dbgs() << "  - " << getDRS().MRI.getName(RegNo) << " = PUT_RC <"
+      dbgs() << "  - " << MRI.getName(RegNo) << " = PUT_RC <"
              << ResOpIdx << ">(";
       Res->printAsOperand(dbgs());
       dbgs() << ")\n";
     });
 
-    IntegerType *RegType = getDRS().getRegIntType(RegNo);
+    IntegerType *RegType = getRegIntType(RegNo);
     if (Res->getType()->isPointerTy())
       Res = Builder.CreatePtrToInt(Res, RegType);
     if (!Res->getType()->isIntegerTy())
@@ -233,7 +247,7 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
           Res, IntegerType::get(getContext(),
                                 Res->getType()->getPrimitiveSizeInBits()));
     if (Res->getType()->getPrimitiveSizeInBits() < RegType->getBitWidth())
-      Res = getDRS().insertBitsInValue(getDRS().getRegAsInt(RegNo), Res);
+      Res = llvm::insertBitsInValue(Builder.saveIP(), getRegAsInt(RegNo), Res);
     assert(Res->getType() == RegType);
     setReg(RegNo, Res);
     break;
@@ -244,7 +258,7 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
     Value *Res = Vals[ResOpIdx];
 
     DEBUG({
-      dbgs() << "  - " << getDRS().MRI.getName(RegNo) << " = PUT_REG <"
+      dbgs() << "  - " << MRI.getName(RegNo) << " = PUT_REG <"
              << ResOpIdx << ">(";
       Res->printAsOperand(dbgs());
       dbgs() << ")\n";
@@ -260,10 +274,10 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
     DEBUG({
       dbgs() << "  - <" << Vals.size() << ">(";
       ResTys[0]->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
-      dbgs() << ") = GET_RC " << getDRS().MRI.getName(RegNo) << "\n";
+      dbgs() << ") = GET_RC " << MRI.getName(RegNo) << "\n";
     });
 
-    Value *Reg = getDRS().getRegAsInt(RegNo);
+    Value *Reg = getRegAsInt(RegNo);
     if (getResultTy(0)->getPrimitiveSizeInBits() <
         Reg->getType()->getPrimitiveSizeInBits())
       Reg = Builder.CreateTrunc(
@@ -280,7 +294,7 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
     DEBUG({
       dbgs() << "  - <" << Vals.size() << ">(";
       ResTys[0]->print(dbgs(), /*IsForDebug=*/true, /*NoDetails=*/true);
-      dbgs() << ") = GET_REG " << getDRS().MRI.getName(RegNo) << "\n";
+      dbgs() << ") = GET_REG " << MRI.getName(RegNo) << "\n";
     });
 
     Value *RegVal = getReg(RegNo);
@@ -370,7 +384,7 @@ bool DCInstruction::translateDCOp(uint16_t Opcode) {
   case DCINS::IMPLICIT: {
     const unsigned RegNo = Next();
 
-    DEBUG(dbgs() << "  - " << getDRS().MRI.getName(RegNo) << " = IMPLICIT\n");
+    DEBUG(dbgs() << "  - " << MRI.getName(RegNo) << " = IMPLICIT\n");
 
     translateImplicit(RegNo);
     break;
@@ -604,7 +618,7 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
   }
   case ISD::BRIND: {
     Value *Op0 = getOperand(0);
-    setReg(getDRS().MRI.getProgramCounter(), Op0);
+    setReg(getTranslator().getMRI().getProgramCounter(), Op0);
     insertCall(Op0);
     Builder.CreateBr(getParentFunction().getExitBlock());
     break;
@@ -612,7 +626,7 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
   case ISD::BR: {
     Value *Op0 = getOperand(0);
     uint64_t Target = cast<ConstantInt>(Op0)->getValue().getZExtValue();
-    setReg(getDRS().MRI.getProgramCounter(), Op0);
+    setReg(getTranslator().getMRI().getProgramCounter(), Op0);
     Builder.CreateBr(getParentFunction().getOrCreateBasicBlock(Target));
     break;
   }
@@ -647,8 +661,9 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
 
   default:
     errs() << "Couldn't translate opcode for instruction: \n  ";
-    errs() << "  " << getDRS().MII.getName(TheMCInst.Inst.getOpcode()) << ": "
-           << TheMCInst.Inst << "\n";
+    errs() << "  "
+           << getTranslator().getMII().getName(TheMCInst.Inst.getOpcode())
+           << ": " << TheMCInst.Inst << "\n";
     errs() << "Opcode: " << Opcode << "\n";
     return DoAndCheckResults(false);
   }
@@ -723,4 +738,89 @@ bool DCInstruction::translatePredicate(unsigned PredicateKind) {
   }
   }
   return false;
+}
+
+//===-- Register State Machinery ------------------------------------------===//
+
+Value *DCInstruction::getReg(unsigned RegNo) {
+  auto &RSD = getTranslator().getRegSetDesc();
+
+  if (!RegNo)
+    return nullptr;
+
+  if (EnableMockIntrin) {
+    auto &MRI = getTranslator().getMRI();
+    Value *MDRegName = MetadataAsValue::get(
+        getContext(), MDString::get(getContext(), MRI.getName(RegNo)));
+    Function *GetRegIntrin = Intrinsic::getDeclaration(
+        getModule(), Intrinsic::dc_getreg, getRegType(RegNo));
+    return Builder.CreateCall(GetRegIntrin, MDRegName);
+  }
+
+  if (Constant *C = RSD.RegConstantVals[RegNo])
+    return C;
+
+  if (RSD.RegAliased[RegNo])
+    llvm_unreachable("Access to aliased registers not implemented yet");
+
+  if (RSD.RegConstantVals[RegNo])
+    llvm_unreachable("Can't set constant register!");
+
+  return DCB.getReg(RegNo);
+}
+
+void DCInstruction::setReg(unsigned RegNo, Value *Val) {
+  auto &MRI = getTranslator().getMRI();
+  auto &RSD = getTranslator().getRegSetDesc();
+
+  if (EnableMockIntrin) {
+    Value *MDRegName = MetadataAsValue::get(
+        getContext(), MDString::get(getContext(), MRI.getName(RegNo)));
+    Function *SetRegIntrin = Intrinsic::getDeclaration(
+        getModule(), Intrinsic::dc_setreg, Val->getType());
+    // FIXME: val type or regtype?
+    Builder.CreateCall(SetRegIntrin, {Val, MDRegName});
+    return;
+  }
+
+  if (RSD.RegAliased[RegNo])
+    llvm_unreachable("Access to aliased registers not implemented yet");
+
+  // Set the register itself.
+  DCB.setReg(RegNo, Val);
+
+  Value *RegVal = getRegAsInt(RegNo);
+
+  for (MCSuperRegIterator SRI(RegNo, &MRI); SRI.isValid(); ++SRI) {
+    const unsigned SuperReg = *SRI;
+    if (RSD.RegAliased[SuperReg])
+      continue;
+
+    unsigned Idx = MRI.getSubRegIndex(SuperReg, RegNo);
+    assert(Idx && "Superreg's subreg doesn't have an index?");
+
+    DCB.setReg(SuperReg, llvm::recreateSuperRegFromSub(
+                             Builder.saveIP(), MRI, SuperReg, RegNo,
+                             getRegAsInt(SuperReg), RegVal,
+                             doesSubRegIndexClearSuper(Idx)));
+  }
+
+  for (MCSubRegIterator SRI(RegNo, &MRI); SRI.isValid(); ++SRI) {
+    const unsigned SubReg = *SRI;
+    if (RSD.RegAliased[SubReg])
+      continue;
+    DCB.setReg(SubReg, llvm::extractSubRegFromSuper(Builder.saveIP(), MRI,
+                                                    RegNo, SubReg, RegVal));
+  }
+}
+
+Type *DCInstruction::getRegType(unsigned RegNo) {
+  if (Type *Ty = getTranslator().getRegSetDesc().RegTypes[RegNo])
+    return Ty;
+  return getRegIntType(RegNo);
+}
+
+IntegerType *DCInstruction::getRegIntType(unsigned RegNo) {
+  return IntegerType::get(getContext(),
+                          getTranslator().getRegSetDesc().RegSizes[RegNo]);
 }

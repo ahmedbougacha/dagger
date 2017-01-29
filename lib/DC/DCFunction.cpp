@@ -10,7 +10,7 @@
 #include "llvm/DC/DCFunction.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/DC/DCRegisterSema.h"
+#include "llvm/DC/RegisterValueUtils.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -24,6 +24,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
@@ -54,7 +55,8 @@ DCFunction::DCFunction(DCModule &DCM, const MCFunction &MCF)
   IRBuilder<> ExitBuilder(ExitBB);
 
   if (EnableRegSetDiff) {
-    Value *SavedRegSet = EntryBuilder.CreateAlloca(getDRS().getRegSetType());
+    Type *RegSetTy = getTranslator().getRegSetDesc().RegSetType;
+    Value *SavedRegSet = EntryBuilder.CreateAlloca(RegSetTy);
     Value *RegSetArg = &getFunction()->getArgumentList().front();
 
     // First, save the previous regset in the entry block.
@@ -72,7 +74,7 @@ DCFunction::DCFunction(DCModule &DCM, const MCFunction &MCF)
         ExitBuilder.getInt64(reinterpret_cast<uint64_t>(StartAddr)),
         ExitBuilder.getInt8PtrTy());
 
-    ExitBuilder.CreateCall(getDRS().getOrCreateRegSetDiffFunction(),
+    ExitBuilder.CreateCall(DCM.getOrCreateRegSetDiffFunction(),
                            {FnAddr, SavedRegSet, RegSetArg});
   }
 
@@ -83,16 +85,20 @@ DCFunction::DCFunction(DCModule &DCM, const MCFunction &MCF)
   // StartAddr.
   EntryBuilder.CreateBr(getOrCreateBasicBlock(StartAddr));
 
-  getDRS().SwitchToFunction(getFunction());
+  // Prepare the register state.
+  const unsigned NumRegs = getTranslator().getMRI().getNumRegs();
+  RegPtrs.resize(NumRegs);
+  RegAllocas.resize(NumRegs);
+  RegInits.resize(NumRegs);
+  RegDefCount.resize(NumRegs);
 }
 
 DCFunction::~DCFunction() {
   for (auto CallI : Calls) {
-    getDRS().saveAllLocalRegs(CallI->getParent(), CallI);
-    getDRS().restoreLocalRegs(CallI->getParent(), ++CallI);
+    saveLocalRegs(CallI->getParent(), CallI);
+    restoreLocalRegs(CallI->getParent(), ++CallI);
   }
-
-  getDRS().FinalizeFunction(ExitBB);
+  saveLocalRegs(ExitBB, ExitBB->getTerminator()->getIterator());
 }
 
 void DCFunction::createExternalTailCallBB(uint64_t Addr) {
@@ -125,4 +131,108 @@ BasicBlock *DCFunction::getOrCreateBasicBlock(uint64_t Addr) {
 
 void DCFunction::addCallForRegSetSaveRestore(CallInst *CI) {
   Calls.push_back(CI->getIterator());
+}
+
+void DCFunction::saveLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
+  IRBuilder<> LocalBuilder(BB, IP);
+  auto &RSD = getTranslator().getRegSetDesc();
+
+  for (unsigned RI = 1, RE = RegAllocas.size(); RI != RE; ++RI) {
+    if (!RegAllocas[RI])
+      continue;
+    int OffsetInSet = RSD.RegOffsetsInSet[RI];
+    if (OffsetInSet != -1)
+      LocalBuilder.CreateStore(LocalBuilder.CreateLoad(RegAllocas[RI]),
+                               RegPtrs[RI]);
+  }
+}
+
+void DCFunction::restoreLocalRegs(BasicBlock *BB, BasicBlock::iterator IP) {
+  IRBuilder<> LocalBuilder(BB, IP);
+  auto &RSD = getTranslator().getRegSetDesc();
+
+  for (unsigned RI = 1, RE = RegAllocas.size(); RI != RE; ++RI) {
+    if (!RegAllocas[RI])
+      continue;
+    int OffsetInSet = RSD.RegOffsetsInSet[RI];
+    if (OffsetInSet != -1)
+      LocalBuilder.CreateStore(LocalBuilder.CreateLoad(RegPtrs[RI]),
+                               RegAllocas[RI]);
+  }
+}
+
+unsigned DCFunction::incrementRegDefCount(unsigned RegNo) {
+  return RegDefCount[RegNo]++;
+}
+
+AllocaInst *DCFunction::getOrCreateRegAlloca(unsigned RegNo) {
+  AllocaInst *&RA = RegAllocas[RegNo];
+
+  // If we already have an alloca, nothing to do here.
+  if (RA)
+    return RA;
+
+  auto &MRI = getTranslator().getMRI();
+  auto &RSD = getTranslator().getRegSetDesc();
+  StringRef RegName = MRI.getName(RegNo);
+  Value *&RP = RegPtrs[RegNo];
+  Value *&RI = RegInits[RegNo];
+
+  assert(RP == 0 && "Register has a pointer but no alloca!");
+  assert(RI == 0 && "Register has an init value but no alloca!");
+
+  BasicBlock *EntryBB = &TheFunction.getEntryBlock();
+  IRBuilder<> Builder(EntryBB, EntryBB->getTerminator()->getIterator());
+
+  const unsigned LargestSuper = RSD.RegLargestSupers[RegNo];
+
+  auto *RegIntTy = IntegerType::get(getContext(), RSD.RegSizes[RegNo]);
+  auto *RegTy = RSD.RegTypes[RegNo];
+  if (!RegTy)
+    RegTy = RegIntTy;
+
+  if (LargestSuper != RegNo) {
+    // If the register has a super-register, extract from the largest super,
+    // directly from the regset.
+
+    // Make sure the super-register itself has an alloca (and an init value).
+    getOrCreateRegAlloca(LargestSuper);
+    auto *LargestSuperInitVal = RegInits[LargestSuper];
+    assert(LargestSuperInitVal != 0 && "Super-register non initialized!");
+
+    // Extract from the super-register, to initialize our register.
+    RI = llvm::extractSubRegFromSuper(Builder.saveIP(), MRI, LargestSuper,
+                                      RegNo, LargestSuperInitVal);
+
+    // And give it the proper type.
+    RI = Builder.CreateBitCast(RI, RegTy);
+  } else {
+    // Else, it should be in the regset, load it from there.
+    // Get the regset pointer argument.
+    Value *RegSetArg = &TheFunction.getArgumentList().front();
+
+    // Get the offset of our largest super-register into the regset.
+    int OffsetInRegSet = RSD.RegOffsetsInSet[RegNo];
+    assert(OffsetInRegSet != -1 && "Getting a register not in the regset!");
+
+    // Compute the pointer to our largest super-register's entry in the regset.
+    RP = Builder.CreateInBoundsGEP(
+        RegSetArg, {Builder.getInt32(0), Builder.getInt32(OffsetInRegSet)});
+    RP->setName((RegName + "_ptr").str());
+
+    // Finally, extract the register's value from the incoming regset.
+    RI = Builder.CreateLoad(RegTy, RP);
+  }
+
+  // At this point, we have an initial (entry-block) value for our register.
+  // Name it.
+  RI->setName((RegName + "_init").str());
+
+  // Then, create an alloca for the register.
+  RA = Builder.CreateAlloca(RI->getType());
+  RA->setName(RegName);
+
+  // Finally, initialize the local copy of the register.
+  Builder.CreateStore(RI, RA);
+  return RA;
 }

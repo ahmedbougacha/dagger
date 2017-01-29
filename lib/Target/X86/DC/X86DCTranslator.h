@@ -11,13 +11,10 @@
 #define LLVM_LIB_TARGET_X86_X86DCTRANSLATOR_H
 
 #include "llvm/DC/DCTranslator.h"
-#include "X86RegisterSema.h"
 
 namespace llvm {
 
 class X86DCTranslator final : public DCTranslator {
-  X86RegisterSema DRS;
-
 public:
   X86DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel,
                   const MCInstrInfo &MII, const MCRegisterInfo &MRI);
@@ -25,8 +22,6 @@ public:
   virtual ~X86DCTranslator();
 
 private:
-  X86RegisterSema &getDRS() override { return DRS; }
-
   std::unique_ptr<DCModule> createDCModule(Module &M) override;
 
   std::unique_ptr<DCFunction> createDCFunction(DCModule &DCM,

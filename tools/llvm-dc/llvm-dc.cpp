@@ -1,6 +1,5 @@
 #define DEBUG_TYPE "llvm-dc"
 #include "llvm/DC/DCFunction.h"
-#include "llvm/DC/DCRegisterSema.h"
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/DC/DCTranslatorUtils.h"
 #include "llvm/ADT/Triple.h"

@@ -33,7 +33,6 @@ class DCBasicBlock;
 class DCFunction;
 class DCInstruction;
 class DCModule;
-class DCRegisterSema;
 class MCBasicBlock;
 class MCDecodedInst;
 class MCFunction;
@@ -66,8 +65,6 @@ public:
                const MCInstrInfo &MII, const MCRegisterInfo &MRI,
                const DCRegisterSetDesc RegSetDesc);
   virtual ~DCTranslator();
-
-  virtual DCRegisterSema &getDRS() = 0;
 
   const MCInstrInfo &getMII() const { return MII; }
   const MCRegisterInfo &getMRI() const { return MRI; }

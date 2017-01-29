@@ -8,9 +8,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/DC/DCModule.h"
-#include "llvm/DC/DCRegisterSema.h"
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include <dlfcn.h>
 
 using namespace llvm;
 
@@ -151,4 +154,111 @@ Function *DCModule::getOrCreateFiniRegSetFunction() {
   ReturnInst::Create(getContext(), insertCodeForFiniRegSet(BB, RegSet), BB);
 
   return FiniFn;
+}
+
+
+extern "C" void __llvm_dc_print_reg_diff_fn(void *FPtr) {
+  printf("Different Registers for '");
+  Dl_info DLI;
+  if (dladdr(FPtr, &DLI))
+    printf("%s", DLI.dli_sname);
+  else
+    printf("fn_%p", FPtr);
+  printf("':\n");
+}
+
+extern "C" void __llvm_dc_print_reg_diff(char *Name, uint8_t *v1, uint8_t *v2,
+                                         uint32_t Size) {
+  bool Diff = false;
+
+  for (uint32_t i = 0; i < Size; ++i)
+    Diff |= (v1[i] != v2[i]);
+
+  if (!Diff)
+    return;
+
+  printf("%s = ", Name);
+  for (uint32_t i = 0; i < Size; ++i)
+    printf("%.2x", v2[Size - i - 1]);
+  printf("\n");
+}
+
+/// Get a constant expression expressing \p FPtr as a \p FTy value.
+template <typename T>
+Value *getCallTargetForExtFn(FunctionType *FTy, T FPtr) {
+  // FIXME: bitness
+  ConstantInt *FnPtrInt = ConstantInt::get(Type::getInt64Ty(FTy->getContext()),
+                                           reinterpret_cast<uint64_t>(FPtr));
+  return ConstantExpr::getBitCast(
+    ConstantExpr::getIntToPtr(FnPtrInt, Type::getInt8PtrTy(FTy->getContext())),
+    FTy->getPointerTo());
+}
+
+
+Function *DCModule::getOrCreateRegSetDiffFunction() {
+  auto &MRI = getTranslator().getMRI();
+  auto &RSD = getTranslator().getRegSetDesc();
+  IRBuilder<> Builder(getContext());
+
+  Type *I8PtrTy = Builder.getInt8PtrTy();
+  Type *RegSetPtrTy = RSD.RegSetType->getPointerTo();
+
+  Type *RSDiffArgTys[] = {I8PtrTy, RegSetPtrTy, RegSetPtrTy};
+  Function *RSDiffFn = cast<Function>(TheModule.getOrInsertFunction(
+      "__llvm_dc_print_regset_diff",
+      FunctionType::get(Builder.getVoidTy(), RSDiffArgTys,
+                        /*isVarArg=*/false)));
+
+  // If we already defined the function, return it.
+  if (!RSDiffFn->isDeclaration())
+    return RSDiffFn;
+
+  Builder.SetInsertPoint(BasicBlock::Create(getContext(), "", RSDiffFn));
+
+  // Get the argument regset pointers.
+  Function::arg_iterator ArgI = RSDiffFn->getArgumentList().begin();
+  Value *FnAddr = &*ArgI++;
+  Value *RS1 = &*ArgI++;
+  Value *RS2 = &*ArgI++;
+
+  // We use a C++ helper function to print the header with the function info:
+  //   __llvm_dc_print_reg_diff_fn (defined above).
+  Type *PrintFnArgTys[] = {I8PtrTy};
+  FunctionType *PrintFnType = FunctionType::get(
+      Builder.getVoidTy(), PrintFnArgTys, /*isVarArg=*/false);
+
+  Builder.CreateCall(
+      getCallTargetForExtFn(PrintFnType, &__llvm_dc_print_reg_diff_fn), FnAddr);
+
+  // We use a C++ helper function to diff and print each individual register:
+  //   __llvm_dc_print_reg_diff (defined above).
+  Type *RegDiffArgTys[] = {I8PtrTy, I8PtrTy, I8PtrTy, Builder.getInt32Ty()};
+  FunctionType *RegDiffFnType = FunctionType::get(
+      Builder.getVoidTy(), RegDiffArgTys, /*isVarArg=*/false);
+
+  Value *RegDiffFnPtr =
+      getCallTargetForExtFn(RegDiffFnType, &__llvm_dc_print_reg_diff);
+
+  for (auto Reg : RSD.LargestRegs) {
+    if (Reg == 0)
+      continue;
+    int OffsetInRegSet = RSD.RegOffsetsInSet[Reg];
+    assert(OffsetInRegSet != -1 && "Getting a register not in the regset!");
+    Value *Idx[] = {Builder.getInt32(0), Builder.getInt32(OffsetInRegSet)};
+    Value *Reg1Ptr =
+        Builder.CreateBitCast(Builder.CreateInBoundsGEP(RS1, Idx), I8PtrTy);
+    Value *Reg2Ptr =
+        Builder.CreateBitCast(Builder.CreateInBoundsGEP(RS2, Idx), I8PtrTy);
+
+    Value *RegName = Builder.CreateBitCast(
+        Builder.CreateGlobalString(MRI.getName(Reg)), I8PtrTy);
+
+    Builder.CreateCall(RegDiffFnPtr,
+                        {RegName, Reg1Ptr, Reg2Ptr,
+                         Builder.getInt32(RSD.RegSizes[Reg] / 8)});
+  }
+
+  Builder.CreateRetVoid();
+
+  return RSDiffFn;
 }

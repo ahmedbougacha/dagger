@@ -14,7 +14,6 @@
 #include "llvm/DC/DCFunction.h"
 #include "llvm/DC/DCInstruction.h"
 #include "llvm/DC/DCModule.h"
-#include "llvm/DC/DCRegisterSema.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
 #include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
@@ -55,8 +54,6 @@ void DCTranslator::initializeTranslationModule() {
   CurrentModule->setDataLayout(DL);
 
   DCM = createDCModule(*CurrentModule);
-
-  getDRS().SwitchToModule(CurrentModule);
 
   CurrentFPM.reset(new legacy::FunctionPassManager(CurrentModule));
   if (OptLevel >= 1)

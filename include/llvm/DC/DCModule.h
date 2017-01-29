@@ -23,7 +23,6 @@
 
 namespace llvm {
 class FunctionType;
-class DCRegisterSema;
 class Value;
 
 class DCModule {
@@ -39,10 +38,13 @@ public:
   Function *getOrCreateInitRegSetFunction();
   Function *getOrCreateFiniRegSetFunction();
 
+  // Returns the regset diff function, that prints to stderr:
+  //     void @__llvm_dc_print_regset_diff(i8* fn, %regset* v1, %regset* v2)
+  Function *getOrCreateRegSetDiffFunction();
+
   std::string getFunctionName(uint64_t Addr);
   Function *getOrCreateFunction(uint64_t Addr);
 
-  DCRegisterSema &getDRS() { return getTranslator().getDRS(); }
   DCTranslator &getTranslator() { return DCT; }
   Module *getModule() { return &TheModule; }
   LLVMContext &getContext() { return getModule()->getContext(); }
