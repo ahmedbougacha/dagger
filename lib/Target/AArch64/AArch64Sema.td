@@ -13,3 +13,14 @@
 //===----------------------------------------------------------------------===//
 
 include "llvm/DC/Semantics.td"
+
+// Branching instructions
+def : Semantics<BL, [(set LR, PC), (AArch64call imm:$addr)]>;
+def : Semantics<BLR, [(set LR, PC), (AArch64call GPR64:$Rn)]>;
+
+
+// Store instructions
+def : Semantics<STPXi,[(store GPR64:$Rt, (bitconvert (add GPR64sp:$Rn, (sext simm7s8:$offset)))),
+                       (store GPR64:$Rt2, (bitconvert (add 8, (add GPR64sp:$Rn, (sext simm7s8:$offset)))))]>;
+def : Semantics<STPWi,[(store GPR32:$Rt, (bitconvert (add GPR64sp:$Rn, (sext simm7s4:$offset)))),
+                       (store GPR32:$Rt2, (bitconvert (add 4, (add GPR64sp:$Rn, (sext simm7s4:$offset)))))]>;

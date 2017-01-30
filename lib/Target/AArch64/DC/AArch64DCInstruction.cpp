@@ -100,9 +100,24 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
 
     return R;
   }
+  case AArch64::OpTypes::simm7s4: {
+    return translateScaledIndexOperand(MIOperandNo, 4, true);
+  }
+  case AArch64::OpTypes::simm7s8: {
+    return translateScaledIndexOperand(MIOperandNo, 8, true);
+  }
+  case AArch64::OpTypes::simm7s16: {
+    return translateScaledIndexOperand(MIOperandNo, 16, true);
+  }
   default:
     return nullptr;
   }
 }
 
 bool AArch64DCInstruction::translateImplicit(unsigned RegNo) { return false; }
+
+Value *AArch64DCInstruction::translateScaledIndexOperand(unsigned MIOperandNo, unsigned scale, bool isSigned) {
+  APInt val = APInt(32, getImmOp(MIOperandNo), isSigned);
+  APInt apScale = APInt(32, scale, false);
+  return Builder.getInt(val * apScale);
+}
