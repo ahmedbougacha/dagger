@@ -87,6 +87,11 @@ def : SameSemantics<JG_4,  JG_1>;
 
 def : SameSemantics<JMP_4, JMP_1>;
 
+def : SameSemantics<CMP8rr_REV,  CMP8rr>;
+def : SameSemantics<CMP16rr_REV, CMP16rr>;
+def : SameSemantics<CMP32rr_REV, CMP32rr>;
+def : SameSemantics<CMP64rr_REV, CMP64rr>;
+
 def : Semantics<CALL64pcrel32, [(X86call imm:$dst)]>;
 
 def : Semantics<RETL, [(X86retflag 0)]>;
@@ -195,6 +200,11 @@ def : Semantics<MOV8rr,  [(set  GR8:$dst,  GR8:$src)]>;
 def : Semantics<MOV16rr, [(set GR16:$dst, GR16:$src)]>;
 def : Semantics<MOV32rr, [(set GR32:$dst, GR32:$src)]>;
 def : Semantics<MOV64rr, [(set GR64:$dst, GR64:$src)]>;
+
+def : Semantics<MOV8rr_REV,  [(set  GR8:$dst,  GR8:$src)]>;
+def : Semantics<MOV16rr_REV, [(set GR16:$dst, GR16:$src)]>;
+def : Semantics<MOV32rr_REV, [(set GR32:$dst, GR32:$src)]>;
+def : Semantics<MOV64rr_REV, [(set GR64:$dst, GR64:$src)]>;
 
 def : Semantics<MOV32o64a, [(store EAX, offset64_32:$dst)]>;
 

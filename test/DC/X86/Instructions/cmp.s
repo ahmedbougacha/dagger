@@ -421,8 +421,52 @@ cmpw	%r9w, %r8w
 
 ## CMP16rr_REV:	cmpw	%r9w, %r8w
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[R8W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R8W")
+# CHECK-NEXT: [[R9W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R9W")
+# CHECK-NEXT: [[V1:%.+]] = icmp ugt i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V2:%.+]] = icmp uge i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V3:%.+]] = icmp ult i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V4:%.+]] = icmp ule i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V5:%.+]] = icmp slt i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V6:%.+]] = icmp sle i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V7:%.+]] = icmp sgt i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V8:%.+]] = icmp sge i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V9:%.+]] = icmp eq i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V10:%.+]] = icmp ne i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V11:%.+]] = sub i16 [[R8W_0]], [[R9W_0]]
+# CHECK-NEXT: [[V12:%.+]] = icmp eq i16 [[V11]], 0
+# CHECK-NEXT: [[V13:%.+]] = icmp slt i16 [[V11]], 0
+# CHECK-NEXT: [[V14:%.+]] = call { i16, i1 } @llvm.ssub.with.overflow.i16(i16 [[R8W_0]], i16 [[R9W_0]])
+# CHECK-NEXT: [[V15:%.+]] = extractvalue { i16, i1 } [[V14]], 1
+# CHECK-NEXT: [[V16:%.+]] = call { i16, i1 } @llvm.usub.with.overflow.i16(i16 [[R8W_0]], i16 [[R9W_0]])
+# CHECK-NEXT: [[V17:%.+]] = extractvalue { i16, i1 } [[V16]], 1
+# CHECK-NEXT: [[V18:%.+]] = trunc i16 [[V11]] to i8
+# CHECK-NEXT: [[V19:%.+]] = call i8 @llvm.ctpop.i8(i8 [[V18]])
+# CHECK-NEXT: [[V20:%.+]] = trunc i8 [[V19]] to i1
+# CHECK-NEXT: [[V21:%.+]] = icmp eq i1 [[V20]], false
+# CHECK-NEXT: [[V22:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"CtlSysEFLAGS")
+# CHECK-NEXT: [[V23:%.+]] = zext i1 [[V17]] to i32
+# CHECK-NEXT: [[V24:%.+]] = shl i32 [[V23]], 0
+# CHECK-NEXT: [[V25:%.+]] = or i32 [[V24]], [[V22]]
+# CHECK-NEXT: [[V26:%.+]] = zext i1 [[V21]] to i32
+# CHECK-NEXT: [[V27:%.+]] = shl i32 [[V26]], 2
+# CHECK-NEXT: [[V28:%.+]] = or i32 [[V27]], [[V25]]
+# CHECK-NEXT: [[V29:%.+]] = zext i1 false to i32
+# CHECK-NEXT: [[V30:%.+]] = shl i32 [[V29]], 4
+# CHECK-NEXT: [[V31:%.+]] = or i32 [[V30]], [[V28]]
+# CHECK-NEXT: [[V32:%.+]] = zext i1 [[V12]] to i32
+# CHECK-NEXT: [[V33:%.+]] = shl i32 [[V32]], 6
+# CHECK-NEXT: [[V34:%.+]] = or i32 [[V33]], [[V31]]
+# CHECK-NEXT: [[V35:%.+]] = zext i1 [[V13]] to i32
+# CHECK-NEXT: [[V36:%.+]] = shl i32 [[V35]], 7
+# CHECK-NEXT: [[V37:%.+]] = or i32 [[V36]], [[V34]]
+# CHECK-NEXT: [[V38:%.+]] = zext i1 [[V15]] to i32
+# CHECK-NEXT: [[V39:%.+]] = shl i32 [[V38]], 11
+# CHECK-NEXT: [[V40:%.+]] = or i32 [[V39]], [[V37]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V40]], metadata !"EFLAGS")
 .byte 0x66; .byte 0x45; .byte 0x3b; .byte 0xc1
 
 ## CMP32i32
@@ -846,8 +890,52 @@ cmpl	%r9d, %r8d
 
 ## CMP32rr_REV:	cmpl	%r9d, %r8d
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[R8D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R8D")
+# CHECK-NEXT: [[R9D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R9D")
+# CHECK-NEXT: [[V1:%.+]] = icmp ugt i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V2:%.+]] = icmp uge i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V3:%.+]] = icmp ult i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V4:%.+]] = icmp ule i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V5:%.+]] = icmp slt i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V6:%.+]] = icmp sle i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V7:%.+]] = icmp sgt i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V8:%.+]] = icmp sge i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V9:%.+]] = icmp eq i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V10:%.+]] = icmp ne i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V11:%.+]] = sub i32 [[R8D_0]], [[R9D_0]]
+# CHECK-NEXT: [[V12:%.+]] = icmp eq i32 [[V11]], 0
+# CHECK-NEXT: [[V13:%.+]] = icmp slt i32 [[V11]], 0
+# CHECK-NEXT: [[V14:%.+]] = call { i32, i1 } @llvm.ssub.with.overflow.i32(i32 [[R8D_0]], i32 [[R9D_0]])
+# CHECK-NEXT: [[V15:%.+]] = extractvalue { i32, i1 } [[V14]], 1
+# CHECK-NEXT: [[V16:%.+]] = call { i32, i1 } @llvm.usub.with.overflow.i32(i32 [[R8D_0]], i32 [[R9D_0]])
+# CHECK-NEXT: [[V17:%.+]] = extractvalue { i32, i1 } [[V16]], 1
+# CHECK-NEXT: [[V18:%.+]] = trunc i32 [[V11]] to i8
+# CHECK-NEXT: [[V19:%.+]] = call i8 @llvm.ctpop.i8(i8 [[V18]])
+# CHECK-NEXT: [[V20:%.+]] = trunc i8 [[V19]] to i1
+# CHECK-NEXT: [[V21:%.+]] = icmp eq i1 [[V20]], false
+# CHECK-NEXT: [[V22:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"CtlSysEFLAGS")
+# CHECK-NEXT: [[V23:%.+]] = zext i1 [[V17]] to i32
+# CHECK-NEXT: [[V24:%.+]] = shl i32 [[V23]], 0
+# CHECK-NEXT: [[V25:%.+]] = or i32 [[V24]], [[V22]]
+# CHECK-NEXT: [[V26:%.+]] = zext i1 [[V21]] to i32
+# CHECK-NEXT: [[V27:%.+]] = shl i32 [[V26]], 2
+# CHECK-NEXT: [[V28:%.+]] = or i32 [[V27]], [[V25]]
+# CHECK-NEXT: [[V29:%.+]] = zext i1 false to i32
+# CHECK-NEXT: [[V30:%.+]] = shl i32 [[V29]], 4
+# CHECK-NEXT: [[V31:%.+]] = or i32 [[V30]], [[V28]]
+# CHECK-NEXT: [[V32:%.+]] = zext i1 [[V12]] to i32
+# CHECK-NEXT: [[V33:%.+]] = shl i32 [[V32]], 6
+# CHECK-NEXT: [[V34:%.+]] = or i32 [[V33]], [[V31]]
+# CHECK-NEXT: [[V35:%.+]] = zext i1 [[V13]] to i32
+# CHECK-NEXT: [[V36:%.+]] = shl i32 [[V35]], 7
+# CHECK-NEXT: [[V37:%.+]] = or i32 [[V36]], [[V34]]
+# CHECK-NEXT: [[V38:%.+]] = zext i1 [[V15]] to i32
+# CHECK-NEXT: [[V39:%.+]] = shl i32 [[V38]], 11
+# CHECK-NEXT: [[V40:%.+]] = or i32 [[V39]], [[V37]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V40]], metadata !"EFLAGS")
 .byte 0x45; .byte 0x3b; .byte 0xc1
 
 ## CMP64i32
@@ -1271,8 +1359,52 @@ cmpq	%rbx, %r11
 
 ## CMP64rr_REV:	cmpq	%rbx, %r11
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[R11_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R11")
+# CHECK-NEXT: [[RBX_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RBX")
+# CHECK-NEXT: [[V1:%.+]] = icmp ugt i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V2:%.+]] = icmp uge i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V3:%.+]] = icmp ult i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V4:%.+]] = icmp ule i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V5:%.+]] = icmp slt i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V6:%.+]] = icmp sle i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V7:%.+]] = icmp sgt i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V8:%.+]] = icmp sge i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V9:%.+]] = icmp eq i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V10:%.+]] = icmp ne i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V11:%.+]] = sub i64 [[R11_0]], [[RBX_0]]
+# CHECK-NEXT: [[V12:%.+]] = icmp eq i64 [[V11]], 0
+# CHECK-NEXT: [[V13:%.+]] = icmp slt i64 [[V11]], 0
+# CHECK-NEXT: [[V14:%.+]] = call { i64, i1 } @llvm.ssub.with.overflow.i64(i64 [[R11_0]], i64 [[RBX_0]])
+# CHECK-NEXT: [[V15:%.+]] = extractvalue { i64, i1 } [[V14]], 1
+# CHECK-NEXT: [[V16:%.+]] = call { i64, i1 } @llvm.usub.with.overflow.i64(i64 [[R11_0]], i64 [[RBX_0]])
+# CHECK-NEXT: [[V17:%.+]] = extractvalue { i64, i1 } [[V16]], 1
+# CHECK-NEXT: [[V18:%.+]] = trunc i64 [[V11]] to i8
+# CHECK-NEXT: [[V19:%.+]] = call i8 @llvm.ctpop.i8(i8 [[V18]])
+# CHECK-NEXT: [[V20:%.+]] = trunc i8 [[V19]] to i1
+# CHECK-NEXT: [[V21:%.+]] = icmp eq i1 [[V20]], false
+# CHECK-NEXT: [[V22:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"CtlSysEFLAGS")
+# CHECK-NEXT: [[V23:%.+]] = zext i1 [[V17]] to i32
+# CHECK-NEXT: [[V24:%.+]] = shl i32 [[V23]], 0
+# CHECK-NEXT: [[V25:%.+]] = or i32 [[V24]], [[V22]]
+# CHECK-NEXT: [[V26:%.+]] = zext i1 [[V21]] to i32
+# CHECK-NEXT: [[V27:%.+]] = shl i32 [[V26]], 2
+# CHECK-NEXT: [[V28:%.+]] = or i32 [[V27]], [[V25]]
+# CHECK-NEXT: [[V29:%.+]] = zext i1 false to i32
+# CHECK-NEXT: [[V30:%.+]] = shl i32 [[V29]], 4
+# CHECK-NEXT: [[V31:%.+]] = or i32 [[V30]], [[V28]]
+# CHECK-NEXT: [[V32:%.+]] = zext i1 [[V12]] to i32
+# CHECK-NEXT: [[V33:%.+]] = shl i32 [[V32]], 6
+# CHECK-NEXT: [[V34:%.+]] = or i32 [[V33]], [[V31]]
+# CHECK-NEXT: [[V35:%.+]] = zext i1 [[V13]] to i32
+# CHECK-NEXT: [[V36:%.+]] = shl i32 [[V35]], 7
+# CHECK-NEXT: [[V37:%.+]] = or i32 [[V36]], [[V34]]
+# CHECK-NEXT: [[V38:%.+]] = zext i1 [[V15]] to i32
+# CHECK-NEXT: [[V39:%.+]] = shl i32 [[V38]], 11
+# CHECK-NEXT: [[V40:%.+]] = or i32 [[V39]], [[V37]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V40]], metadata !"EFLAGS")
 .byte 0x4c; .byte 0x3b; .byte 0xdb
 
 ## CMP8i8
@@ -1586,8 +1718,51 @@ cmpb	%spl, %bpl
 
 ## CMP8rr_REV:	cmpb	%spl, %bpl
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[BPL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"BPL")
+# CHECK-NEXT: [[SPL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"SPL")
+# CHECK-NEXT: [[V1:%.+]] = icmp ugt i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V2:%.+]] = icmp uge i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V3:%.+]] = icmp ult i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V4:%.+]] = icmp ule i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V5:%.+]] = icmp slt i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V6:%.+]] = icmp sle i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V7:%.+]] = icmp sgt i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V8:%.+]] = icmp sge i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V9:%.+]] = icmp eq i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V10:%.+]] = icmp ne i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V11:%.+]] = sub i8 [[BPL_0]], [[SPL_0]]
+# CHECK-NEXT: [[V12:%.+]] = icmp eq i8 [[V11]], 0
+# CHECK-NEXT: [[V13:%.+]] = icmp slt i8 [[V11]], 0
+# CHECK-NEXT: [[V14:%.+]] = call { i8, i1 } @llvm.ssub.with.overflow.i8(i8 [[BPL_0]], i8 [[SPL_0]])
+# CHECK-NEXT: [[V15:%.+]] = extractvalue { i8, i1 } [[V14]], 1
+# CHECK-NEXT: [[V16:%.+]] = call { i8, i1 } @llvm.usub.with.overflow.i8(i8 [[BPL_0]], i8 [[SPL_0]])
+# CHECK-NEXT: [[V17:%.+]] = extractvalue { i8, i1 } [[V16]], 1
+# CHECK-NEXT: [[V18:%.+]] = call i8 @llvm.ctpop.i8(i8 [[V11]])
+# CHECK-NEXT: [[V19:%.+]] = trunc i8 [[V18]] to i1
+# CHECK-NEXT: [[V20:%.+]] = icmp eq i1 [[V19]], false
+# CHECK-NEXT: [[V21:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"CtlSysEFLAGS")
+# CHECK-NEXT: [[V22:%.+]] = zext i1 [[V17]] to i32
+# CHECK-NEXT: [[V23:%.+]] = shl i32 [[V22]], 0
+# CHECK-NEXT: [[V24:%.+]] = or i32 [[V23]], [[V21]]
+# CHECK-NEXT: [[V25:%.+]] = zext i1 [[V20]] to i32
+# CHECK-NEXT: [[V26:%.+]] = shl i32 [[V25]], 2
+# CHECK-NEXT: [[V27:%.+]] = or i32 [[V26]], [[V24]]
+# CHECK-NEXT: [[V28:%.+]] = zext i1 false to i32
+# CHECK-NEXT: [[V29:%.+]] = shl i32 [[V28]], 4
+# CHECK-NEXT: [[V30:%.+]] = or i32 [[V29]], [[V27]]
+# CHECK-NEXT: [[V31:%.+]] = zext i1 [[V12]] to i32
+# CHECK-NEXT: [[V32:%.+]] = shl i32 [[V31]], 6
+# CHECK-NEXT: [[V33:%.+]] = or i32 [[V32]], [[V30]]
+# CHECK-NEXT: [[V34:%.+]] = zext i1 [[V13]] to i32
+# CHECK-NEXT: [[V35:%.+]] = shl i32 [[V34]], 7
+# CHECK-NEXT: [[V36:%.+]] = or i32 [[V35]], [[V33]]
+# CHECK-NEXT: [[V37:%.+]] = zext i1 [[V15]] to i32
+# CHECK-NEXT: [[V38:%.+]] = shl i32 [[V37]], 11
+# CHECK-NEXT: [[V39:%.+]] = or i32 [[V38]], [[V36]]
+# CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V39]], metadata !"EFLAGS")
 .byte 0x40; .byte 0x3a; .byte 0xec
 
 ## CMPPDrmi

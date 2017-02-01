@@ -93,8 +93,11 @@ movw	%r9w, %r8w
 
 ## MOV16rr_REV:	movw	%r9w, %r8w
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[R9W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R9W")
+# CHECK-NEXT: call void @llvm.dc.setreg.i16(i16 [[R9W_0]], metadata !"R8W")
 .byte 0x66; .byte 0x45; .byte 0x8b; .byte 0xc1
 
 ## MOV32ao32:	movl	2, %eax
@@ -194,8 +197,11 @@ movl	%r9d, %r8d
 
 ## MOV32rr_REV:	movl	%r9d, %r8d
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[R9D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R9D")
+# CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[R9D_0]], metadata !"R8D")
 .byte 0x45; .byte 0x8b; .byte 0xc1
 
 ## MOV64ao32:	movq	2, %rax
@@ -317,8 +323,11 @@ movq	%rbx, %r11
 
 ## MOV64rr_REV:	movq	%rbx, %r11
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[RBX_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RBX")
+# CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[RBX_0]], metadata !"R11")
 .byte 0x4c; .byte 0x8b; .byte 0xdb
 
 ## MOV8ao32:	movb	2, %al
@@ -414,8 +423,11 @@ movb	%spl, %bpl
 
 ## MOV8rr_REV:	movb	%spl, %bpl
 # CHECK-LABEL: call void @llvm.dc.startinst
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
+# CHECK-NEXT: [[SPL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"SPL")
+# CHECK-NEXT: call void @llvm.dc.setreg.i8(i8 [[SPL_0]], metadata !"BPL")
 .byte 0x40; .byte 0x8a; .byte 0xec
 
 ## MOVNTSD
