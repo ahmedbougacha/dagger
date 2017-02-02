@@ -7,7 +7,6 @@ add_llvm_library(LLVMX86DC
   X86DCInstruction.cpp
   X86DCModule.cpp
   X86DCTranslator.cpp
-  X86RegisterSema.cpp
   )
 
 add_dependencies(LLVMX86DC X86CommonTableGen)

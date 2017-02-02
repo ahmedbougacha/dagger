@@ -11,7 +11,6 @@
 #define LLVM_LIB_TARGET_X86_X86DCINSTRUCTION_H
 
 #include "X86DCBasicBlock.h"
-#include "X86RegisterSema.h"
 #include "llvm/DC/DCInstruction.h"
 
 namespace llvm {
@@ -43,16 +42,14 @@ protected:
 
   bool translateTargetInst() override;
 
+  bool doesSubRegIndexClearSuper(unsigned SubRegIdx) override;
+
   StringRef getDCOpcodeName(unsigned Opcode) const override;
   StringRef getDCCustomOpName(unsigned OperandKind) const override;
   StringRef getDCPredicateName(unsigned PredicateKind) const override;
   StringRef getDCComplexPatternName(unsigned CPKind) const override;
 
 private:
-  X86RegisterSema &getDRS() {
-    return static_cast<X86RegisterSema &>(DCInstruction::getDRS());
-  }
-
   Value *translateAddr(unsigned MIOperandNo,
                        MVT::SimpleValueType VT = MVT::iPTRAny);
   Value *translateMemOffset(unsigned MIOperandNo, MVT::SimpleValueType VT);

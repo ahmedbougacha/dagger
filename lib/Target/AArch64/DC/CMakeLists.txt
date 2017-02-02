@@ -7,7 +7,6 @@ add_llvm_library(LLVMAArch64DC
   AArch64DCInstruction.cpp
   AArch64DCModule.cpp
   AArch64DCTranslator.cpp
-  AArch64RegisterSema.cpp
   )
 
 add_dependencies(LLVMAArch64DC AArch64CommonTableGen)

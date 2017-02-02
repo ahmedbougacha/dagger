@@ -11,7 +11,11 @@
 #include "MCTargetDesc/X86MCTargetDesc.h"
 #include "llvm/DC/DCRegisterSetDesc.h"
 #include "llvm/DC/DCTranslator.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Type.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
@@ -70,4 +74,79 @@ Value *X86DCModule::insertCodeForFiniRegSet(BasicBlock *InsertAtEnd,
   return Builder.CreateTrunc(
       Builder.CreateLoad(Builder.CreateInBoundsGEP(RegSet, Idx)),
       Builder.getInt32Ty());
+}
+
+void X86DCModule::insertExternalWrapperAsm(BasicBlock *InsertAtEnd,
+                                           Value *ExternalFunc, Value *RegSet) {
+  IRBuilder<> Builder(InsertAtEnd);
+  auto &DCT = getTranslator();
+  auto &DL = DCT.getDataLayout();
+
+  auto getRegOffset = [&](unsigned Reg) {
+    return DCT.getRegSetDesc()
+        .getRegSizeOffsetInRegSet(Reg, DL, DCT.getMRI())
+        .second;
+  };
+
+  std::string IAStr;
+  raw_string_ostream(IAStr)
+      << "mov $0, %r12  \n" // r12 <- regset
+      << "mov $1, %r13  \n" // r13 <- fn
+      << "mov %rsp, %r14\n" // r14 <- old_sp
+
+      // switch to regset sp
+      << "mov " << getRegOffset(X86::RSP) << "(%r12), %rsp  \n"
+
+      // "pop" the return address
+      << "pop %rax                                          \n"
+      << "mov %rax, " << getRegOffset(X86::RIP) << "(%r12)  \n"
+
+      << "mov " << getRegOffset(X86::RDI) << "(%r12), %rdi  \n"
+      << "mov " << getRegOffset(X86::RSI) << "(%r12), %rsi  \n"
+      << "mov " << getRegOffset(X86::RDX) << "(%r12), %rdx  \n"
+      << "mov " << getRegOffset(X86::RCX) << "(%r12), %rcx  \n"
+      << "mov " << getRegOffset(X86::R8) << "(%r12), %r8   \n"
+      << "mov " << getRegOffset(X86::R9) << "(%r12), %r9   \n"
+
+      << "movaps " << getRegOffset(X86::XMM0) << "(%r12), %xmm0 \n"
+      << "movaps " << getRegOffset(X86::XMM1) << "(%r12), %xmm1 \n"
+      << "movaps " << getRegOffset(X86::XMM2) << "(%r12), %xmm2 \n"
+      << "movaps " << getRegOffset(X86::XMM3) << "(%r12), %xmm3 \n"
+      << "movaps " << getRegOffset(X86::XMM4) << "(%r12), %xmm4 \n"
+      << "movaps " << getRegOffset(X86::XMM5) << "(%r12), %xmm5 \n"
+      << "movaps " << getRegOffset(X86::XMM6) << "(%r12), %xmm6 \n"
+      << "movaps " << getRegOffset(X86::XMM7) << "(%r12), %xmm7 \n"
+
+      // used for vararg sse count
+      << "mov " << getRegOffset(X86::RAX) << "(%r12), %rax   \n"
+
+      << "call *%r13\n"
+
+      << "mov %rax, " << getRegOffset(X86::RAX) << "(%r12)   \n"
+      << "mov %rdx, " << getRegOffset(X86::RDX) << "(%r12)   \n"
+
+      << "movaps %xmm0, " << getRegOffset(X86::XMM0) << "(%r12) \n"
+      << "movaps %xmm1, " << getRegOffset(X86::XMM1) << "(%r12) \n"
+      << "movaps %xmm2, " << getRegOffset(X86::XMM2) << "(%r12) \n"
+      << "movaps %xmm3, " << getRegOffset(X86::XMM3) << "(%r12) \n"
+      << "movaps %xmm4, " << getRegOffset(X86::XMM4) << "(%r12) \n"
+      << "movaps %xmm5, " << getRegOffset(X86::XMM5) << "(%r12) \n"
+      << "movaps %xmm6, " << getRegOffset(X86::XMM6) << "(%r12) \n"
+      << "movaps %xmm7, " << getRegOffset(X86::XMM7) << "(%r12) \n"
+
+      << "mov %rsp, " << getRegOffset(X86::RSP) << "(%r12)      \n"
+
+      // restore old_sp
+      << "mov %r14, %rsp\n";
+
+  Type *IAArgTypes[] = {RegSet->getType(), ExternalFunc->getType()};
+  InlineAsm *IA = InlineAsm::get(
+      FunctionType::get(Builder.getVoidTy(), IAArgTypes, /*isVarArg=*/false),
+      IAStr, "r,r,"
+             "~{rax},~{rdi},~{rsi},~{rdx},~{rcx},~{r8},"
+             "~{r9},~{r10},~{r11},~{r12},~{r13},~{r14},"
+             "~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{xmm6},~{xmm7}",
+      /*hasSideEffects=*/true, /*isAlignStack=*/false);
+
+  Builder.CreateCall(IA, {RegSet, ExternalFunc});
 }

@@ -12,6 +12,7 @@
 #include "AArch64DCFunction.h"
 #include "AArch64DCInstruction.h"
 #include "AArch64DCModule.h"
+#include "MCTargetDesc/AArch64MCTargetDesc.h"
 
 #define GET_REGISTER_SEMA
 #include "AArch64GenSema.inc"
@@ -33,8 +34,8 @@ AArch64DCTranslator::AArch64DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                                          unsigned OptLevel,
                                          const MCInstrInfo &MII,
                                          const MCRegisterInfo &MRI)
-    : DCTranslator(Ctx, DL, OptLevel, buildAArch64RegSetDesc(Ctx, MRI)),
-      DRS(Ctx, MRI, MII, DL, getRegSetDesc()) {
+    : DCTranslator(Ctx, DL, OptLevel, MII, MRI,
+                   buildAArch64RegSetDesc(Ctx, MRI)) {
   initializeTranslationModule();
 }
 

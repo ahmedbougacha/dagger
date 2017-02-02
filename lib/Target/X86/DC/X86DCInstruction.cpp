@@ -13,12 +13,12 @@
 #include "MCTargetDesc/X86MCTargetDesc.h"
 #include "Utils/X86ShuffleDecode.h"
 #include "X86ISelLowering.h"
-#include "X86RegisterSema.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/DC/DCModule.h"
+#include "llvm/DC/RegisterValueUtils.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -46,6 +46,20 @@ static MVT getSimpleVTForType(Type *Ty) {
 X86DCInstruction::X86DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI)
     : DCInstruction(DCB, MCI, X86::OpcodeToSemaIdx, X86::InstSemantics,
                     X86::ConstantArray) {}
+
+bool X86DCInstruction::doesSubRegIndexClearSuper(unsigned SubRegIdx) {
+  if (SubRegIdx == X86::sub_32bit)
+    return true;
+  if (SubRegIdx == X86::sub_xmm) {
+    auto &MII = getTranslator().getMII();
+    const MCInstrDesc &MCID = MII.get(TheMCInst.Inst.getOpcode());
+    // VEX-encoded SSE instructions clear [size-1:127].
+    // FIXME: This should take into account VEX.vvvv, .LIG, ..
+    if (MCID.TSFlags & X86II::VEX)
+      return true;
+  }
+  return false;
+}
 
 bool X86DCInstruction::translateTargetInst() {
   unsigned Opcode = TheMCInst.Inst.getOpcode();
@@ -220,7 +234,7 @@ bool X86DCInstruction::translateTargetInst() {
       // Finally, update EFLAGS.
       // FIXME: add support to X86DRS::updateEFLAGS for atomicrmw.
       Result = Builder.CreateBinOp(Opc, Old, Operand2);
-      getDRS().updateEFLAGS(Result, /*DontUpdateCF=*/isINCDEC);
+      getParent().updateEFLAGS(Result, /*DontUpdateCF=*/isINCDEC);
       return true;
     } else if (Prefix == X86::REP_PREFIX) {
       unsigned SizeInBits = 0;
@@ -359,19 +373,19 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
            "Conditional mov predicate register isn't EFLAGS!");
     (void)Op3;
     unsigned CC = cast<ConstantInt>(Op2)->getValue().getZExtValue();
-    Value *Pred = getDRS().getCC((X86::CondCode)CC);
+    Value *Pred = getParent().getCC((X86::CondCode)CC);
     addResult(Builder.CreateSelect(Pred, Op1, Op0));
     break;
   }
   case X86ISD::RET_FLAG: {
     // FIXME: Handle ret arg.
     setReg(X86::RIP, translatePop(8));
-    Builder.CreateBr(getParent().getParent().getExitBlock());
+    Builder.CreateBr(getParentFunction().getExitBlock());
     break;
   }
   case X86ISD::CMP: {
     Value *Op0 = getOperand(0), *Op1 = getOperand(1);
-    addResult(getDRS().getEFLAGSforCMP(Op0, Op1));
+    addResult(getParent().getEFLAGSforCMP(Op0, Op1));
     break;
   }
   case X86ISD::BRCOND: {
@@ -382,9 +396,9 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     uint64_t Target = cast<ConstantInt>(Op0)->getValue().getZExtValue();
     unsigned CC = cast<ConstantInt>(Op1)->getValue().getZExtValue();
     setReg(X86::RIP, Op0);
-    Builder.CreateCondBr(getDRS().getCC((X86::CondCode)CC),
-                         getParent().getParent().getOrCreateBasicBlock(Target),
-                         getParent().getParent().getOrCreateBasicBlock(
+    Builder.CreateCondBr(getParent().getCC((X86::CondCode)CC),
+                         getParentFunction().getOrCreateBasicBlock(Target),
+                         getParentFunction().getOrCreateBasicBlock(
                              TheMCInst.Address + TheMCInst.Size));
     break;
   }
@@ -400,7 +414,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
            "SetCC predicate register isn't EFLAGS!");
     (void)Op1;
     unsigned CC = cast<ConstantInt>(Op0)->getValue().getZExtValue();
-    Value *Pred = getDRS().getCC((X86::CondCode)CC);
+    Value *Pred = getParent().getCC((X86::CondCode)CC);
     addResult(Builder.CreateZExt(Pred, Builder.getInt8Ty()));
     break;
   }
@@ -408,7 +422,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     Value *Op0 = getOperand(0), *Op1 = getOperand(1), *Op2 = getOperand(2);
     assert(Op2 == getReg(X86::EFLAGS) && "SBB borrow register isn't EFLAGS!");
     (void)Op2;
-    Value *Borrow = Builder.CreateZExt(getDRS().getSF(X86::CF), Op0->getType());
+    Value *Borrow = Builder.CreateZExt(getParent().getSF(X86::CF), Op0->getType());
     Value *Res = Builder.CreateSub(Op0, Op1);
     addResult(Builder.CreateSub(Res, Borrow));
     addResult(getReg(X86::EFLAGS));
@@ -451,7 +465,8 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
 
     // We also need to update ZF in EFLAGS.
     Value *OldEFLAGS = getReg(X86::EFLAGS);
-    addResult(getDRS().insertBitsInValue(OldEFLAGS, IsSrcZero, X86::ZF));
+    addResult(llvm::insertBitsInValue(Builder.saveIP(), OldEFLAGS, IsSrcZero,
+                                      X86::ZF));
     break;
   }
   case X86ISD::BSR: {
@@ -471,7 +486,8 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
 
     // We also need to update ZF in EFLAGS.
     Value *OldEFLAGS = getReg(X86::EFLAGS);
-    addResult(getDRS().insertBitsInValue(OldEFLAGS, IsSrcZero, X86::ZF));
+    addResult(llvm::insertBitsInValue(Builder.saveIP(), OldEFLAGS, IsSrcZero,
+                                      X86::ZF));
     break;
   }
 
@@ -882,7 +898,7 @@ bool X86DCInstruction::translateImplicit(unsigned RegNo) {
   // FIXME: We need to understand instructions that define multiple values.
   Value *Def = getLastDef();
   assert(Def && "Nothing was defined in an instruction with implicit EFLAGS?");
-  getDRS().updateEFLAGS(Def);
+  getParent().updateEFLAGS(Def);
   return true;
 }
 
@@ -1101,5 +1117,5 @@ void X86DCInstruction::translateCMPXCHG(unsigned MemOpType, unsigned CmpReg) {
   // Finally, update EFLAGS.
   // FIXME: add support to X86DRS::updateEFLAGS for cmpxchg.
   Value *Result = Builder.CreateBinOp(Instruction::Sub, CmpVal, OldVal);
-  getDRS().updateEFLAGS(Result);
+  getParent().updateEFLAGS(Result);
 }

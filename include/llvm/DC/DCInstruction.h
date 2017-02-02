@@ -26,7 +26,8 @@
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/DC/DCBasicBlock.h"
 #include "llvm/DC/DCOpcodes.h"
-#include "llvm/DC/DCRegisterSema.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/NoFolder.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -37,8 +38,7 @@ protected:
   DCBasicBlock &DCB;
   const MCDecodedInst &TheMCInst;
 
-  typedef IRBuilder<NoFolder> DCIRBuilder;
-  DCIRBuilder Builder;
+  IRBuilder<NoFolder> Builder;
 
   /// Get the type of result \p Idx of the current operation.
   Type *getResultTy(unsigned Idx) { return ResTys[Idx]; }
@@ -83,24 +83,68 @@ public:
 
   bool translate();
 
-  DCRegisterSema &getDRS() { return getParent().getDRS(); }
   LLVMContext &getContext() { return getParent().getContext(); }
   Module *getModule() { return getParent().getModule(); }
   Function *getFunction() { return getParent().getFunction(); }
 
   DCBasicBlock &getParent() { return DCB; }
+  DCFunction &getParentFunction() { return getParent().getParent(); }
+  DCModule &getParentModule() { return getParentFunction().getParent(); }
+  DCTranslator &getTranslator() { return getParentModule().getTranslator(); }
 
 protected:
+
+  /// MC operand accessors
+  /// @{
+  /// Get the immediate operand \p Idx of the current instruction (TheMCInst).
   uint64_t getImmOp(unsigned Idx) {
     return TheMCInst.Inst.getOperand(Idx).getImm();
   }
+
+  /// Get the register operand \p Idx of the current instruction (TheMCInst).
   unsigned getRegOp(unsigned Idx) {
     return TheMCInst.Inst.getOperand(Idx).getReg();
   }
+  /// @}
 
-  Value *getReg(unsigned RegNo) { return getDRS().getReg(RegNo); }
-  void setReg(unsigned RegNo, Value *Val) { getDRS().setReg(RegNo, Val); }
+  /// Register state accessors
+  /// @{
+  /// Get the native type of register \p RegNo.
+  /// Get the current value of register \p RegNo, i.e., the value assigned to it
+  /// last with setReg().
+  Value *getReg(unsigned RegNo);
 
+  /// Get the current value of register \p RegNo, bitcast to its integer type.
+  Value *getRegAsInt(unsigned RegNo) {
+    return Builder.CreateBitCast(getReg(RegNo), getRegIntType(RegNo));
+  }
+
+  /// Assign \p Val to register \p RegNo.
+  /// This updates the DCBasicBlock "current" Value for \p RegNo.
+  /// Assign its sub-/super-registers to the appropriate value.
+  void setReg(unsigned RegNo, Value *Val);
+  /// @}
+
+  /// Register type accessors
+  /// @{
+  /// Get the type of register \p RegNo, as defined in the DCRegisterSetDesc.
+  /// If the register doesn't have a type, return it's integer type.
+  Type *getRegType(unsigned RegNo);
+
+  /// Get the integer type of register \p RegNo (iN, with N the size in bits).
+  IntegerType *getRegIntType(unsigned RegNo);
+  /// @}
+
+  /// Do we need to keep the value of the bits not covered by Idx, or does
+  /// setting the sub-reg through Idx clear the Super-reg?
+  virtual bool doesSubRegIndexClearSuper(unsigned Idx) { return false; }
+
+  /// Translation
+  /// @{
+  /// Create a call instruction to \p CallTarget.
+  /// This does the necessary bookkeeping to save/restore the register state
+  /// across the call and ensure the consistency of the register set struct.
+  /// If \p CallTarget isn't a Function, wrap it with @llvm.dc.translate.at()
   void insertCall(Value *CallTarget);
 
   bool translateOpcode(unsigned Opcode);
@@ -117,6 +161,7 @@ protected:
   // Called before translating an instruction.
   // Return true if the translation shouldn't proceed.
   virtual bool translateTargetInst() { return false; }
+  /// @}
 
   /// Returns a string containing the name of each construct, for dump purposes.
   /// @{
@@ -151,6 +196,7 @@ private:
   void dumpOperation(StringRef Opcode, ArrayRef<Type *> ResultTypes,
                      ArrayRef<Value *> Operands,
                      unsigned SemaStartIdx) LLVM_DUMP_METHOD;
+
 
 protected:
   /// Get the next raw value in the semantics array.

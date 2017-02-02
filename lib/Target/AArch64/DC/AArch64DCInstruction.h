@@ -11,7 +11,6 @@
 #define LLVM_LIB_TARGET_AARCH64_AARCH64DCINSTRUCTION_H
 
 #include "AArch64DCBasicBlock.h"
-#include "AArch64RegisterSema.h"
 #include "llvm/DC/DCInstruction.h"
 
 namespace llvm {
@@ -31,6 +30,8 @@ protected:
   Value *translateCustomOperand(unsigned OperandType,
                                 unsigned MIOperandNo) override;
   bool translateImplicit(unsigned RegNo) override;
+
+  bool doesSubRegIndexClearSuper(unsigned SubRegIdx) override;
 
   StringRef getDCOpcodeName(unsigned Opcode) const override;
   StringRef getDCCustomOpName(unsigned OperandKind) const override;

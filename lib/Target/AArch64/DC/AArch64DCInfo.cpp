@@ -1,4 +1,5 @@
 #include "AArch64DCTranslator.h"
+#include "MCTargetDesc/AArch64MCTargetDesc.h"
 #include "llvm/Support/TargetRegistry.h"
 
 using namespace llvm;

@@ -18,7 +18,7 @@ ret
 # CHECK-DAG: [[RAXSAVE:%[0-9]+]] = load i64, i64* %RAX
 # CHECK-DAG: store i64 [[RAXSAVE]],  i64* %RAX_ptr
 # CHECK: call void [[FPTR]](%regset* %0)
-# CHECK: [[RAXRELOAD:%RAX_[0-9]+]] = load i64, i64* %RAX_ptr
+# CHECK: [[RAXRELOAD:%[0-9]+]] = load i64, i64* %RAX_ptr
 # CHECK: store i64 [[RAXRELOAD]],  i64* %RAX
 # CHECK: [[RAX0:%RAX_[0-9]+]] = load i64, i64* %RAX
 # CHECK: [[RAX1:%RAX_[0-9]+]] = add i64 [[RAX0]], 2

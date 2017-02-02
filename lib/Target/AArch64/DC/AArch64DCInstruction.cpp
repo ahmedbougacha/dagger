@@ -9,7 +9,6 @@
 
 #include "AArch64DCInstruction.h"
 #include "AArch64ISelLowering.h"
-#include "AArch64RegisterSema.h"
 #include "InstPrinter/AArch64InstPrinter.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
@@ -167,4 +166,15 @@ Value *AArch64DCInstruction::translateScaledImmediate(unsigned MIOperandNo, unsi
   APInt val = APInt(32, getImmOp(MIOperandNo), isSigned);
   APInt apScale = APInt(32, scale, false);
   return Builder.getInt(val * apScale);
+
+bool AArch64DCInstruction::doesSubRegIndexClearSuper(unsigned SubRegIdx) {
+  switch (SubRegIdx) {
+  case AArch64::sub_32:
+  case AArch64::bsub:
+  case AArch64::hsub:
+  case AArch64::ssub:
+  case AArch64::dsub:
+    return true;
+  }
+  return false;
 }

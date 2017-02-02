@@ -21,9 +21,8 @@ using namespace llvm;
 X86DCTranslator::X86DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                                  unsigned OptLevel, const MCInstrInfo &MII,
                                  const MCRegisterInfo &MRI)
-    : DCTranslator(Ctx, DL, OptLevel,
-                   DCRegisterSetDesc(Ctx, MRI, X86::RegClassVTs)),
-      DRS(Ctx, MRI, MII, DL, getRegSetDesc()) {
+    : DCTranslator(Ctx, DL, OptLevel, MII, MRI,
+                   DCRegisterSetDesc(Ctx, MRI, X86::RegClassVTs)) {
   initializeTranslationModule();
 }
 

@@ -14,7 +14,6 @@
 #include "llvm/DC/DCFunction.h"
 #include "llvm/DC/DCInstruction.h"
 #include "llvm/DC/DCModule.h"
-#include "llvm/DC/DCRegisterSema.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCObjectDisassembler.h"
 #include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
@@ -33,9 +32,10 @@ using namespace llvm;
 #define DEBUG_TYPE "dctranslator"
 
 DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
-                           unsigned OptLevel,
+                           unsigned OptLevel, const MCInstrInfo &MII,
+                           const MCRegisterInfo &MRI,
                            const DCRegisterSetDesc RegSetDesc)
-    : Ctx(Ctx), DL(DL), RegSetDesc(RegSetDesc), ModuleSet(),
+    : Ctx(Ctx), DL(DL), MII(MII), MRI(MRI), RegSetDesc(RegSetDesc), ModuleSet(),
       CurrentModule(nullptr), CurrentFPM(), OptLevel(OptLevel) {}
 
 Module *DCTranslator::finalizeTranslationModule() {
@@ -54,8 +54,6 @@ void DCTranslator::initializeTranslationModule() {
   CurrentModule->setDataLayout(DL);
 
   DCM = createDCModule(*CurrentModule);
-
-  getDRS().SwitchToModule(CurrentModule);
 
   CurrentFPM.reset(new legacy::FunctionPassManager(CurrentModule));
   if (OptLevel >= 1)
@@ -130,7 +128,7 @@ Function *DCTranslator::translateFunction(const MCFunction &MCFN) {
       std::unique_ptr<DCBasicBlock> DCB = createDCBasicBlock(*DCF, *BB);
 
       for (auto &I : *BB) {
-        StringRef InstName = getDRS().MII.getName(I.Inst.getOpcode());
+        StringRef InstName = MII.getName(I.Inst.getOpcode());
         InstPrettyStackTraceEntry X(I.Address, InstName);
         DEBUG(dbgs() << "Translating instruction:\n ";
               dbgs() << InstName << ": " << I.Inst << "\n";);
