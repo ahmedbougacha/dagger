@@ -57,6 +57,15 @@ bool AArch64DCInstruction::translateTargetInst() {
 }
 
 bool AArch64DCInstruction::translateTargetOpcode(unsigned Opcode) {
+  switch (Opcode) {
+  case AArch64ISD::CALL: {
+    Value *Op1 = getOperand(0);
+    insertCall(Op1);
+    return true;
+  }
+  default:
+    break;
+  }
   errs() << "Unknown AArch64 opcode found in semantics: " + utostr(Opcode)
          << "\n";
   return false;
@@ -69,6 +78,16 @@ Value *AArch64DCInstruction::translateComplexPattern(unsigned Pattern) {
 Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
                                                     unsigned MIOperandNo) {
   switch (OperandType) {
+  case AArch64::OpTypes::am_bl_target: {
+    auto *ResTy = Builder.getInt8PtrTy();
+
+    // bl target is an offset in number of (4byte) instructions from PC
+    // target = PC + (imm * 4)
+    // TODO: add check that offset is +-128MB from PC?
+    signed offset = getImmOp(MIOperandNo)*4;
+    Value *blTarget = Builder.getInt64(TheMCInst.Address + offset);
+    return Builder.CreateIntToPtr(blTarget, ResTy);
+  }
   case AArch64::OpTypes::logical_shifted_reg32:
   case AArch64::OpTypes::logical_shifted_reg64: {
     Value *R = getReg(getRegOp(MIOperandNo));
