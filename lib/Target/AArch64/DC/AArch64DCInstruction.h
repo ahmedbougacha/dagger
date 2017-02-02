@@ -37,6 +37,10 @@ protected:
   StringRef getDCCustomOpName(unsigned OperandKind) const override;
   StringRef getDCPredicateName(unsigned PredicateKind) const override;
   StringRef getDCComplexPatternName(unsigned CPKind) const override;
+
+private:
+  Value *translateScaledImmediate(unsigned MIOperandNo, unsigned Scale,
+                                  bool IsSigned);
 };
 
 } // end llvm namespace

@@ -104,7 +104,19 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
 
     return R;
   }
+  case AArch64::OpTypes::simm7s4: {
+    return translateScaledImmediate(MIOperandNo, 4, true);
+  }
+  case AArch64::OpTypes::simm7s8: {
+    return translateScaledImmediate(MIOperandNo, 8, true);
+  }
+  case AArch64::OpTypes::simm7s16: {
+    return translateScaledImmediate(MIOperandNo, 16, true);
+  }
   default:
+    errs() << "Unknown AArch64 operand type found in semantics: "
+           << utostr(OperandType) << "\n";
+
     return nullptr;
   }
 }
@@ -121,4 +133,12 @@ bool AArch64DCInstruction::doesSubRegIndexClearSuper(unsigned SubRegIdx) {
     return true;
   }
   return false;
+}
+
+Value *AArch64DCInstruction::translateScaledImmediate(unsigned MIOperandNo,
+                                                      unsigned Scale,
+                                                      bool IsSigned) {
+  APInt Val = APInt(32, getImmOp(MIOperandNo), IsSigned);
+  APInt APScale = APInt(32, Scale, false);
+  return Builder.getInt(Val * APScale);
 }
