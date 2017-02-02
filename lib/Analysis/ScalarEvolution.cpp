@@ -127,10 +127,19 @@ static cl::opt<unsigned> MulOpsInlineThreshold(
     cl::desc("Threshold for inlining multiplication operands into a SCEV"),
     cl::init(1000));
 
+static cl::opt<unsigned> AddOpsInlineThreshold(
+    "scev-addops-inline-threshold", cl::Hidden,
+    cl::desc("Threshold for inlining multiplication operands into a SCEV"),
+    cl::init(500));
+
 static cl::opt<unsigned>
     MaxCompareDepth("scalar-evolution-max-compare-depth", cl::Hidden,
                     cl::desc("Maximum depth of recursive compare complexity"),
                     cl::init(32));
+
+static cl::opt<unsigned> MaxConstantEvolvingDepth(
+    "scalar-evolution-max-constant-evolving-depth", cl::Hidden,
+    cl::desc("Maximum depth of recursive constant evolving"), cl::init(32));
 
 //===----------------------------------------------------------------------===//
 //                           SCEV class definitions
@@ -140,11 +149,12 @@ static cl::opt<unsigned>
 // Implementation of the SCEV class.
 //
 
-LLVM_DUMP_METHOD
-void SCEV::dump() const {
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+LLVM_DUMP_METHOD void SCEV::dump() const {
   print(dbgs());
   dbgs() << '\n';
 }
+#endif
 
 void SCEV::print(raw_ostream &OS) const {
   switch (static_cast<SCEVTypes>(getSCEVType())) {
@@ -2215,6 +2225,9 @@ const SCEV *ScalarEvolution::getAddExpr(SmallVectorImpl<const SCEV *> &Ops,
   if (Idx < Ops.size()) {
     bool DeletedAdd = false;
     while (const SCEVAddExpr *Add = dyn_cast<SCEVAddExpr>(Ops[Idx])) {
+      if (Ops.size() > AddOpsInlineThreshold ||
+          Add->getNumOperands() > AddOpsInlineThreshold)
+        break;
       // If we have an add, expand the add operands onto the end of the operands
       // list.
       Ops.erase(Ops.begin()+Idx);
@@ -2884,7 +2897,7 @@ const SCEV *ScalarEvolution::getUDivExactExpr(const SCEV *LHS,
   // end of this file for inspiration.
 
   const SCEVMulExpr *Mul = dyn_cast<SCEVMulExpr>(LHS);
-  if (!Mul)
+  if (!Mul || !Mul->hasNoUnsignedWrap())
     return getUDivExpr(LHS, RHS);
 
   if (const SCEVConstant *RHSCst = dyn_cast<SCEVConstant>(RHS)) {
@@ -5143,12 +5156,27 @@ const SCEV *ScalarEvolution::createSCEV(Value *V) {
         APInt EffectiveMask =
             APInt::getLowBitsSet(BitWidth, BitWidth - LZ - TZ).shl(TZ);
         if ((LZ != 0 || TZ != 0) && !((~A & ~KnownZero) & EffectiveMask)) {
-          const SCEV *MulCount = getConstant(ConstantInt::get(
-              getContext(), APInt::getOneBitSet(BitWidth, TZ)));
+          const SCEV *MulCount = getConstant(APInt::getOneBitSet(BitWidth, TZ));
+          const SCEV *LHS = getSCEV(BO->LHS);
+          const SCEV *ShiftedLHS = nullptr;
+          if (auto *LHSMul = dyn_cast<SCEVMulExpr>(LHS)) {
+            if (auto *OpC = dyn_cast<SCEVConstant>(LHSMul->getOperand(0))) {
+              // For an expression like (x * 8) & 8, simplify the multiply.
+              unsigned MulZeros = OpC->getAPInt().countTrailingZeros();
+              unsigned GCD = std::min(MulZeros, TZ);
+              APInt DivAmt = APInt::getOneBitSet(BitWidth, TZ - GCD);
+              SmallVector<const SCEV*, 4> MulOps;
+              MulOps.push_back(getConstant(OpC->getAPInt().lshr(GCD)));
+              MulOps.append(LHSMul->op_begin() + 1, LHSMul->op_end());
+              auto *NewMul = getMulExpr(MulOps, LHSMul->getNoWrapFlags());
+              ShiftedLHS = getUDivExpr(NewMul, getConstant(DivAmt));
+            }
+          }
+          if (!ShiftedLHS)
+            ShiftedLHS = getUDivExpr(LHS, MulCount);
           return getMulExpr(
               getZeroExtendExpr(
-                  getTruncateExpr(
-                      getUDivExactExpr(getSCEV(BO->LHS), MulCount),
+                  getTruncateExpr(ShiftedLHS,
                       IntegerType::get(getContext(), BitWidth - LZ - TZ)),
                   BO->LHS->getType()),
               MulCount);
@@ -6403,7 +6431,10 @@ static bool canConstantEvolve(Instruction *I, const Loop *L) {
 /// recursing through each instruction operand until reaching a loop header phi.
 static PHINode *
 getConstantEvolvingPHIOperands(Instruction *UseInst, const Loop *L,
-                               DenseMap<Instruction *, PHINode *> &PHIMap) {
+                               DenseMap<Instruction *, PHINode *> &PHIMap,
+                               unsigned Depth) {
+  if (Depth > MaxConstantEvolvingDepth)
+    return nullptr;
 
   // Otherwise, we can evaluate this instruction if all of its operands are
   // constant or derived from a PHI node themselves.
@@ -6423,7 +6454,7 @@ getConstantEvolvingPHIOperands(Instruction *UseInst, const Loop *L,
     if (!P) {
       // Recurse and memoize the results, whether a phi is found or not.
       // This recursive call invalidates pointers into PHIMap.
-      P = getConstantEvolvingPHIOperands(OpInst, L, PHIMap);
+      P = getConstantEvolvingPHIOperands(OpInst, L, PHIMap, Depth + 1);
       PHIMap[OpInst] = P;
     }
     if (!P)
@@ -6450,7 +6481,7 @@ static PHINode *getConstantEvolvingPHI(Value *V, const Loop *L) {
 
   // Record non-constant instructions contained by the loop.
   DenseMap<Instruction *, PHINode *> PHIMap;
-  return getConstantEvolvingPHIOperands(I, L, PHIMap);
+  return getConstantEvolvingPHIOperands(I, L, PHIMap, 0);
 }
 
 /// EvaluateExpression - Given an expression that passes the
@@ -7009,10 +7040,10 @@ const SCEV *ScalarEvolution::getSCEVAtScope(Value *V, const Loop *L) {
 /// A and B isn't important.
 ///
 /// If the equation does not have a solution, SCEVCouldNotCompute is returned.
-static const SCEV *SolveLinEquationWithOverflow(const APInt &A, const APInt &B,
+static const SCEV *SolveLinEquationWithOverflow(const APInt &A, const SCEV *B,
                                                ScalarEvolution &SE) {
   uint32_t BW = A.getBitWidth();
-  assert(BW == B.getBitWidth() && "Bit widths must be the same.");
+  assert(BW == SE.getTypeSizeInBits(B->getType()));
   assert(A != 0 && "A must be non-zero.");
 
   // 1. D = gcd(A, N)
@@ -7026,26 +7057,26 @@ static const SCEV *SolveLinEquationWithOverflow(const APInt &A, const APInt &B,
   //
   // B is divisible by D if and only if the multiplicity of prime factor 2 for B
   // is not less than multiplicity of this prime factor for D.
-  if (B.countTrailingZeros() < Mult2)
+  if (SE.GetMinTrailingZeros(B) < Mult2)
     return SE.getCouldNotCompute();
 
   // 3. Compute I: the multiplicative inverse of (A / D) in arithmetic
   // modulo (N / D).
   //
-  // (N / D) may need BW+1 bits in its representation.  Hence, we'll use this
-  // bit width during computations.
+  // If D == 1, (N / D) == N == 2^BW, so we need one extra bit to represent
+  // (N / D) in general. The inverse itself always fits into BW bits, though,
+  // so we immediately truncate it.
   APInt AD = A.lshr(Mult2).zext(BW + 1);  // AD = A / D
   APInt Mod(BW + 1, 0);
   Mod.setBit(BW - Mult2);  // Mod = N / D
-  APInt I = AD.multiplicativeInverse(Mod);
+  APInt I = AD.multiplicativeInverse(Mod).trunc(BW);
 
   // 4. Compute the minimum unsigned root of the equation:
   // I * (B / D) mod (N / D)
-  APInt Result = (I * B.lshr(Mult2).zext(BW + 1)).urem(Mod);
-
-  // The result is guaranteed to be less than 2^BW so we may truncate it to BW
-  // bits.
-  return SE.getConstant(Result.trunc(BW));
+  // To simplify the computation, we factor out the divide by D:
+  // (I * B mod N) / D
+  const SCEV *D = SE.getConstant(APInt::getOneBitSet(BW, Mult2));
+  return SE.getUDivExactExpr(SE.getMulExpr(B, SE.getConstant(I)), D);
 }
 
 /// Find the roots of the quadratic equation for the given quadratic chrec
@@ -7206,73 +7237,25 @@ ScalarEvolution::howFarToZero(const SCEV *V, const Loop *L, bool ControlsExit,
   // 1*N = -Start; -1*N = Start (mod 2^BW), so:
   //   N = Distance (as unsigned)
   if (StepC->getValue()->equalsInt(1) || StepC->getValue()->isAllOnesValue()) {
-    ConstantRange CR = getUnsignedRange(Start);
-    const SCEV *MaxBECount;
-    if (!CountDown && CR.getUnsignedMin().isMinValue())
-      // When counting up, the worst starting value is 1, not 0.
-      MaxBECount = CR.getUnsignedMax().isMinValue()
-        ? getConstant(APInt::getMinValue(CR.getBitWidth()))
-        : getConstant(APInt::getMaxValue(CR.getBitWidth()));
-    else
-      MaxBECount = getConstant(CountDown ? CR.getUnsignedMax()
-                                         : -CR.getUnsignedMin());
-    return ExitLimit(Distance, MaxBECount, false, Predicates);
-  }
+    APInt MaxBECount = getUnsignedRange(Distance).getUnsignedMax();
 
-  // As a special case, handle the instance where Step is a positive power of
-  // two. In this case, determining whether Step divides Distance evenly can be
-  // done by counting and comparing the number of trailing zeros of Step and
-  // Distance.
-  if (!CountDown) {
-    const APInt &StepV = StepC->getAPInt();
-    // StepV.isPowerOf2() returns true if StepV is an positive power of two.  It
-    // also returns true if StepV is maximally negative (eg, INT_MIN), but that
-    // case is not handled as this code is guarded by !CountDown.
-    if (StepV.isPowerOf2() &&
-        GetMinTrailingZeros(Distance) >= StepV.countTrailingZeros()) {
-      // Here we've constrained the equation to be of the form
-      //
-      //   2^(N + k) * Distance' = (StepV == 2^N) * X (mod 2^W)  ... (0)
-      //
-      // where we're operating on a W bit wide integer domain and k is
-      // non-negative.  The smallest unsigned solution for X is the trip count.
-      //
-      // (0) is equivalent to:
-      //
-      //      2^(N + k) * Distance' - 2^N * X = L * 2^W
-      // <=>  2^N(2^k * Distance' - X) = L * 2^(W - N) * 2^N
-      // <=>  2^k * Distance' - X = L * 2^(W - N)
-      // <=>  2^k * Distance'     = L * 2^(W - N) + X    ... (1)
-      //
-      // The smallest X satisfying (1) is unsigned remainder of dividing the LHS
-      // by 2^(W - N).
-      //
-      // <=>  X = 2^k * Distance' URem 2^(W - N)   ... (2)
-      //
-      // E.g. say we're solving
-      //
-      //   2 * Val = 2 * X  (in i8)   ... (3)
-      //
-      // then from (2), we get X = Val URem i8 128 (k = 0 in this case).
-      //
-      // Note: It is tempting to solve (3) by setting X = Val, but Val is not
-      // necessarily the smallest unsigned value of X that satisfies (3).
-      // E.g. if Val is i8 -127 then the smallest value of X that satisfies (3)
-      // is i8 1, not i8 -127
-
-      const auto *ModuloResult = getUDivExactExpr(Distance, Step);
-
-      // Since SCEV does not have a URem node, we construct one using a truncate
-      // and a zero extend.
-
-      unsigned NarrowWidth = StepV.getBitWidth() - StepV.countTrailingZeros();
-      auto *NarrowTy = IntegerType::get(getContext(), NarrowWidth);
-      auto *WideTy = Distance->getType();
-
-      const SCEV *Limit =
-          getZeroExtendExpr(getTruncateExpr(ModuloResult, NarrowTy), WideTy);
-      return ExitLimit(Limit, Limit, false, Predicates);
+    // When a loop like "for (int i = 0; i != n; ++i) { /* body */ }" is rotated,
+    // we end up with a loop whose backedge-taken count is n - 1.  Detect this
+    // case, and see if we can improve the bound.
+    //
+    // Explicitly handling this here is necessary because getUnsignedRange
+    // isn't context-sensitive; it doesn't know that we only care about the
+    // range inside the loop.
+    const SCEV *Zero = getZero(Distance->getType());
+    const SCEV *One = getOne(Distance->getType());
+    const SCEV *DistancePlusOne = getAddExpr(Distance, One);
+    if (isLoopEntryGuardedByCond(L, ICmpInst::ICMP_NE, DistancePlusOne, Zero)) {
+      // If Distance + 1 doesn't overflow, we can compute the maximum distance
+      // as "unsigned_max(Distance + 1) - 1".
+      ConstantRange CR = getUnsignedRange(DistancePlusOne);
+      MaxBECount = APIntOps::umin(MaxBECount, CR.getUnsignedMax() - 1);
     }
+    return ExitLimit(Distance, getConstant(MaxBECount), false, Predicates);
   }
 
   // If the condition controls loop exit (the loop exits only if the expression
@@ -7287,13 +7270,10 @@ ScalarEvolution::howFarToZero(const SCEV *V, const Loop *L, bool ControlsExit,
     return ExitLimit(Exact, Exact, false, Predicates);
   }
 
-  // Then, try to solve the above equation provided that Start is constant.
-  if (const SCEVConstant *StartC = dyn_cast<SCEVConstant>(Start)) {
-    const SCEV *E = SolveLinEquationWithOverflow(
-        StepC->getValue()->getValue(), -StartC->getValue()->getValue(), *this);
-    return ExitLimit(E, E, false, Predicates);
-  }
-  return getCouldNotCompute();
+  // Solve the general equation.
+  const SCEV *E = SolveLinEquationWithOverflow(
+      StepC->getAPInt(), getNegativeSCEV(Start), *this);
+  return ExitLimit(E, E, false, Predicates);
 }
 
 ScalarEvolution::ExitLimit
@@ -10010,6 +9990,18 @@ void ScalarEvolution::verify() const {
   }
 
   // TODO: Verify more things.
+}
+
+bool ScalarEvolution::invalidate(
+    Function &F, const PreservedAnalyses &PA,
+    FunctionAnalysisManager::Invalidator &Inv) {
+  // Invalidate the ScalarEvolution object whenever it isn't preserved or one
+  // of its dependencies is invalidated.
+  auto PAC = PA.getChecker<ScalarEvolutionAnalysis>();
+  return !(PAC.preserved() || PAC.preservedSet<AllAnalysesOn<Function>>()) ||
+         Inv.invalidate<AssumptionAnalysis>(F, PA) ||
+         Inv.invalidate<DominatorTreeAnalysis>(F, PA) ||
+         Inv.invalidate<LoopAnalysis>(F, PA);
 }
 
 AnalysisKey ScalarEvolutionAnalysis::Key;

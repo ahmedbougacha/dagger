@@ -13,7 +13,9 @@
 #define LLVM_FUZZER_TRACE_PC
 
 #include "FuzzerDefs.h"
+#include "FuzzerDictionary.h"
 #include "FuzzerValueBitMap.h"
+
 #include <set>
 
 namespace fuzzer {
@@ -31,6 +33,7 @@ struct TableOfRecentCompares {
   struct Pair {
     T A, B;
   };
+  ATTRIBUTE_NO_SANITIZE_ALL
   void Insert(size_t Idx, T Arg1, T Arg2) {
     Idx = Idx % kSize;
     Table[Idx].A = Arg1;
@@ -44,25 +47,20 @@ struct TableOfRecentCompares {
 
 class TracePC {
  public:
-  static const size_t kFeatureSetSize = ValueBitMap::kNumberOfItems;
 
   void HandleTrace(uint32_t *guard, uintptr_t PC);
   void HandleInit(uint32_t *start, uint32_t *stop);
   void HandleCallerCallee(uintptr_t Caller, uintptr_t Callee);
-  void HandleValueProfile(size_t Value) { ValueProfileMap.AddValue(Value); }
-  template <class T> void HandleCmp(void *PC, T Arg1, T Arg2);
+  template <class T> void HandleCmp(uintptr_t PC, T Arg1, T Arg2);
   size_t GetTotalPCCoverage();
   void SetUseCounters(bool UC) { UseCounters = UC; }
   void SetUseValueProfile(bool VP) { UseValueProfile = VP; }
   void SetPrintNewPCs(bool P) { DoPrintNewPCs = P; }
   template <class Callback> size_t CollectFeatures(Callback CB);
-  bool UpdateValueProfileMap(ValueBitMap *MaxValueProfileMap) {
-    return UseValueProfile && MaxValueProfileMap->MergeFrom(ValueProfileMap);
-  }
 
   void ResetMaps() {
     ValueProfileMap.Reset();
-    memset(Counters, 0, sizeof(Counters));
+    memset(Counters, 0, GetNumPCs());
   }
 
   void UpdateFeatureSet(size_t CurrentElementIdx, size_t CurrentElementSize);
@@ -74,15 +72,13 @@ class TracePC {
   void DumpCoverage();
 
   void AddValueForMemcmp(void *caller_pc, const void *s1, const void *s2,
-                         size_t n);
-  void AddValueForStrcmp(void *caller_pc, const char *s1, const char *s2,
-                         size_t n);
+                         size_t n, bool StopAtZero);
 
   bool UsingTracePcGuard() const {return NumModules; }
 
-  static const size_t kTORCSize = 1 << 5;
-  TableOfRecentCompares<uint32_t, kTORCSize> TORC4;
-  TableOfRecentCompares<uint64_t, kTORCSize> TORC8;
+  TableOfRecentCompares<uint32_t, 32> TORC4;
+  TableOfRecentCompares<uint64_t, 32> TORC8;
+  TableOfRecentCompares<Word, 32> TORCW;
 
   void PrintNewPCs();
   void InitializePrintNewPCs();
@@ -105,10 +101,8 @@ private:
   size_t NumModules;  // linker-initialized.
   size_t NumGuards;  // linker-initialized.
 
-  static const size_t kNumCounters = 1 << 14;
-  alignas(8) uint8_t Counters[kNumCounters];
-
-  static const size_t kNumPCs = 1 << 24;
+  static const size_t kNumPCs = 1 << 21;
+  alignas(8) uint8_t Counters[kNumPCs];
   uintptr_t PCs[kNumPCs];
 
   std::set<uintptr_t> *PrintedPCs;
@@ -122,7 +116,7 @@ size_t TracePC::CollectFeatures(Callback CB) {
   size_t Res = 0;
   const size_t Step = 8;
   assert(reinterpret_cast<uintptr_t>(Counters) % Step == 0);
-  size_t N = Min(kNumCounters, NumGuards + 1);
+  size_t N = GetNumPCs();
   N = (N + Step - 1) & ~(Step - 1);  // Round up.
   for (size_t Idx = 0; Idx < N; Idx += Step) {
     uint64_t Bundle = *reinterpret_cast<uint64_t*>(&Counters[Idx]);
@@ -146,7 +140,7 @@ size_t TracePC::CollectFeatures(Callback CB) {
   }
   if (UseValueProfile)
     ValueProfileMap.ForEach([&](size_t Idx) {
-      if (CB(NumGuards * 8 + Idx))
+      if (CB(N * 8 + Idx))
         Res++;
     });
   return Res;

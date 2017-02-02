@@ -1227,7 +1227,7 @@ TargetLoweringBase::emitPatchPoint(MachineInstr &InitialMI,
 
     // Copy operands before the frame-index.
     for (unsigned i = 0; i < OperIdx; ++i)
-      MIB.addOperand(MI->getOperand(i));
+      MIB.add(MI->getOperand(i));
     // Add frame index operands recognized by stackmaps.cpp
     if (MFI.isStatepointSpillSlotObjectIndex(FI)) {
       // indirect-mem-ref tag, size, #FI, offset.
@@ -1237,18 +1237,18 @@ TargetLoweringBase::emitPatchPoint(MachineInstr &InitialMI,
       assert(MI->getOpcode() == TargetOpcode::STATEPOINT && "sanity");
       MIB.addImm(StackMaps::IndirectMemRefOp);
       MIB.addImm(MFI.getObjectSize(FI));
-      MIB.addOperand(MI->getOperand(OperIdx));
+      MIB.add(MI->getOperand(OperIdx));
       MIB.addImm(0);
     } else {
       // direct-mem-ref tag, #FI, offset.
       // Used by patchpoint, and direct alloca arguments to statepoints
       MIB.addImm(StackMaps::DirectMemRefOp);
-      MIB.addOperand(MI->getOperand(OperIdx));
+      MIB.add(MI->getOperand(OperIdx));
       MIB.addImm(0);
     }
     // Copy the operands after the frame index.
     for (unsigned i = OperIdx + 1; i != MI->getNumOperands(); ++i)
-      MIB.addOperand(MI->getOperand(i));
+      MIB.add(MI->getOperand(i));
 
     // Inherit previous memory operands.
     MIB->setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
@@ -1918,11 +1918,7 @@ void TargetLoweringBase::setMaximumJumpTableSize(unsigned Val) {
 /// override the target defaults.
 static StringRef getRecipEstimateForFunc(MachineFunction &MF) {
   const Function *F = MF.getFunction();
-  StringRef RecipAttrName = "reciprocal-estimates";
-  if (!F->hasFnAttribute(RecipAttrName))
-    return StringRef();
-
-  return F->getFnAttribute(RecipAttrName).getValueAsString();
+  return F->getFnAttribute("reciprocal-estimates").getValueAsString();
 }
 
 /// Construct a string for the given reciprocal operation of the given type.

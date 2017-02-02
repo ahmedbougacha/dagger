@@ -164,9 +164,7 @@ static void thinLTOResolveWeakForLinkerGUID(
     }
     // Alias and aliasee can't be turned into available_externally.
     else if (!isa<AliasSummary>(S.get()) &&
-             !GlobalInvolvedWithAlias.count(S.get()) &&
-             (GlobalValue::isLinkOnceODRLinkage(OriginalLinkage) ||
-              GlobalValue::isWeakODRLinkage(OriginalLinkage)))
+             !GlobalInvolvedWithAlias.count(S.get()))
       S->setLinkage(GlobalValue::AvailableExternallyLinkage);
     if (S->linkage() != OriginalLinkage)
       recordNewLinkage(S->modulePath(), GUID, S->linkage());
@@ -372,6 +370,7 @@ static void writeToResolutionFile(raw_ostream &OS, InputFile *Input,
       OS << 'x';
     OS << '\n';
   }
+  OS.flush();
   assert(ResI == Res.end());
 }
 
@@ -447,6 +446,11 @@ Error LTO::addRegularLTO(BitcodeModule BM, const SymbolResolution *&ResI,
     if (GV.hasAppendingLinkage())
       Keep.push_back(&GV);
 
+  DenseSet<GlobalObject *> AliasedGlobals;
+  for (auto &GA : M.aliases())
+    if (GlobalObject *GO = GA.getBaseObject())
+      AliasedGlobals.insert(GO);
+
   for (const InputFile::Symbol &Sym :
        make_range(InputFile::symbol_iterator(SymTab.symbols().begin(), SymTab,
                                              nullptr),
@@ -456,20 +460,37 @@ Error LTO::addRegularLTO(BitcodeModule BM, const SymbolResolution *&ResI,
     SymbolResolution Res = *ResI++;
     addSymbolToGlobalRes(Used, Sym, Res, 0);
 
-    if (Sym.getFlags() & object::BasicSymbolRef::SF_Undefined)
-      continue;
-    if (Res.Prevailing && Sym.isGV()) {
+    if (Sym.isGV()) {
       GlobalValue *GV = Sym.getGV();
-      Keep.push_back(GV);
-      switch (GV->getLinkage()) {
-      default:
-        break;
-      case GlobalValue::LinkOnceAnyLinkage:
-        GV->setLinkage(GlobalValue::WeakAnyLinkage);
-        break;
-      case GlobalValue::LinkOnceODRLinkage:
-        GV->setLinkage(GlobalValue::WeakODRLinkage);
-        break;
+      if (Res.Prevailing) {
+        if (Sym.getFlags() & object::BasicSymbolRef::SF_Undefined)
+          continue;
+        Keep.push_back(GV);
+        switch (GV->getLinkage()) {
+        default:
+          break;
+        case GlobalValue::LinkOnceAnyLinkage:
+          GV->setLinkage(GlobalValue::WeakAnyLinkage);
+          break;
+        case GlobalValue::LinkOnceODRLinkage:
+          GV->setLinkage(GlobalValue::WeakODRLinkage);
+          break;
+        }
+      } else if (isa<GlobalObject>(GV) &&
+                 (GV->hasLinkOnceODRLinkage() || GV->hasWeakODRLinkage() ||
+                  GV->hasAvailableExternallyLinkage()) &&
+                 !AliasedGlobals.count(cast<GlobalObject>(GV))) {
+        // Either of the above three types of linkage indicates that the
+        // chosen prevailing symbol will have the same semantics as this copy of
+        // the symbol, so we can link it with available_externally linkage. We
+        // only need to do this if the symbol is undefined.
+        GlobalValue *CombinedGV =
+            RegularLTO.CombinedModule->getNamedValue(GV->getName());
+        if (!CombinedGV || CombinedGV->isDeclaration()) {
+          Keep.push_back(GV);
+          GV->setLinkage(GlobalValue::AvailableExternallyLinkage);
+          cast<GlobalObject>(GV)->setComdat(nullptr);
+        }
       }
     }
     // Common resolution: collect the maximum size/alignment over all commons.
@@ -602,7 +623,7 @@ Error LTO::runRegularLTO(AddStreamFn AddStream) {
       return Error::success();
   }
   return backend(Conf, AddStream, RegularLTO.ParallelCodeGenParallelismLevel,
-                 std::move(RegularLTO.CombinedModule));
+                 std::move(RegularLTO.CombinedModule), ThinLTO.CombinedIndex);
 }
 
 /// This class defines the interface to the ThinLTO backend.
@@ -857,19 +878,6 @@ Error LTO::runThinLTO(AddStreamFn AddStream, NativeObjectCache Cache,
     if (!ModuleToDefinedGVSummaries.count(Mod.first))
       ModuleToDefinedGVSummaries.try_emplace(Mod.first);
 
-  // Compute "dead" symbols, we don't want to import/export these!
-  DenseSet<GlobalValue::GUID> GUIDPreservedSymbols;
-  for (auto &Res : GlobalResolutions) {
-    if (Res.second.VisibleOutsideThinLTO &&
-        // IRName will be defined if we have seen the prevailing copy of
-        // this value. If not, no need to preserve any ThinLTO copies.
-        !Res.second.IRName.empty())
-      GUIDPreservedSymbols.insert(GlobalValue::getGUID(Res.second.IRName));
-  }
-
-  auto DeadSymbols =
-      computeDeadSymbols(ThinLTO.CombinedIndex, GUIDPreservedSymbols);
-
   StringMap<FunctionImporter::ImportMapTy> ImportLists(
       ThinLTO.ModuleMap.size());
   StringMap<FunctionImporter::ExportSetTy> ExportLists(
@@ -877,6 +885,19 @@ Error LTO::runThinLTO(AddStreamFn AddStream, NativeObjectCache Cache,
   StringMap<std::map<GlobalValue::GUID, GlobalValue::LinkageTypes>> ResolvedODR;
 
   if (Conf.OptLevel > 0) {
+    // Compute "dead" symbols, we don't want to import/export these!
+    DenseSet<GlobalValue::GUID> GUIDPreservedSymbols;
+    for (auto &Res : GlobalResolutions) {
+      if (Res.second.VisibleOutsideThinLTO &&
+          // IRName will be defined if we have seen the prevailing copy of
+          // this value. If not, no need to preserve any ThinLTO copies.
+          !Res.second.IRName.empty())
+        GUIDPreservedSymbols.insert(GlobalValue::getGUID(Res.second.IRName));
+    }
+
+    auto DeadSymbols =
+        computeDeadSymbols(ThinLTO.CombinedIndex, GUIDPreservedSymbols);
+
     ComputeCrossModuleImport(ThinLTO.CombinedIndex, ModuleToDefinedGVSummaries,
                              ImportLists, ExportLists, &DeadSymbols);
 

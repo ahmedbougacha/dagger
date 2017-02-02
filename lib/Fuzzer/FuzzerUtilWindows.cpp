@@ -178,6 +178,17 @@ const void *SearchMemory(const void *Data, size_t DataLen, const void *Patt,
   return NULL;
 }
 
+std::string DisassembleCmd(const std::string &FileName) {
+  if (ExecuteCommand("dumpbin /summary > nul") == 0)
+    return "dumpbin /disasm " + FileName;
+  Printf("libFuzzer: couldn't find tool to disassemble (dumpbin)\n");
+  exit(1);
+}
+
+std::string SearchRegexCmd(const std::string &Regex) {
+  return "findstr /r \"" + Regex + "\"";
+}
+
 } // namespace fuzzer
 
 #endif // LIBFUZZER_WINDOWS

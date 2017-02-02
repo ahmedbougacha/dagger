@@ -58,8 +58,10 @@
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/IndirectCallSiteVisitor.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
@@ -71,7 +73,9 @@
 #include "llvm/ProfileData/InstrProfReader.h"
 #include "llvm/ProfileData/ProfileCommon.h"
 #include "llvm/Support/BranchProbability.h"
+#include "llvm/Support/DOTGraphTraits.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/GraphWriter.h"
 #include "llvm/Support/JamCRC.h"
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -119,7 +123,7 @@ static cl::opt<unsigned> MaxNumAnnotations(
 // Command line option to control appending FunctionHash to the name of a COMDAT
 // function. This is to avoid the hash mismatch caused by the preinliner.
 static cl::opt<bool> DoComdatRenaming(
-    "do-comdat-renaming", cl::init(true), cl::Hidden,
+    "do-comdat-renaming", cl::init(false), cl::Hidden,
     cl::desc("Append function hash to the name of COMDAT function to avoid "
              "function hash mismatch due to the preinliner"));
 
@@ -134,9 +138,30 @@ static cl::opt<bool> PGOWarnMissing("pgo-warn-missing-function",
 static cl::opt<bool> NoPGOWarnMismatch("no-pgo-warn-mismatch", cl::init(false),
                                        cl::Hidden);
 
+// Command line option to enable/disable the warning about a hash mismatch in
+// the profile data for Comdat functions, which often turns out to be false
+// positive due to the pre-instrumentation inline.
+static cl::opt<bool> NoPGOWarnMismatchComdat("no-pgo-warn-mismatch-comdat",
+                                             cl::init(true), cl::Hidden);
+
 // Command line option to enable/disable select instruction instrumentation.
 static cl::opt<bool> PGOInstrSelect("pgo-instr-select", cl::init(true),
                                     cl::Hidden);
+
+// Command line option to specify the name of the function for CFG dump
+static cl::opt<std::string>
+    PGOViewFunction("pgo-view-function", cl::Hidden,
+                    cl::desc("The option to specify "
+                             "the name of the function "
+                             "whose CFG will be displayed."));
+
+// Command line option to turn on CFG dot dump of raw profile counts
+static cl::opt<bool> PGOViewRawCounts("pgo-view-raw-counts", cl::init(false),
+                                      cl::Hidden);
+
+// Command line option to turn on CFG dot dump after profile annotation.
+extern cl::opt<bool> PGOViewCounts;
+
 namespace {
 
 /// The select instruction visitor plays three roles specified
@@ -407,20 +432,8 @@ void FuncPGOInstrumentation<Edge, BBInfo>::computeCFGHash() {
 static bool canRenameComdat(
     Function &F,
     std::unordered_multimap<Comdat *, GlobalValue *> &ComdatMembers) {
-  if (F.getName().empty())
+  if (!DoComdatRenaming || !canRenameComdatFunc(F, true))
     return false;
-  if (!needsComdatForCounter(F, *(F.getParent())))
-    return false;
-  // Only safe to do if this function may be discarded if it is not used
-  // in the compilation unit.
-  if (!GlobalValue::isDiscardableIfUnused(F.getLinkage()))
-    return false;
-
-  // For AvailableExternallyLinkage functions.
-  if (!F.hasComdat()) {
-    assert(F.getLinkage() == GlobalValue::AvailableExternallyLinkage);
-    return true;
-  }
 
   // FIXME: Current only handle those Comdat groups that only containing one
   // function and function aliases.
@@ -683,6 +696,8 @@ public:
     return FuncInfo.findBBInfo(BB);
   }
 
+  Function &getFunc() const { return F; }
+
 private:
   Function &F;
   Module *M;
@@ -803,7 +818,11 @@ bool PGOUseFunc::readCounters(IndexedInstrProfReader *PGOReader) {
       } else if (Err == instrprof_error::hash_mismatch ||
                  Err == instrprof_error::malformed) {
         NumOfPGOMismatch++;
-        SkipWarning = NoPGOWarnMismatch;
+        SkipWarning =
+            NoPGOWarnMismatch ||
+            (NoPGOWarnMismatchComdat &&
+             (F.hasComdat() ||
+              F.getLinkage() == GlobalValue::AvailableExternallyLinkage));
       }
 
       if (SkipWarning)
@@ -1204,6 +1223,25 @@ static bool annotateAllFunctions(
       ColdFunctions.push_back(&F);
     else if (FreqAttr == PGOUseFunc::FFA_Hot)
       HotFunctions.push_back(&F);
+#ifndef NDEBUG
+    if (PGOViewCounts &&
+        (PGOViewFunction.empty() || F.getName().equals(PGOViewFunction))) {
+      LoopInfo LI{DominatorTree(F)};
+      std::unique_ptr<BranchProbabilityInfo> NewBPI =
+          llvm::make_unique<BranchProbabilityInfo>(F, LI);
+      std::unique_ptr<BlockFrequencyInfo> NewBFI =
+          llvm::make_unique<BlockFrequencyInfo>(F, *NewBPI, LI);
+
+      NewBFI->view();
+    }
+#endif
+    if (PGOViewRawCounts &&
+        (PGOViewFunction.empty() || F.getName().equals(PGOViewFunction))) {
+      if (PGOViewFunction.empty())
+        WriteGraph(&Func, Twine("PGORawCounts_") + Func.getFunc().getName());
+      else
+        ViewGraph(&Func, Twine("PGORawCounts_") + Func.getFunc().getName());
+    }
   }
   M.setProfileSummary(PGOReader->getSummary().getMD(M.getContext()));
   // Set function hotness attribute from the profile.
@@ -1258,4 +1296,47 @@ bool PGOInstrumentationUseLegacyPass::runOnModule(Module &M) {
   };
 
   return annotateAllFunctions(M, ProfileFileName, LookupBPI, LookupBFI);
+}
+
+namespace llvm {
+template <> struct GraphTraits<PGOUseFunc *> {
+  typedef const BasicBlock *NodeRef;
+  typedef succ_const_iterator ChildIteratorType;
+  typedef pointer_iterator<Function::const_iterator> nodes_iterator;
+
+  static NodeRef getEntryNode(const PGOUseFunc *G) {
+    return &G->getFunc().front();
+  }
+  static ChildIteratorType child_begin(const NodeRef N) {
+    return succ_begin(N);
+  }
+  static ChildIteratorType child_end(const NodeRef N) { return succ_end(N); }
+  static nodes_iterator nodes_begin(const PGOUseFunc *G) {
+    return nodes_iterator(G->getFunc().begin());
+  }
+  static nodes_iterator nodes_end(const PGOUseFunc *G) {
+    return nodes_iterator(G->getFunc().end());
+  }
+};
+
+template <> struct DOTGraphTraits<PGOUseFunc *> : DefaultDOTGraphTraits {
+  explicit DOTGraphTraits(bool isSimple = false)
+      : DefaultDOTGraphTraits(isSimple) {}
+
+  static std::string getGraphName(const PGOUseFunc *G) {
+    return G->getFunc().getName();
+  }
+
+  std::string getNodeLabel(const BasicBlock *Node, const PGOUseFunc *Graph) {
+    std::string Result;
+    raw_string_ostream OS(Result);
+    OS << Node->getName().str() << " : ";
+    UseBBInfo *BI = Graph->findBBInfo(Node);
+    if (BI && BI->CountValid)
+      OS << BI->CountValue;
+    else
+      OS << "Unknown";
+    return Result;
+  }
+};
 }

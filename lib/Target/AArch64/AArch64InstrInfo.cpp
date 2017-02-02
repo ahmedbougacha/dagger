@@ -369,7 +369,7 @@ void AArch64InstrInfo::instantiateCondBranch(
     // Folded compare-and-branch
     // Note that we use addOperand instead of addReg to keep the flags.
     const MachineInstrBuilder MIB =
-        BuildMI(&MBB, DL, get(Cond[1].getImm())).addOperand(Cond[2]);
+        BuildMI(&MBB, DL, get(Cond[1].getImm())).add(Cond[2]);
     if (Cond.size() > 3)
       MIB.addImm(Cond[3].getImm());
     MIB.addMBB(TBB);
@@ -1299,16 +1299,16 @@ bool AArch64InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
         .addMemOperand(*MI.memoperands_begin());
   } else if (TM.getCodeModel() == CodeModel::Large) {
     BuildMI(MBB, MI, DL, get(AArch64::MOVZXi), Reg)
-        .addGlobalAddress(GV, 0, AArch64II::MO_G3).addImm(48);
-    BuildMI(MBB, MI, DL, get(AArch64::MOVKXi), Reg)
-        .addReg(Reg, RegState::Kill)
-        .addGlobalAddress(GV, 0, AArch64II::MO_G2 | MO_NC).addImm(32);
+        .addGlobalAddress(GV, 0, AArch64II::MO_G0 | MO_NC).addImm(0);
     BuildMI(MBB, MI, DL, get(AArch64::MOVKXi), Reg)
         .addReg(Reg, RegState::Kill)
         .addGlobalAddress(GV, 0, AArch64II::MO_G1 | MO_NC).addImm(16);
     BuildMI(MBB, MI, DL, get(AArch64::MOVKXi), Reg)
         .addReg(Reg, RegState::Kill)
-        .addGlobalAddress(GV, 0, AArch64II::MO_G0 | MO_NC).addImm(0);
+        .addGlobalAddress(GV, 0, AArch64II::MO_G2 | MO_NC).addImm(32);
+    BuildMI(MBB, MI, DL, get(AArch64::MOVKXi), Reg)
+        .addReg(Reg, RegState::Kill)
+        .addGlobalAddress(GV, 0, AArch64II::MO_G3).addImm(48);
     BuildMI(MBB, MI, DL, get(AArch64::LDRXui), Reg)
         .addReg(Reg, RegState::Kill)
         .addImm(0)
@@ -1627,6 +1627,17 @@ bool AArch64InstrInfo::isUnscaledLdSt(MachineInstr &MI) const {
   return isUnscaledLdSt(MI.getOpcode());
 }
 
+bool AArch64InstrInfo::isTailCall(const MachineInstr &Inst) const
+{
+  switch (Inst.getOpcode()) {
+  case AArch64::TCRETURNdi:
+  case AArch64::TCRETURNri:
+    return true;
+  default:
+    return false;
+  }
+}
+
 // Is this a candidate for ld/st merging or pairing?  For example, we don't
 // touch volatiles or load/stores that have a hint to avoid pair formation.
 bool AArch64InstrInfo::isCandidateToMergeOrPair(MachineInstr &MI) const {
@@ -1652,7 +1663,7 @@ bool AArch64InstrInfo::isCandidateToMergeOrPair(MachineInstr &MI) const {
     return false;
 
   // On some CPUs quad load/store pairs are slower than two single load/stores.
-  if (Subtarget.avoidQuadLdStPairs()) {
+  if (Subtarget.isPaired128Slow()) {
     switch (MI.getOpcode()) {
     default:
       break;
@@ -1901,88 +1912,6 @@ bool AArch64InstrInfo::shouldClusterMemOps(MachineInstr &FirstLdSt,
   // The caller should already have ordered First/SecondLdSt by offset.
   assert(Offset1 <= Offset2 && "Caller should have ordered offsets.");
   return Offset1 + 1 == Offset2;
-}
-
-bool AArch64InstrInfo::shouldScheduleAdjacent(
-    const MachineInstr &First, const MachineInstr &Second) const {
-  if (Subtarget.hasArithmeticBccFusion()) {
-    // Fuse CMN, CMP, TST followed by Bcc.
-    unsigned SecondOpcode = Second.getOpcode();
-    if (SecondOpcode == AArch64::Bcc) {
-      switch (First.getOpcode()) {
-      default:
-        return false;
-      case AArch64::ADDSWri:
-      case AArch64::ADDSWrr:
-      case AArch64::ADDSXri:
-      case AArch64::ADDSXrr:
-      case AArch64::ANDSWri:
-      case AArch64::ANDSWrr:
-      case AArch64::ANDSXri:
-      case AArch64::ANDSXrr:
-      case AArch64::SUBSWri:
-      case AArch64::SUBSWrr:
-      case AArch64::SUBSXri:
-      case AArch64::SUBSXrr:
-      case AArch64::BICSWrr:
-      case AArch64::BICSXrr:
-        return true;
-      case AArch64::ADDSWrs:
-      case AArch64::ADDSXrs:
-      case AArch64::ANDSWrs:
-      case AArch64::ANDSXrs:
-      case AArch64::SUBSWrs:
-      case AArch64::SUBSXrs:
-      case AArch64::BICSWrs:
-      case AArch64::BICSXrs:
-        // Shift value can be 0 making these behave like the "rr" variant...
-        return !hasShiftedReg(Second);
-      }
-    }
-  }
-  if (Subtarget.hasArithmeticCbzFusion()) {
-    // Fuse ALU operations followed by CBZ/CBNZ.
-    unsigned SecondOpcode = Second.getOpcode();
-    if (SecondOpcode == AArch64::CBNZW || SecondOpcode == AArch64::CBNZX ||
-        SecondOpcode == AArch64::CBZW || SecondOpcode == AArch64::CBZX) {
-      switch (First.getOpcode()) {
-      default:
-        return false;
-      case AArch64::ADDWri:
-      case AArch64::ADDWrr:
-      case AArch64::ADDXri:
-      case AArch64::ADDXrr:
-      case AArch64::ANDWri:
-      case AArch64::ANDWrr:
-      case AArch64::ANDXri:
-      case AArch64::ANDXrr:
-      case AArch64::EORWri:
-      case AArch64::EORWrr:
-      case AArch64::EORXri:
-      case AArch64::EORXrr:
-      case AArch64::ORRWri:
-      case AArch64::ORRWrr:
-      case AArch64::ORRXri:
-      case AArch64::ORRXrr:
-      case AArch64::SUBWri:
-      case AArch64::SUBWrr:
-      case AArch64::SUBXri:
-      case AArch64::SUBXrr:
-        return true;
-      case AArch64::ADDWrs:
-      case AArch64::ADDXrs:
-      case AArch64::ANDWrs:
-      case AArch64::ANDXrs:
-      case AArch64::SUBWrs:
-      case AArch64::SUBXrs:
-      case AArch64::BICWrs:
-      case AArch64::BICXrs:
-        // Shift value can be 0 making these behave like the "rr" variant...
-        return !hasShiftedReg(Second);
-      }
-    }
-  }
-  return false;
 }
 
 MachineInstr *AArch64InstrInfo::emitFrameIndexDebugValue(
@@ -3793,7 +3722,7 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
     MachineInstrBuilder MIB1 =
         BuildMI(MF, Root.getDebugLoc(), TII->get(SubOpc), NewVR)
             .addReg(ZeroReg)
-            .addOperand(Root.getOperand(2));
+            .add(Root.getOperand(2));
     InsInstrs.push_back(MIB1);
     InstrIdxForVirtReg.insert(std::make_pair(NewVR, 0));
     MUL = genMaddR(MF, MRI, TII, Root, InsInstrs, 1, Opc, NewVR, RC);

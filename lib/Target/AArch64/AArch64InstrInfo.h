@@ -87,6 +87,8 @@ public:
   /// Return true if this is an unscaled load/store.
   bool isUnscaledLdSt(MachineInstr &MI) const;
 
+  bool isTailCall(const MachineInstr &Inst) const override;
+
   static bool isPairableLdStInst(const MachineInstr &MI) {
     switch (MI.getOpcode()) {
     default:
@@ -135,9 +137,6 @@ public:
 
   bool shouldClusterMemOps(MachineInstr &FirstLdSt, MachineInstr &SecondLdSt,
                            unsigned NumLoads) const override;
-
-  bool shouldScheduleAdjacent(const MachineInstr &First,
-                              const MachineInstr &Second) const override;
 
   MachineInstr *emitFrameIndexDebugValue(MachineFunction &MF, int FrameIx,
                                          uint64_t Offset, const MDNode *Var,

@@ -11,19 +11,37 @@
 #define LLVM_TRANSFORMS_SCALAR_LOOPUNROLLPASS_H
 
 #include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/LoopPassManager.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/Transforms/Scalar/LoopPassManager.h"
 
 namespace llvm {
 
-struct LoopUnrollPass : public PassInfoMixin<LoopUnrollPass> {
-  Optional<unsigned> ProvidedCount;
-  Optional<unsigned> ProvidedThreshold;
-  Optional<bool> ProvidedAllowPartial;
-  Optional<bool> ProvidedRuntime;
-  Optional<bool> ProvidedUpperBound;
+class LoopUnrollPass : public PassInfoMixin<LoopUnrollPass> {
+  const bool AllowPartialUnrolling;
 
-  PreservedAnalyses run(Loop &L, LoopAnalysisManager &AM);
+  explicit LoopUnrollPass(bool AllowPartialUnrolling)
+      : AllowPartialUnrolling(AllowPartialUnrolling) {}
+
+public:
+  /// Create an instance of the loop unroll pass that will support both full
+  /// and partial unrolling.
+  ///
+  /// This uses the target information (or flags) to control the thresholds for
+  /// different unrolling stategies but supports all of them.
+  static LoopUnrollPass create() {
+    return LoopUnrollPass(/*AllowPartialUnrolling*/ true);
+  }
+
+  /// Create an instance of the loop unroll pass that only does full loop
+  /// unrolling.
+  ///
+  /// This will disable any runtime or partial unrolling.
+  static LoopUnrollPass createFull() {
+    return LoopUnrollPass(/*AllowPartialUnrolling*/ false);
+  }
+
+  PreservedAnalyses run(Loop &L, LoopAnalysisManager &AM,
+                        LoopStandardAnalysisResults &AR, LPMUpdater &U);
 };
 } // end namespace llvm
 

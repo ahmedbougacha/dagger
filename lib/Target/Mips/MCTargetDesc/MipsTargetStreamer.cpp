@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "MCTargetDesc/MipsABIInfo.h"
 #include "MipsTargetStreamer.h"
 #include "InstPrinter/MipsInstPrinter.h"
 #include "MipsELFStreamer.h"
@@ -685,6 +686,17 @@ MipsTargetELFStreamer::MipsTargetELFStreamer(MCStreamer &S,
   // issues as well.
   unsigned EFlags = MCA.getELFHeaderEFlags();
 
+  // FIXME: Fix a dependency issue by instantiating the ABI object to some
+  // default based off the triple. The triple doesn't describe the target
+  // fully, but any external user of the API that uses the MCTargetStreamer
+  // would otherwise crash on assertion failure.
+
+  ABI = MipsABIInfo(
+      STI.getTargetTriple().getArch() == Triple::ArchType::mipsel ||
+              STI.getTargetTriple().getArch() == Triple::ArchType::mips
+          ? MipsABIInfo::O32()
+          : MipsABIInfo::N64());
+
   // Architecture
   if (Features[Mips::FeatureMips64r6])
     EFlags |= ELF::EF_MIPS_ARCH_64R6;
@@ -720,10 +732,6 @@ MipsTargetELFStreamer::MipsTargetELFStreamer(MCStreamer &S,
   // Other options.
   if (Features[Mips::FeatureNaN2008])
     EFlags |= ELF::EF_MIPS_NAN2008;
-
-  // -mabicalls and -mplt are not implemented but we should act as if they were
-  // given.
-  EFlags |= ELF::EF_MIPS_CPIC;
 
   MCA.setELFHeaderEFlags(EFlags);
 }
@@ -795,10 +803,13 @@ void MipsTargetELFStreamer::finish() {
   } else if (Features[Mips::FeatureMips64r2] || Features[Mips::FeatureMips64])
     EFlags |= ELF::EF_MIPS_32BITMODE;
 
-  // If we've set the cpic eflag and we're n64, go ahead and set the pic
-  // one as well.
-  if (EFlags & ELF::EF_MIPS_CPIC && getABI().IsN64())
-    EFlags |= ELF::EF_MIPS_PIC;
+  // -mplt is not implemented but we should act as if it was
+  // given.
+  if (!Features[Mips::FeatureNoABICalls])
+    EFlags |= ELF::EF_MIPS_CPIC;
+
+  if (Pic)
+    EFlags |= ELF::EF_MIPS_PIC | ELF::EF_MIPS_CPIC;
 
   MCA.setELFHeaderEFlags(EFlags);
 

@@ -17,7 +17,6 @@
 #include "llvm/LTO/LTOBackend.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
-#include "llvm/Analysis/LoopPassManager.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -36,11 +35,17 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Scalar/LoopPassManager.h"
 #include "llvm/Transforms/Utils/FunctionImportUtils.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
 
 using namespace llvm;
 using namespace lto;
+
+static cl::opt<bool>
+    LTOUseNewPM("lto-use-new-pm",
+                cl::desc("Run LTO passes using the new pass manager"),
+                cl::init(false), cl::Hidden);
 
 LLVM_ATTRIBUTE_NORETURN static void reportOpenError(StringRef Path, Twine Msg) {
   errs() << "failed to open " << Path << ": " << Msg << '\n';
@@ -124,6 +129,56 @@ createTargetMachine(Config &Conf, StringRef TheTriple,
       Conf.CodeModel, Conf.CGOptLevel));
 }
 
+static void runNewPMPasses(Module &Mod, TargetMachine *TM, unsigned OptLevel) {
+  PassBuilder PB(TM);
+  AAManager AA;
+
+  // Parse a custom AA pipeline if asked to.
+  assert(PB.parseAAPipeline(AA, "default"));
+
+  LoopAnalysisManager LAM;
+  FunctionAnalysisManager FAM;
+  CGSCCAnalysisManager CGAM;
+  ModuleAnalysisManager MAM;
+
+  // Register the AA manager first so that our version is the one used.
+  FAM.registerPass([&] { return std::move(AA); });
+
+  // Register all the basic analyses with the managers.
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  ModulePassManager MPM;
+  // FIXME (davide): verify the input.
+
+  PassBuilder::OptimizationLevel OL;
+
+  switch (OptLevel) {
+  default:
+    llvm_unreachable("Invalid optimization level");
+  case 0:
+    OL = PassBuilder::O0;
+    break;
+  case 1:
+    OL = PassBuilder::O1;
+    break;
+  case 2:
+    OL = PassBuilder::O2;
+    break;
+  case 3:
+    OL = PassBuilder::O3;
+    break;
+  }
+
+  MPM = PB.buildLTODefaultPipeline(OL, false /* DebugLogging */);
+  MPM.run(Mod, MAM);
+
+  // FIXME (davide): verify the output.
+}
+
 static void runNewPMCustomPasses(Module &Mod, TargetMachine *TM,
                                  std::string PipelineDesc,
                                  std::string AAPipelineDesc,
@@ -168,13 +223,14 @@ static void runNewPMCustomPasses(Module &Mod, TargetMachine *TM,
 }
 
 static void runOldPMPasses(Config &Conf, Module &Mod, TargetMachine *TM,
-                           bool IsThinLTO) {
+                           bool IsThinLTO, ModuleSummaryIndex &CombinedIndex) {
   legacy::PassManager passes;
   passes.add(createTargetTransformInfoWrapperPass(TM->getTargetIRAnalysis()));
 
   PassManagerBuilder PMB;
   PMB.LibraryInfo = new TargetLibraryInfoImpl(Triple(TM->getTargetTriple()));
   PMB.Inliner = createFunctionInliningPass();
+  PMB.Summary = &CombinedIndex;
   // Unconditionally verify input since it is not verified before this
   // point and has unknown origin.
   PMB.VerifyInput = true;
@@ -191,12 +247,20 @@ static void runOldPMPasses(Config &Conf, Module &Mod, TargetMachine *TM,
 }
 
 bool opt(Config &Conf, TargetMachine *TM, unsigned Task, Module &Mod,
-         bool IsThinLTO) {
-  if (Conf.OptPipeline.empty())
-    runOldPMPasses(Conf, Mod, TM, IsThinLTO);
-  else
+         bool IsThinLTO, ModuleSummaryIndex &CombinedIndex) {
+  // There's still no ThinLTO pipeline hooked up in the new pass manager,
+  // once there is one, we can just remove this.
+  if (LTOUseNewPM && IsThinLTO)
+    report_fatal_error("ThinLTO not supported with the new PM yet!");
+
+  // FIXME: Plumb the combined index into the new pass manager.
+  if (!Conf.OptPipeline.empty())
     runNewPMCustomPasses(Mod, TM, Conf.OptPipeline, Conf.AAPipeline,
                          Conf.DisableVerify);
+  else if (LTOUseNewPM)
+    runNewPMPasses(Mod, TM, Conf.OptLevel);
+  else
+    runOldPMPasses(Conf, Mod, TM, IsThinLTO, CombinedIndex);
   return !Conf.PostOptModuleHook || Conf.PostOptModuleHook(Task, Mod);
 }
 
@@ -291,7 +355,8 @@ static void handleAsmUndefinedRefs(Module &Mod, TargetMachine &TM) {
 
 Error lto::backend(Config &C, AddStreamFn AddStream,
                    unsigned ParallelCodeGenParallelismLevel,
-                   std::unique_ptr<Module> Mod) {
+                   std::unique_ptr<Module> Mod,
+                   ModuleSummaryIndex &CombinedIndex) {
   Expected<const Target *> TOrErr = initAndLookupTarget(C, *Mod);
   if (!TOrErr)
     return TOrErr.takeError();
@@ -302,7 +367,7 @@ Error lto::backend(Config &C, AddStreamFn AddStream,
   handleAsmUndefinedRefs(*Mod, *TM);
 
   if (!C.CodeGenOnly)
-    if (!opt(C, TM.get(), 0, *Mod, /*IsThinLTO=*/false))
+    if (!opt(C, TM.get(), 0, *Mod, /*IsThinLTO=*/false, CombinedIndex))
       return Error::success();
 
   if (ParallelCodeGenParallelismLevel == 1) {
@@ -367,7 +432,7 @@ Error lto::thinBackend(Config &Conf, unsigned Task, AddStreamFn AddStream,
   if (Conf.PostImportModuleHook && !Conf.PostImportModuleHook(Task, Mod))
     return Error::success();
 
-  if (!opt(Conf, TM.get(), Task, Mod, /*IsThinLTO=*/true))
+  if (!opt(Conf, TM.get(), Task, Mod, /*IsThinLTO=*/true, CombinedIndex))
     return Error::success();
 
   codegen(Conf, TM.get(), AddStream, Task, Mod);

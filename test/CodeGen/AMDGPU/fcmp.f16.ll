@@ -1,5 +1,5 @@
 ; RUN: llc -march=amdgcn -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=SI %s
-; RUN: llc -march=amdgcn -mcpu=fiji -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=VI %s
+; RUN: llc -march=amdgcn -mcpu=fiji -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=VI %s
 
 ; GCN-LABEL: {{^}}fcmp_f16_lt
 ; GCN: buffer_load_ushort v[[A_F16:[0-9]+]]
@@ -28,10 +28,10 @@ entry:
 ; GCN: buffer_load_ushort v[[A_F16:[0-9]+]]
 ; GCN: buffer_load_ushort v[[B_F16:[0-9]+]]
 
-; SI:  v_cvt_f32_f16_e32 v[[A_F32:[0-9]+]], v[[A_F16]]
-; SI:  v_cvt_f32_f16_e32 v[[B_F32:[0-9]+]], v[[B_F16]]
+; SI:  v_cvt_f32_f16_e64 v[[A_F32:[0-9]+]], |v[[A_F16]]|
+; SI:  v_cvt_f32_f16_e64 v[[B_F32:[0-9]+]], |v[[B_F16]]|
 
-; SI:  v_cmp_lt_f32_e64 s{{\[[0-9]+:[0-9]+\]}}, |v[[A_F32]]|, |v[[B_F32]]|
+; SI:  v_cmp_lt_f32_e32 vcc, v[[A_F32]], v[[B_F32]]
 ; VI:  v_cmp_lt_f16_e64 s{{\[[0-9]+:[0-9]+\]}}, |v[[A_F16]]|, |v[[B_F16]]|
 
 ; GCN: v_cndmask_b32_e64 v[[R_I32:[0-9]+]]

@@ -1692,12 +1692,12 @@ void MachineInstr::copyImplicitOps(MachineFunction &MF,
   }
 }
 
-LLVM_DUMP_METHOD void MachineInstr::dump(const TargetInstrInfo *TII) const {
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+LLVM_DUMP_METHOD void MachineInstr::dump() const {
   dbgs() << "  ";
-  print(dbgs(), false /* SkipOpers */, TII);
-#endif
+  print(dbgs());
 }
+#endif
 
 void MachineInstr::print(raw_ostream &OS, bool SkipOpers,
                          const TargetInstrInfo *TII) const {
@@ -1840,7 +1840,8 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
         OS << "!\"" << DIV->getName() << '\"';
       else
         MO.print(OS, MST, TRI);
-    } else if (TRI && (isInsertSubreg() || isRegSequence()) && MO.isImm()) {
+    } else if (TRI && (isInsertSubreg() || isRegSequence() ||
+                       (isSubregToReg() && i == 3)) && MO.isImm()) {
       OS << TRI->getSubRegIndexName(MO.getImm());
     } else if (i == AsmDescOp && MO.isImm()) {
       // Pretty print the inline asm operand descriptor.

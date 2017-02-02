@@ -212,72 +212,70 @@ void DiagnosticInfoOptimizationBase::print(DiagnosticPrinter &DP) const {
 OptimizationRemark::OptimizationRemark(const char *PassName,
                                        StringRef RemarkName,
                                        const DebugLoc &DLoc, Value *CodeRegion)
-    : DiagnosticInfoOptimizationBase(
+    : DiagnosticInfoIROptimization(
           DK_OptimizationRemark, DS_Remark, PassName, RemarkName,
           *cast<BasicBlock>(CodeRegion)->getParent(), DLoc, CodeRegion) {}
 
 OptimizationRemark::OptimizationRemark(const char *PassName,
                                        StringRef RemarkName, Instruction *Inst)
-    : DiagnosticInfoOptimizationBase(DK_OptimizationRemark, DS_Remark, PassName,
-                                     RemarkName,
-                                     *Inst->getParent()->getParent(),
-                                     Inst->getDebugLoc(), Inst->getParent()) {}
+    : DiagnosticInfoIROptimization(DK_OptimizationRemark, DS_Remark, PassName,
+                                   RemarkName, *Inst->getParent()->getParent(),
+                                   Inst->getDebugLoc(), Inst->getParent()) {}
 
-bool OptimizationRemark::isEnabled() const {
+bool OptimizationRemark::isEnabled(StringRef PassName) {
   return PassRemarksOptLoc.Pattern &&
-         PassRemarksOptLoc.Pattern->match(getPassName());
+         PassRemarksOptLoc.Pattern->match(PassName);
 }
 
 OptimizationRemarkMissed::OptimizationRemarkMissed(const char *PassName,
                                                    StringRef RemarkName,
                                                    const DebugLoc &DLoc,
                                                    Value *CodeRegion)
-    : DiagnosticInfoOptimizationBase(
+    : DiagnosticInfoIROptimization(
           DK_OptimizationRemarkMissed, DS_Remark, PassName, RemarkName,
           *cast<BasicBlock>(CodeRegion)->getParent(), DLoc, CodeRegion) {}
 
 OptimizationRemarkMissed::OptimizationRemarkMissed(const char *PassName,
                                                    StringRef RemarkName,
                                                    Instruction *Inst)
-    : DiagnosticInfoOptimizationBase(DK_OptimizationRemarkMissed, DS_Remark,
-                                     PassName, RemarkName,
-                                     *Inst->getParent()->getParent(),
-                                     Inst->getDebugLoc(), Inst->getParent()) {}
+    : DiagnosticInfoIROptimization(DK_OptimizationRemarkMissed, DS_Remark,
+                                   PassName, RemarkName,
+                                   *Inst->getParent()->getParent(),
+                                   Inst->getDebugLoc(), Inst->getParent()) {}
 
-bool OptimizationRemarkMissed::isEnabled() const {
+bool OptimizationRemarkMissed::isEnabled(StringRef PassName) {
   return PassRemarksMissedOptLoc.Pattern &&
-         PassRemarksMissedOptLoc.Pattern->match(getPassName());
+         PassRemarksMissedOptLoc.Pattern->match(PassName);
 }
 
 OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(const char *PassName,
                                                        StringRef RemarkName,
                                                        const DebugLoc &DLoc,
                                                        Value *CodeRegion)
-    : DiagnosticInfoOptimizationBase(
+    : DiagnosticInfoIROptimization(
           DK_OptimizationRemarkAnalysis, DS_Remark, PassName, RemarkName,
           *cast<BasicBlock>(CodeRegion)->getParent(), DLoc, CodeRegion) {}
 
 OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(const char *PassName,
                                                        StringRef RemarkName,
                                                        Instruction *Inst)
-    : DiagnosticInfoOptimizationBase(DK_OptimizationRemarkAnalysis, DS_Remark,
-                                     PassName, RemarkName,
-                                     *Inst->getParent()->getParent(),
-                                     Inst->getDebugLoc(), Inst->getParent()) {}
+    : DiagnosticInfoIROptimization(DK_OptimizationRemarkAnalysis, DS_Remark,
+                                   PassName, RemarkName,
+                                   *Inst->getParent()->getParent(),
+                                   Inst->getDebugLoc(), Inst->getParent()) {}
 
 OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(enum DiagnosticKind Kind,
                                                        const char *PassName,
                                                        StringRef RemarkName,
                                                        const DebugLoc &DLoc,
                                                        Value *CodeRegion)
-    : DiagnosticInfoOptimizationBase(Kind, DS_Remark, PassName, RemarkName,
-                                     *cast<BasicBlock>(CodeRegion)->getParent(),
-                                     DLoc, CodeRegion) {}
+    : DiagnosticInfoIROptimization(Kind, DS_Remark, PassName, RemarkName,
+                                   *cast<BasicBlock>(CodeRegion)->getParent(),
+                                   DLoc, CodeRegion) {}
 
-bool OptimizationRemarkAnalysis::isEnabled() const {
-  return shouldAlwaysPrint() ||
-         (PassRemarksAnalysisOptLoc.Pattern &&
-          PassRemarksAnalysisOptLoc.Pattern->match(getPassName()));
+bool OptimizationRemarkAnalysis::isEnabled(StringRef PassName) {
+  return PassRemarksAnalysisOptLoc.Pattern &&
+         PassRemarksAnalysisOptLoc.Pattern->match(PassName);
 }
 
 void DiagnosticInfoMIRParser::print(DiagnosticPrinter &DP) const {
@@ -321,6 +319,13 @@ void llvm::emitOptimizationRemarkAnalysisAliasing(LLVMContext &Ctx,
   Ctx.diagnose(OptimizationRemarkAnalysisAliasing(PassName, Fn, DLoc, Msg));
 }
 
+DiagnosticInfoOptimizationFailure::DiagnosticInfoOptimizationFailure(
+    const char *PassName, StringRef RemarkName, const DebugLoc &DLoc,
+    Value *CodeRegion)
+    : DiagnosticInfoIROptimization(
+          DK_OptimizationFailure, DS_Warning, PassName, RemarkName,
+          *cast<BasicBlock>(CodeRegion)->getParent(), DLoc, CodeRegion) {}
+
 bool DiagnosticInfoOptimizationFailure::isEnabled() const {
   // Only print warnings.
   return getSeverity() == DS_Warning;
@@ -334,18 +339,6 @@ void DiagnosticInfoUnsupported::print(DiagnosticPrinter &DP) const {
      << *getFunction().getFunctionType() << ": " << Msg << '\n';
   OS.flush();
   DP << Str;
-}
-
-void llvm::emitLoopVectorizeWarning(LLVMContext &Ctx, const Function &Fn,
-                                    const DebugLoc &DLoc, const Twine &Msg) {
-  Ctx.diagnose(DiagnosticInfoOptimizationFailure(
-      Fn, DLoc, Twine("loop not vectorized: " + Msg)));
-}
-
-void llvm::emitLoopInterleaveWarning(LLVMContext &Ctx, const Function &Fn,
-                                     const DebugLoc &DLoc, const Twine &Msg) {
-  Ctx.diagnose(DiagnosticInfoOptimizationFailure(
-      Fn, DLoc, Twine("loop not interleaved: " + Msg)));
 }
 
 void DiagnosticInfoISelFallback::print(DiagnosticPrinter &DP) const {

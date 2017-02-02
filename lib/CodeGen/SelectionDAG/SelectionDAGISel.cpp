@@ -925,6 +925,50 @@ public:
 };
 } // end anonymous namespace
 
+static bool isStrictFPOp(SDNode *Node, unsigned &NewOpc) {
+  unsigned OrigOpc = Node->getOpcode();
+  switch (OrigOpc) {
+    case ISD::STRICT_FADD: NewOpc = ISD::FADD; return true;
+    case ISD::STRICT_FSUB: NewOpc = ISD::FSUB; return true;
+    case ISD::STRICT_FMUL: NewOpc = ISD::FMUL; return true;
+    case ISD::STRICT_FDIV: NewOpc = ISD::FDIV; return true;
+    case ISD::STRICT_FREM: NewOpc = ISD::FREM; return true;
+    default: return false;
+  }
+}
+
+SDNode* SelectionDAGISel::MutateStrictFPToFP(SDNode *Node, unsigned NewOpc) {
+  assert(((Node->getOpcode() == ISD::STRICT_FADD && NewOpc == ISD::FADD) ||
+          (Node->getOpcode() == ISD::STRICT_FSUB && NewOpc == ISD::FSUB) ||
+          (Node->getOpcode() == ISD::STRICT_FMUL && NewOpc == ISD::FMUL) ||
+          (Node->getOpcode() == ISD::STRICT_FDIV && NewOpc == ISD::FDIV) ||
+          (Node->getOpcode() == ISD::STRICT_FREM && NewOpc == ISD::FREM)) &&
+          "Unexpected StrictFP opcode!");
+
+  // We're taking this node out of the chain, so we need to re-link things.
+  SDValue InputChain = Node->getOperand(0);
+  SDValue OutputChain = SDValue(Node, 1);
+  CurDAG->ReplaceAllUsesOfValueWith(OutputChain, InputChain);
+
+  SDVTList VTs = CurDAG->getVTList(Node->getOperand(1).getValueType());
+  SDValue Ops[2] = { Node->getOperand(1), Node->getOperand(2) };
+  SDNode *Res = CurDAG->MorphNodeTo(Node, NewOpc, VTs, Ops);
+  
+  // MorphNodeTo can operate in two ways: if an existing node with the
+  // specified operands exists, it can just return it.  Otherwise, it
+  // updates the node in place to have the requested operands.
+  if (Res == Node) {
+    // If we updated the node in place, reset the node ID.  To the isel,
+    // this should be just like a newly allocated machine node.
+    Res->setNodeId(-1);
+  } else {
+    CurDAG->ReplaceAllUsesWith(Node, Res);
+    CurDAG->RemoveDeadNode(Node);
+  }
+
+  return Res; 
+}
+
 void SelectionDAGISel::DoInstructionSelection() {
   DEBUG(dbgs() << "===== Instruction selection begins: BB#"
         << FuncInfo->MBB->getNumber()
@@ -960,7 +1004,23 @@ void SelectionDAGISel::DoInstructionSelection() {
       if (Node->use_empty())
         continue;
 
+      // When we are using non-default rounding modes or FP exception behavior
+      // FP operations are represented by StrictFP pseudo-operations.  They
+      // need to be simplified here so that the target-specific instruction
+      // selectors know how to handle them.
+      //
+      // If the current node is a strict FP pseudo-op, the isStrictFPOp()
+      // function will provide the corresponding normal FP opcode to which the
+      // node should be mutated.
+      unsigned NormalFPOpc = ISD::UNDEF;
+      bool IsStrictFPOp = isStrictFPOp(Node, NormalFPOpc);
+      if (IsStrictFPOp)
+        Node = MutateStrictFPToFP(Node, NormalFPOpc);
+
       Select(Node);
+
+      // FIXME: Add code here to attach an implicit def and use of
+      // target-specific FP environment registers.
     }
 
     CurDAG->setRoot(Dummy.getValue());
@@ -1475,7 +1535,7 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
 
           if (EnableFastISelVerbose || EnableFastISelAbort) {
             dbgs() << "FastISel missed call: ";
-            Inst->dump();
+            Inst->print(dbgs());
           }
           if (EnableFastISelAbort > 2)
             // FastISel selector couldn't handle something and bailed.
@@ -1519,7 +1579,7 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
           } else {
             dbgs() << "FastISel miss: ";
           }
-          Inst->dump();
+          Inst->print(dbgs());
         }
         if (ShouldAbort)
           // FastISel selector couldn't handle something and bailed.
@@ -2248,7 +2308,7 @@ GetVBR(uint64_t Val, const unsigned char *MatcherTable, unsigned &Idx) {
 /// to use the new results.
 void SelectionDAGISel::UpdateChains(
     SDNode *NodeToMatch, SDValue InputChain,
-    const SmallVectorImpl<SDNode *> &ChainNodesMatched, bool isMorphNodeTo) {
+    SmallVectorImpl<SDNode *> &ChainNodesMatched, bool isMorphNodeTo) {
   SmallVector<SDNode*, 4> NowDeadNodes;
 
   // Now that all the normal results are replaced, we replace the chain and
@@ -2260,6 +2320,11 @@ void SelectionDAGISel::UpdateChains(
     // Replace all the chain results with the final chain we ended up with.
     for (unsigned i = 0, e = ChainNodesMatched.size(); i != e; ++i) {
       SDNode *ChainNode = ChainNodesMatched[i];
+      // If ChainNode is null, it's because we replaced it on a previous
+      // iteration and we cleared it out of the map. Just skip it.
+      if (!ChainNode)
+        continue;
+
       assert(ChainNode->getOpcode() != ISD::DELETED_NODE &&
              "Deleted node left in chain");
 
@@ -2272,6 +2337,11 @@ void SelectionDAGISel::UpdateChains(
       if (ChainVal.getValueType() == MVT::Glue)
         ChainVal = ChainVal.getValue(ChainVal->getNumValues()-2);
       assert(ChainVal.getValueType() == MVT::Other && "Not a chain?");
+      SelectionDAG::DAGNodeDeletedListener NDL(
+          *CurDAG, [&](SDNode *N, SDNode *E) {
+            std::replace(ChainNodesMatched.begin(), ChainNodesMatched.end(), N,
+                         static_cast<SDNode *>(nullptr));
+          });
       CurDAG->ReplaceAllUsesOfValueWith(ChainVal, InputChain);
 
       // If the node became dead and we haven't already seen it, delete it.

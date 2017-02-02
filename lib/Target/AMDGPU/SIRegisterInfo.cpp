@@ -415,14 +415,14 @@ static bool buildMUBUFOffsetLoadStore(const SIInstrInfo *TII,
   unsigned Reg = TII->getNamedOperand(*MI, AMDGPU::OpName::vdata)->getReg();
 
   BuildMI(*MBB, MI, DL, TII->get(LoadStoreOp))
-    .addReg(Reg, getDefRegState(!IsStore))
-    .addOperand(*TII->getNamedOperand(*MI, AMDGPU::OpName::srsrc))
-    .addOperand(*TII->getNamedOperand(*MI, AMDGPU::OpName::soffset))
-    .addImm(Offset)
-    .addImm(0) // glc
-    .addImm(0) // slc
-    .addImm(0) // tfe
-    .setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
+      .addReg(Reg, getDefRegState(!IsStore))
+      .add(*TII->getNamedOperand(*MI, AMDGPU::OpName::srsrc))
+      .add(*TII->getNamedOperand(*MI, AMDGPU::OpName::soffset))
+      .addImm(Offset)
+      .addImm(0) // glc
+      .addImm(0) // slc
+      .addImm(0) // tfe
+      .setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
   return true;
 }
 
@@ -1108,10 +1108,12 @@ unsigned SIRegisterInfo::getPreloadedValue(const MachineFunction &MF,
   case SIRegisterInfo::PRIVATE_SEGMENT_WAVE_BYTE_OFFSET:
     return MFI->PrivateSegmentWaveByteOffsetSystemSGPR;
   case SIRegisterInfo::PRIVATE_SEGMENT_BUFFER:
-    assert(ST.isAmdCodeObjectV2() &&
-           "Non-CodeObjectV2 ABI currently uses relocations");
-    assert(MFI->hasPrivateSegmentBuffer());
-    return MFI->PrivateSegmentBufferUserSGPR;
+    if (ST.isAmdCodeObjectV2(MF)) {
+      assert(MFI->hasPrivateSegmentBuffer());
+      return MFI->PrivateSegmentBufferUserSGPR;
+    }
+    assert(MFI->hasPrivateMemoryInputPtr());
+    return MFI->PrivateMemoryPtrUserSGPR;
   case SIRegisterInfo::KERNARG_SEGMENT_PTR:
     assert(MFI->hasKernargSegmentPtr());
     return MFI->KernargSegmentPtrUserSGPR;
@@ -1473,4 +1475,24 @@ SIRegisterInfo::getRegClassForReg(const MachineRegisterInfo &MRI,
 bool SIRegisterInfo::isVGPR(const MachineRegisterInfo &MRI,
                             unsigned Reg) const {
   return hasVGPRs(getRegClassForReg(MRI, Reg));
+}
+
+bool SIRegisterInfo::shouldCoalesce(MachineInstr *MI,
+                                    const TargetRegisterClass *SrcRC,
+                                    unsigned SubReg,
+                                    const TargetRegisterClass *DstRC,
+                                    unsigned DstSubReg,
+                                    const TargetRegisterClass *NewRC) const {
+  unsigned SrcSize = SrcRC->getSize();
+  unsigned DstSize = DstRC->getSize();
+  unsigned NewSize = NewRC->getSize();
+
+  // Do not increase size of registers beyond dword, we would need to allocate
+  // adjacent registers and constraint regalloc more than needed.
+
+  // Always allow dword coalescing.
+  if (SrcSize <= 4 || DstSize <= 4)
+    return true;
+
+  return NewSize <= DstSize || NewSize <= SrcSize;
 }

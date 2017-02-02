@@ -48,7 +48,7 @@ public:
   }
 
   explicit SimpleInliner(InlineParams Params)
-      : LegacyInlinerBase(ID), Params(Params) {
+      : LegacyInlinerBase(ID), Params(std::move(Params)) {
     initializeSimpleInlinerPass(*PassRegistry::getPassRegistry());
   }
 
@@ -61,7 +61,8 @@ public:
         [&](Function &F) -> AssumptionCache & {
       return ACT->getAssumptionCache(F);
     };
-    return llvm::getInlineCost(CS, Params, TTI, GetAssumptionCache, PSI);
+    return llvm::getInlineCost(CS, Params, TTI, GetAssumptionCache,
+                               /*GetBFI=*/None, PSI);
   }
 
   bool runOnSCC(CallGraphSCC &SCC) override;

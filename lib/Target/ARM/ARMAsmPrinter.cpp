@@ -164,6 +164,9 @@ bool ARMAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   // Emit the rest of the function body.
   EmitFunctionBody();
 
+  // Emit the XRay table for this function.
+  emitXRayTable();
+
   // If we need V4T thumb mode Register Indirect Jump pads, emit them.
   // These are created per function, rather than per TU, since it's
   // relatively easy to exceed the thumb branch range within a TU.
@@ -841,7 +844,7 @@ void ARMAsmPrinter::emitAttributes() {
                       ARMBuildAttrs::Allowed);
   else
     ATS.emitAttribute(ARMBuildAttrs::ABI_FP_number_model,
-                      ARMBuildAttrs::AllowIEE754);
+                      ARMBuildAttrs::AllowIEEE754);
 
   if (STI.allowsUnalignedMem())
     ATS.emitAttribute(ARMBuildAttrs::CPU_unaligned_access,
@@ -1252,7 +1255,7 @@ void ARMAsmPrinter::EmitUnwindingInstruction(const MachineInstr *MI) {
 
     switch (Opc) {
     default:
-      MI->dump();
+      MI->print(errs());
       llvm_unreachable("Unsupported opcode for unwinding information");
     case ARM::tPUSH:
       // Special case here: no src & dst reg, but two extra imp ops.
@@ -1288,7 +1291,7 @@ void ARMAsmPrinter::EmitUnwindingInstruction(const MachineInstr *MI) {
       int64_t Offset = 0;
       switch (Opc) {
       default:
-        MI->dump();
+        MI->print(errs());
         llvm_unreachable("Unsupported opcode for unwinding information");
       case ARM::MOVr:
       case ARM::tMOVr:
@@ -1343,11 +1346,11 @@ void ARMAsmPrinter::EmitUnwindingInstruction(const MachineInstr *MI) {
         }
       }
     } else if (DstReg == ARM::SP) {
-      MI->dump();
+      MI->print(errs());
       llvm_unreachable("Unsupported opcode for unwinding information");
     }
     else {
-      MI->dump();
+      MI->print(errs());
       llvm_unreachable("Unsupported opcode for unwinding information");
     }
   }

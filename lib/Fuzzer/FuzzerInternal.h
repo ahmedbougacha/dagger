@@ -41,7 +41,6 @@ public:
       CallerCalleeCoverage = 0;
       CounterBitmapBits = 0;
       CounterBitmap.clear();
-      VPMap.Reset();
     }
 
     size_t BlockCoverage;
@@ -49,7 +48,6 @@ public:
     // Precalculated number of bits in CounterBitmap.
     size_t CounterBitmapBits;
     std::vector<uint8_t> CounterBitmap;
-    ValueBitMap VPMap;
   };
 
   Fuzzer(UserCallback CB, InputCorpus &Corpus, MutationDispatcher &MD,
@@ -109,6 +107,7 @@ public:
                                bool DuringInitialCorpusExecution);
 
   void HandleMalloc(size_t Size);
+  void AnnounceOutput(const uint8_t *Data, size_t Size);
 
 private:
   void AlarmCallback();

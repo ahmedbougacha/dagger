@@ -272,6 +272,8 @@ void RuntimeDyldELF::resolveX86_64Relocation(const SectionEntry &Section,
   default:
     llvm_unreachable("Relocation type not implemented yet!");
     break;
+  case ELF::R_X86_64_NONE:
+    break;
   case ELF::R_X86_64_64: {
     support::ulittle64_t::ref(Section.getAddressWithOffset(Offset)) =
         Value + Addend;
@@ -374,6 +376,9 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
     write(isBE, TargetPtr, static_cast<uint32_t>(Result & 0xffffffffU));
     break;
   }
+  case ELF::R_AARCH64_PREL64:
+    write(isBE, TargetPtr, Value + Addend - FinalAddress);
+    break;
   case ELF::R_AARCH64_CALL26: // fallthrough
   case ELF::R_AARCH64_JUMP26: {
     // Operation: S+A-P. Set Call or B immediate value to bits fff_fffc of the
@@ -416,6 +421,18 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
     // from bits 11:0 of X
     or32AArch64Imm(TargetPtr, Value + Addend);
     break;
+  case ELF::R_AARCH64_LDST8_ABS_LO12_NC:
+    // Operation: S + A
+    // Immediate goes in bits 21:10 of LD/ST instruction, taken
+    // from bits 11:0 of X
+    or32AArch64Imm(TargetPtr, getBits(Value + Addend, 0, 11));
+    break;
+  case ELF::R_AARCH64_LDST16_ABS_LO12_NC:
+    // Operation: S + A
+    // Immediate goes in bits 21:10 of LD/ST instruction, taken
+    // from bits 11:1 of X
+    or32AArch64Imm(TargetPtr, getBits(Value + Addend, 1, 11));
+    break;
   case ELF::R_AARCH64_LDST32_ABS_LO12_NC:
     // Operation: S + A
     // Immediate goes in bits 21:10 of LD/ST instruction, taken
@@ -427,6 +444,12 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
     // Immediate goes in bits 21:10 of LD/ST instruction, taken
     // from bits 11:3 of X
     or32AArch64Imm(TargetPtr, getBits(Value + Addend, 3, 11));
+    break;
+  case ELF::R_AARCH64_LDST128_ABS_LO12_NC:
+    // Operation: S + A
+    // Immediate goes in bits 21:10 of LD/ST instruction, taken
+    // from bits 11:4 of X
+    or32AArch64Imm(TargetPtr, getBits(Value + Addend, 4, 11));
     break;
   }
 }
@@ -896,6 +919,48 @@ uint32_t RuntimeDyldELF::getMatchingLoRelocation(uint32_t RelType,
   return ELF::R_MIPS_NONE;
 }
 
+// Sometimes we don't need to create thunk for a branch.
+// This typically happens when branch target is located
+// in the same object file. In such case target is either
+// a weak symbol or symbol in a different executable section.
+// This function checks if branch target is located in the
+// same object file and if distance between source and target
+// fits R_AARCH64_CALL26 relocation. If both conditions are
+// met, it emits direct jump to the target and returns true.
+// Otherwise false is returned and thunk is created.
+bool RuntimeDyldELF::resolveAArch64ShortBranch(
+    unsigned SectionID, relocation_iterator RelI,
+    const RelocationValueRef &Value) {
+  uint64_t Address;
+  if (Value.SymbolName) {
+    auto Loc = GlobalSymbolTable.find(Value.SymbolName);
+
+    // Don't create direct branch for external symbols.
+    if (Loc == GlobalSymbolTable.end())
+      return false;
+
+    const auto &SymInfo = Loc->second;
+    Address =
+        uint64_t(Sections[SymInfo.getSectionID()].getLoadAddressWithOffset(
+            SymInfo.getOffset()));
+  } else {
+    Address = uint64_t(Sections[Value.SectionID].getLoadAddress());
+  }
+  uint64_t Offset = RelI->getOffset();
+  uint64_t SourceAddress = Sections[SectionID].getLoadAddressWithOffset(Offset);
+
+  // R_AARCH64_CALL26 requires immediate to be in range -2^27 <= imm < 2^27
+  // If distance between source and target is out of range then we should
+  // create thunk.
+  if (!isInt<28>(Address + Value.Addend - SourceAddress))
+    return false;
+
+  resolveRelocation(Sections[SectionID], Offset, Address, RelI->getType(),
+                    Value.Addend);
+
+  return true;
+}
+
 Expected<relocation_iterator>
 RuntimeDyldELF::processRelocationRef(
     unsigned SectionID, relocation_iterator RelI, const ObjectFile &O,
@@ -1003,7 +1068,7 @@ RuntimeDyldELF::processRelocationRef(
                         (uint64_t)Section.getAddressWithOffset(i->second),
                         RelType, 0);
       DEBUG(dbgs() << " Stub function found\n");
-    } else {
+    } else if (!resolveAArch64ShortBranch(SectionID, RelI, Value)) {
       // Create a new stub function.
       DEBUG(dbgs() << " Create a new stub function\n");
       Stubs[Value] = Section.getStubOffset();

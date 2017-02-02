@@ -662,12 +662,14 @@ unsigned PPCInstrInfo::insertBranch(MachineBasicBlock &MBB,
                               (isPPC64 ? PPC::BDNZ8 : PPC::BDNZ) :
                               (isPPC64 ? PPC::BDZ8  : PPC::BDZ))).addMBB(TBB);
     else if (Cond[0].getImm() == PPC::PRED_BIT_SET)
-      BuildMI(&MBB, DL, get(PPC::BC)).addOperand(Cond[1]).addMBB(TBB);
+      BuildMI(&MBB, DL, get(PPC::BC)).add(Cond[1]).addMBB(TBB);
     else if (Cond[0].getImm() == PPC::PRED_BIT_UNSET)
-      BuildMI(&MBB, DL, get(PPC::BCn)).addOperand(Cond[1]).addMBB(TBB);
+      BuildMI(&MBB, DL, get(PPC::BCn)).add(Cond[1]).addMBB(TBB);
     else                // Conditional branch
       BuildMI(&MBB, DL, get(PPC::BCC))
-        .addImm(Cond[0].getImm()).addOperand(Cond[1]).addMBB(TBB);
+          .addImm(Cond[0].getImm())
+          .add(Cond[1])
+          .addMBB(TBB);
     return 1;
   }
 
@@ -677,12 +679,14 @@ unsigned PPCInstrInfo::insertBranch(MachineBasicBlock &MBB,
                             (isPPC64 ? PPC::BDNZ8 : PPC::BDNZ) :
                             (isPPC64 ? PPC::BDZ8  : PPC::BDZ))).addMBB(TBB);
   else if (Cond[0].getImm() == PPC::PRED_BIT_SET)
-    BuildMI(&MBB, DL, get(PPC::BC)).addOperand(Cond[1]).addMBB(TBB);
+    BuildMI(&MBB, DL, get(PPC::BC)).add(Cond[1]).addMBB(TBB);
   else if (Cond[0].getImm() == PPC::PRED_BIT_UNSET)
-    BuildMI(&MBB, DL, get(PPC::BCn)).addOperand(Cond[1]).addMBB(TBB);
+    BuildMI(&MBB, DL, get(PPC::BCn)).add(Cond[1]).addMBB(TBB);
   else
     BuildMI(&MBB, DL, get(PPC::BCC))
-      .addImm(Cond[0].getImm()).addOperand(Cond[1]).addMBB(TBB);
+        .addImm(Cond[0].getImm())
+        .add(Cond[1])
+        .addMBB(TBB);
   BuildMI(&MBB, DL, get(PPC::B)).addMBB(FBB);
   return 2;
 }
@@ -692,9 +696,6 @@ bool PPCInstrInfo::canInsertSelect(const MachineBasicBlock &MBB,
                 ArrayRef<MachineOperand> Cond,
                 unsigned TrueReg, unsigned FalseReg,
                 int &CondCycles, int &TrueCycles, int &FalseCycles) const {
-  if (!Subtarget.hasISEL())
-    return false;
-
   if (Cond.size() != 2)
     return false;
 
@@ -735,9 +736,6 @@ void PPCInstrInfo::insertSelect(MachineBasicBlock &MBB,
                                 unsigned FalseReg) const {
   assert(Cond.size() == 2 &&
          "PPC branch conditions have two components!");
-
-  assert(Subtarget.hasISEL() &&
-         "Cannot insert select on target without ISEL support");
 
   // Get the register classes.
   MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();

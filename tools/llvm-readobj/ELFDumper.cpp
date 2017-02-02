@@ -12,7 +12,6 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "ARMAttributeParser.h"
 #include "ARMEHABIPrinter.h"
 #include "Error.h"
 #include "ObjDumper.h"
@@ -22,6 +21,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Object/ELFObjectFile.h"
+#include "llvm/Support/ARMAttributeParser.h"
 #include "llvm/Support/ARMBuildAttributes.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Format.h"
@@ -1892,7 +1892,7 @@ template <> void ELFDumper<ELFType<support::little, false>>::printAttributes() {
     if (Contents.size() == 1)
       continue;
 
-    ARMAttributeParser(W).Parse(Contents);
+    ARMAttributeParser(&W).Parse(Contents, true);
   }
 }
 }
@@ -2364,7 +2364,7 @@ template <class ELFT> void ELFDumper<ELFT>::printAMDGPURuntimeMD() {
   }
   ArrayRef<uint8_t> Sec = unwrapOrError(Obj->getSectionContents(Shdr));
 
-  const uint32_t RuntimeMDNoteType = 7;
+  const uint32_t RuntimeMDNoteType = 8;
   for (auto I = reinterpret_cast<const Elf_Word *>(&Sec[0]),
        E = I + Sec.size()/4; I != E;) {
     uint32_t NameSZ = I[0];

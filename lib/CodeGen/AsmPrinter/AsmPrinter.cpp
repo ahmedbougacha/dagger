@@ -567,6 +567,15 @@ void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
   OutStreamer->AddBlankLine();
 }
 
+/// Emit the directive and value for debug thread local expression
+///
+/// \p Value - The value to emit.
+/// \p Size - The size of the integer (in bytes) to emit.
+void AsmPrinter::EmitDebugValue(const MCExpr *Value,
+                                      unsigned Size) const {
+  OutStreamer->EmitValue(Value, Size);
+}
+
 /// EmitFunctionHeader - This method emits the header for the current
 /// function.
 void AsmPrinter::EmitFunctionHeader() {
@@ -1644,8 +1653,11 @@ void AsmPrinter::EmitXXStructorList(const DataLayout &DL, const Constant *List,
     const TargetLoweringObjectFile &Obj = getObjFileLowering();
     const MCSymbol *KeySym = nullptr;
     if (GlobalValue *GV = S.ComdatKey) {
-      if (GV->hasAvailableExternallyLinkage())
-        // If the associated variable is available_externally, some other TU
+      if (GV->isDeclarationForLinker())
+        // If the associated variable is not defined in this module
+        // (it might be available_externally, or have been an
+        // available_externally definition that was dropped by the
+        // EliminateAvailableExternally pass), some other TU
         // will provide its dynamic initializer.
         continue;
 

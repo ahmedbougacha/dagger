@@ -33,6 +33,12 @@ class Pass;
 class OptimizationRemarkEmitter;
 class ScalarEvolution;
 
+typedef SmallDenseMap<const Loop *, Loop *, 4> NewLoopsMap;
+
+const Loop* addClonedBlockToLoopInfo(BasicBlock *OriginalBB,
+                                     BasicBlock *ClonedBB, LoopInfo *LI,
+                                     NewLoopsMap &NewLoops);
+
 bool UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
                 bool AllowRuntime, bool AllowExpensiveTripCount,
                 bool PreserveCondBr, bool PreserveOnlyFirst,
@@ -50,7 +56,7 @@ void computePeelCount(Loop *L, unsigned LoopSize,
                       TargetTransformInfo::UnrollingPreferences &UP);
 
 bool peelLoop(Loop *L, unsigned PeelCount, LoopInfo *LI, ScalarEvolution *SE,
-              DominatorTree *DT, bool PreserveLCSSA);
+              DominatorTree *DT, AssumptionCache *AC, bool PreserveLCSSA);
 
 MDNode *GetUnrollMetadata(MDNode *LoopID, StringRef Name);
 }

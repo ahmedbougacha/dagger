@@ -239,7 +239,7 @@ public:
     std::function<void(SDNode *, SDNode *)> Callback;
     DAGNodeDeletedListener(SelectionDAG &DAG,
                            std::function<void(SDNode *, SDNode *)> Callback)
-        : DAGUpdateListener(DAG), Callback(Callback) {}
+        : DAGUpdateListener(DAG), Callback(std::move(Callback)) {}
     void NodeDeleted(SDNode *N, SDNode *E) override { Callback(N, E); }
   };
 
@@ -625,12 +625,6 @@ public:
   }
 
   SDValue getCondCode(ISD::CondCode Cond);
-
-  /// Returns the ConvertRndSat Note: Avoid using this node because it may
-  /// disappear in the future and most targets don't support it.
-  SDValue getConvertRndSat(EVT VT, const SDLoc &dl, SDValue Val, SDValue DTy,
-                           SDValue STy, SDValue Rnd, SDValue Sat,
-                           ISD::CvtCode Code);
 
   /// Return an ISD::VECTOR_SHUFFLE node. The number of elements in VT,
   /// which must be a vector type, must match the number of mask elements

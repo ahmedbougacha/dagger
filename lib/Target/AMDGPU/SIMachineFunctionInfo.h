@@ -16,12 +16,15 @@
 
 #include "AMDGPUMachineFunction.h"
 #include "SIRegisterInfo.h"
+#include "llvm/CodeGen/PseudoSourceValue.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/Support/ErrorHandling.h"
 #include <array>
+#include <cassert>
 #include <map>
+#include <utility>
 
 namespace llvm {
-
-class MachineRegisterInfo;
 
 class AMDGPUImagePseudoSourceValue : public PseudoSourceValue {
 public:
@@ -83,6 +86,9 @@ class SIMachineFunctionInfo final : public AMDGPUMachineFunction {
   // as the input registers.
   unsigned ScratchRSrcReg;
   unsigned ScratchWaveOffsetReg;
+
+  // Input registers for non-HSA ABI
+  unsigned PrivateMemoryPtrUserSGPR;
 
   // Input registers setup for the HSA ABI.
   // User SGPRs in allocation order.
@@ -163,6 +169,11 @@ private:
   bool WorkItemIDY : 1;
   bool WorkItemIDZ : 1;
 
+  // Private memory buffer
+  // Compute directly in sgpr[0:1]
+  // Other shaders indirect 64-bits at sgpr[0:1]
+  bool PrivateMemoryInputPtr : 1;
+
   MCPhysReg getNextUserSGPR() const {
     assert(NumSystemSGPRs == 0 && "System SGPRs must be added after user SGPRs");
     return AMDGPU::SGPR0 + NumUserSGPRs;
@@ -174,10 +185,12 @@ private:
 
 public:
   struct SpilledReg {
-    unsigned VGPR;
-    int Lane;
+    unsigned VGPR = AMDGPU::NoRegister;
+    int Lane = -1;
+
+    SpilledReg() = default;
     SpilledReg(unsigned R, int L) : VGPR (R), Lane (L) { }
-    SpilledReg() : VGPR(AMDGPU::NoRegister), Lane(-1) { }
+
     bool hasLane() { return Lane != -1;}
     bool hasReg() { return VGPR != AMDGPU::NoRegister;}
   };
@@ -185,6 +198,7 @@ public:
   // SIMachineFunctionInfo definition
 
   SIMachineFunctionInfo(const MachineFunction &MF);
+
   SpilledReg getSpilledReg(MachineFunction *MF, unsigned FrameIndex,
                            unsigned SubIdx);
   bool hasCalculatedTID() const { return TIDReg != AMDGPU::NoRegister; };
@@ -198,6 +212,7 @@ public:
   unsigned addKernargSegmentPtr(const SIRegisterInfo &TRI);
   unsigned addDispatchID(const SIRegisterInfo &TRI);
   unsigned addFlatScratchInit(const SIRegisterInfo &TRI);
+  unsigned addPrivateMemoryPtr(const SIRegisterInfo &TRI);
 
   // Add system SGPRs.
   unsigned addWorkGroupIDX() {
@@ -302,6 +317,10 @@ public:
     return WorkItemIDZ;
   }
 
+  bool hasPrivateMemoryInputPtr() const {
+    return PrivateMemoryInputPtr;
+  }
+
   unsigned getNumUserSGPRs() const {
     return NumUserSGPRs;
   }
@@ -336,6 +355,10 @@ public:
 
   unsigned getQueuePtrUserSGPR() const {
     return QueuePtrUserSGPR;
+  }
+
+  unsigned getPrivateMemoryPtrUserSGPR() const {
+    return PrivateMemoryPtrUserSGPR;
   }
 
   bool hasSpilledSGPRs() const {
@@ -495,6 +518,6 @@ public:
   }
 };
 
-} // End namespace llvm
+} // end namespace llvm
 
-#endif
+#endif // LLVM_LIB_TARGET_AMDGPU_SIMACHINEFUNCTIONINFO_H

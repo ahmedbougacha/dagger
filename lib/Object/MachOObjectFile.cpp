@@ -784,6 +784,52 @@ static Error checkVersCommand(const MachOObjectFile &Obj,
   return Error::success();
 }
 
+static Error checkNoteCommand(const MachOObjectFile &Obj,
+                              const MachOObjectFile::LoadCommandInfo &Load,
+                              uint32_t LoadCommandIndex,
+                              std::list<MachOElement> &Elements) {
+  if (Load.C.cmdsize != sizeof(MachO::note_command))
+    return malformedError("load command " + Twine(LoadCommandIndex) + 
+                          " LC_NOTE has incorrect cmdsize");
+  MachO::note_command Nt = getStruct<MachO::note_command>(Obj, Load.Ptr);
+  uint64_t FileSize = Obj.getData().size();
+  if (Nt.offset > FileSize)
+    return malformedError("offset field of LC_NOTE command " +
+                          Twine(LoadCommandIndex) + " extends "
+                          "past the end of the file");
+  uint64_t BigSize = Nt.offset;
+  BigSize += Nt.size;
+  if (BigSize > FileSize)
+    return malformedError("size field plus offset field of LC_NOTE command " +
+                          Twine(LoadCommandIndex) + " extends past the end of "
+                          "the file");
+  if (Error Err = checkOverlappingElement(Elements, Nt.offset, Nt.size,
+                                          "LC_NOTE data"))
+    return Err;
+  return Error::success();
+}
+
+static Error
+parseBuildVersionCommand(const MachOObjectFile &Obj,
+                         const MachOObjectFile::LoadCommandInfo &Load,
+                         SmallVectorImpl<const char*> &BuildTools,
+                         uint32_t LoadCommandIndex) {
+  MachO::build_version_command BVC =
+      getStruct<MachO::build_version_command>(Obj, Load.Ptr);
+  if (Load.C.cmdsize !=
+      sizeof(MachO::build_version_command) +
+          BVC.ntools * sizeof(MachO::build_tool_version))
+    return malformedError("load command " + Twine(LoadCommandIndex) +
+                          " LC_BUILD_VERSION_COMMAND has incorrect cmdsize");
+
+  auto Start = Load.Ptr + sizeof(MachO::build_version_command);
+  BuildTools.resize(BVC.ntools);
+  for (unsigned i = 0; i < BVC.ntools; ++i)
+    BuildTools[i] = Start + i * sizeof(MachO::build_tool_version);
+
+  return Error::success();
+}
+
 static Error checkRpathCommand(const MachOObjectFile &Obj,
                                const MachOObjectFile::LoadCommandInfo &Load,
                                uint32_t LoadCommandIndex) {
@@ -931,7 +977,26 @@ static Error checkThreadCommand(const MachOObjectFile &Obj,
       sys::swapByteOrder(count);
     state += sizeof(uint32_t);
 
-    if (cputype == MachO::CPU_TYPE_X86_64) {
+    if (cputype == MachO::CPU_TYPE_I386) {
+      if (flavor == MachO::x86_THREAD_STATE32) {
+        if (count != MachO::x86_THREAD_STATE32_COUNT)
+          return malformedError("load command " + Twine(LoadCommandIndex) +
+                                " count not x86_THREAD_STATE32_COUNT for "
+                                "flavor number " + Twine(nflavor) + " which is "
+                                "a x86_THREAD_STATE32 flavor in " + CmdName +
+                                " command");
+        if (state + sizeof(MachO::x86_thread_state32_t) > end)
+          return malformedError("load command " + Twine(LoadCommandIndex) +
+                                " x86_THREAD_STATE32 extends past end of "
+                                "command in " + CmdName + " command");
+        state += sizeof(MachO::x86_thread_state32_t);
+      } else {
+        return malformedError("load command " + Twine(LoadCommandIndex) +
+                              " unknown flavor (" + Twine(flavor) + ") for "
+                              "flavor number " + Twine(nflavor) + " in " +
+                              CmdName + " command");
+      }
+    } else if (cputype == MachO::CPU_TYPE_X86_64) {
       if (flavor == MachO::x86_THREAD_STATE64) {
         if (count != MachO::x86_THREAD_STATE64_COUNT)
           return malformedError("load command " + Twine(LoadCommandIndex) +
@@ -1279,6 +1344,12 @@ MachOObjectFile::MachOObjectFile(MemoryBufferRef Object, bool IsLittleEndian,
     } else if (Load.C.cmd == MachO::LC_VERSION_MIN_WATCHOS) {
       if ((Err = checkVersCommand(*this, Load, I, &VersLoadCmd,
                                   "LC_VERSION_MIN_WATCHOS")))
+        return;
+    } else if (Load.C.cmd == MachO::LC_NOTE) {
+      if ((Err = checkNoteCommand(*this, Load, I, Elements)))
+        return;
+    } else if (Load.C.cmd == MachO::LC_BUILD_VERSION) {
+      if ((Err = parseBuildVersionCommand(*this, Load, BuildTools, I)))
         return;
     } else if (Load.C.cmd == MachO::LC_RPATH) {
       if ((Err = checkRpathCommand(*this, Load, I)))
@@ -2383,6 +2454,8 @@ Triple MachOObjectFile::getArchTriple(uint32_t CPUType, uint32_t CPUSubType,
         *ArchFlag = "armv7em";
       return Triple("thumbv7em-apple-darwin");
     case MachO::CPU_SUBTYPE_ARM_V7K:
+      if (McpuDefault)
+        *McpuDefault = "cortex-a7";
       if (ArchFlag)
         *ArchFlag = "armv7k";
       return Triple("armv7k-apple-darwin");
@@ -2393,6 +2466,8 @@ Triple MachOObjectFile::getArchTriple(uint32_t CPUType, uint32_t CPUSubType,
         *ArchFlag = "armv7m";
       return Triple("thumbv7m-apple-darwin");
     case MachO::CPU_SUBTYPE_ARM_V7S:
+      if (McpuDefault)
+        *McpuDefault = "cortex-a7";
       if (ArchFlag)
         *ArchFlag = "armv7s";
       return Triple("armv7s-apple-darwin");
@@ -3287,6 +3362,21 @@ MachOObjectFile::getLinkerOptionLoadCommand(const LoadCommandInfo &L) const {
 MachO::version_min_command
 MachOObjectFile::getVersionMinLoadCommand(const LoadCommandInfo &L) const {
   return getStruct<MachO::version_min_command>(*this, L.Ptr);
+}
+
+MachO::note_command
+MachOObjectFile::getNoteLoadCommand(const LoadCommandInfo &L) const {
+  return getStruct<MachO::note_command>(*this, L.Ptr);
+}
+
+MachO::build_version_command
+MachOObjectFile::getBuildVersionLoadCommand(const LoadCommandInfo &L) const {
+  return getStruct<MachO::build_version_command>(*this, L.Ptr);
+}
+
+MachO::build_tool_version
+MachOObjectFile::getBuildToolVersion(unsigned index) const {
+  return getStruct<MachO::build_tool_version>(*this, BuildTools[index]);
 }
 
 MachO::dylib_command

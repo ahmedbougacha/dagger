@@ -11,6 +11,10 @@ REM
 REM   Visual Studio 2015, CMake, Ninja, SVN, GNUWin32, SWIG, Python 3,
 REM   NSIS with the strlen_8192 patch,
 REM   Visual Studio 2015 SDK (for the clang-format plugin).
+REM
+REM
+REM   For LLDB, SWIG version <= 3.0.8 needs to be used to work around
+REM   https://github.com/swig/swig/issues/769
 
 
 REM You need to modify the paths below:
@@ -21,8 +25,8 @@ set PATH=%PATH%;c:\gnuwin32\bin
 
 set revision=%1
 set branch=trunk
-set package_version=4.0.0-r%revision%
-set clang_format_vs_version=4.0.0.%revision%
+set package_version=5.0.0-r%revision%
+set clang_format_vs_version=5.0.0.%revision%
 set build_dir=llvm_package_%revision%
 
 echo Branch: %branch%
@@ -47,7 +51,7 @@ svn.exe export -r %revision% http://llvm.org/svn/llvm-project/lldb/%branch% llvm
 
 
 REM Setting CMAKE_CL_SHOWINCLUDES_PREFIX to work around PR27226.
-set cmake_flags=-DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_INSTALL_TOOLCHAIN_ONLY=ON -DLLVM_USE_CRT_RELEASE=MT -DCLANG_FORMAT_VS_VERSION=%clang_format_vs_version% -DPACKAGE_VERSION=%package_version% -DLLDB_RELOCATABLE_PYTHON=1 -DLLDB_TEST_COMPILER=%cd%\build32_stage0\bin\clang.exe -DCMAKE_CL_SHOWINCLUDES_PREFIX="Note: including file: "
+set cmake_flags=-DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_INSTALL_TOOLCHAIN_ONLY=ON -DCMAKE_INSTALL_UCRT_LIBRARIES=ON -DCLANG_FORMAT_VS_VERSION=%clang_format_vs_version% -DPACKAGE_VERSION=%package_version% -DLLDB_RELOCATABLE_PYTHON=1 -DLLDB_TEST_COMPILER=%cd%\build32_stage0\bin\clang.exe -DCMAKE_CL_SHOWINCLUDES_PREFIX="Note: including file: "
 
 REM TODO: Run all tests, including lld and compiler-rt.
 

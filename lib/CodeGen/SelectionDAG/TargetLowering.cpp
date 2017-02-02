@@ -2050,6 +2050,16 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
     if (Cond == ISD::SETO || Cond == ISD::SETUO)
       return DAG.getSetCC(dl, VT, N0, N0, Cond);
 
+    // setcc (fneg x), C -> setcc swap(pred) x, -C
+    if (N0.getOpcode() == ISD::FNEG) {
+      ISD::CondCode SwapCond = ISD::getSetCCSwappedOperands(Cond);
+      if (DCI.isBeforeLegalizeOps() ||
+          isCondCodeLegal(SwapCond, N0.getSimpleValueType())) {
+        SDValue NegN1 = DAG.getNode(ISD::FNEG, dl, N0.getValueType(), N1);
+        return DAG.getSetCC(dl, VT, N0.getOperand(0), NegN1, SwapCond);
+      }
+    }
+
     // If the condition is not legal, see if we can find an equivalent one
     // which is legal.
     if (!isCondCodeLegal(Cond, N0.getSimpleValueType())) {
@@ -2470,10 +2480,7 @@ TargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *RI,
     std::make_pair(0u, static_cast<const TargetRegisterClass*>(nullptr));
 
   // Figure out which register class contains this reg.
-  for (TargetRegisterInfo::regclass_iterator RCI = RI->regclass_begin(),
-       E = RI->regclass_end(); RCI != E; ++RCI) {
-    const TargetRegisterClass *RC = *RCI;
-
+  for (const TargetRegisterClass *RC : RI->regclasses()) {
     // If none of the value types for this register class are valid, we
     // can't use it.  For example, 64-bit reg classes on 32-bit targets.
     if (!isLegalRC(RC))
@@ -3706,7 +3713,7 @@ SDValue TargetLowering::expandUnalignedStore(StoreSDNode *ST,
   return Result;
 }
 
-SDValue 
+SDValue
 TargetLowering::IncrementMemoryAddress(SDValue Addr, SDValue Mask,
                                        const SDLoc &DL, EVT DataVT,
                                        SelectionDAG &DAG,
@@ -3736,6 +3743,49 @@ TargetLowering::IncrementMemoryAddress(SDValue Addr, SDValue Mask,
     Increment = DAG.getConstant(DataVT.getSizeInBits() / 8, DL, AddrVT);
 
   return DAG.getNode(ISD::ADD, DL, AddrVT, Addr, Increment);
+}
+
+static SDValue clampDynamicVectorIndex(SelectionDAG &DAG,
+                                       SDValue Idx,
+                                       EVT VecVT,
+                                       const SDLoc &dl) {
+  if (isa<ConstantSDNode>(Idx))
+    return Idx;
+
+  EVT IdxVT = Idx.getValueType();
+  unsigned NElts = VecVT.getVectorNumElements();
+  if (isPowerOf2_32(NElts)) {
+    APInt Imm = APInt::getLowBitsSet(IdxVT.getSizeInBits(),
+                                     Log2_32(NElts));
+    return DAG.getNode(ISD::AND, dl, IdxVT, Idx,
+                       DAG.getConstant(Imm, dl, IdxVT));
+  }
+
+  return DAG.getNode(ISD::UMIN, dl, IdxVT, Idx,
+                     DAG.getConstant(NElts - 1, dl, IdxVT));
+}
+
+SDValue TargetLowering::getVectorElementPointer(SelectionDAG &DAG,
+                                                SDValue VecPtr, EVT VecVT,
+                                                SDValue Index) const {
+  SDLoc dl(Index);
+  // Make sure the index type is big enough to compute in.
+  Index = DAG.getZExtOrTrunc(Index, dl, getPointerTy(DAG.getDataLayout()));
+
+  EVT EltVT = VecVT.getVectorElementType();
+
+  // Calculate the element offset and add it to the pointer.
+  unsigned EltSize = EltVT.getSizeInBits() / 8; // FIXME: should be ABI size.
+  assert(EltSize * 8 == EltVT.getSizeInBits() &&
+         "Converting bits to bytes lost precision");
+
+  Index = clampDynamicVectorIndex(DAG, Index, VecVT, dl);
+
+  EVT IdxVT = Index.getValueType();
+
+  Index = DAG.getNode(ISD::MUL, dl, IdxVT, Index,
+                      DAG.getConstant(EltSize, dl, IdxVT));
+  return DAG.getNode(ISD::ADD, dl, IdxVT, Index, VecPtr);
 }
 
 //===----------------------------------------------------------------------===//

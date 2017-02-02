@@ -650,6 +650,7 @@ void ScheduleDAGSDNodes::computeOperandLatency(SDNode *Def, SDNode *Use,
 }
 
 void ScheduleDAGSDNodes::dumpNode(const SUnit *SU) const {
+  // Cannot completely remove virtual function even in release mode.
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   if (!SU->getNode()) {
     dbgs() << "PHYS REG COPY\n";
@@ -704,8 +705,8 @@ ProcessSDDbgValues(SDNode *N, SelectionDAG *DAG, InstrEmitter &Emitter,
   if (!N->getHasDebugValue())
     return;
 
-  // Opportunistically insert immediate dbg_value uses, i.e. those with source
-  // order number right after the N.
+  // Opportunistically insert immediate dbg_value uses, i.e. those with the same
+  // source order number as N.
   MachineBasicBlock *BB = Emitter.getBlock();
   MachineBasicBlock::iterator InsertPos = Emitter.getInsertPos();
   ArrayRef<SDDbgValue*> DVs = DAG->GetDbgValues(N);
@@ -713,7 +714,7 @@ ProcessSDDbgValues(SDNode *N, SelectionDAG *DAG, InstrEmitter &Emitter,
     if (DVs[i]->isInvalidated())
       continue;
     unsigned DVOrder = DVs[i]->getOrder();
-    if (!Order || DVOrder == ++Order) {
+    if (!Order || DVOrder == Order) {
       MachineInstr *DbgMI = Emitter.EmitDbgValue(DVs[i], VRBaseMap);
       if (DbgMI) {
         Orders.push_back(std::make_pair(DVOrder, DbgMI));

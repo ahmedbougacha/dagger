@@ -79,6 +79,13 @@ void DIEAbbrev::Emit(const AsmPrinter *AP) const {
     // Emit form type.
     AP->EmitULEB128(AttrData.getForm(),
                     dwarf::FormEncodingString(AttrData.getForm()).data());
+
+    // Emit value for DW_FORM_implicit_const.
+    if (AttrData.getForm() == dwarf::DW_FORM_implicit_const) {
+      assert(AP->getDwarfVersion() >= 5 &&
+            "DW_FORM_implicit_const is supported starting from DWARFv5");
+      AP->EmitSLEB128(AttrData.getValue());
+    }
   }
 
   // Mark end of abbreviation.
@@ -105,8 +112,11 @@ void DIEAbbrev::print(raw_ostream &O) {
   }
 }
 
-LLVM_DUMP_METHOD
-void DIEAbbrev::dump() { print(dbgs()); }
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+LLVM_DUMP_METHOD void DIEAbbrev::dump() {
+  print(dbgs());
+}
+#endif
 
 //===----------------------------------------------------------------------===//
 // DIEAbbrevSet Implementation
@@ -160,7 +170,11 @@ DIE *DIE::getParent() const {
 DIEAbbrev DIE::generateAbbrev() const {
   DIEAbbrev Abbrev(Tag, hasChildren());
   for (const DIEValue &V : values())
-    Abbrev.AddAttribute(V.getAttribute(), V.getForm());
+    if (V.getForm() == dwarf::DW_FORM_implicit_const)
+      Abbrev.AddImplicitConstAttribute(V.getAttribute(),
+                                       V.getDIEInteger().getValue());
+    else
+      Abbrev.AddAttribute(V.getAttribute(), V.getForm());
   return Abbrev;
 }
 
@@ -238,10 +252,11 @@ void DIE::print(raw_ostream &O, unsigned IndentCount) const {
   O << "\n";
 }
 
-LLVM_DUMP_METHOD
-void DIE::dump() {
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+LLVM_DUMP_METHOD void DIE::dump() {
   print(dbgs());
 }
+#endif
 
 unsigned DIE::computeOffsetsAndAbbrevs(const AsmPrinter *AP,
                                        DIEAbbrevSet &AbbrevSet,
@@ -329,10 +344,11 @@ void DIEValue::print(raw_ostream &O) const {
   }
 }
 
-LLVM_DUMP_METHOD
-void DIEValue::dump() const {
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+LLVM_DUMP_METHOD void DIEValue::dump() const {
   print(dbgs());
 }
+#endif
 
 //===----------------------------------------------------------------------===//
 // DIEInteger Implementation
@@ -342,6 +358,8 @@ void DIEValue::dump() const {
 ///
 void DIEInteger::EmitValue(const AsmPrinter *Asm, dwarf::Form Form) const {
   switch (Form) {
+  case dwarf::DW_FORM_implicit_const:
+    LLVM_FALLTHROUGH;
   case dwarf::DW_FORM_flag_present:
     // Emit something to keep the lines and comments in sync.
     // FIXME: Is there a better way to do this?
@@ -406,6 +424,7 @@ void DIEInteger::EmitValue(const AsmPrinter *Asm, dwarf::Form Form) const {
 ///
 unsigned DIEInteger::SizeOf(const AsmPrinter *AP, dwarf::Form Form) const {
   switch (Form) {
+  case dwarf::DW_FORM_implicit_const: LLVM_FALLTHROUGH;
   case dwarf::DW_FORM_flag_present: return 0;
   case dwarf::DW_FORM_flag:  LLVM_FALLTHROUGH;
   case dwarf::DW_FORM_ref1:  LLVM_FALLTHROUGH;
@@ -470,7 +489,7 @@ void DIEInteger::print(raw_ostream &O) const {
 /// EmitValue - Emit expression value.
 ///
 void DIEExpr::EmitValue(const AsmPrinter *AP, dwarf::Form Form) const {
-  AP->OutStreamer->EmitValue(Expr, SizeOf(AP, Form));
+  AP->EmitDebugValue(Expr, SizeOf(AP, Form));
 }
 
 /// SizeOf - Determine size of expression value in bytes.

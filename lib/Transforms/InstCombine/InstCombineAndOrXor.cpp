@@ -1361,6 +1361,34 @@ Instruction *InstCombiner::visitAnd(BinaryOperator &I) {
         break;
       }
 
+      // ((C1 OP zext(X)) & C2) -> zext((C1-X) & C2) if C2 fits in the bitwidth
+      // of X and OP behaves well when given trunc(C1) and X.
+      switch (Op0I->getOpcode()) {
+      default:
+        break;
+      case Instruction::Xor:
+      case Instruction::Or:
+      case Instruction::Mul:
+      case Instruction::Add:
+      case Instruction::Sub:
+        Value *X;
+        ConstantInt *C1;
+        if (match(Op0I, m_BinOp(m_ZExt(m_Value(X)), m_ConstantInt(C1))) ||
+            match(Op0I, m_BinOp(m_ConstantInt(C1), m_ZExt(m_Value(X))))) {
+          if (AndRHSMask.isIntN(X->getType()->getScalarSizeInBits())) {
+            auto *TruncC1 = ConstantExpr::getTrunc(C1, X->getType());
+            Value *BinOp;
+            if (isa<ZExtInst>(Op0LHS))
+              BinOp = Builder->CreateBinOp(Op0I->getOpcode(), X, TruncC1);
+            else
+              BinOp = Builder->CreateBinOp(Op0I->getOpcode(), TruncC1, X);
+            auto *TruncC2 = ConstantExpr::getTrunc(AndRHS, X->getType());
+            auto *And = Builder->CreateAnd(BinOp, TruncC2);
+            return new ZExtInst(And, I.getType());
+          }
+        }
+      }
+
       if (ConstantInt *Op0CI = dyn_cast<ConstantInt>(Op0I->getOperand(1)))
         if (Instruction *Res = OptAndOp(Op0I, Op0CI, AndRHS, I))
           return Res;
@@ -1382,13 +1410,8 @@ Instruction *InstCombiner::visitAnd(BinaryOperator &I) {
       }
     }
 
-    // Try to fold constant and into select arguments.
-    if (SelectInst *SI = dyn_cast<SelectInst>(Op0))
-      if (Instruction *R = FoldOpIntoSelect(I, SI))
-        return R;
-    if (isa<PHINode>(Op0))
-      if (Instruction *NV = FoldOpIntoPhi(I))
-        return NV;
+    if (Instruction *FoldedLogic = foldOpWithConstantIntoOperand(I))
+      return FoldedLogic;
   }
 
   if (Instruction *DeMorgan = matchDeMorgansLaws(I, Builder))
@@ -2125,14 +2148,8 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
                             Builder->getInt(C1->getValue() & ~RHS->getValue()));
     }
 
-    // Try to fold constant and into select arguments.
-    if (SelectInst *SI = dyn_cast<SelectInst>(Op0))
-      if (Instruction *R = FoldOpIntoSelect(I, SI))
-        return R;
-
-    if (isa<PHINode>(Op0))
-      if (Instruction *NV = FoldOpIntoPhi(I))
-        return NV;
+    if (Instruction *FoldedLogic = foldOpWithConstantIntoOperand(I))
+      return FoldedLogic;
   }
 
   // Given an OR instruction, check to see if this is a bswap.
@@ -2594,13 +2611,8 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
       }
     }
 
-    // Try to fold constant and into select arguments.
-    if (SelectInst *SI = dyn_cast<SelectInst>(Op0))
-      if (Instruction *R = FoldOpIntoSelect(I, SI))
-        return R;
-    if (isa<PHINode>(Op0))
-      if (Instruction *NV = FoldOpIntoPhi(I))
-        return NV;
+    if (Instruction *FoldedLogic = foldOpWithConstantIntoOperand(I))
+      return FoldedLogic;
   }
 
   BinaryOperator *Op1I = dyn_cast<BinaryOperator>(Op1);

@@ -762,6 +762,12 @@ public:
         LaunchPolicy());
   }
 
+
+  /// Negotiate a function id for Func with the other end of the channel.
+  template <typename Func> Error negotiateFunction(bool Retry = false) {
+    return getRemoteFunctionId<Func>(true, Retry).takeError();
+  }
+
   /// Append a call Func, does not call send on the channel.
   /// The first argument specifies a user-defined handler to be run when the
   /// function returns. The handler should take an Expected<Func::ReturnType>,
@@ -777,7 +783,7 @@ public:
 
     // Look up the function ID.
     FunctionIdT FnId;
-    if (auto FnIdOrErr = getRemoteFunctionId<Func>())
+    if (auto FnIdOrErr = getRemoteFunctionId<Func>(LazyAutoNegotiation, false))
       FnId = *FnIdOrErr;
     else {
       // This isn't a channel error so we don't want to abandon other pending
@@ -788,33 +794,39 @@ public:
       return FnIdOrErr.takeError();
     }
 
-    // Allocate a sequence number.
-    auto SeqNo = SequenceNumberMgr.getSequenceNumber();
-    assert(!PendingResponses.count(SeqNo) &&
-           "Sequence number already allocated");
+    SequenceNumberT SeqNo; // initialized in locked scope below.
+    {
+      // Lock the pending responses map and sequence number manager.
+      std::lock_guard<std::mutex> Lock(ResponsesMutex);
 
-    // Install the user handler.
-    PendingResponses[SeqNo] =
+      // Allocate a sequence number.
+      SeqNo = SequenceNumberMgr.getSequenceNumber();
+      assert(!PendingResponses.count(SeqNo) &&
+             "Sequence number already allocated");
+
+      // Install the user handler.
+      PendingResponses[SeqNo] =
         detail::createResponseHandler<ChannelT, typename Func::ReturnType>(
             std::move(Handler));
+    }
 
     // Open the function call message.
     if (auto Err = C.startSendMessage(FnId, SeqNo)) {
       abandonPendingResponses();
-      return joinErrors(std::move(Err), C.endSendMessage());
+      return Err;
     }
 
     // Serialize the call arguments.
     if (auto Err = detail::HandlerTraits<typename Func::Type>::serializeArgs(
             C, Args...)) {
       abandonPendingResponses();
-      return joinErrors(std::move(Err), C.endSendMessage());
+      return Err;
     }
 
     // Close the function call messagee.
     if (auto Err = C.endSendMessage()) {
       abandonPendingResponses();
-      return std::move(Err);
+      return Err;
     }
 
     return Error::success();
@@ -833,8 +845,10 @@ public:
   Error handleOne() {
     FunctionIdT FnId;
     SequenceNumberT SeqNo;
-    if (auto Err = C.startReceiveMessage(FnId, SeqNo))
+    if (auto Err = C.startReceiveMessage(FnId, SeqNo)) {
+      abandonPendingResponses();
       return Err;
+    }
     if (FnId == ResponseId)
       return handleResponse(SeqNo);
     auto I = Handlers.find(FnId);
@@ -863,6 +877,42 @@ public:
     return detail::ReadArgs<ArgTs...>(Args...);
   }
 
+  /// Abandon all outstanding result handlers.
+  ///
+  /// This will call all currently registered result handlers to receive an
+  /// "abandoned" error as their argument. This is used internally by the RPC
+  /// in error situations, but can also be called directly by clients who are
+  /// disconnecting from the remote and don't or can't expect responses to their
+  /// outstanding calls. (Especially for outstanding blocking calls, calling
+  /// this function may be necessary to avoid dead threads).
+  void abandonPendingResponses() {
+    // Lock the pending responses map and sequence number manager.
+    std::lock_guard<std::mutex> Lock(ResponsesMutex);
+
+    for (auto &KV : PendingResponses)
+      KV.second->abandon();
+    PendingResponses.clear();
+    SequenceNumberMgr.reset();
+  }
+
+  /// Remove the handler for the given function.
+  /// A handler must currently be registered for this function.
+  template <typename Func>
+  void removeHandler() {
+    auto IdItr = LocalFunctionIds.find(Func::getPrototype());
+    assert(IdItr != LocalFunctionIds.end() &&
+           "Function does not have a registered handler");
+    auto HandlerItr = Handlers.find(IdItr->second);
+    assert(HandlerItr != Handlers.end() &&
+           "Function does not have a registered handler");
+    Handlers.erase(HandlerItr);
+  }
+
+  /// Clear all handlers.
+  void clearHandlers() {
+    Handlers.clear();
+  }
+
 protected:
   // The LaunchPolicy type allows a launch policy to be specified when adding
   // a function handler. See addHandlerImpl.
@@ -888,28 +938,32 @@ protected:
         wrapHandler<Func>(std::move(Handler), std::move(Launch));
   }
 
-  // Abandon all outstanding results.
-  void abandonPendingResponses() {
-    for (auto &KV : PendingResponses)
-      KV.second->abandon();
-    PendingResponses.clear();
-    SequenceNumberMgr.reset();
-  }
-
   Error handleResponse(SequenceNumberT SeqNo) {
-    auto I = PendingResponses.find(SeqNo);
-    if (I == PendingResponses.end()) {
-      abandonPendingResponses();
-      return orcError(OrcErrorCode::UnexpectedRPCResponse);
+    using Handler = typename decltype(PendingResponses)::mapped_type;
+    Handler PRHandler;
+
+    {
+      // Lock the pending responses map and sequence number manager.
+      std::unique_lock<std::mutex> Lock(ResponsesMutex);
+      auto I = PendingResponses.find(SeqNo);
+
+      if (I != PendingResponses.end()) {
+        PRHandler = std::move(I->second);
+        PendingResponses.erase(I);
+        SequenceNumberMgr.releaseSequenceNumber(SeqNo);
+      } else {
+        // Unlock the pending results map to prevent recursive lock.
+        Lock.unlock();
+        abandonPendingResponses();
+        return orcError(OrcErrorCode::UnexpectedRPCResponse);
+      }
     }
 
-    auto PRHandler = std::move(I->second);
-    PendingResponses.erase(I);
-    SequenceNumberMgr.releaseSequenceNumber(SeqNo);
+    assert(PRHandler &&
+           "If we didn't find a response handler we should have bailed out");
 
     if (auto Err = PRHandler->handleResponse(C)) {
       abandonPendingResponses();
-      SequenceNumberMgr.reset();
       return Err;
     }
 
@@ -923,41 +977,39 @@ protected:
     return I->second;
   }
 
-  // Find the remote FunctionId for the given function, which must be in the
-  // RemoteFunctionIds map.
-  template <typename Func> Expected<FunctionIdT> getRemoteFunctionId() {
-    // Try to find the id for the given function.
+  // Find the remote FunctionId for the given function.
+  template <typename Func>
+  Expected<FunctionIdT> getRemoteFunctionId(bool NegotiateIfNotInMap,
+                                            bool NegotiateIfInvalid) {
+    bool DoNegotiate;
+
+    // Check if we already have a function id...
     auto I = RemoteFunctionIds.find(Func::getPrototype());
+    if (I != RemoteFunctionIds.end()) {
+      // If it's valid there's nothing left to do.
+      if (I->second != getInvalidFunctionId())
+        return I->second;
+      DoNegotiate = NegotiateIfInvalid;
+    } else
+      DoNegotiate = NegotiateIfNotInMap;
 
-    // If we have it in the map, return it.
-    if (I != RemoteFunctionIds.end())
-      return I->second;
-
-    // Otherwise, if we have auto-negotiation enabled, try to negotiate it.
-    if (LazyAutoNegotiation) {
+    // We don't have a function id for Func yet, but we're allowed to try to
+    // negotiate one.
+    if (DoNegotiate) {
       auto &Impl = static_cast<ImplT &>(*this);
       if (auto RemoteIdOrErr =
-              Impl.template callB<OrcRPCNegotiate>(Func::getPrototype())) {
-        auto &RemoteId = *RemoteIdOrErr;
-
-        // If autonegotiation indicates that the remote end doesn't support this
-        // function, return an unknown function error.
-        if (RemoteId == getInvalidFunctionId())
-          return orcError(OrcErrorCode::UnknownRPCFunction);
-
-        // Autonegotiation succeeded and returned a valid id. Update the map and
-        // return the id.
-        RemoteFunctionIds[Func::getPrototype()] = RemoteId;
-        return RemoteId;
-      } else {
-        // Autonegotiation failed. Return the error.
+          Impl.template callB<OrcRPCNegotiate>(Func::getPrototype())) {
+        RemoteFunctionIds[Func::getPrototype()] = *RemoteIdOrErr;
+        if (*RemoteIdOrErr == getInvalidFunctionId())
+          return make_error<RPCFunctionNotSupported>(Func::getPrototype());
+        return *RemoteIdOrErr;
+      } else
         return RemoteIdOrErr.takeError();
-      }
     }
 
-    // No key was available in the map and autonegotiation wasn't enabled.
-    // Return an unknown function error.
-    return orcError(OrcErrorCode::UnknownRPCFunction);
+    // No key was available in the map and we weren't allowed to try to
+    // negotiate one, so return an unknown function error.
+    return make_error<RPCFunctionNotSupported>(Func::getPrototype());
   }
 
   using WrappedHandlerFn = std::function<Error(ChannelT &, SequenceNumberT)>;
@@ -1016,6 +1068,7 @@ protected:
 
   std::map<FunctionIdT, WrappedHandlerFn> Handlers;
 
+  std::mutex ResponsesMutex;
   detail::SequenceNumberManager<SequenceNumberT> SequenceNumberMgr;
   std::map<SequenceNumberT, std::unique_ptr<detail::ResponseHandler<ChannelT>>>
       PendingResponses;
@@ -1075,32 +1128,6 @@ public:
       Launch);
   }
 
-  /// Negotiate a function id for Func with the other end of the channel.
-  template <typename Func> Error negotiateFunction(bool Retry = false) {
-    using OrcRPCNegotiate = typename BaseClass::OrcRPCNegotiate;
-
-    // Check if we already have a function id...
-    auto I = this->RemoteFunctionIds.find(Func::getPrototype());
-    if (I != this->RemoteFunctionIds.end()) {
-      // If it's valid there's nothing left to do.
-      if (I->second != this->getInvalidFunctionId())
-        return Error::success();
-      // If it's invalid and we can't re-attempt negotiation, throw an error.
-      if (!Retry)
-        return orcError(OrcErrorCode::UnknownRPCFunction);
-    }
-
-    // We don't have a function id for Func yet, call the remote to try to
-    // negotiate one.
-    if (auto RemoteIdOrErr = callB<OrcRPCNegotiate>(Func::getPrototype())) {
-      this->RemoteFunctionIds[Func::getPrototype()] = *RemoteIdOrErr;
-      if (*RemoteIdOrErr == this->getInvalidFunctionId())
-        return orcError(OrcErrorCode::UnknownRPCFunction);
-      return Error::success();
-    } else
-      return RemoteIdOrErr.takeError();
-  }
-
   /// Return type for non-blocking call primitives.
   template <typename Func>
   using NonBlockingCallResult = typename detail::ResultTraits<
@@ -1130,7 +1157,6 @@ public:
               return Error::success();
             },
             Args...)) {
-      this->abandonPendingResponses();
       RTraits::consumeAbandoned(FutureResult.get());
       return std::move(Err);
     }
@@ -1162,15 +1188,9 @@ public:
             typename AltRetT = typename Func::ReturnType>
   typename detail::ResultTraits<AltRetT>::ErrorReturnType
   callB(const ArgTs &... Args) {
-    if (auto FutureResOrErr = callNB<Func>(Args...)) {
-      if (auto Err = this->C.send()) {
-        this->abandonPendingResponses();
-        detail::ResultTraits<typename Func::ReturnType>::consumeAbandoned(
-            std::move(FutureResOrErr->get()));
-        return std::move(Err);
-      }
+    if (auto FutureResOrErr = callNB<Func>(Args...))
       return FutureResOrErr->get();
-    } else
+    else
       return FutureResOrErr.takeError();
   }
 
@@ -1213,32 +1233,6 @@ public:
         detail::MemberFnWrapper<ClassT, RetT, ArgTs...>(Object, Method));
   }
 
-  /// Negotiate a function id for Func with the other end of the channel.
-  template <typename Func> Error negotiateFunction(bool Retry = false) {
-    using OrcRPCNegotiate = typename BaseClass::OrcRPCNegotiate;
-
-    // Check if we already have a function id...
-    auto I = this->RemoteFunctionIds.find(Func::getPrototype());
-    if (I != this->RemoteFunctionIds.end()) {
-      // If it's valid there's nothing left to do.
-      if (I->second != this->getInvalidFunctionId())
-        return Error::success();
-      // If it's invalid and we can't re-attempt negotiation, throw an error.
-      if (!Retry)
-        return orcError(OrcErrorCode::UnknownRPCFunction);
-    }
-
-    // We don't have a function id for Func yet, call the remote to try to
-    // negotiate one.
-    if (auto RemoteIdOrErr = callB<OrcRPCNegotiate>(Func::getPrototype())) {
-      this->RemoteFunctionIds[Func::getPrototype()] = *RemoteIdOrErr;
-      if (*RemoteIdOrErr == this->getInvalidFunctionId())
-        return orcError(OrcErrorCode::UnknownRPCFunction);
-      return Error::success();
-    } else
-      return RemoteIdOrErr.takeError();
-  }
-
   template <typename Func, typename... ArgTs,
             typename AltRetT = typename Func::ReturnType>
   typename detail::ResultTraits<AltRetT>::ErrorReturnType
@@ -1258,7 +1252,6 @@ public:
               return Error::success();
             },
             Args...)) {
-      this->abandonPendingResponses();
       detail::ResultTraits<typename Func::ReturnType>::consumeAbandoned(
           std::move(Result));
       return std::move(Err);
@@ -1266,7 +1259,6 @@ public:
 
     while (!ReceivedResponse) {
       if (auto Err = this->handleOne()) {
-        this->abandonPendingResponses();
         detail::ResultTraits<typename Func::ReturnType>::consumeAbandoned(
             std::move(Result));
         return std::move(Err);
@@ -1277,24 +1269,40 @@ public:
   }
 };
 
+/// Asynchronous dispatch for a function on an RPC endpoint.
+template <typename RPCClass, typename Func>
+class RPCAsyncDispatch {
+public:
+  RPCAsyncDispatch(RPCClass &Endpoint) : Endpoint(Endpoint) {}
+
+  template <typename HandlerT, typename... ArgTs>
+  Error operator()(HandlerT Handler, const ArgTs &... Args) const {
+    return Endpoint.template appendCallAsync<Func>(std::move(Handler), Args...);
+  }
+
+private:
+  RPCClass &Endpoint;
+};
+
+/// Construct an asynchronous dispatcher from an RPC endpoint and a Func.
+template <typename Func, typename RPCEndpointT>
+RPCAsyncDispatch<RPCEndpointT, Func> rpcAsyncDispatch(RPCEndpointT &Endpoint) {
+  return RPCAsyncDispatch<RPCEndpointT, Func>(Endpoint);
+}
+
 /// \brief Allows a set of asynchrounous calls to be dispatched, and then
 ///        waited on as a group.
-template <typename RPCClass> class ParallelCallGroup {
+class ParallelCallGroup {
 public:
 
-  /// \brief Construct a parallel call group for the given RPC.
-  ParallelCallGroup(RPCClass &RPC) : RPC(RPC), NumOutstandingCalls(0) {}
-
+  ParallelCallGroup() = default;
   ParallelCallGroup(const ParallelCallGroup &) = delete;
   ParallelCallGroup &operator=(const ParallelCallGroup &) = delete;
 
   /// \brief Make as asynchronous call.
-  ///
-  /// Does not issue a send call to the RPC's channel. The channel may use this
-  /// to batch up subsequent calls. A send will automatically be sent when wait
-  /// is called.
-  template <typename Func, typename HandlerT, typename... ArgTs>
-  Error appendCall(HandlerT Handler, const ArgTs &... Args) {
+  template <typename AsyncDispatcher, typename HandlerT, typename... ArgTs>
+  Error call(const AsyncDispatcher &AsyncDispatch, HandlerT Handler,
+             const ArgTs &... Args) {
     // Increment the count of outstanding calls. This has to happen before
     // we invoke the call, as the handler may (depending on scheduling)
     // be run immediately on another thread, and we don't want the decrement
@@ -1317,38 +1325,21 @@ public:
       return Err;
     };
 
-    return RPC.template appendCallAsync<Func>(std::move(WrappedHandler),
-                                              Args...);
-  }
-
-  /// \brief Make an asynchronous call.
-  ///
-  /// The same as appendCall, but also calls send on the channel immediately.
-  /// Prefer appendCall if you are about to issue a "wait" call shortly, as
-  /// this may allow the channel to better batch the calls.
-  template <typename Func, typename HandlerT, typename... ArgTs>
-  Error call(HandlerT Handler, const ArgTs &... Args) {
-    if (auto Err = appendCall(std::move(Handler), Args...))
-      return Err;
-    return RPC.sendAppendedCalls();
+    return AsyncDispatch(std::move(WrappedHandler), Args...);
   }
 
   /// \brief Blocks until all calls have been completed and their return value
   ///        handlers run.
-  Error wait() {
-    if (auto Err = RPC.sendAppendedCalls())
-      return Err;
+  void wait() {
     std::unique_lock<std::mutex> Lock(M);
     while (NumOutstandingCalls > 0)
       CV.wait(Lock);
-    return Error::success();
   }
 
 private:
-  RPCClass &RPC;
   std::mutex M;
   std::condition_variable CV;
-  uint32_t NumOutstandingCalls;
+  uint32_t NumOutstandingCalls = 0;
 };
 
 /// @brief Convenience class for grouping RPC Functions into APIs that can be

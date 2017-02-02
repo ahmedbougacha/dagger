@@ -33,8 +33,6 @@ class X86TTIImpl : public BasicTTIImplBase<X86TTIImpl> {
   const X86Subtarget *ST;
   const X86TargetLowering *TLI;
 
-  int getScalarizationOverhead(Type *Ty, bool Insert, bool Extract);
-
   const X86Subtarget *getST() const { return ST; }
   const X86TargetLowering *getTLI() const { return TLI; }
 
@@ -60,7 +58,8 @@ public:
       TTI::OperandValueKind Opd1Info = TTI::OK_AnyValue,
       TTI::OperandValueKind Opd2Info = TTI::OK_AnyValue,
       TTI::OperandValueProperties Opd1PropInfo = TTI::OP_None,
-      TTI::OperandValueProperties Opd2PropInfo = TTI::OP_None);
+      TTI::OperandValueProperties Opd2PropInfo = TTI::OP_None,
+      ArrayRef<const Value *> Args = ArrayRef<const Value *>());
   int getShuffleCost(TTI::ShuffleKind Kind, Type *Tp, int Index, Type *SubTp);
   int getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src);
   int getCmpSelInstrCost(unsigned Opcode, Type *ValTy, Type *CondTy);

@@ -100,6 +100,10 @@ def int_amdgcn_dispatch_id :
   GCCBuiltin<"__builtin_amdgcn_dispatch_id">,
   Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
 
+def int_amdgcn_implicit_buffer_ptr :
+  GCCBuiltin<"__builtin_amdgcn_implicit_buffer_ptr">,
+  Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
+
 //===----------------------------------------------------------------------===//
 // Instruction Intrinsics
 //===----------------------------------------------------------------------===//
@@ -200,6 +204,11 @@ def int_amdgcn_fract : Intrinsic<
 
 def int_amdgcn_class : Intrinsic<
   [llvm_i1_ty], [llvm_anyfloat_ty, llvm_i32_ty], [IntrNoMem]
+>;
+
+def int_amdgcn_fmed3 : GCCBuiltin<"__builtin_amdgcn_fmed3">,
+  Intrinsic<[llvm_anyfloat_ty],
+    [LLVMMatchType<0>, LLVMMatchType<0>, LLVMMatchType<0>], [IntrNoMem]
 >;
 
 def int_amdgcn_cubeid : GCCBuiltin<"__builtin_amdgcn_cubeid">,
@@ -446,6 +455,32 @@ def int_amdgcn_buffer_atomic_cmpswap : Intrinsic<
    llvm_i32_ty,       // offset(SGPR/VGPR/imm)
    llvm_i1_ty],       // slc(imm)
   []>;
+
+// Uses that do not set the done bit should set IntrWriteMem on the
+// call site.
+def int_amdgcn_exp : Intrinsic <[], [
+  llvm_i32_ty,       // tgt,
+  llvm_i32_ty,       // en
+  llvm_any_ty,       // src0 (f32 or i32)
+  LLVMMatchType<0>,  // src1
+  LLVMMatchType<0>,  // src2
+  LLVMMatchType<0>,  // src3
+  llvm_i1_ty,        // done
+  llvm_i1_ty         // vm
+  ],
+  []
+>;
+
+// exp with compr bit set.
+def int_amdgcn_exp_compr : Intrinsic <[], [
+  llvm_i32_ty,       // tgt,
+  llvm_i32_ty,       // en
+  llvm_anyvector_ty, // src0 (v2f16 or v2i16)
+  LLVMMatchType<0>,  // src1
+  llvm_i1_ty,        // done
+  llvm_i1_ty],       // vm
+  []
+>;
 
 def int_amdgcn_buffer_wbinvl1_sc :
   GCCBuiltin<"__builtin_amdgcn_buffer_wbinvl1_sc">,

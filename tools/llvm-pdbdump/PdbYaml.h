@@ -16,9 +16,9 @@
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
 #include "llvm/DebugInfo/MSF/MSFCommon.h"
+#include "llvm/DebugInfo/PDB/Native/PDBFile.h"
+#include "llvm/DebugInfo/PDB/Native/RawConstants.h"
 #include "llvm/DebugInfo/PDB/PDBTypes.h"
-#include "llvm/DebugInfo/PDB/Raw/PDBFile.h"
-#include "llvm/DebugInfo/PDB/Raw/RawConstants.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/YAMLTraits.h"
 
@@ -106,6 +106,8 @@ struct PdbObject {
   Optional<PdbDbiStream> DbiStream;
   Optional<PdbTpiStream> TpiStream;
   Optional<PdbTpiStream> IpiStream;
+
+  Optional<std::vector<StringRef>> StringTable;
 
   BumpPtrAllocator &Allocator;
 };

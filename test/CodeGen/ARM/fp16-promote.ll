@@ -643,10 +643,11 @@ define void @test_maxnum(half* %p, half* %q) #0 {
 }
 
 ; CHECK-ALL-LABEL: test_minnan:
-; CHECK-FP16: vcvtb.f32.f16
+; CHECK-FP16: vmov.f32 s0, #1.000000e+00
 ; CHECK-FP16: vcvtb.f32.f16
 ; CHECK-LIBCALL: bl __aeabi_h2f
-; CHECK-LIBCALL: bl __aeabi_h2f
+; CHECK-LIBCALL-VFP: vmov.f32 s{{[0-9]+}}, #1.000000e+00
+; CHECK-NOVFP: mov r{{[0-9]+}}, #1065353216
 ; CHECK-VFP: vmin.f32
 ; CHECK-NOVFP: bl __aeabi_fcmpge
 ; CHECK-FP16: vcvtb.f16.f32
@@ -660,10 +661,11 @@ define void @test_minnan(half* %p) #0 {
 }
 
 ; CHECK-ALL-LABEL: test_maxnan:
-; CHECK-FP16: vcvtb.f32.f16
+; CHECK-FP16: vmov.f32 s0, #1.000000e+00
 ; CHECK-FP16: vcvtb.f32.f16
 ; CHECK-LIBCALL: bl __aeabi_h2f
-; CHECK-LIBCALL: bl __aeabi_h2f
+; CHECK-LIBCALL-VFP: vmov.f32 s0, #1.000000e+00
+; CHECK-NOVFP: mov r{{[0-9]+}}, #1065353216
 ; CHECK-VFP: vmax.f32
 ; CHECK-NOVFP: bl __aeabi_fcmple
 ; CHECK-FP16: vcvtb.f16.f32
@@ -825,7 +827,7 @@ define void @test_fmuladd(half* %p, half* %q, half* %r) #0 {
 ; CHECK-ALL: strh
 ; CHECK-ALL: mov
 ; CHECK-ALL-DAG: ldrh
-; CHECK-ALL-DAG: add
+; CHECK-ALL-DAG: orr
 ; CHECK-ALL: strh
 ; CHECK-ALL: ldrh
 ; CHECK-ALL: strh
@@ -855,7 +857,7 @@ define void @test_insertelement(half* %p, <4 x half>* %q, i32 %i) #0 {
 ; CHECK-VFP: orr
 ; CHECK-VFP: str
 ; CHECK-VFP: mov
-; CHECK-VFP: add
+; CHECK-VFP: orr
 ; CHECK-VFP: ldrh
 ; CHECK-VFP: strh
 ; CHECK-VFP: add sp, sp, #8

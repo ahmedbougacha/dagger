@@ -45,6 +45,18 @@ OptimizationRemarkEmitter::OptimizationRemarkEmitter(Function *F)
   BFI = OwnedBFI.get();
 }
 
+bool OptimizationRemarkEmitter::invalidate(
+    Function &F, const PreservedAnalyses &PA,
+    FunctionAnalysisManager::Invalidator &Inv) {
+  // This analysis has no state and so can be trivially preserved but it needs
+  // a fresh view of BFI if it was constructed with one.
+  if (BFI && Inv.invalidate<BlockFrequencyAnalysis>(F, PA))
+    return true;
+
+  // Otherwise this analysis result remains valid.
+  return false;
+}
+
 Optional<uint64_t> OptimizationRemarkEmitter::computeHotness(const Value *V) {
   if (!BFI)
     return None;
@@ -55,44 +67,51 @@ Optional<uint64_t> OptimizationRemarkEmitter::computeHotness(const Value *V) {
 namespace llvm {
 namespace yaml {
 
-template <> struct MappingTraits<DiagnosticInfoOptimizationBase *> {
-  static void mapping(IO &io, DiagnosticInfoOptimizationBase *&OptDiag) {
-    assert(io.outputting() && "input not yet implemented");
+void MappingTraits<DiagnosticInfoOptimizationBase *>::mapping(
+    IO &io, DiagnosticInfoOptimizationBase *&OptDiag) {
+  assert(io.outputting() && "input not yet implemented");
 
-    if (io.mapTag("!Passed", OptDiag->getKind() == DK_OptimizationRemark))
-      ;
-    else if (io.mapTag("!Missed",
-                       OptDiag->getKind() == DK_OptimizationRemarkMissed))
-      ;
-    else if (io.mapTag("!Analysis",
-                       OptDiag->getKind() == DK_OptimizationRemarkAnalysis))
-      ;
-    else if (io.mapTag("!AnalysisFPCommute",
-                       OptDiag->getKind() ==
-                           DK_OptimizationRemarkAnalysisFPCommute))
-      ;
-    else if (io.mapTag("!AnalysisAliasing",
-                       OptDiag->getKind() ==
-                           DK_OptimizationRemarkAnalysisAliasing))
-      ;
-    else
-      llvm_unreachable("todo");
+  if (io.mapTag("!Passed",
+                (OptDiag->getKind() == DK_OptimizationRemark ||
+                 OptDiag->getKind() == DK_MachineOptimizationRemark)))
+    ;
+  else if (io.mapTag(
+               "!Missed",
+               (OptDiag->getKind() == DK_OptimizationRemarkMissed ||
+                OptDiag->getKind() == DK_MachineOptimizationRemarkMissed)))
+    ;
+  else if (io.mapTag(
+               "!Analysis",
+               (OptDiag->getKind() == DK_OptimizationRemarkAnalysis ||
+                OptDiag->getKind() == DK_MachineOptimizationRemarkAnalysis)))
+    ;
+  else if (io.mapTag("!AnalysisFPCommute",
+                     OptDiag->getKind() ==
+                         DK_OptimizationRemarkAnalysisFPCommute))
+    ;
+  else if (io.mapTag("!AnalysisAliasing",
+                     OptDiag->getKind() ==
+                         DK_OptimizationRemarkAnalysisAliasing))
+    ;
+  else if (io.mapTag("!Failure", OptDiag->getKind() == DK_OptimizationFailure))
+    ;
+  else
+    llvm_unreachable("Unknown remark type");
 
-    // These are read-only for now.
-    DebugLoc DL = OptDiag->getDebugLoc();
-    StringRef FN = GlobalValue::getRealLinkageName(
-        OptDiag->getFunction().getName());
+  // These are read-only for now.
+  DebugLoc DL = OptDiag->getDebugLoc();
+  StringRef FN =
+      GlobalValue::getRealLinkageName(OptDiag->getFunction().getName());
 
-    StringRef PassName(OptDiag->PassName);
-    io.mapRequired("Pass", PassName);
-    io.mapRequired("Name", OptDiag->RemarkName);
-    if (!io.outputting() || DL)
-      io.mapOptional("DebugLoc", DL);
-    io.mapRequired("Function", FN);
-    io.mapOptional("Hotness", OptDiag->Hotness);
-    io.mapOptional("Args", OptDiag->Args);
-  }
-};
+  StringRef PassName(OptDiag->PassName);
+  io.mapRequired("Pass", PassName);
+  io.mapRequired("Name", OptDiag->RemarkName);
+  if (!io.outputting() || DL)
+    io.mapOptional("DebugLoc", DL);
+  io.mapRequired("Function", FN);
+  io.mapOptional("Hotness", OptDiag->Hotness);
+  io.mapOptional("Args", OptDiag->Args);
+}
 
 template <> struct MappingTraits<DebugLoc> {
   static void mapping(IO &io, DebugLoc &DL) {
@@ -127,18 +146,20 @@ template <> struct MappingTraits<DiagnosticInfoOptimizationBase::Argument> {
 LLVM_YAML_IS_SEQUENCE_VECTOR(DiagnosticInfoOptimizationBase::Argument)
 
 void OptimizationRemarkEmitter::computeHotness(
-    DiagnosticInfoOptimizationBase &OptDiag) {
+    DiagnosticInfoIROptimization &OptDiag) {
   Value *V = OptDiag.getCodeRegion();
   if (V)
     OptDiag.setHotness(computeHotness(V));
 }
 
-void OptimizationRemarkEmitter::emit(DiagnosticInfoOptimizationBase &OptDiag) {
+void OptimizationRemarkEmitter::emit(
+    DiagnosticInfoOptimizationBase &OptDiagBase) {
+  auto &OptDiag = cast<DiagnosticInfoIROptimization>(OptDiagBase);
   computeHotness(OptDiag);
 
   yaml::Output *Out = F->getContext().getDiagnosticsOutputFile();
   if (Out) {
-    auto *P = &const_cast<DiagnosticInfoOptimizationBase &>(OptDiag);
+    auto *P = const_cast<DiagnosticInfoOptimizationBase *>(&OptDiagBase);
     *Out << P;
   }
   // FIXME: now that IsVerbose is part of DI, filtering for this will be moved

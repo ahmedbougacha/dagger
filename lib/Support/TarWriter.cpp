@@ -26,6 +26,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/Path.h"
 
 using namespace llvm;
 
@@ -52,6 +53,13 @@ struct UstarHeader {
   char Pad[12];
 };
 static_assert(sizeof(UstarHeader) == BlockSize, "invalid Ustar header");
+
+static UstarHeader makeUstarHeader() {
+  UstarHeader Hdr = {};
+  memcpy(Hdr.Magic, "ustar", 5); // Ustar magic
+  memcpy(Hdr.Version, "00", 2);  // Ustar version
+  return Hdr;
+}
 
 // A PAX attribute is in the form of "<length> <key>=<value>\n"
 // where <length> is the length of the entire string including
@@ -97,10 +105,9 @@ static void writePaxHeader(raw_fd_ostream &OS, StringRef Path) {
   std::string PaxAttr = formatPax("path", Path);
 
   // Create a 512-byte header.
-  UstarHeader Hdr = {};
+  UstarHeader Hdr = makeUstarHeader();
   snprintf(Hdr.Size, sizeof(Hdr.Size), "%011zo", PaxAttr.size());
-  Hdr.TypeFlag = 'x';            // PAX magic
-  memcpy(Hdr.Magic, "ustar", 6); // Ustar magic
+  Hdr.TypeFlag = 'x'; // PAX magic
   computeChecksum(Hdr);
 
   // Write them down.
@@ -115,7 +122,7 @@ static void writePaxHeader(raw_fd_ostream &OS, StringRef Path) {
 static std::pair<StringRef, StringRef> splitPath(StringRef Path) {
   if (Path.size() <= sizeof(UstarHeader::Name))
     return {"", Path};
-  size_t Sep = Path.rfind('/', sizeof(UstarHeader::Name) + 1);
+  size_t Sep = Path.rfind('/', sizeof(UstarHeader::Prefix) + 1);
   if (Sep == StringRef::npos)
     return {"", Path};
   return {Path.substr(0, Sep), Path.substr(Sep + 1)};
@@ -137,23 +144,13 @@ static void writeUstarHeader(raw_fd_ostream &OS, StringRef Path, size_t Size) {
   StringRef Name;
   std::tie(Prefix, Name) = splitPath(Path);
 
-  UstarHeader Hdr = {};
+  UstarHeader Hdr = makeUstarHeader();
   memcpy(Hdr.Name, Name.data(), Name.size());
   memcpy(Hdr.Mode, "0000664", 8);
   snprintf(Hdr.Size, sizeof(Hdr.Size), "%011zo", Size);
-  memcpy(Hdr.Magic, "ustar", 6);
   memcpy(Hdr.Prefix, Prefix.data(), Prefix.size());
   computeChecksum(Hdr);
   OS << StringRef(reinterpret_cast<char *>(&Hdr), sizeof(Hdr));
-}
-
-// We want to use '/' as a path separator even on Windows.
-// This function canonicalizes a given path.
-static std::string canonicalize(std::string S) {
-#ifdef LLVM_ON_WIN32
-  std::replace(S.begin(), S.end(), '\\', '/');
-#endif
-  return S;
 }
 
 // Creates a TarWriter instance and returns it.
@@ -171,7 +168,7 @@ TarWriter::TarWriter(int FD, StringRef BaseDir)
 // Append a given file to an archive.
 void TarWriter::append(StringRef Path, StringRef Data) {
   // Write Path and Data.
-  std::string S = BaseDir + "/" + canonicalize(Path) + "\0";
+  std::string S = BaseDir + "/" + sys::path::convert_to_slash(Path) + "\0";
   if (fitsInUstar(S)) {
     writeUstarHeader(OS, S, Data.size());
   } else {

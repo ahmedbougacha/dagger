@@ -511,9 +511,6 @@ private:
   void visitSelectInst(SelectInst &I);
   void visitBinaryOperator(Instruction &I);
   void visitCmpInst(CmpInst &I);
-  void visitExtractElementInst(ExtractElementInst &I);
-  void visitInsertElementInst(InsertElementInst &I);
-  void visitShuffleVectorInst(ShuffleVectorInst &I);
   void visitExtractValueInst(ExtractValueInst &EVI);
   void visitInsertValueInst(InsertValueInst &IVI);
   void visitLandingPadInst(LandingPadInst &I) { markAnythingOverdefined(&I); }
@@ -913,9 +910,16 @@ void SCCPSolver::visitBinaryOperator(Instruction &I) {
 
   // Otherwise, one of our operands is overdefined.  Try to produce something
   // better than overdefined with some tricks.
+  // If this is 0 / Y, it doesn't matter that the second operand is
+  // overdefined, and we can replace it with zero.
+  if (I.getOpcode() == Instruction::UDiv || I.getOpcode() == Instruction::SDiv)
+    if (V1State.isConstant() && V1State.getConstant()->isNullValue())
+      return markConstant(IV, &I, V1State.getConstant());
 
-  // If this is an AND or OR with 0 or -1, it doesn't matter that the other
-  // operand is overdefined.
+  // If this is:
+  // -> AND/MUL with 0
+  // -> OR with -1
+  // it doesn't matter that the other operand is overdefined.
   if (I.getOpcode() == Instruction::And || I.getOpcode() == Instruction::Mul ||
       I.getOpcode() == Instruction::Or) {
     LatticeVal *NonOverdefVal = nullptr;
@@ -968,21 +972,6 @@ void SCCPSolver::visitCmpInst(CmpInst &I) {
     return;
 
   markOverdefined(&I);
-}
-
-void SCCPSolver::visitExtractElementInst(ExtractElementInst &I) {
-  // TODO : SCCP does not handle vectors properly.
-  return markOverdefined(&I);
-}
-
-void SCCPSolver::visitInsertElementInst(InsertElementInst &I) {
-  // TODO : SCCP does not handle vectors properly.
-  return markOverdefined(&I);
-}
-
-void SCCPSolver::visitShuffleVectorInst(ShuffleVectorInst &I) {
-  // TODO : SCCP does not handle vectors properly.
-  return markOverdefined(&I);
 }
 
 // Handle getelementptr instructions.  If all operands are constants then we
@@ -1723,7 +1712,10 @@ static bool runIPSCCP(Module &M, const DataLayout &DL,
 
     // If this is an exact definition of this function, then we can propagate
     // information about its result into callsites of it.
-    if (F.hasExactDefinition())
+    // Don't touch naked functions. They may contain asm returning a
+    // value we don't see, so we may end up interprocedurally propagating
+    // the return value incorrectly.
+    if (F.hasExactDefinition() && !F.hasFnAttribute(Attribute::Naked))
       Solver.AddTrackedFunction(&F);
 
     // If this function only has direct calls that we can see, we can track its

@@ -147,9 +147,19 @@ function(add_flag_or_print_warning flag name)
   endif()
 endfunction()
 
-if(LLVM_ENABLE_LLD)
-  check_cxx_compiler_flag("-fuse-ld=lld" CXX_SUPPORTS_LLD)
-  append_if(CXX_SUPPORTS_LLD "-fuse-ld=lld"
+if( LLVM_ENABLE_LLD )
+	if ( LLVM_USE_LINKER )
+		message(FATAL_ERROR "LLVM_ENABLE_LLD and LLVM_USE_LINKER can't be set at the same time")
+	endif()
+	set(LLVM_USE_LINKER "lld")
+endif()
+
+if( LLVM_USE_LINKER )
+  check_cxx_compiler_flag("-fuse-ld=${LLVM_USE_LINKER}" CXX_SUPPORTS_CUSTOM_LINKER)
+  if ( NOT CXX_SUPPORTS_CUSTOM_LINKER )
+	  message(FATAL_ERROR "Host compiler does not support '-fuse-ld=${LLVM_USE_LINKER}'")
+  endif()
+  append("-fuse-ld=${LLVM_USE_LINKER}"
     CMAKE_EXE_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
 endif()
 
@@ -555,6 +565,8 @@ if(LLVM_USE_SANITIZER)
       append_common_sanitizer_flags()
       append("-fsanitize=undefined -fno-sanitize=vptr,function -fno-sanitize-recover=all"
               CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+      append("-fsanitize-blacklist=${CMAKE_SOURCE_DIR}/utils/sanitizers/ubsan_blacklist.txt"
+	      CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
     elseif (LLVM_USE_SANITIZER STREQUAL "Thread")
       append_common_sanitizer_flags()
       append("-fsanitize=thread" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
@@ -576,6 +588,10 @@ if(LLVM_USE_SANITIZER)
   else()
     message(FATAL_ERROR "LLVM_USE_SANITIZER is not supported on this platform.")
   endif()
+  if (LLVM_USE_SANITIZER MATCHES "(Undefined;)?Address(;Undefined)?")
+    add_flag_if_supported("-fsanitize-address-use-after-scope"
+                          FSANITIZE_USE_AFTER_SCOPE_FLAG)
+  endif()
   if (LLVM_USE_SANITIZE_COVERAGE)
     append("-fsanitize-coverage=trace-pc-guard,indirect-calls,trace-cmp" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
   endif()
@@ -595,6 +611,14 @@ if (UNIX AND
     CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND
     CMAKE_GENERATOR STREQUAL "Ninja")
   append("-fcolor-diagnostics" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+endif()
+
+# lld doesn't print colored diagnostics when invoked from Ninja
+if (UNIX AND CMAKE_GENERATOR STREQUAL "Ninja")
+  include(CheckLinkerFlag)
+  check_linker_flag("-Wl,-color-diagnostics" LINKER_SUPPORTS_COLOR_DIAGNOSTICS)
+  append_if(LINKER_SUPPORTS_COLOR_DIAGNOSTICS "-Wl,-color-diagnostics"
+    CMAKE_EXE_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
 endif()
 
 # Add flags for add_dead_strip().

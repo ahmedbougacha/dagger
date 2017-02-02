@@ -55,7 +55,17 @@ cl::opt<unsigned>
                                 "is no less than the max frequency of the "
                                 "function multiplied by this percent."));
 
+// Command line option to turn on CFG dot dump after profile annotation.
+cl::opt<bool> PGOViewCounts("pgo-view-counts", cl::init(false), cl::Hidden);
+
 namespace llvm {
+
+static GVDAGType getGVDT() {
+
+  if (PGOViewCounts)
+    return GVDT_Count;
+  return ViewBlockFreqPropagationDAG;
+}
 
 template <>
 struct GraphTraits<BlockFrequencyInfo *> {
@@ -89,8 +99,7 @@ struct DOTGraphTraits<BlockFrequencyInfo *> : public BFIDOTGTraitsBase {
   std::string getNodeLabel(const BasicBlock *Node,
                            const BlockFrequencyInfo *Graph) {
 
-    return BFIDOTGTraitsBase::getNodeLabel(Node, Graph,
-                                           ViewBlockFreqPropagationDAG);
+    return BFIDOTGTraitsBase::getNodeLabel(Node, Graph, getGVDT());
   }
 
   std::string getNodeAttributes(const BasicBlock *Node,
@@ -132,6 +141,15 @@ BlockFrequencyInfo &BlockFrequencyInfo::operator=(BlockFrequencyInfo &&RHS) {
 // template instantiated which is not available in the header.
 BlockFrequencyInfo::~BlockFrequencyInfo() {}
 
+bool BlockFrequencyInfo::invalidate(Function &F, const PreservedAnalyses &PA,
+                                    FunctionAnalysisManager::Invalidator &) {
+  // Check whether the analysis, all analyses on functions, or the function's
+  // CFG have been preserved.
+  auto PAC = PA.getChecker<BlockFrequencyAnalysis>();
+  return !(PAC.preserved() || PAC.preservedSet<AllAnalysesOn<Function>>() ||
+           PAC.preservedSet<CFGAnalyses>());
+}
+
 void BlockFrequencyInfo::calculate(const Function &F,
                                    const BranchProbabilityInfo &BPI,
                                    const LoopInfo &LI) {
@@ -169,6 +187,28 @@ BlockFrequencyInfo::getProfileCountFromFreq(uint64_t Freq) const {
 void BlockFrequencyInfo::setBlockFreq(const BasicBlock *BB, uint64_t Freq) {
   assert(BFI && "Expected analysis to be available");
   BFI->setBlockFreq(BB, Freq);
+}
+
+void BlockFrequencyInfo::setBlockFreqAndScale(
+    const BasicBlock *ReferenceBB, uint64_t Freq,
+    SmallPtrSetImpl<BasicBlock *> &BlocksToScale) {
+  assert(BFI && "Expected analysis to be available");
+  // Use 128 bits APInt to avoid overflow.
+  APInt NewFreq(128, Freq);
+  APInt OldFreq(128, BFI->getBlockFreq(ReferenceBB).getFrequency());
+  APInt BBFreq(128, 0);
+  for (auto *BB : BlocksToScale) {
+    BBFreq = BFI->getBlockFreq(BB).getFrequency();
+    // Multiply first by NewFreq and then divide by OldFreq
+    // to minimize loss of precision.
+    BBFreq *= NewFreq;
+    // udiv is an expensive operation in the general case. If this ends up being
+    // a hot spot, one of the options proposed in
+    // https://reviews.llvm.org/D28535#650071 could be used to avoid this.
+    BBFreq = BBFreq.udiv(OldFreq);
+    BFI->setBlockFreq(BB, BBFreq.getLimitedValue());
+  }
+  BFI->setBlockFreq(ReferenceBB, Freq);
 }
 
 /// Pop up a ghostview window with the current block frequency propagation

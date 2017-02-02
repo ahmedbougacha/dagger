@@ -119,7 +119,7 @@ NodeList Liveness::getAllReachingDefs(RegisterRef RefRR,
     // Stop at the covering/overwriting def of the initial register reference.
     RegisterRef RR = TA.Addr->getRegRef(DFG);
     if (!DFG.IsPreservingDef(TA))
-      if (RegisterAggr::isCoverOf(RR, RefRR, TRI))
+      if (RegisterAggr::isCoverOf(RR, RefRR, PRI))
         continue;
     // Get the next level of reaching defs. This will include multiple
     // reaching defs for shadows.
@@ -134,7 +134,7 @@ NodeList Liveness::getAllReachingDefs(RegisterRef RefRR,
   for (NodeId N : DefQ) {
     auto TA = DFG.addr<DefNode*>(N);
     bool IsPhi = TA.Addr->getFlags() & NodeAttrs::PhiRef;
-    if (!IsPhi && !DFG.alias(RefRR, TA.Addr->getRegRef(DFG)))
+    if (!IsPhi && !PRI.alias(RefRR, TA.Addr->getRegRef(DFG)))
       continue;
     Defs.insert(TA.Id);
     Owners.insert(TA.Addr->getOwner(DFG).Id);
@@ -245,7 +245,7 @@ NodeSet Liveness::getAllReachingDefsRec(RegisterRef RefRR,
       NodeAddr<RefNode*> RefA, NodeSet &Visited, const NodeSet &Defs) {
   // Collect all defined registers. Do not consider phis to be defining
   // anything, only collect "real" definitions.
-  RegisterAggr DefRRs(TRI);
+  RegisterAggr DefRRs(PRI);
   for (NodeId D : Defs) {
     const auto DA = DFG.addr<const DefNode*>(D);
     if (!(DA.Addr->getFlags() & NodeAttrs::PhiRef))
@@ -299,7 +299,7 @@ NodeSet Liveness::getAllReachedUses(RegisterRef RefRR,
     auto UA = DFG.addr<UseNode*>(U);
     if (!(UA.Addr->getFlags() & NodeAttrs::Undef)) {
       RegisterRef UR = UA.Addr->getRegRef(DFG);
-      if (DFG.alias(RefRR, UR) && !DefRRs.hasCoverOf(UR))
+      if (PRI.alias(RefRR, UR) && !DefRRs.hasCoverOf(UR))
         Uses.insert(U);
     }
     U = UA.Addr->getSibling();
@@ -312,7 +312,7 @@ NodeSet Liveness::getAllReachedUses(RegisterRef RefRR,
     RegisterRef DR = DA.Addr->getRegRef(DFG);
     // If this def is already covered, it cannot reach anything new.
     // Similarly, skip it if it is not aliased to the interesting register.
-    if (DefRRs.hasCoverOf(DR) || !DFG.alias(RefRR, DR))
+    if (DefRRs.hasCoverOf(DR) || !PRI.alias(RefRR, DR))
       continue;
     NodeSet T;
     if (DFG.IsPreservingDef(DA)) {
@@ -377,9 +377,9 @@ void Liveness::computePhiInfo() {
         NodeAddr<UseNode*> A = DFG.addr<UseNode*>(UN);
         uint16_t F = A.Addr->getFlags();
         if ((F & (NodeAttrs::Undef | NodeAttrs::PhiRef)) == 0) {
-	  RegisterRef R = DFG.normalizeRef(getRestrictedRegRef(A));
+          RegisterRef R = DFG.normalizeRef(getRestrictedRegRef(A));
           RealUses[R.Reg].insert({A.Id,R.Mask});
-	}
+        }
         UN = A.Addr->getSibling();
       }
       // Visit all reached defs, and add them to the queue. These defs may
@@ -424,7 +424,7 @@ void Liveness::computePhiInfo() {
         auto UA = DFG.addr<UseNode*>(I->first);
         // Undef flag is checked above.
         assert((UA.Addr->getFlags() & NodeAttrs::Undef) == 0);
-	RegisterRef R(UI->first, I->second);
+        RegisterRef R(UI->first, I->second);
         NodeList RDs = getAllReachingDefs(R, UA);
         if (any_of(RDs, InPhiDefs))
           ++I;
@@ -463,7 +463,7 @@ void Liveness::computePhiInfo() {
 
       for (NodeAddr<UseNode*> VA : DFG.getRelatedRefs(PhiA, UA)) {
         SeenUses.insert(VA.Id);
-        RegisterAggr DefRRs(TRI);
+        RegisterAggr DefRRs(PRI);
         for (NodeAddr<DefNode*> DA : getAllReachingDefs(VA)) {
           if (DA.Addr->getFlags() & NodeAttrs::PhiRef) {
             NodeId RP = DA.Addr->getOwner(DFG).Id;
@@ -684,9 +684,7 @@ void Liveness::computeLiveIns() {
   traverse(&MF.front(), LiveIn);
 
   // Add function live-ins to the live-in set of the function entry block.
-  auto &EntryIn = LiveMap[&MF.front()];
-  for (auto I = MRI.livein_begin(), E = MRI.livein_end(); I != E; ++I)
-    EntryIn.insert(RegisterRef(I->first));
+  LiveMap[&MF.front()].insert(DFG.getLiveIns());
 
   if (Trace) {
     // Dump the liveness map
@@ -803,9 +801,8 @@ void Liveness::resetKills(MachineBasicBlock *B) {
         IsLive = true;
         break;
       }
-      if (IsLive)
-        continue;
-      Op.setIsKill(true);
+      if (!IsLive)
+        Op.setIsKill(true);
       for (MCSubRegIterator SR(R, &TRI, true); SR.isValid(); ++SR)
         Live.set(*SR);
     }
@@ -921,7 +918,7 @@ void Liveness::traverse(MachineBasicBlock *B, RefMap &LiveIn) {
       // propagated upwards. This only applies to non-preserving defs,
       // and to the parts of the register actually covered by those defs.
       // (Note that phi defs should always be preserving.)
-      RegisterAggr RRs(TRI);
+      RegisterAggr RRs(PRI);
       LRef.Mask = OR.second;
 
       if (!DFG.IsPreservingDef(DA)) {
@@ -949,7 +946,7 @@ void Liveness::traverse(MachineBasicBlock *B, RefMap &LiveIn) {
           // registers are not covering LRef. The first def from the
           // upward chain will be live.
           // Subtract all accumulated defs (RRs) from LRef.
-          RegisterAggr L(TRI);
+          RegisterAggr L(PRI);
           L.insert(LRef).clear(RRs);
           assert(!L.empty());
           NewDefs.insert({TA.Id,L.begin()->second});

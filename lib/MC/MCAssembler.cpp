@@ -114,10 +114,16 @@ bool MCAssembler::isThumbFunc(const MCSymbol *Symbol) const {
   if (!Symbol->isVariable())
     return false;
 
-  // FIXME: It looks like gas supports some cases of the form "foo + 2". It
-  // is not clear if that is a bug or a feature.
   const MCExpr *Expr = Symbol->getVariableValue();
-  const MCSymbolRefExpr *Ref = dyn_cast<MCSymbolRefExpr>(Expr);
+
+  MCValue V;
+  if (!Expr->evaluateAsRelocatable(V, nullptr, nullptr))
+    return false;
+
+  if (V.getSymB() || V.getRefKind() != MCSymbolRefExpr::VK_None)
+    return false;
+
+  const MCSymbolRefExpr *Ref = V.getSymA();
   if (!Ref)
     return false;
 
@@ -741,6 +747,10 @@ bool MCAssembler::fixupNeedsRelaxation(const MCFixup &Fixup,
   MCValue Target;
   uint64_t Value;
   bool Resolved = evaluateFixup(Layout, Fixup, DF, Target, Value);
+  if (Target.getSymA() &&
+      Target.getSymA()->getKind() == MCSymbolRefExpr::VK_X86_ABS8 &&
+      Fixup.getKind() == FK_Data_1)
+    return false;
   return getBackend().fixupNeedsRelaxationAdvanced(Fixup, Resolved, Value, DF,
                                                    Layout);
 }

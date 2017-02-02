@@ -12,7 +12,7 @@
 
 #include "OutputStyle.h"
 
-#include "llvm/DebugInfo/CodeView/TypeDumper.h"
+#include "llvm/DebugInfo/CodeView/TypeDatabase.h"
 #include "llvm/Support/ScopedPrinter.h"
 
 namespace llvm {
@@ -34,6 +34,7 @@ private:
   Error dumpGlobalsStream();
   Error dumpStreamBytes();
   Error dumpStreamBlocks();
+  Error dumpStringTable();
   Error dumpInfoStream();
   Error dumpTpiStream(uint32_t StreamIdx);
   Error dumpDbiStream();
@@ -49,7 +50,7 @@ private:
 
   PDBFile &File;
   ScopedPrinter P;
-  codeview::CVTypeDumper Dumper;
+  codeview::TypeDatabase TypeDB;
   std::vector<std::string> StreamPurposes;
 };
 }

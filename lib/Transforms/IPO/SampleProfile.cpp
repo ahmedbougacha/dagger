@@ -35,6 +35,7 @@
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -43,6 +44,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
+#include "llvm/ProfileData/InstrProf.h"
 #include "llvm/ProfileData/SampleProfReader.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -50,6 +52,7 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO.h"
+#include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include <cctype>
 
@@ -451,8 +454,7 @@ void SampleProfileLoader::printBlockWeight(raw_ostream &OS,
 /// \param Inst Instruction to query.
 ///
 /// \returns the weight of \p Inst.
-ErrorOr<uint64_t>
-SampleProfileLoader::getInstWeight(const Instruction &Inst) {
+ErrorOr<uint64_t> SampleProfileLoader::getInstWeight(const Instruction &Inst) {
   const DebugLoc &DLoc = Inst.getDebugLoc();
   if (!DLoc)
     return std::error_code();
@@ -491,8 +493,8 @@ SampleProfileLoader::getInstWeight(const Instruction &Inst) {
       LLVMContext &Ctx = F->getContext();
       emitOptimizationRemark(
           Ctx, DEBUG_TYPE, *F, DLoc,
-          Twine("Applied ") + Twine(*R) + " samples from profile (offset: " +
-              Twine(LineOffset) +
+          Twine("Applied ") + Twine(*R) +
+              " samples from profile (offset: " + Twine(LineOffset) +
               ((Discriminator) ? Twine(".") + Twine(Discriminator) : "") + ")");
     }
     DEBUG(dbgs() << "    " << Lineno << "." << DIL->getDiscriminator() << ":"
@@ -511,8 +513,7 @@ SampleProfileLoader::getInstWeight(const Instruction &Inst) {
 /// \param BB The basic block to query.
 ///
 /// \returns the weight for \p BB.
-ErrorOr<uint64_t>
-SampleProfileLoader::getBlockWeight(const BasicBlock *BB) {
+ErrorOr<uint64_t> SampleProfileLoader::getBlockWeight(const BasicBlock *BB) {
   uint64_t Max = 0;
   bool HasWeight = false;
   for (auto &I : BB->getInstList()) {
@@ -614,14 +615,14 @@ SampleProfileLoader::findFunctionSamples(const Instruction &Inst) const {
 /// Iteratively traverse all callsites of the function \p F, and find if
 /// the corresponding inlined instance exists and is hot in profile. If
 /// it is hot enough, inline the callsites and adds new callsites of the
-/// callee into the caller.
-///
-/// TODO: investigate the possibility of not invoking InlineFunction directly.
+/// callee into the caller. If the call is an indirect call, first promote
+/// it to direct call. Each indirect call is limited with a single target.
 ///
 /// \param F function to perform iterative inlining.
 ///
 /// \returns True if there is any inline happened.
 bool SampleProfileLoader::inlineHotFunctions(Function &F) {
+  DenseSet<Instruction *> PromotedInsns;
   bool Changed = false;
   LLVMContext &Ctx = F.getContext();
   std::function<AssumptionCache &(Function &)> GetAssumptionCache = [&](
@@ -647,10 +648,28 @@ bool SampleProfileLoader::inlineHotFunctions(Function &F) {
     }
     for (auto I : CIS) {
       InlineFunctionInfo IFI(nullptr, ACT ? &GetAssumptionCache : nullptr);
-      CallSite CS(I);
-      Function *CalledFunction = CS.getCalledFunction();
+      Function *CalledFunction = CallSite(I).getCalledFunction();
+      Instruction *DI = I;
+      if (!CalledFunction && !PromotedInsns.count(I)) {
+        auto CalleeFunctionName = findCalleeFunctionSamples(*I)->getName();
+        const char *Reason = "Callee function not available";
+        CalledFunction = F.getParent()->getFunction(CalleeFunctionName);
+        if (CalledFunction && isLegalToPromote(I, CalledFunction, &Reason)) {
+          // The indirect target was promoted and inlined in the profile, as a
+          // result, we do not have profile info for the branch probability.
+          // We set the probability to 80% taken to indicate that the static
+          // call is likely taken.
+          DI = promoteIndirectCall(I, CalledFunction, 80, 100);
+          PromotedInsns.insert(I);
+        } else {
+          DEBUG(dbgs() << "\nFailed to promote indirect call to "
+                       << CalleeFunctionName << " because " << Reason << "\n");
+          continue;
+        }
+      }
       if (!CalledFunction || !CalledFunction->getSubprogram())
         continue;
+      CallSite CS(DI);
       DebugLoc DLoc = I->getDebugLoc();
       uint64_t NumSamples = findCalleeFunctionSamples(*I)->getTotalSamples();
       if (InlineFunction(CS, IFI)) {
@@ -994,6 +1013,26 @@ void SampleProfileLoader::buildEdges(Function &F) {
   }
 }
 
+/// Sorts the CallTargetMap \p M by count in descending order and stores the
+/// sorted result in \p Sorted. Returns the total counts.
+static uint64_t SortCallTargets(SmallVector<InstrProfValueData, 2> &Sorted,
+                                const SampleRecord::CallTargetMap &M) {
+  Sorted.clear();
+  uint64_t Sum = 0;
+  for (auto I = M.begin(); I != M.end(); ++I) {
+    Sum += I->getValue();
+    Sorted.push_back({Function::getGUID(I->getKey()), I->getValue()});
+  }
+  std::sort(Sorted.begin(), Sorted.end(),
+            [](const InstrProfValueData &L, const InstrProfValueData &R) {
+              if (L.Count == R.Count)
+                return L.Value > R.Value;
+              else
+                return L.Count > R.Count;
+            });
+  return Sum;
+}
+
 /// \brief Propagate weights into edges
 ///
 /// The following rules are applied to every block BB in the CFG:
@@ -1071,13 +1110,33 @@ void SampleProfileLoader::propagateWeights(Function &F) {
 
     if (BlockWeights[BB]) {
       for (auto &I : BB->getInstList()) {
-        if (CallInst *CI = dyn_cast<CallInst>(&I)) {
-          if (!dyn_cast<IntrinsicInst>(&I)) {
-            SmallVector<uint32_t, 1> Weights;
-            Weights.push_back(BlockWeights[BB]);
-            CI->setMetadata(LLVMContext::MD_prof,
-                            MDB.createBranchWeights(Weights));
-          }
+        if (!isa<CallInst>(I) && !isa<InvokeInst>(I))
+          continue;
+        CallSite CS(&I);
+        if (!CS.getCalledFunction()) {
+          const DebugLoc &DLoc = I.getDebugLoc();
+          if (!DLoc)
+            continue;
+          const DILocation *DIL = DLoc;
+          uint32_t LineOffset = getOffset(
+              DLoc.getLine(), DIL->getScope()->getSubprogram()->getLine());
+          uint32_t Discriminator = DIL->getDiscriminator();
+
+          const FunctionSamples *FS = findFunctionSamples(I);
+          if (!FS)
+            continue;
+          auto T = FS->findCallTargetMapAt(LineOffset, Discriminator);
+          if (!T || T.get().size() == 0)
+            continue;
+          SmallVector<InstrProfValueData, 2> SortedCallTargets;
+          uint64_t Sum = SortCallTargets(SortedCallTargets, T.get());
+          annotateValueSite(*I.getParent()->getParent()->getParent(), I,
+                            SortedCallTargets, Sum, IPVK_IndirectCallTarget,
+                            SortedCallTargets.size());
+        } else if (!dyn_cast<IntrinsicInst>(&I)) {
+          SmallVector<uint32_t, 1> Weights;
+          Weights.push_back(BlockWeights[BB]);
+          I.setMetadata(LLVMContext::MD_prof, MDB.createBranchWeights(Weights));
         }
       }
     }

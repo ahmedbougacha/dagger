@@ -366,7 +366,7 @@ namespace {
     struct ValueCacheEntryTy {
       ValueCacheEntryTy(Value *V, LazyValueInfoCache *P) : Handle(V, P) {}
       LVIValueHandle Handle;
-      SmallDenseMap<AssertingVH<BasicBlock>, LVILatticeVal, 4> BlockVals;
+      SmallDenseMap<PoisoningVH<BasicBlock>, LVILatticeVal, 4> BlockVals;
     };
 
     /// This is all of the cached information for all values,
@@ -375,13 +375,13 @@ namespace {
 
     /// This tracks, on a per-block basis, the set of values that are
     /// over-defined at the end of that block.
-    typedef DenseMap<AssertingVH<BasicBlock>, SmallPtrSet<Value *, 4>>
+    typedef DenseMap<PoisoningVH<BasicBlock>, SmallPtrSet<Value *, 4>>
         OverDefinedCacheTy;
     OverDefinedCacheTy OverDefinedCache;
 
     /// Keep track of all blocks that we have ever seen, so we
     /// don't spend time removing unused blocks from our caches.
-    DenseSet<AssertingVH<BasicBlock> > SeenBlocks;
+    DenseSet<PoisoningVH<BasicBlock> > SeenBlocks;
 
   public:
     void insertResult(Value *Val, BasicBlock *BB, const LVILatticeVal &Result) {
@@ -459,15 +459,15 @@ namespace {
 }
 
 void LazyValueInfoCache::eraseValue(Value *V) {
-  SmallVector<AssertingVH<BasicBlock>, 4> ToErase;
-  for (auto &I : OverDefinedCache) {
-    SmallPtrSetImpl<Value *> &ValueSet = I.second;
+  for (auto I = OverDefinedCache.begin(), E = OverDefinedCache.end(); I != E;) {
+    // Copy and increment the iterator immediately so we can erase behind
+    // ourselves.
+    auto Iter = I++;
+    SmallPtrSetImpl<Value *> &ValueSet = Iter->second;
     ValueSet.erase(V);
     if (ValueSet.empty())
-      ToErase.push_back(I.first);
+      OverDefinedCache.erase(Iter);
   }
-  for (auto &BB : ToErase)
-    OverDefinedCache.erase(BB);
 
   ValueCache.erase(V);
 }
@@ -480,7 +480,7 @@ void LVIValueHandle::deleted() {
 
 void LazyValueInfoCache::eraseBlock(BasicBlock *BB) {
   // Shortcut if we have never seen this block.
-  DenseSet<AssertingVH<BasicBlock> >::iterator I = SeenBlocks.find(BB);
+  DenseSet<PoisoningVH<BasicBlock> >::iterator I = SeenBlocks.find(BB);
   if (I == SeenBlocks.end())
     return;
   SeenBlocks.erase(I);
@@ -925,7 +925,7 @@ void LazyValueInfoImpl::intersectAssumeOrGuardBlockValueConstantRange(
   if (!BBI)
     return;
 
-  for (auto &AssumeVH : AC->assumptions()) {
+  for (auto &AssumeVH : AC->assumptionsFor(Val)) {
     if (!AssumeVH)
       continue;
     auto *I = cast<CallInst>(AssumeVH);
@@ -1501,6 +1501,18 @@ void LazyValueInfo::releaseMemory() {
     delete &getImpl(PImpl, AC, nullptr);
     PImpl = nullptr;
   }
+}
+
+bool LazyValueInfo::invalidate(Function &F, const PreservedAnalyses &PA,
+                               FunctionAnalysisManager::Invalidator &Inv) {
+  // We need to invalidate if we have either failed to preserve this analyses
+  // result directly or if any of its dependencies have been invalidated.
+  auto PAC = PA.getChecker<LazyValueAnalysis>();
+  if (!(PAC.preserved() || PAC.preservedSet<AllAnalysesOn<Function>>()) ||
+      (DT && Inv.invalidate<DominatorTreeAnalysis>(F, PA)))
+    return true;
+
+  return false;
 }
 
 void LazyValueInfoWrapperPass::releaseMemory() { Info.releaseMemory(); }
