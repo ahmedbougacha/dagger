@@ -185,7 +185,7 @@ class MCELFObjectSymbolizer final : public MCObjectSymbolizer {
   const object::ELFObjectFileBase &OF;
 
 public:
-  /// \brief Construct a Mach-O specific object symbolizer.
+  /// \brief Construct an ELF specific object symbolizer.
   /// \param VMAddrSlide The virtual address slide applied by dyld.
   MCELFObjectSymbolizer(MCContext &Ctx,
                         std::unique_ptr<MCRelocationInfo> RelInfo,
