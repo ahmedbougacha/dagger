@@ -138,6 +138,21 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
   case AArch64::OpTypes::simm7s16: {
     return translateScaledImmediate(MIOperandNo, 16, true);
   }
+  case AArch64::OpTypes::uimm12s1:
+  case AArch64::OpTypes::uimm12s2:
+  case AArch64::OpTypes::uimm12s4:
+  case AArch64::OpTypes::uimm12s8:
+  case AArch64::OpTypes::uimm12s16: {
+    unsigned Scale;
+    switch (OperandType) {
+    case AArch64::OpTypes::uimm12s1: Scale = 1; break;
+    case AArch64::OpTypes::uimm12s2: Scale = 2; break;
+    case AArch64::OpTypes::uimm12s4: Scale = 4; break;
+    case AArch64::OpTypes::uimm12s8: Scale = 8; break;
+    case AArch64::OpTypes::uimm12s16: Scale = 16; break;
+    }
+    return Builder.getInt64(getImmOp(MIOperandNo) * Scale);
+  }
   default:
     errs() << "Unknown AArch64 operand type found in semantics: "
            << utostr(OperandType) << "\n";
