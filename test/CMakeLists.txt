@@ -86,15 +86,37 @@ if(TARGET llvm-lto)
 endif()
 
 
-set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS}
+# Add a check-dagger rule.
+set(LLVM_DC_TEST_DEPENDS
           llvm-dc
           llvm-dec
           llvm-mccfg
         )
 
 if(APPLE)
-  set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS} DYN)
+  set(LLVM_DC_TEST_DEPENDS ${LLVM_DC_TEST_DEPENDS} DYN)
 endif()
+
+# Add our dependencies to the global check-all dependencies.
+set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS} ${LLVM_DC_TEST_DEPENDS})
+
+# And finally add the common tools for our check-dagger target.
+set(LLVM_DC_TEST_DEPENDS ${LLVM_DC_TEST_DEPENDS}
+          FileCheck
+          not
+          count
+          llvm-mc
+          llvm-objdump
+        )
+
+add_lit_testsuite(check-dagger "Running the LLVM DC regression tests"
+  ${CMAKE_CURRENT_BINARY_DIR}/DC
+  ${CMAKE_CURRENT_BINARY_DIR}/MC/Analysis
+  ${CMAKE_CURRENT_BINARY_DIR}/tools/llvm-objdump
+  PARAMS llvm_site_config=${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg
+         llvm_unit_site_config=${CMAKE_CURRENT_BINARY_DIR}/Unit/lit.site.cfg
+  DEPENDS ${LLVM_DC_TEST_DEPENDS}
+  )
 
 
 # If Intel JIT events are supported, depend on a tool that tests the listener.
