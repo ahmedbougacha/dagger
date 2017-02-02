@@ -72,12 +72,31 @@ bool AArch64DCInstruction::translateTargetOpcode(unsigned Opcode) {
 }
 
 Value *AArch64DCInstruction::translateComplexPattern(unsigned Pattern) {
+  switch(Pattern) {
+  case AArch64::ComplexPattern::AddrModeIndexed8:
+  case AArch64::ComplexPattern::AddrModeIndexed16:
+  case AArch64::ComplexPattern::AddrModeIndexed32:
+  case AArch64::ComplexPattern::AddrModeIndexed64:
+  case AArch64::ComplexPattern::AddrModeIndexed128: {
+    Value *Base = getOperand(0), *Idx = getOperand(1);
+    return Builder.CreateAdd(Base, Idx);
+  }
+  }
   return nullptr;
 }
 
 Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
                                                     unsigned MIOperandNo) {
   switch (OperandType) {
+  case AArch64::OpTypes::addsub_shifted_imm32:
+  case AArch64::OpTypes::addsub_shifted_imm64: {
+    const uint64_t Imm = getImmOp(MIOperandNo);
+    const unsigned ShiftImm = getImmOp(MIOperandNo + 1);
+
+    if (ShiftImm)
+      return nullptr;
+    return ConstantInt::get(getResultTy(0), Imm);
+  }
   case AArch64::OpTypes::am_bl_target: {
     auto *ResTy = Builder.getInt8PtrTy();
 
