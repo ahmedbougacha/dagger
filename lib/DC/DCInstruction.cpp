@@ -643,6 +643,14 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
     break;
   }
 
+  case ISD::BITREVERSE: {
+    Value *Op = getOperand(0);
+    Value *IntDecl = Intrinsic::getDeclaration(
+        getModule(), Intrinsic::bitreverse, getResultTy(0));
+    addResult(Builder.CreateCall(IntDecl, Op));
+    break;
+  }
+
   case ISD::ATOMIC_FENCE: {
     uint64_t OrdV = cast<ConstantInt>(getOperand(0))->getZExtValue();
     uint64_t ScopeV = cast<ConstantInt>(getOperand(1))->getZExtValue();
