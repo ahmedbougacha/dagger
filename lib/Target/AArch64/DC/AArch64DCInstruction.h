@@ -39,10 +39,6 @@ protected:
   StringRef getDCComplexPatternName(unsigned CPKind) const override;
 
 private:
-  AArch64RegisterSema &getDRS() {
-    return static_cast<AArch64RegisterSema &>(DCInstruction::getDRS());
-  }
-
   Value *translateScaledImmediate(unsigned MIOperandNo,
                                   unsigned scale,
                                   bool isSigned);
