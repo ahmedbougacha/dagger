@@ -166,6 +166,7 @@ Value *AArch64DCInstruction::translateScaledImmediate(unsigned MIOperandNo, unsi
   APInt val = APInt(32, getImmOp(MIOperandNo), isSigned);
   APInt apScale = APInt(32, scale, false);
   return Builder.getInt(val * apScale);
+}
 
 bool AArch64DCInstruction::doesSubRegIndexClearSuper(unsigned SubRegIdx) {
   switch (SubRegIdx) {
