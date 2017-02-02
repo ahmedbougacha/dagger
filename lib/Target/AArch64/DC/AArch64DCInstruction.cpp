@@ -105,9 +105,32 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
 
     return R;
   }
+  case AArch64::OpTypes::movimm32_shift:
+  case AArch64::OpTypes::movimm32_imm: {
+    const uint64_t Imm = getImmOp(MIOperandNo);
+    return ConstantInt::get(getResultTy(0), Imm);
+  }
+  case AArch64::OpTypes::simm7s4: {
+    return translateScaledImmediate(MIOperandNo, 4, true);
+  }
+  case AArch64::OpTypes::simm7s8: {
+    return translateScaledImmediate(MIOperandNo, 8, true);
+  }
+  case AArch64::OpTypes::simm7s16: {
+    return translateScaledImmediate(MIOperandNo, 16, true);
+  }
   default:
+    errs() << "Unknown AArch64 operand type found in semantics: "
+           << utostr(OperandType) << "\n";
+
     return nullptr;
   }
 }
 
 bool AArch64DCInstruction::translateImplicit(unsigned RegNo) { return false; }
+
+Value *AArch64DCInstruction::translateScaledImmediate(unsigned MIOperandNo, unsigned scale, bool isSigned) {
+  APInt val = APInt(32, getImmOp(MIOperandNo), isSigned);
+  APInt apScale = APInt(32, scale, false);
+  return Builder.getInt(val * apScale);
+}
