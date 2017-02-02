@@ -113,6 +113,11 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
 
     return R;
   }
+  case AArch64::OpTypes::movimm32_shift:
+  case AArch64::OpTypes::movimm32_imm: {
+    const uint64_t Imm = getImmOp(MIOperandNo);
+    return ConstantInt::get(getResultTy(0), Imm);
+  }
   case AArch64::OpTypes::simm7s4: {
     return translateScaledImmediate(MIOperandNo, 4, true);
   }

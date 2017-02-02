@@ -59,3 +59,5 @@ defm : StorePairPrePostIndex<"Q", FPR128, f128, 16>;
 // Arithmetic Instruction
 def : Semantics<SUBXri, [(set GPR64sp:$Rd, (sub GPR64sp:$Rn, addsub_shifted_imm64:$imm))]>;
 
+// Move Instructions
+def : Semantics<MOVZWi, [(set GPR32:$Rd, (shl movimm32_imm:$imm, movimm32_shift:$shift))]>;
