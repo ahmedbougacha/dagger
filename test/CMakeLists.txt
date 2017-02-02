@@ -102,6 +102,7 @@ set(LLVM_TEST_DEPENDS ${LLVM_TEST_DEPENDS} ${LLVM_DC_TEST_DEPENDS})
 
 # And finally add the common tools for our check-dagger target.
 set(LLVM_DC_TEST_DEPENDS ${LLVM_DC_TEST_DEPENDS}
+          llvm-config
           FileCheck
           not
           count
@@ -112,7 +113,6 @@ set(LLVM_DC_TEST_DEPENDS ${LLVM_DC_TEST_DEPENDS}
 add_lit_testsuite(check-dagger "Running the LLVM DC regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}/DC
   ${CMAKE_CURRENT_BINARY_DIR}/MC/Analysis
-  ${CMAKE_CURRENT_BINARY_DIR}/tools/llvm-objdump
   PARAMS llvm_site_config=${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg
          llvm_unit_site_config=${CMAKE_CURRENT_BINARY_DIR}/Unit/lit.site.cfg
   DEPENDS ${LLVM_DC_TEST_DEPENDS}
