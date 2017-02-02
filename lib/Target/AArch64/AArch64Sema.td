@@ -52,3 +52,10 @@ defm : StorePairPrePostIndex<"S", FPR32, f32, 4>;
 defm : StorePairPrePostIndex<"D", FPR64, f64, 8>;
 defm : StorePairPrePostIndex<"Q", FPR128, f128, 16>;
 
+//===
+// Data Processing Instructions
+//===
+
+// Arithmetic Instruction
+def : Semantics<SUBXri, [(set GPR64sp:$Rd, (sub GPR64sp:$Rn, addsub_shifted_imm64:$imm))]>;
+

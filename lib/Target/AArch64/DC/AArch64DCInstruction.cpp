@@ -77,6 +77,15 @@ Value *AArch64DCInstruction::translateComplexPattern(unsigned Pattern) {
 Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
                                                     unsigned MIOperandNo) {
   switch (OperandType) {
+  case AArch64::OpTypes::addsub_shifted_imm32:
+  case AArch64::OpTypes::addsub_shifted_imm64: {
+    const uint64_t Imm = getImmOp(MIOperandNo);
+    const unsigned ShiftImm = getImmOp(MIOperandNo + 1);
+
+    if (ShiftImm)
+      return nullptr;
+    return ConstantInt::get(getResultTy(0), Imm);
+  }
   case AArch64::OpTypes::am_bl_target: {
     auto *ResTy = Builder.getInt8PtrTy();
 
