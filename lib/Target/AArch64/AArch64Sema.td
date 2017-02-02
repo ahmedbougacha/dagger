@@ -13,3 +13,11 @@
 //===----------------------------------------------------------------------===//
 
 include "llvm/DC/Semantics.td"
+
+//===
+// Control Flow Instructions
+//===
+
+// Branching instructions
+def : Semantics<BL, [(set LR, PC), (AArch64call imm:$addr)]>;
+def : Semantics<BLR, [(set LR, PC), (AArch64call GPR64:$Rn)]>;
