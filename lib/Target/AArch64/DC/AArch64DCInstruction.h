@@ -39,8 +39,7 @@ protected:
   StringRef getDCComplexPatternName(unsigned CPKind) const override;
 
 private:
-  Value *translateScaledImmediate(unsigned MIOperandNo, unsigned Scale,
-                                  bool IsSigned);
+  Value *translateScaledImmediate(unsigned MIOperandNo, unsigned Scale);
 };
 
 } // end llvm namespace
