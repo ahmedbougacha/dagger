@@ -16,16 +16,19 @@ bool MCInstrAnalysis::evaluateBranch(const MCInst &Inst, uint64_t Addr,
   if (Inst.getNumOperands() == 0 ||
       Info->get(Inst.getOpcode()).OpInfo[0].OperandType != MCOI::OPERAND_PCREL)
     return false;
+
   const MCOperand &Op = Inst.getOperand(0);
   if (Op.isImm()) {
     int64_t Imm = Inst.getOperand(0).getImm();
     Target = Addr+Size+Imm;
     return true;
   }
+
   const MCExpr *Expr = Op.getExpr();
   int64_t Absolute;
   if (!Expr->evaluateAsAbsolute(Absolute))
     return false;
-  Addr = Absolute;
+
+  Target = Absolute;
   return true;
 }
