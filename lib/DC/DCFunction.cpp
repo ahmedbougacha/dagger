@@ -44,6 +44,28 @@ DCFunction::DCFunction(DCModule &DCM, const MCFunction &MCF)
   getFunction()->setDoesNotAlias(1);
   getFunction()->setDoesNotCapture(1);
 
+  if (auto *DebugStream = DCM.getDebugStream()) {
+    const auto StartLine = DCM.incrementDebugLine();
+    *DebugStream << TheFunction.getName() << ":\n";
+
+    DIFile *DebugFile = DCM.getDebugFile();
+    DIBuilder *DebugBuilder = DCM.getDebugBuilder();
+
+    DISubprogram *DIFn = DebugBuilder->createFunction(
+        DebugFile, TheFunction.getName(), TheFunction.getName(), DebugFile,
+        /*LineNo=*/StartAddr, DCM.getDebugFunctionTy(), /*isLocalToUnit=*/false,
+        /*isDefinition=*/true, /*ScopeLine=*/StartLine);
+
+    TheFunction.setSubprogram(DIFn);
+
+    DebugScope =
+        DebugBuilder->createLexicalBlock(DIFn, DebugFile,
+                                         /*Line=*/StartLine, /*Col=*/0);
+
+    EntryDebugLoc =
+        DILocation::get(getContext(), StartLine, /*Column=*/0, DebugScope);
+  }
+
   // Create the entry and exit basic blocks.
   auto *EntryBB = BasicBlock::Create(
       getContext(), "entry_fn_" + utohexstr(StartAddr), getFunction());
@@ -53,6 +75,9 @@ DCFunction::DCFunction(DCModule &DCM, const MCFunction &MCF)
   // Prepare the entry/exit blocks.
   IRBuilder<> EntryBuilder(EntryBB);
   IRBuilder<> ExitBuilder(ExitBB);
+
+  EntryBuilder.SetCurrentDebugLocation(EntryDebugLoc);
+  ExitBuilder.SetCurrentDebugLocation(EntryDebugLoc);
 
   if (EnableRegSetDiff) {
     Type *RegSetTy = getTranslator().getRegSetDesc().RegSetType;
@@ -234,5 +259,24 @@ AllocaInst *DCFunction::getOrCreateRegAlloca(unsigned RegNo) {
 
   // Finally, initialize the local copy of the register.
   Builder.CreateStore(RI, RA);
+
+  if (DIBuilder *DIB = DCM.getDebugBuilder()) {
+    // FIXME: Use a proper alignment.
+    // FIXME: Look into using better types.
+    unsigned SizeInBits = RSD.RegSizes[RegNo];
+    DIBasicType *DRegTy = DIB->createBasicType(
+        "i" + utostr(SizeInBits), SizeInBits, dwarf::DW_ATE_unsigned);
+    DILocalVariable *DRegVar =
+        DIB->createAutoVariable(DebugScope, RegName, DCM.getDebugFile(),
+                                /*LineNo=*/EntryDebugLoc->getLine(), DRegTy,
+                                /*AlwaysPreserve=*/true);
+
+    // Let DIB insert at the end of the block, and fix it ourselves.
+    Instruction *DRegDecl = DIB->insertDeclare(
+        RA, DRegVar, DIB->createExpression(), EntryDebugLoc, EntryBB);
+    DRegDecl->removeFromParent();
+    DRegDecl->insertAfter(RA);
+  }
+
   return RA;
 }

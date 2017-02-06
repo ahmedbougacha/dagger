@@ -15,9 +15,13 @@
 #ifndef LLVM_DC_DCMODULE_H
 #define LLVM_DC_DCMODULE_H
 
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/DC/DCTranslator.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/FormattedStream.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cstdint>
 #include <string>
 
@@ -51,6 +55,37 @@ public:
 
   FunctionType *getFuncTy() { return &FuncTy; }
 
+  /// Debug Info Support.
+  /// @{
+  /// Get the output stream for the emitted debug source file.
+  /// When debug info is enabled, we synthesize a source file for debug info
+  /// purposes, by printing assembly to it.  This lets us reference machine
+  /// code in the debug info of the translated IR.
+  raw_ostream *getDebugStream() {
+    return DebugStream ? DebugStream.getPointer() : nullptr;
+  }
+
+  /// Get the debug info builder.
+  DIBuilder *getDebugBuilder() { return DebugBuilder.get(); }
+
+  /// Get the DIFile for the debug source file we emit for this module.
+  DIFile *getDebugFile() { return DebugFile; }
+
+  /// Get the type of translated void(%regset*) functions.
+  DISubroutineType *getDebugFunctionTy() { return DebugFnTy; }
+
+  /// Increment the current line number in the emitted debug source file,
+  /// returning the previous line number.
+  unsigned incrementDebugLine();
+  /// @}
+
+private:
+  /// Initialize the output stream for the emitted debug source file.
+  /// When debug info is enabled, we synthesize a source file for debug info
+  /// purposes, by printing assembly to it.  This lets us reference machine
+  /// code in the debug info of the translated IR.
+  void initializeDebugInfo(StringRef OutputDirectory);
+
 protected:
   /// Insert, at the end of basic block \p InsertAtEnd, the target-specific ABI
   /// code for initializing the register set with the dynamic environment, as
@@ -77,6 +112,24 @@ private:
   DCTranslator &DCT;
   Module &TheModule;
   FunctionType &FuncTy;
+
+  /// Debug Info State.
+  /// @}
+  /// The output stream for the emitted debug source file.
+  Optional<raw_fd_ostream> DebugStream;
+
+  /// The current line number in the emitted debug source file.
+  unsigned DebugLine = 1;
+
+  /// The debug info builder.
+  std::unique_ptr<DIBuilder> DebugBuilder;
+
+  /// The DIFile for the debug source file we emit for this module.
+  DIFile *DebugFile = nullptr;
+
+  /// The type of translated void(%regset*) functions.
+  DISubroutineType *DebugFnTy = nullptr;
+  /// @}
 };
 
 } // end namespace llvm

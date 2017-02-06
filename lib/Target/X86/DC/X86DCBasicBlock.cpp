@@ -40,6 +40,9 @@ void X86DCBasicBlock::materializeEFLAGS() {
   if (!LastEFLAGSChangingDef)
     return;
 
+  if (auto *EFLAGSDefI = dyn_cast<Instruction>(LastEFLAGSChangingDef))
+    Builder.SetCurrentDebugLocation(EFLAGSDefI->getDebugLoc());
+
   Value *EFLAGSDef =
       computeEFLAGSForDef(LastEFLAGSChangingDef, LastEFLAGSDefWasPartialINCDEC);
   setReg(X86::EFLAGS, EFLAGSDef);

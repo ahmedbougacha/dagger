@@ -22,6 +22,9 @@ Value *llvm::extractSubRegFromSuper(IRBuilderBase::InsertPoint InsertPt,
   IRBuilder<> Builder(Ctx);
   Builder.restoreIP(InsertPt);
 
+  if (auto *SuperDefI = dyn_cast<Instruction>(SRV))
+    Builder.SetCurrentDebugLocation(SuperDefI->getDebugLoc());
+
   unsigned Idx = MRI.getSubRegIndex(Super, Sub);
   assert(Idx && "Superreg's subreg doesn't have an index?");
   unsigned Offset = MRI.getSubRegIdxOffset(Idx),
@@ -46,6 +49,9 @@ Value *llvm::recreateSuperRegFromSub(IRBuilderBase::InsertPoint InsertPt,
   IRBuilder<> Builder(Ctx);
   Builder.restoreIP(InsertPt);
 
+  if (auto *SubDefI = dyn_cast<Instruction>(SubVal))
+    Builder.SetCurrentDebugLocation(SubDefI->getDebugLoc());
+
   unsigned Idx = MRI.getSubRegIndex(Super, Sub);
   assert(Idx && "Superreg's subreg doesn't have an index?");
   unsigned Offset = MRI.getSubRegIdxOffset(Idx),
@@ -64,6 +70,9 @@ Value *llvm::extractBitsFromValue(IRBuilderBase::InsertPoint InsertPt,
   IRBuilder<> Builder(Ctx);
   Builder.restoreIP(InsertPt);
 
+  if (auto *ValDefI = dyn_cast<Instruction>(Val))
+    Builder.SetCurrentDebugLocation(ValDefI->getDebugLoc());
+
   Value *LShr = Val;
   if (LoBit)
     LShr = Builder.CreateLShr(Val, ConstantInt::get(Val->getType(), LoBit));
@@ -76,6 +85,9 @@ Value *llvm::insertBitsInValue(IRBuilderBase::InsertPoint InsertPt,
   auto &Ctx = FullVal->getContext();
   IRBuilder<> Builder(Ctx);
   Builder.restoreIP(InsertPt);
+
+  if (auto *InsertDefI = dyn_cast<Instruction>(ToInsert))
+    Builder.SetCurrentDebugLocation(InsertDefI->getDebugLoc());
 
   IntegerType *ValType = cast<IntegerType>(FullVal->getType());
   IntegerType *ToInsertType = cast<IntegerType>(ToInsert->getType());

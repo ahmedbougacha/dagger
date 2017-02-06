@@ -51,6 +51,15 @@ class DCFunction {
   /// IR scheme of appending a global number to duplicate Value names.
   std::vector<unsigned> RegDefCount;
 
+  /// Debug Info
+  /// @{
+  /// The function debug scope.
+  DILocalScope *DebugScope = nullptr;
+
+  /// The debug location of the function entry.
+  DILocation *EntryDebugLoc = nullptr;
+  /// @}
+
   /// Copy all of the largest super-registers that have ever been accessed in
   /// the function from their function-level alloca to the register set struct.
   void saveLocalRegs(BasicBlock *BB, BasicBlock::iterator IP);
@@ -75,6 +84,9 @@ public:
   DCTranslator &getTranslator() { return getParent().getTranslator(); }
 
   BasicBlock *getExitBlock() { return ExitBB; }
+
+  /// Get the debug scope of the function, or nullptr if debug info is disabled.
+  DILocalScope *getDebugScope() { return DebugScope; }
 
   /// Track the (inserted) call instruction \p CI to later insert regset saves/
   /// restores around it, when the function is finalized.

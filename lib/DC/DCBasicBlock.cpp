@@ -26,6 +26,7 @@ DCBasicBlock::DCBasicBlock(DCFunction &DCF, const MCBasicBlock &MCB)
     : DCF(DCF), TheBB(*DCF.getOrCreateBasicBlock(MCB.getStartAddr())),
       TheMCBB(MCB), RegValues(getTranslator().getMRI().getNumRegs()),
       Builder(&TheBB) {
+
   // Remove the @llvm.trap(), but keep the unreachable, to use as an insertion
   // point for our builder.
   assert(
@@ -34,6 +35,15 @@ DCBasicBlock::DCBasicBlock(DCFunction &DCF, const MCBasicBlock &MCB)
   TheBB.begin()->eraseFromParent();
 
   Builder.SetInsertPoint(TheBB.getTerminator());
+
+  if (auto *DebugStream = getParentModule().getDebugStream()) {
+    const auto StartLine = getParentModule().incrementDebugLine();
+    *DebugStream << TheBB.getName() << ":\n";
+
+    DebugLoc = DILocation::get(getContext(), StartLine, /*Column=*/0,
+                               DCF.getDebugScope());
+    Builder.SetCurrentDebugLocation(DebugLoc);
+  }
 
   // The PC at the start of the basic block is known, just set it.
   const unsigned PC = getTranslator().getMRI().getProgramCounter();
@@ -51,9 +61,14 @@ DCBasicBlock::~DCBasicBlock() {
     BranchInst::Create(DCF.getOrCreateBasicBlock(TheMCBB.getEndAddr()),
                        getBasicBlock());
   Builder.SetInsertPoint(TheBB.getTerminator());
+  if (DebugLoc)
+    Builder.SetCurrentDebugLocation(DebugLoc);
 
   // Finally, save the last assigned value of each register to its alloca.
   saveAllLiveRegs();
+
+  if (auto *DebugStream = getParentModule().getDebugStream())
+    *DebugStream << '\n';
 }
 
 void DCBasicBlock::saveAllLiveRegs() {
@@ -65,6 +80,10 @@ void DCBasicBlock::saveAllLiveRegs() {
     auto *RegValue = RegValues[RI];
     if (!RegValue)
       continue;
+
+    if (auto *RegDefI = dyn_cast<Instruction>(RegValue))
+      Builder.SetCurrentDebugLocation(RegDefI->getDebugLoc());
+
     auto *RegAlloca = DCF.getOrCreateRegAlloca(RI);
     Builder.CreateStore(
         Builder.CreateBitCast(RegValue, RegAlloca->getAllocatedType()),

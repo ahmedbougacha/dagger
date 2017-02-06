@@ -25,6 +25,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
+#include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/Debug.h"
@@ -60,6 +61,21 @@ DCInstruction::DCInstruction(DCBasicBlock &DCB, const MCDecodedInst &MCI,
       SemaIdx(OpcodeToSemaIdx[MCI.Inst.getOpcode()]), ResTys(), Vals(),
       OpcodeToSemaIdx(OpcodeToSemaIdx), SemanticsArray(SemanticsArray),
       ConstantArray(ConstantArray) {
+
+  if (auto *DebugStream = getParentModule().getDebugStream()) {
+    auto &MIP = getTranslator().getInstPrinter();
+    auto &STI = getTranslator().getSubtargetInfo();
+
+    const auto StartLine = getParentModule().incrementDebugLine();
+    MIP.printInst(&TheMCInst.Inst, *DebugStream,
+                  "@ 0x" + utohexstr(TheMCInst.Address), STI);
+
+    *DebugStream << "\n";
+
+    Builder.SetCurrentDebugLocation(
+        DILocation::get(getContext(), StartLine, /*Column=*/0,
+                        getParentFunction().getDebugScope()));
+  }
 
   if (EnableMockIntrin) {
     Function *StartInstIntrin =

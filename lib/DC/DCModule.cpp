@@ -13,17 +13,82 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include <dlfcn.h>
 
 using namespace llvm;
+
+#define DEBUG_TYPE "dc-module"
+
+static cl::opt<std::string> DebugInfoDir(
+    "debug-info-dir",
+    cl::desc("The path to a directory where synthetic source files can be "
+             "generated, enabling debug info emission, or an empty string to "
+             "disable debug info."));
 
 DCModule::DCModule(DCTranslator &DCT, Module &M)
     : DCT(DCT), TheModule(M),
       FuncTy(*FunctionType::get(Type::getVoidTy(getContext()),
                                 DCT.getRegSetDesc().RegSetType->getPointerTo(),
-                                /*isVarArg=*/false)) {}
+                                /*isVarArg=*/false)) {
 
-DCModule::~DCModule() {}
+  if (!DebugInfoDir.empty())
+    initializeDebugInfo(DebugInfoDir);
+}
+
+void DCModule::initializeDebugInfo(StringRef OutputDirectory) {
+  SmallString<128> DebugDirPath = OutputDirectory;
+  if (auto EC = sys::fs::make_absolute(DebugDirPath)) {
+    DEBUG(dbgs() << "Invalid debug info directory: " << EC.message() << "\n");
+    return;
+  }
+
+  if (auto EC = sys::fs::create_directory(DebugDirPath)) {
+    DEBUG(dbgs() << "Failed to create debug info directory: " << EC.message()
+                 << "\n");
+    return;
+  }
+
+  SmallString<128> DebugPathModel = DebugDirPath;
+  sys::path::append(DebugPathModel, TheModule.getName() + ".s");
+  SmallString<128> DebugPath;
+  int DebugFD = -1;
+  if (auto EC = sys::fs::createUniqueFile(DebugPathModel, DebugFD, DebugPath)) {
+    DEBUG(dbgs() << "Failed to write debug info .s: " << EC.message() << "\n");
+    return;
+  }
+
+  DebugStream.emplace(DebugFD, /*shouldClose=*/true);
+  DEBUG(dbgs() << "Opened debug info .s: " << DebugPath << "\n");
+
+  DebugBuilder.reset(new DIBuilder(TheModule, /*AllowUnresolved=*/false));
+
+  SmallString<128> CurrentPath;
+  if (sys::fs::current_path(CurrentPath))
+    CurrentPath.clear();
+
+  DebugFile = DebugBuilder->createFile(DebugPath, CurrentPath);
+
+  // FIXME: Look into lang type
+  DebugBuilder->createCompileUnit(dwarf::DW_LANG_C, DebugFile,
+                                  /*Producer=*/"LLVM-DC" LLVM_VERSION_STRING,
+                                  /*isOptimized=*/false,
+                                  /*Flags=*/"", /*RV=*/0);
+
+  // FIXME: Meaning?
+  TheModule.addModuleFlag(Module::Error, "Dwarf Version", 2);
+  TheModule.addModuleFlag(Module::Error, "Debug Info Version", 3);
+
+  DebugFnTy = DebugBuilder->createSubroutineType(
+      DebugBuilder->getOrCreateTypeArray({}));
+}
+
+DCModule::~DCModule() {
+  if (DebugBuilder)
+    DebugBuilder->finalize();
+}
 
 std::string DCModule::getFunctionName(uint64_t Addr) {
   return "fn_" + utohexstr(Addr);
@@ -33,6 +98,8 @@ Function *DCModule::getOrCreateFunction(uint64_t Addr) {
   return cast<Function>(
       getModule()->getOrInsertFunction(getFunctionName(Addr), getFuncTy()));
 }
+
+unsigned DCModule::incrementDebugLine() { return DebugLine++; }
 
 Function *DCModule::createExternalWrapperFunction(uint64_t Addr,
                                                   StringRef Name) {

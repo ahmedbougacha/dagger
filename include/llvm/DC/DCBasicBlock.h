@@ -39,6 +39,9 @@ class DCBasicBlock {
 
   std::vector<Value *> RegValues;
 
+  /// The debug location of the start of the block.
+  DILocation *DebugLoc = nullptr;
+
 protected:
   IRBuilder<NoFolder> Builder;
 
