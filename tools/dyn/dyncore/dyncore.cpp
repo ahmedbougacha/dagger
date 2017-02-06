@@ -405,7 +405,7 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
   LLVMContext Ctx;
 
   std::unique_ptr<DCTranslator> DT(TheTarget->createDCTranslator(
-      Triple(TripleName), Ctx, DL, /*OptLevel=*/2, *MII, *MRI));
+      Triple(TripleName), Ctx, DL, /*OptLevel=*/2, *MII, *MRI, *STI, *MIP));
   if (!DT) {
     errs() << "error: no dc translator for target " << TripleName << "\n";
     exit(1);

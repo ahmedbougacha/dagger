@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
   LLVMContext Ctx;
 
   std::unique_ptr<DCTranslator> DT(TheTarget->createDCTranslator(
-      Triple(TripleName), Ctx, DL, TransOptLevel, *MII, *MRI));
+      Triple(TripleName), Ctx, DL, TransOptLevel, *MII, *MRI, *STI, *MIP));
   if (!DT) {
     errs() << "error: no dc translator for target " << TripleName << "\n";
     return 1;

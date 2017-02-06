@@ -177,7 +177,8 @@ public:
 
   typedef DCTranslator *(*DCTranslatorCtorTy)(
       const Triple &TT, LLVMContext &Ctx, const DataLayout &DL,
-      unsigned OptLevel, const MCInstrInfo &MII, const MCRegisterInfo &MRI);
+      unsigned OptLevel, const MCInstrInfo &MII, const MCRegisterInfo &MRI,
+      const MCSubtargetInfo &STI, MCInstPrinter &MIP);
 
 private:
   /// Next - The next registered target in the linked list, maintained by the
@@ -586,13 +587,16 @@ public:
   /// \param OptLevel How optimized the output should be (0-3).
   /// \param MII  The target-provided instruction info.
   /// \param MRI  The target-provided register info.
+  /// \param STI  The target-provided subtarget info.
+  /// \param MIP  The target-provided inst printer (to emit the debug file).
   DCTranslator *createDCTranslator(const Triple &TT, LLVMContext &Ctx,
-                                   const DataLayout &DL,
-                                   unsigned OptLevel,
+                                   const DataLayout &DL, unsigned OptLevel,
                                    const MCInstrInfo &MII,
-                                   const MCRegisterInfo &MRI) const {
+                                   const MCRegisterInfo &MRI,
+                                   const MCSubtargetInfo &STI,
+                                   MCInstPrinter &MIP) const {
     if (DCTranslatorCtorFn)
-      return DCTranslatorCtorFn(TT, Ctx, DL, OptLevel, MII, MRI);
+      return DCTranslatorCtorFn(TT, Ctx, DL, OptLevel, MII, MRI, STI, MIP);
     return nullptr;
   }
 

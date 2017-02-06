@@ -36,14 +36,18 @@ class DCModule;
 class MCBasicBlock;
 class MCDecodedInst;
 class MCFunction;
+class MCInstPrinter;
 class MCInstrInfo;
 class MCRegisterInfo;
+class MCSubtargetInfo;
 
 class DCTranslator {
   LLVMContext &Ctx;
   const DataLayout DL;
   const MCInstrInfo &MII;
   const MCRegisterInfo &MRI;
+  const MCSubtargetInfo &STI;
+  MCInstPrinter &MIP;
 
   const DCRegisterSetDesc RegSetDesc;
 
@@ -63,11 +67,14 @@ public:
   /// \param OptLevel How optimized the output should be (0-3).
   DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel,
                const MCInstrInfo &MII, const MCRegisterInfo &MRI,
+               const MCSubtargetInfo &STI, MCInstPrinter &MIP,
                const DCRegisterSetDesc RegSetDesc);
   virtual ~DCTranslator();
 
   const MCInstrInfo &getMII() const { return MII; }
   const MCRegisterInfo &getMRI() const { return MRI; }
+  MCInstPrinter &getInstPrinter() const { return MIP; }
+  const MCSubtargetInfo &getSubtargetInfo() const { return STI; }
   const DCRegisterSetDesc &getRegSetDesc() const { return RegSetDesc; }
   const DataLayout &getDataLayout() const { return DL; }
 

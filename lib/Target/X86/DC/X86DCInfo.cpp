@@ -4,13 +4,13 @@
 
 using namespace llvm;
 
-static DCTranslator *createX86DCTranslator(const Triple &TT, LLVMContext &Ctx,
-                                           const DataLayout &DL,
-                                           unsigned OptLevel,
-                                           const MCInstrInfo &MII,
-                                           const MCRegisterInfo &MRI) {
+static DCTranslator *
+createX86DCTranslator(const Triple &TT, LLVMContext &Ctx, const DataLayout &DL,
+                      unsigned OptLevel, const MCInstrInfo &MII,
+                      const MCRegisterInfo &MRI, const MCSubtargetInfo &STI,
+                      MCInstPrinter &MIP) {
   (void)TT;
-  return new X86DCTranslator(Ctx, DL, OptLevel, MII, MRI);
+  return new X86DCTranslator(Ctx, DL, OptLevel, MII, MRI, STI, MIP);
 }
 
 // Force static initialization.

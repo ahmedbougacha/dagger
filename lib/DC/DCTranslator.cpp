@@ -34,9 +34,11 @@ using namespace llvm;
 DCTranslator::DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                            unsigned OptLevel, const MCInstrInfo &MII,
                            const MCRegisterInfo &MRI,
+                           const MCSubtargetInfo &STI, MCInstPrinter &MIP,
                            const DCRegisterSetDesc RegSetDesc)
-    : Ctx(Ctx), DL(DL), MII(MII), MRI(MRI), RegSetDesc(RegSetDesc), ModuleSet(),
-      CurrentModule(nullptr), CurrentFPM(), OptLevel(OptLevel) {}
+    : Ctx(Ctx), DL(DL), MII(MII), MRI(MRI), STI(STI), MIP(MIP),
+      RegSetDesc(RegSetDesc), ModuleSet(), CurrentModule(nullptr), CurrentFPM(),
+      OptLevel(OptLevel) {}
 
 Module *DCTranslator::finalizeTranslationModule() {
   Module *OldModule = CurrentModule;

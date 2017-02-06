@@ -20,8 +20,9 @@ using namespace llvm;
 
 X86DCTranslator::X86DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                                  unsigned OptLevel, const MCInstrInfo &MII,
-                                 const MCRegisterInfo &MRI)
-    : DCTranslator(Ctx, DL, OptLevel, MII, MRI,
+                                 const MCRegisterInfo &MRI,
+                                 const MCSubtargetInfo &STI, MCInstPrinter &MIP)
+    : DCTranslator(Ctx, DL, OptLevel, MII, MRI, STI, MIP,
                    DCRegisterSetDesc(Ctx, MRI, X86::RegClassVTs)) {
   initializeTranslationModule();
 }

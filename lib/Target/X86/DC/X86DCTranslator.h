@@ -17,7 +17,8 @@ namespace llvm {
 class X86DCTranslator final : public DCTranslator {
 public:
   X86DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel,
-                  const MCInstrInfo &MII, const MCRegisterInfo &MRI);
+                  const MCInstrInfo &MII, const MCRegisterInfo &MRI,
+                  const MCSubtargetInfo &STI, MCInstPrinter &MIP);
 
   virtual ~X86DCTranslator();
 

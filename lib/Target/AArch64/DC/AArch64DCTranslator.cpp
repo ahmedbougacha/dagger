@@ -33,8 +33,10 @@ static DCRegisterSetDesc buildAArch64RegSetDesc(LLVMContext &Ctx,
 AArch64DCTranslator::AArch64DCTranslator(LLVMContext &Ctx, const DataLayout &DL,
                                          unsigned OptLevel,
                                          const MCInstrInfo &MII,
-                                         const MCRegisterInfo &MRI)
-    : DCTranslator(Ctx, DL, OptLevel, MII, MRI,
+                                         const MCRegisterInfo &MRI,
+                                         const MCSubtargetInfo &STI,
+                                         MCInstPrinter &MIP)
+    : DCTranslator(Ctx, DL, OptLevel, MII, MRI, STI, MIP,
                    buildAArch64RegSetDesc(Ctx, MRI)) {
   initializeTranslationModule();
 }

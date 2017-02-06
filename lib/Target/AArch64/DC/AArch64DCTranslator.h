@@ -17,7 +17,8 @@ namespace llvm {
 class AArch64DCTranslator final : public DCTranslator {
 public:
   AArch64DCTranslator(LLVMContext &Ctx, const DataLayout &DL, unsigned OptLevel,
-                      const MCInstrInfo &MII, const MCRegisterInfo &MRI);
+                      const MCInstrInfo &MII, const MCRegisterInfo &MRI,
+                      const MCSubtargetInfo &STI, MCInstPrinter &MIP);
   virtual ~AArch64DCTranslator();
 
 protected:

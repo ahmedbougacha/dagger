@@ -7,9 +7,10 @@ using namespace llvm;
 static DCTranslator *
 createAArch64DCTranslator(const Triple &TT, LLVMContext &Ctx,
                           const DataLayout &DL, unsigned OptLevel,
-                          const MCInstrInfo &MII, const MCRegisterInfo &MRI) {
+                          const MCInstrInfo &MII, const MCRegisterInfo &MRI,
+                          const MCSubtargetInfo &STI, MCInstPrinter &MIP) {
   (void)TT;
-  return new AArch64DCTranslator(Ctx, DL, OptLevel, MII, MRI);
+  return new AArch64DCTranslator(Ctx, DL, OptLevel, MII, MRI, STI, MIP);
 }
 
 // Force static initialization.
