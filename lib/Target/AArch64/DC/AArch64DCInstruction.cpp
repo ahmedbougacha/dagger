@@ -113,6 +113,7 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
 
     return R;
   }
+  case AArch64::OpTypes::movimm64_shift:
   case AArch64::OpTypes::movimm32_shift:
   case AArch64::OpTypes::movimm32_imm: {
     const uint64_t Imm = getImmOp(MIOperandNo);

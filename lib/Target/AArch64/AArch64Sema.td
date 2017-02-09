@@ -61,3 +61,6 @@ def : Semantics<SUBXri, [(set GPR64sp:$Rd, (sub GPR64sp:$Rn, addsub_shifted_imm6
 
 // Move Instructions
 def : Semantics<MOVZWi, [(set GPR32:$Rd, (shl movimm32_imm:$imm, movimm32_shift:$shift))]>;
+def : Semantics<MOVZXi, [(set GPR64:$Rd, (zext (shl movimm32_imm:$imm, movimm64_shift:$shift)))]>;
+def : Semantics<MOVNWi, [(set GPR32:$Rd, (xor (shl movimm32_imm:$imm, movimm32_shift:$shift), -1))]>;
+def : Semantics<MOVNXi, [(set GPR64:$Rd, (xor (zext (shl movimm32_imm:$imm, movimm64_shift:$shift)), -1))]>;
