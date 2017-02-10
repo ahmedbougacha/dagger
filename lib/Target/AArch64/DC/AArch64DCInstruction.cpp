@@ -51,6 +51,13 @@ bool AArch64DCInstruction::translateTargetInst() {
     Builder.CreateBr(getParent().getParent().getExitBlock());
     return true;
   }
+  case AArch64::HINT: {
+    unsigned Op0 = getImmOp(0);
+    switch(Op0) {
+      case 0: // NOP
+        return true;
+    }
+  }
   }
   return false;
 }
