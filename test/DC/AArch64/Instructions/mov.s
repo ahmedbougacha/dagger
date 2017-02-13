@@ -26,14 +26,23 @@ mov	b16, v17.b[0]
 
 ;; MOVNWi
 ; CHECK-LABEL: call void @llvm.dc.startinst
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
+; CHECK-NEXT: [[V1:%.+]] = shl i32 0, 0
+; CHECK-NEXT: [[V2:%.+]] = xor i32 [[V1]], -1
+; CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V2]], metadata !"W16")
 mov	w16, #-1
 
 ;; MOVNXi
 ; CHECK-LABEL: call void @llvm.dc.startinst
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
+; CHECK-NEXT: [[V1:%.+]] = shl i32 0, 0
+; CHECK-NEXT: [[V2:%.+]] = zext i32 [[V1]] to i64
+; CHECK-NEXT: [[V3:%.+]] = xor i64 [[V2]], -1
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V3]], metadata !"X16")
 mov	x16, #-1
 
 ;; MOVZWi
@@ -47,8 +56,12 @@ mov	w16, #0
 
 ;; MOVZXi
 ; CHECK-LABEL: call void @llvm.dc.startinst
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
+; CHECK-NEXT: [[V1:%.+]] = shl i32 0, 0
+; CHECK-NEXT: [[V2:%.+]] = zext i32 [[V1]] to i64
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V2]], metadata !"X16")
 mov	x16, #0
 
 ;; UMOVvi32
