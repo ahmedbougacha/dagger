@@ -2,48 +2,72 @@
 
 ## BLSI32rm
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 blsil	2(%rbx,%r14,2), %r8d
 
 ## BLSI32rr
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 blsil	%r9d, %r8d
 
 ## BLSI64rm
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 blsiq	2(%rbx,%r14,2), %r11
 
 ## BLSI64rr
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 blsiq	%rbx, %r11
 
 ## BLSIC32rm
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 blsic	2(%rbx,%r14,2), %r8d
 
 ## BLSIC32rr
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 blsic	%r9d, %r8d
 
 ## BLSIC64rm
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 blsic	2(%rbx,%r14,2), %r11
 
 ## BLSIC64rr
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 blsic	%rbx, %r11

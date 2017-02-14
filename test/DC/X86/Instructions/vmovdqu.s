@@ -35,12 +35,18 @@ vmovdqu	2(%rbx,%r14,2), %ymm8
 
 ## VMOVDQUYrr
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 vmovdqu	%ymm9, %ymm8
 
 ## VMOVDQUYrr_REV:	vmovdqu	%ymm9, %ymm8
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x41; .byte 0x7e; .byte 0x7f; .byte 0xc8
@@ -80,12 +86,18 @@ vmovdqu	2(%rbx,%r14,2), %xmm8
 
 ## VMOVDQUrr
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 vmovdqu	%xmm9, %xmm8
 
 ## VMOVDQUrr_REV:	vmovdqu	%xmm9, %xmm8
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x41; .byte 0x7a; .byte 0x7f; .byte 0xc8

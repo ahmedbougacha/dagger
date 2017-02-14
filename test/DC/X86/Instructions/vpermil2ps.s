@@ -128,12 +128,18 @@ vpermil2ps	$2, %ymm11, %ymm10, %ymm9, %ymm8
 
 ## VPERMIL2PSrrY_REV:	vpermil2ps	$2, %ymm11, %ymm10, %ymm9, %ymm8
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x43; .byte 0xb5; .byte 0x48; .byte 0xc3; .byte 0xa2
 
 ## VPERMIL2PSrr_REV:	vpermil2ps	$2, %xmm11, %xmm10, %xmm9, %xmm8
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x43; .byte 0xb1; .byte 0x48; .byte 0xc3; .byte 0xa2

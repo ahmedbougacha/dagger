@@ -2,6 +2,9 @@
 
 ;; SQSHLUb
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshlu	b16, b17, #0
@@ -19,6 +22,9 @@ sqshlu	d16, d17, #0
 
 ;; SQSHLUh
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshlu	h16, h17, #0

@@ -215,13 +215,6 @@ void DCInstruction::translateCastOp(Instruction::CastOps Opc) {
 }
 
 bool DCInstruction::tryTranslateInst() {
-  if (translateTargetInst())
-    return true;
-
-  SemaIdx = OpcodeToSemaIdx[TheMCInst.Inst.getOpcode()];
-  if (SemaIdx == ~0U)
-    return false;
-
   {
     // Increment the PC before anything.
     const unsigned PCReg = getTranslator().getMRI().getProgramCounter();
@@ -229,6 +222,13 @@ bool DCInstruction::tryTranslateInst() {
     setReg(PCReg, Builder.CreateAdd(OldPC, ConstantInt::get(OldPC->getType(),
                                                             TheMCInst.Size)));
   }
+
+  if (translateTargetInst())
+    return true;
+
+  SemaIdx = OpcodeToSemaIdx[TheMCInst.Inst.getOpcode()];
+  if (SemaIdx == ~0U)
+    return false;
 
   unsigned Opcode;
   while ((Opcode = Next()) != DCINS::END_OF_INSTRUCTION)

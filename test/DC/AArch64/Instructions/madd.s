@@ -2,12 +2,18 @@
 
 ;; MADDWrrr
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 madd	w16, w17, w18, w19
 
 ;; MADDXrrr
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 madd	x16, x17, x18, x19

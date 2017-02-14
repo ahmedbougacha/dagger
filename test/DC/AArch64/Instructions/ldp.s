@@ -2,90 +2,135 @@
 
 ;; LDPDi
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp		d16, d17, [x18]
 
 ;; LDPDpost
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	d17, d18, [x16], #0
 
 ;; LDPDpre
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	d17, d18, [x16, #0]!
 
 ;; LDPQi
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp		q16, q17, [x18]
 
 ;; LDPQpost
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	q17, q18, [x16], #0
 
 ;; LDPQpre
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	q17, q18, [x16, #0]!
 
 ;; LDPSi
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp		s16, s17, [x18]
 
 ;; LDPSpost
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	s17, s18, [x16], #0
 
 ;; LDPSpre
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	s17, s18, [x16, #0]!
 
 ;; LDPWi
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp		w16, w17, [x18]
 
 ;; LDPWpost
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	w17, w18, [x16], #0
 
 ;; LDPWpre
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	w17, w18, [x16, #0]!
 
 ;; LDPXi
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp		x16, x17, [x18]
 
 ;; LDPXpost
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	x17, x18, [x16], #0
 
 ;; LDPXpre
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 ldp	x17, x18, [x16, #0]!

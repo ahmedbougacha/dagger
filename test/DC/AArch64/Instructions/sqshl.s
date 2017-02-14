@@ -2,6 +2,9 @@
 
 ;; SQSHLb
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	b16, b17, #0
@@ -19,6 +22,9 @@ sqshl	d16, d17, #0
 
 ;; SQSHLh
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	h16, h17, #0
@@ -36,6 +42,9 @@ sqshl	s16, s17, #0
 
 ;; SQSHLv16i8
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	v16.16b, v17.16b, v18.16b
@@ -54,30 +63,45 @@ sqshl	v16.16b, v17.16b, #0
 
 ;; SQSHLv1i16
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	h16, h17, h18
 
 ;; SQSHLv1i32
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	s16, s17, s18
 
 ;; SQSHLv1i64
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	d16, d17, d18
 
 ;; SQSHLv1i8
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	b16, b17, b18
 
 ;; SQSHLv2i32
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	v16.2s, v17.2s, v18.2s
@@ -96,6 +120,9 @@ sqshl	v16.2s, v17.2s, #0
 
 ;; SQSHLv2i64
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	v16.2d, v17.2d, v18.2d
@@ -114,6 +141,9 @@ sqshl	v16.2d, v17.2d, #0
 
 ;; SQSHLv4i16
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	v16.4h, v17.4h, v18.4h
@@ -132,6 +162,9 @@ sqshl	v16.4h, v17.4h, #0
 
 ;; SQSHLv4i32
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	v16.4s, v17.4s, v18.4s
@@ -150,6 +183,9 @@ sqshl	v16.4s, v17.4s, #0
 
 ;; SQSHLv8i16
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	v16.8h, v17.8h, v18.8h
@@ -168,6 +204,9 @@ sqshl	v16.8h, v17.8h, #0
 
 ;; SQSHLv8i8
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 sqshl	v16.8b, v17.8b, v18.8b

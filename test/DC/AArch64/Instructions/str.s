@@ -2,30 +2,45 @@
 
 ;; STRBpost
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 str	b17, [x16], #0
 
 ;; STRBpre
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 str	b17, [x16, #0]!
 
 ;; STRBroW
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 str	b16, [x17, w18, uxtw]
 
 ;; STRBroX
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 str		b16, [x17, x18]
 
 ;; STRBui
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 str		b16, [x17]
@@ -220,6 +235,9 @@ str		q16, [x17, x18]
 
 ;; STRQui
 ; CHECK-LABEL: call void @llvm.dc.startinst
+; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
+; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
+; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 str		q16, [x17]

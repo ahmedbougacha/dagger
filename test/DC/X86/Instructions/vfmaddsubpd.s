@@ -64,6 +64,9 @@ vfmaddsubpd	%ymm11, %ymm10, %ymm9, %ymm8
 
 ## VFMADDSUBPD4Yrr_REV:	vfmaddsubpd	%ymm11, %ymm10, %ymm9, %ymm8
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x43; .byte 0x35; .byte 0x5d; .byte 0xc2; .byte 0xb0
@@ -132,6 +135,9 @@ vfmaddsubpd	%xmm11, %xmm10, %xmm9, %xmm8
 
 ## VFMADDSUBPD4rr_REV:	vfmaddsubpd	%xmm11, %xmm10, %xmm9, %xmm8
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x43; .byte 0x31; .byte 0x5d; .byte 0xc2; .byte 0xb0

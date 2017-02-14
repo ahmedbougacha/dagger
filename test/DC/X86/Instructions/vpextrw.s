@@ -26,6 +26,9 @@ vpextrw	$2, %xmm9, %r8d
 
 ## VPEXTRWrr_REV:	vpextrw	$2, %xmm9, %r8d
 # CHECK-LABEL: call void @llvm.dc.startinst
+# CHECK-NEXT: [[RIP_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RIP")
+# CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
+# CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
 # CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x43; .byte 0x79; .byte 0x15; .byte 0xc8; .byte 0x02
