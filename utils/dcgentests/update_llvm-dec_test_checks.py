@@ -106,7 +106,11 @@ def main():
                 else:
                     new_inst = ""
                 for u in valuse_re.split(inst):
-                    if u.startswith('%'):
+                    if u.startswith('%regset'):
+                        new_inst += u
+                    elif u.startswith('%0'):
+                        new_inst += u
+                    elif u.startswith('%'):
                         new_inst += "[[" + val_to_pat_id[u[1:]] + "]]"
                     else:
                         new_inst += u
