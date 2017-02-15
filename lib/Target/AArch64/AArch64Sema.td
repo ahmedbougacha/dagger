@@ -27,9 +27,6 @@ def : Semantics<BLR, [(set LR, PC), (AArch64call GPR64:$Rn)]>;
 // Memory Access Instructions
 //===
 
-// Load Instructions
-
-
 // LDR
 def : Semantics<LDRWl, [(set GPR32:$Rt,  (load am_ldrlit:$label))]>;
 def : Semantics<LDRXl, [(set GPR64:$Rt,  (load am_ldrlit:$label))]>;
@@ -37,30 +34,44 @@ def : Semantics<LDRSl, [(set FPR32:$Rt,  (f32 (load am_ldrlit:$label)))]>;
 def : Semantics<LDRDl, [(set FPR64:$Rt,  (f64 (load am_ldrlit:$label)))]>;
 def : Semantics<LDRQl, [(set FPR128:$Rt, (f128 (load am_ldrlit:$label)))]>;
 
-// Store Instructions: given a register, regtype, and operand type generates
+// Load/Store Instructions: given a register, regtype, and operand type generates
 // semantics for offset, pre, and post addressing modes
-multiclass StorePairPrePostIndex<string regname, RegisterClass regtype, ValueType Ty, int scale> {
+multiclass LoadStorePairPrePostIndex<string regname, RegisterClass regtype, ValueType Ty, int scale> {
   def : Semantics<!cast<Instruction>("STP" # regname # "i"), [
           (store (Ty regtype:$Rt), (bitconvert (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))),
           (store (Ty regtype:$Rt2), (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))]>;
+
+  def : Semantics<!cast<Instruction>("LDP" # regname # "i"), [
+          (set (Ty regtype:$Rt), (Ty (load (bitconvert (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))),
+          (set (Ty regtype:$Rt2), (Ty (load (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))))]>;
 
   def : Semantics<!cast<Instruction>("STP" # regname # "pre"), [
           (store (Ty regtype:$Rt), (bitconvert (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))),
           (store (Ty regtype:$Rt2), (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset))))),
           (set GPR64sp:$wback, (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))]>;
 
+  def : Semantics<!cast<Instruction>("LDP" # regname # "pre"), [
+          (set (Ty regtype:$Rt), (Ty (load (bitconvert (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))),
+          (set (Ty regtype:$Rt2), (Ty (load (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset))))))),
+          (set GPR64sp:$wback, (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))]>;
+
   def : Semantics<!cast<Instruction>("STP" # regname # "post"), [
           (store (Ty regtype:$Rt), GPR64sp:$Rn),
           (store (Ty regtype:$Rt2), (bitconvert (add scale, GPR64sp:$Rn))),
           (set GPR64sp:$wback, (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))]>;
+
+  def : Semantics<!cast<Instruction>("LDP" # regname # "post"), [
+          (set (Ty regtype:$Rt), (Ty (load GPR64sp:$Rn))),
+          (set (Ty regtype:$Rt2), (Ty (load (bitconvert (add scale, GPR64sp:$Rn))))),
+          (set GPR64sp:$wback, (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))]>;
 }
 
-// STP instructions
-defm : StorePairPrePostIndex<"W", GPR32, i32, 4>;
-defm : StorePairPrePostIndex<"X", GPR64, i64, 8>;
-defm : StorePairPrePostIndex<"S", FPR32, f32, 4>;
-defm : StorePairPrePostIndex<"D", FPR64, f64, 8>;
-defm : StorePairPrePostIndex<"Q", FPR128, f128, 16>;
+// LSP/STP instructions
+defm : LoadStorePairPrePostIndex<"W", GPR32, i32, 4>;
+defm : LoadStorePairPrePostIndex<"X", GPR64, i64, 8>;
+defm : LoadStorePairPrePostIndex<"S", FPR32, f32, 4>;
+defm : LoadStorePairPrePostIndex<"D", FPR64, f64, 8>;
+defm : LoadStorePairPrePostIndex<"Q", FPR128, f128, 16>;
 
 //===
 // Data Processing Instructions
