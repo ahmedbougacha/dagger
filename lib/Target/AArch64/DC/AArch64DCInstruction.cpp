@@ -93,16 +93,19 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
       return nullptr;
     return ConstantInt::get(getResultTy(0), Imm);
   }
-  case AArch64::OpTypes::am_bl_target: {
+  case AArch64::OpTypes::am_bl_target:
+  case AArch64::OpTypes::am_ldrlit: {
     auto *ResTy = Builder.getInt8PtrTy();
 
-    // bl target is an offset in number of (4byte) instructions from PC
+    // target is an offset in number of (4byte) instructions from PC
     // target = PC + (imm * 4)
     // TODO: add check that offset is +-128MB from PC?
+    //       aml_ldrlit is identical except +-1MB from PC.
     signed offset = getImmOp(MIOperandNo)*4;
-    Value *blTarget = Builder.getInt64(TheMCInst.Address + offset);
-    return Builder.CreateIntToPtr(blTarget, ResTy);
+    Value *immTarget = Builder.getInt64(TheMCInst.Address + offset);
+    return Builder.CreateIntToPtr(immTarget, ResTy);
   }
+
   case AArch64::OpTypes::logical_shifted_reg32:
   case AArch64::OpTypes::logical_shifted_reg64: {
     Value *R = getReg(getRegOp(MIOperandNo));

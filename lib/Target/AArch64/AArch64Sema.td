@@ -27,6 +27,16 @@ def : Semantics<BLR, [(set LR, PC), (AArch64call GPR64:$Rn)]>;
 // Memory Access Instructions
 //===
 
+// Load Instructions
+
+
+// LDR
+def : Semantics<LDRWl, [(set GPR32:$Rt,  (load am_ldrlit:$label))]>;
+def : Semantics<LDRXl, [(set GPR64:$Rt,  (load am_ldrlit:$label))]>;
+def : Semantics<LDRSl, [(set FPR32:$Rt,  (f32 (load am_ldrlit:$label)))]>;
+def : Semantics<LDRDl, [(set FPR64:$Rt,  (f64 (load am_ldrlit:$label)))]>;
+def : Semantics<LDRQl, [(set FPR128:$Rt, (f128 (load am_ldrlit:$label)))]>;
+
 // Store Instructions: given a register, regtype, and operand type generates
 // semantics for offset, pre, and post addressing modes
 multiclass StorePairPrePostIndex<string regname, RegisterClass regtype, ValueType Ty, int scale> {
