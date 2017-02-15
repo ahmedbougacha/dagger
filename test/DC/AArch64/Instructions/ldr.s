@@ -50,8 +50,11 @@ ldr		b16, [x17]
 ; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[V1:%.+]] = inttoptr i64 20 to i8*
+; CHECK-NEXT: [[V2:%.+]] = bitcast i8* [[V1]] to double*
+; CHECK-NEXT: [[V3:%.+]] = load double, double* [[V2]], align 1
+; CHECK-NEXT: [[V4:%.+]] = bitcast double [[V3]] to i64
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V4]], metadata !"D16")
 ldr	d16, #0
 
 ;; LDRDpost
@@ -159,8 +162,11 @@ ldr		h16, [x17]
 ; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[V1:%.+]] = inttoptr i64 64 to i8*
+; CHECK-NEXT: [[V2:%.+]] = bitcast i8* [[V1]] to fp128*
+; CHECK-NEXT: [[V3:%.+]] = load fp128, fp128* [[V2]], align 1
+; CHECK-NEXT: [[V4:%.+]] = bitcast fp128 [[V3]] to i128
+; CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V4]], metadata !"Q16")
 ldr	q16, #0
 
 ;; LDRQpost
@@ -218,8 +224,11 @@ ldr		q16, [x17]
 ; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[V1:%.+]] = inttoptr i64 88 to i8*
+; CHECK-NEXT: [[V2:%.+]] = bitcast i8* [[V1]] to float*
+; CHECK-NEXT: [[V3:%.+]] = load float, float* [[V2]], align 1
+; CHECK-NEXT: [[V4:%.+]] = bitcast float [[V3]] to i32
+; CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V4]], metadata !"S16")
 ldr	s16, #0
 
 ;; LDRSpost
@@ -277,8 +286,10 @@ ldr		s16, [x17]
 ; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[V1:%.+]] = inttoptr i64 112 to i8*
+; CHECK-NEXT: [[V2:%.+]] = bitcast i8* [[V1]] to i32*
+; CHECK-NEXT: [[V3:%.+]] = load i32, i32* [[V2]], align 1
+; CHECK-NEXT: call void @llvm.dc.setreg.i32(i32 [[V3]], metadata !"W16")
 ldr	w16, #0
 
 ;; LDRWpost
@@ -336,8 +347,10 @@ ldr		w16, [x17]
 ; CHECK-NEXT: [[PC_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"PC")
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
-; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
+; CHECK-NEXT: [[V1:%.+]] = inttoptr i64 136 to i8*
+; CHECK-NEXT: [[V2:%.+]] = bitcast i8* [[V1]] to i64*
+; CHECK-NEXT: [[V3:%.+]] = load i64, i64* [[V2]], align 1
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V3]], metadata !"X16")
 ldr	x16, #0
 
 ;; LDRXpost
