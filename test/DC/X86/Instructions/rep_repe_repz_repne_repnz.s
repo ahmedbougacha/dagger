@@ -2,6 +2,8 @@
 
 # XFAIL: *
 
+# CHECK: @llvm.dc.startinst
+
 ## REPNE_PREFIX
 repne
 ## REP_PREFIX

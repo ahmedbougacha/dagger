@@ -2,6 +2,8 @@
 
 # XFAIL: *
 
+# CHECK: @llvm.dc.startinst
+
 ## SBB16i16
 sbbw	$305419896, %ax
 ## SBB16mi

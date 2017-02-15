@@ -2,6 +2,8 @@
 
 # XFAIL: *
 
+# CHECK: @llvm.dc.startinst
+
 ## SHUFPDrmi
 shufpd	$2, 2(%r14,%r15,2), %xmm8
 ## SHUFPDrri

@@ -2,6 +2,8 @@
 
 # XFAIL: *
 
+# CHECK: @llvm.dc.startinst
+
 ## SETAEm
 setae	2(%r11,%rbx,2)
 ## SETAEr

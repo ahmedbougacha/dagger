@@ -2,6 +2,8 @@
 
 # XFAIL: *
 
+# CHECK: @llvm.dc.startinst
+
 ## CMOVA16rm
 cmovaw	2(%r14,%r15,2), %r8w
 ## CMOVA16rr

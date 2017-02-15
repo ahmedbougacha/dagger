@@ -2,6 +2,8 @@
 
 # XFAIL: *
 
+# CHECK: @llvm.dc.startinst
+
 ## VSHUFPDYrmi
 vshufpd	$2, 2(%r14,%r15,2), %ymm9, %ymm8
 ## VSHUFPDYrri
