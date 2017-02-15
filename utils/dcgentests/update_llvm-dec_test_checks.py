@@ -5,6 +5,10 @@ import itertools
 import re
 import subprocess
 
+def overwrite_file(path, output_lines):
+    with open(path, 'w') as f:
+        f.write('\n'.join(output_lines) + '\n')
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--llvm-obj', help='The build dir to use')
@@ -37,11 +41,21 @@ def main():
         with open(test) as f:
             raw_test_lines = [l.rstrip() for l in f]
 
-        test_lines = raw_test_lines
+        test_lines = []
+        for l in raw_test_lines:
+            if not l or l.startswith(COMMENT + ' CHECK'):
+                continue
+            if l.startswith(COMMENT + ' RUN:') or l.startswith(COMMENT + ' XFAIL:'):
+                continue
+            test_lines.append(l)
 
-        print COMMENT + ' RUN: llvm-mc -triple ' + TARGET + ' -filetype=obj -o - %s' \
-                ' | llvm-dec - -dc-translate-unknown-to-undef' \
-                ' -enable-dc-reg-mock-intrin | FileCheck %s\n'
+
+        output = []
+
+        output.append(
+           COMMENT + ' RUN: llvm-mc -triple ' + TARGET + ' -filetype=obj -o - %s' \
+           ' | llvm-dec - -dc-translate-unknown-to-undef' \
+           ' -enable-dc-reg-mock-intrin | FileCheck %s\n')
 
         # run llvm-dec and get the output
         try:
@@ -49,8 +63,9 @@ def main():
                 out = subprocess.check_output(mc_cmd + test + ' | ' + dec_cmd,
                                               shell=True, stdin=f)
         except subprocess.CalledProcessError:
-            print COMMENT + ' XFAIL: *\n'
-            print "\n".join(raw_test_lines)
+            output.append(COMMENT + ' XFAIL: *\n')
+            output.append("\n".join(test_lines))
+            overwrite_file(test, output)
             continue
 
         out_lines = [l.strip() for l in out.split('\n')]
@@ -120,19 +135,20 @@ def main():
         ni = iter(new_inst_blocks)
 
         for l in test_lines:
-            if not l or l.startswith(COMMENT + ' CHECK'):
-                continue
             if l.startswith(COMMENT):
-                print l
+                output.append(l)
                 continue
             if l != RETINST:
                 new_inst = ni.next()
-                print COMMENT + ' CHECK-LABEL: call void @llvm.dc.startinst'
+                output.append(COMMENT + ' CHECK-LABEL: call void @llvm.dc.startinst')
                 for c in new_inst:
-                    print COMMENT + ' CHECK-NEXT: ' + c
-            print l
+                    output.append(COMMENT + ' CHECK-NEXT: ' + c)
+            output.append(l)
             if l != RETINST:
-                print
+                output.append('')
+
+        # And replace the original file with the CHECK-line version.
+        overwrite_file(test, output)
 
 
 if __name__ == '__main__':
