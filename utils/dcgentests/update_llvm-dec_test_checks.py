@@ -64,6 +64,7 @@ def main():
                                               shell=True, stdin=f)
         except subprocess.CalledProcessError:
             output.append(COMMENT + ' XFAIL: *\n')
+            output.append(COMMENT + ' CHECK: @llvm.dc.startinst\n')
             output.append("\n".join(test_lines))
             overwrite_file(test, output)
             continue
