@@ -130,13 +130,32 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
     return ConstantInt::get(getResultTy(0), Imm);
   }
   case AArch64::OpTypes::simm7s4: {
-    return translateScaledImmediate(MIOperandNo, 4);
+    return translateScaledImmediate(MIOperandNo, 4, 32);
   }
   case AArch64::OpTypes::simm7s8: {
-    return translateScaledImmediate(MIOperandNo, 8);
+    return translateScaledImmediate(MIOperandNo, 8, 32);
   }
   case AArch64::OpTypes::simm7s16: {
-    return translateScaledImmediate(MIOperandNo, 16);
+    return translateScaledImmediate(MIOperandNo, 16, 32);
+  }
+  case AArch64::OpTypes::simm9: {
+    // simm9 is not scaled, so scale arg = 1
+    return translateScaledImmediate(MIOperandNo, 1, 64);
+  }
+  case AArch64::OpTypes::uimm12s1: {
+   return translateScaledImmediate(MIOperandNo, 1, 64);
+  }
+  case AArch64::OpTypes::uimm12s2: {
+    return translateScaledImmediate(MIOperandNo, 2, 64);
+  }
+  case AArch64::OpTypes::uimm12s4: {
+    return translateScaledImmediate(MIOperandNo, 4, 64);
+  }
+  case AArch64::OpTypes::uimm12s8: {
+    return translateScaledImmediate(MIOperandNo, 8, 64);
+  }
+  case AArch64::OpTypes::uimm12s16: {
+    return translateScaledImmediate(MIOperandNo, 16, 64);
   }
   default:
     errs() << "Unknown AArch64 operand type found in semantics: "
@@ -161,8 +180,9 @@ bool AArch64DCInstruction::doesSubRegIndexClearSuper(unsigned SubRegIdx) {
 }
 
 Value *AArch64DCInstruction::translateScaledImmediate(unsigned MIOperandNo,
-                                                      unsigned Scale) {
-  APInt Val = APInt(32, getImmOp(MIOperandNo));
-  APInt APScale = APInt(32, Scale);
+                                                      unsigned Scale,
+                                                      unsigned Bits) {
+  APInt Val = APInt(Bits, getImmOp(MIOperandNo));
+  APInt APScale = APInt(Bits, Scale);
   return Builder.getInt(Val * APScale);
 }

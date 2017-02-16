@@ -34,6 +34,28 @@ def : Semantics<LDRSl, [(set FPR32:$Rt,  (f32 (load am_ldrlit:$label)))]>;
 def : Semantics<LDRDl, [(set FPR64:$Rt,  (f64 (load am_ldrlit:$label)))]>;
 def : Semantics<LDRQl, [(set FPR128:$Rt, (f128 (load am_ldrlit:$label)))]>;
 
+// STR
+multiclass StorePrePostIndex<string regname, RegisterClass regtype, ValueType Ty, int scale> {
+  def : Semantics<!cast<Instruction>("STR" # regname # "ui"), [
+          (store (Ty regtype:$Rt),  (bitconvert (add GPR64sp:$Rn, (i64 !cast<Operand>("uimm12s" # scale):$offset))))]>;
+
+  def : Semantics<!cast<Instruction>("STR" # regname # "pre"), [
+          (store (Ty regtype:$Rt),  (bitconvert (add GPR64sp:$Rn, simm9:$offset))),
+          (set GPR64sp:$wback, (bitconvert (add GPR64sp:$Rn, simm9:$offset)))]>;
+
+  def : Semantics<!cast<Instruction>("STR" # regname # "post"), [
+          (store (Ty regtype:$Rt), GPR64sp:$Rn),
+          (set GPR64sp:$wback, (bitconvert (add GPR64sp:$Rn, simm9:$offset)))]>;
+}
+
+defm : StorePrePostIndex<"W", GPR32, i32, 4>;
+defm : StorePrePostIndex<"X", GPR64, i64, 8>;
+defm : StorePrePostIndex<"H", FPR16, f16, 2>;
+defm : StorePrePostIndex<"S", FPR32, f32, 4>;
+defm : StorePrePostIndex<"D", FPR64, f64, 8>;
+defm : StorePrePostIndex<"Q", FPR128, f128, 16>;
+
+
 // Load/Store Instructions: given a register, regtype, and operand type generates
 // semantics for offset, pre, and post addressing modes
 multiclass LoadStorePairPrePostIndex<string regname, RegisterClass regtype, ValueType Ty, int scale> {
