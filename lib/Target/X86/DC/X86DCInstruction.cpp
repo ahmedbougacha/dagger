@@ -703,7 +703,6 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
     Value *Src1 = getOperand(1);
     unsigned MaskImm = cast<ConstantInt>(getOperand(2))->getZExtValue();
     SmallVector<int, 8> Mask;
-    DecodePSHUFMask(getSimpleVTForType(getResultTy(0)), MaskImm, Mask);
     switch (Opcode) {
     case X86ISD::SHUFP:
       DecodeSHUFPMask(getSimpleVTForType(getResultTy(0)), MaskImm, Mask);
