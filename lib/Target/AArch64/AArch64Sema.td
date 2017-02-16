@@ -34,6 +34,17 @@ def : Semantics<LDRSl, [(set FPR32:$Rt,  (f32 (load am_ldrlit:$label)))]>;
 def : Semantics<LDRDl, [(set FPR64:$Rt,  (f64 (load am_ldrlit:$label)))]>;
 def : Semantics<LDRQl, [(set FPR128:$Rt, (f128 (load am_ldrlit:$label)))]>;
 
+// load sign-extended word
+def : Semantics<LDRSWl, [(set GPR64:$Rt, (sext (i32 (load am_ldrlit:$label))))]>;
+
+def : Semantics<LDRSWpre, [(set GPR64:$Rt, (sext (i32 (load (bitconvert (add GPR64sp:$Rn, simm9:$offset)))))),
+        (set GPR64sp:$wback, (add GPR64sp:$Rn, simm9:$offset))]>;
+
+def : Semantics<LDRSWpost, [(set GPR64:$Rt, (sext (i32 (load (bitconvert GPR64sp:$Rn))))),
+        (set GPR64sp:$wback, (add GPR64sp:$Rn, simm9:$offset))]>;
+
+def : Semantics<LDRSWui, [(set GPR64:$Rt, (sext (i32 (load (bitconvert (add GPR64sp:$Rn, uimm12s4:$offset))))))]>;
+
 // STR
 multiclass StorePrePostIndex<string regname, RegisterClass regtype, ValueType Ty, int scale> {
   def : Semantics<!cast<Instruction>("STR" # regname # "ui"), [
