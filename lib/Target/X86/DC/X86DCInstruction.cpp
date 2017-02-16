@@ -26,6 +26,7 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -361,6 +362,23 @@ bool X86DCInstruction::translateTargetInst() {
 }
 
 bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
+  auto CheckOperandIsEFLAGS = [this](Value *Op) {
+    (void)Op;
+#ifndef NDEBUG
+    Value *ExpectedEFLAGS = nullptr;
+    auto *II = dyn_cast<IntrinsicInst>(Op);
+    if (II && II->getIntrinsicID() == Intrinsic::dc_getreg) {
+      auto *MDRegNameV = cast<MetadataAsValue>(II->getOperand(0));
+      auto *MDRegName = cast<MDString>(MDRegNameV->getMetadata());
+      ExpectedEFLAGS = MDRegName->getString() == "EFLAGS" ? Op : nullptr;
+    } else {
+      ExpectedEFLAGS = getReg(X86::EFLAGS);
+    }
+    assert(Op == ExpectedEFLAGS &&
+           "Conditional opcode expected EFLAGS operand!");
+#endif
+  };
+
   switch (Opcode) {
   default:
     errs() << "Unknown X86 opcode found in semantics: " + utostr(Opcode)
@@ -369,9 +387,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   case X86ISD::CMOV: {
     Value *Op0 = getOperand(0), *Op1 = getOperand(1), *Op2 = getOperand(2),
           *Op3 = getOperand(3);
-    assert(Op3 == getReg(X86::EFLAGS) &&
-           "Conditional mov predicate register isn't EFLAGS!");
-    (void)Op3;
+    CheckOperandIsEFLAGS(Op3);
     unsigned CC = cast<ConstantInt>(Op2)->getValue().getZExtValue();
     Value *Pred = getParent().getCC((X86::CondCode)CC);
     addResult(Builder.CreateSelect(Pred, Op1, Op0));
@@ -390,9 +406,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   }
   case X86ISD::BRCOND: {
     Value *Op0 = getOperand(0), *Op1 = getOperand(1), *Op2 = getOperand(2);
-    assert(Op2 == getReg(X86::EFLAGS) &&
-           "Conditional branch predicate register isn't EFLAGS!");
-    (void)Op2;
+    CheckOperandIsEFLAGS(Op2);
     uint64_t Target = cast<ConstantInt>(Op0)->getValue().getZExtValue();
     unsigned CC = cast<ConstantInt>(Op1)->getValue().getZExtValue();
     setReg(X86::RIP, Op0);
@@ -410,9 +424,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   }
   case X86ISD::SETCC: {
     Value *Op0 = getOperand(0), *Op1 = getOperand(1);
-    assert(Op1 == getReg(X86::EFLAGS) &&
-           "SetCC predicate register isn't EFLAGS!");
-    (void)Op1;
+    CheckOperandIsEFLAGS(Op1);
     unsigned CC = cast<ConstantInt>(Op0)->getValue().getZExtValue();
     Value *Pred = getParent().getCC((X86::CondCode)CC);
     addResult(Builder.CreateZExt(Pred, Builder.getInt8Ty()));
@@ -420,8 +432,7 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
   }
   case X86ISD::SBB: {
     Value *Op0 = getOperand(0), *Op1 = getOperand(1), *Op2 = getOperand(2);
-    assert(Op2 == getReg(X86::EFLAGS) && "SBB borrow register isn't EFLAGS!");
-    (void)Op2;
+    CheckOperandIsEFLAGS(Op2);
     Value *Borrow = Builder.CreateZExt(getParent().getSF(X86::CF), Op0->getType());
     Value *Res = Builder.CreateSub(Op0, Op1);
     addResult(Builder.CreateSub(Res, Borrow));

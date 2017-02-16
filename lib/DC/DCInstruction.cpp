@@ -240,6 +240,7 @@ bool DCInstruction::tryTranslateInst() {
 
 bool DCInstruction::translateDCOp(uint16_t Opcode) {
   auto &MRI = getTranslator().getMRI();
+  (void)MRI;
 
   switch (Opcode) {
   case DCINS::PUT_RC: {
@@ -435,6 +436,7 @@ bool DCInstruction::translateOpcode(unsigned Opcode) {
   // We promised to generate NumResults results.  Make sure we didn't lie.
   const unsigned OldNumVals = Vals.size();
   auto DoAndCheckResults = [&](bool Success) {
+    (void)OldNumVals;
     assert((!Success ||
         (Vals.size() == OldNumVals + NumResults)) &&
         "Operation didn't define as many results as declared in its signature");
@@ -772,15 +774,6 @@ Value *DCInstruction::getReg(unsigned RegNo) {
   if (!RegNo)
     return nullptr;
 
-  if (EnableMockIntrin) {
-    auto &MRI = getTranslator().getMRI();
-    Value *MDRegName = MetadataAsValue::get(
-        getContext(), MDString::get(getContext(), MRI.getName(RegNo)));
-    Function *GetRegIntrin = Intrinsic::getDeclaration(
-        getModule(), Intrinsic::dc_getreg, getRegType(RegNo));
-    return Builder.CreateCall(GetRegIntrin, MDRegName);
-  }
-
   if (Constant *C = RSD.RegConstantVals[RegNo])
     return C;
 
@@ -797,21 +790,15 @@ void DCInstruction::setReg(unsigned RegNo, Value *Val) {
   auto &MRI = getTranslator().getMRI();
   auto &RSD = getTranslator().getRegSetDesc();
 
-  if (EnableMockIntrin) {
-    Value *MDRegName = MetadataAsValue::get(
-        getContext(), MDString::get(getContext(), MRI.getName(RegNo)));
-    Function *SetRegIntrin = Intrinsic::getDeclaration(
-        getModule(), Intrinsic::dc_setreg, Val->getType());
-    // FIXME: val type or regtype?
-    Builder.CreateCall(SetRegIntrin, {Val, MDRegName});
-    return;
-  }
-
   if (RSD.RegAliased[RegNo])
     llvm_unreachable("Access to aliased registers not implemented yet");
 
   // Set the register itself.
   DCB.setReg(RegNo, Val);
+
+  // Don't update the super/sub-registers if we're using the mock intrinsics.
+  if (EnableMockIntrin)
+    return;
 
   Value *RegVal = getRegAsInt(RegNo);
 

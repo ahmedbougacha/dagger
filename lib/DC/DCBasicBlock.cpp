@@ -125,7 +125,9 @@ Value *DCBasicBlock::getReg(unsigned RegNo) {
         getContext(), MDString::get(getContext(), MRI.getName(RegNo)));
     Function *GetRegIntrin = Intrinsic::getDeclaration(
         getModule(), Intrinsic::dc_getreg, RSD.RegTypes[RegNo]);
-    return Builder.CreateCall(GetRegIntrin, MDRegName);
+    Value *RV = Builder.CreateCall(GetRegIntrin, MDRegName);
+    dematerializeRegister(RegNo, RV);
+    return RV;
   }
 
   materializeRegister(RegNo);
