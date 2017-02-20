@@ -1,0 +1,17 @@
+#RUN: llvm-dec %p/Inputs/main-entrypoint.elf-x86_64 | FileCheck %s
+
+# Test that we look for the 'main' function as our entrypoint.
+# We ignore the ELF entrypoint.
+
+# C source, compiled with gcc -O2:
+# int main() { return 1; }
+
+# CHECK-LABEL: define void @fn_201100(%regset* noalias nocapture) {
+# CHECK:   store i64 1, i64* %RAX
+# CHECK: }
+
+# CHECK-LABEL: define i32 @main(i32, i8**) {
+# CHECK:   call void @fn_201100(%regset* %3)
+# CHECK:   %6 = call i32 @main_fini_regset(%regset* %3)
+# CHECK:   ret i32 %6
+# CHECK: }

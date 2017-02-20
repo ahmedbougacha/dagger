@@ -249,10 +249,17 @@ MCELFObjectSymbolizer::MCELFObjectSymbolizer(
 
   (void)OF;
 
-  // Refine the main entrypoint if possible.
-  // FIXME: We only handle 64bit LE ELF.
-  if (auto *EF = dyn_cast<ELF64LEObjectFile>(&OF))
-    MainEntrypoint = EF->getELFFile()->getHeader()->e_entry;
+  if (MainEntrypoint.hasValue() == false) {
+    // FIXME: Find the main entrypoint in a stripped ELF-File if possible.
+    // The Entrypoint specified in the ELF-Header is not always useful, because
+    // it calls __libc_start_main and does not return in a way we could detect
+    // it. So the goal is to identify the start of the main()-function here.
+    // FIXME: We only handle 64bit LE ELF.
+    if (auto *EF = dyn_cast<ELF64LEObjectFile>(&OF))
+      MainEntrypoint = EF->getELFFile()->getHeader()->e_entry;
+    else
+      report_fatal_error("Found stripped ELF file, could not find entrypoint.");
+  }
 }
 
 //===- MCObjectSymbolizer -------------------------------------------------===//
