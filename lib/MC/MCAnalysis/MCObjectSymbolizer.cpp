@@ -248,9 +248,13 @@ MCELFObjectSymbolizer::MCELFObjectSymbolizer(
       OF(OF) {
 
   // Refine the main entrypoint if possible.
-  // FIXME: We only handle 64bit LE ELF.
-  if (auto *EF = dyn_cast<ELF64LEObjectFile>(&OF))
-    MainEntrypoint = EF->getELFFile()->getHeader()->e_entry;
+  // FIXME: Find solution to find the real Entrypoint of an stripped ELF-File.
+  // The Entrypoint specified in the ELF-Header is not useful, because it calls
+  // __libc_start_main and does not return in a way daggger could detect it.
+    
+    if(MainEntrypoint.hasValue() == false){
+        report_fatal_error("Could not detect Entrypoint for ELF File.");
+    }
 }
 
 //===- MCObjectSymbolizer -------------------------------------------------===//
@@ -273,9 +277,16 @@ MCObjectSymbolizer::MCObjectSymbolizer(
     StringRef Name = unwrapOrReportError(Symbol.getName());
     uint64_t Addr = unwrapOrReportError(Symbol.getAddress());
 
-    if (Name == "main" || Name == "_main")
-      MainEntrypoint = Addr;
-    Entrypoints.push_back(Addr);
+    if (Name == "main" || Name == "_main"){
+        MainEntrypoint = Addr;
+    }
+    
+    // In ELF-Files, we do not want to add all available symbols because
+    // functions like _init, frame_dummy, deregister_tm_clonse are useless and
+    // we trust, that we will find all functions within the call-graph
+    if(!Obj.isELF()){
+        Entrypoints.push_back(Addr);
+    }
   }
 }
 
