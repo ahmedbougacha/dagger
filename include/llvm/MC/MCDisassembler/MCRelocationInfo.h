@@ -23,6 +23,9 @@ namespace llvm {
 
 class MCContext;
 class MCExpr;
+namespace object {
+class RelocationRef;
+}
 
 /// \brief Create MCExprs from relocations found in an object file.
 class MCRelocationInfo {
