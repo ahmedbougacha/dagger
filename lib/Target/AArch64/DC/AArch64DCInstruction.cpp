@@ -93,6 +93,13 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
       return nullptr;
     return ConstantInt::get(getResultTy(0), Imm);
   }
+  case AArch64::OpTypes::am_b_target: {
+    // b target is an offset in number of (4byte) instructions from PC
+    // target = PC + (imm * 4)
+    // TODO: add check that offset is +-128MB from PC?
+    int Offset = getImmOp(MIOperandNo)*4;
+    return Builder.getInt64(TheMCInst.Address + Offset);
+  }
   case AArch64::OpTypes::am_bl_target: {
     auto *ResTy = Builder.getInt8PtrTy();
 
