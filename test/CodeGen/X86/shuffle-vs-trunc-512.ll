@@ -100,11 +100,11 @@ define void @trunc_v32i16_to_v32i8(<64 x i8>* %L, <32 x i8>* %S) nounwind {
 define void @shuffle_v32i16_to_v16i16(<32 x i16>* %L, <16 x i16>* %S) nounwind {
 ; AVX512F-LABEL: shuffle_v32i16_to_v16i16:
 ; AVX512F:       # BB#0:
-; AVX512F-NEXT:    vmovdqa (%rdi), %ymm0
-; AVX512F-NEXT:    vmovdqa 32(%rdi), %ymm1
-; AVX512F-NEXT:    vpshufb {{.*#+}} ymm1 = ymm1[0,1,4,5,4,5,6,7,0,1,4,5,8,9,12,13,16,17,20,21,20,21,22,23,16,17,20,21,24,25,28,29]
-; AVX512F-NEXT:    vpshufb {{.*#+}} ymm0 = ymm0[0,1,4,5,8,9,12,13,8,9,12,13,12,13,14,15,16,17,20,21,24,25,28,29,24,25,28,29,28,29,30,31]
-; AVX512F-NEXT:    vpblendd {{.*#+}} ymm0 = ymm0[0,1],ymm1[2,3],ymm0[4,5],ymm1[6,7]
+; AVX512F-NEXT:    vpshuflw {{.*#+}} ymm0 = mem[0,2,2,3,4,5,6,7,8,10,10,11,12,13,14,15]
+; AVX512F-NEXT:    vpshufhw {{.*#+}} ymm0 = ymm0[0,1,2,3,4,6,6,7,8,9,10,11,12,14,14,15]
+; AVX512F-NEXT:    vpshuflw {{.*#+}} ymm1 = mem[0,2,2,3,4,5,6,7,8,10,10,11,12,13,14,15]
+; AVX512F-NEXT:    vpshufhw {{.*#+}} ymm1 = ymm1[0,1,2,3,4,6,6,7,8,9,10,11,12,14,14,15]
+; AVX512F-NEXT:    vshufps {{.*#+}} ymm0 = ymm1[0,2],ymm0[0,2],ymm1[4,6],ymm0[4,6]
 ; AVX512F-NEXT:    vpermq {{.*#+}} ymm0 = ymm0[0,2,1,3]
 ; AVX512F-NEXT:    vmovdqa %ymm0, (%rsi)
 ; AVX512F-NEXT:    retq
@@ -113,11 +113,9 @@ define void @shuffle_v32i16_to_v16i16(<32 x i16>* %L, <16 x i16>* %S) nounwind {
 ; AVX512VL:       # BB#0:
 ; AVX512VL-NEXT:    vpshuflw {{.*#+}} ymm0 = mem[0,2,2,3,4,5,6,7,8,10,10,11,12,13,14,15]
 ; AVX512VL-NEXT:    vpshufhw {{.*#+}} ymm0 = ymm0[0,1,2,3,4,6,6,7,8,9,10,11,12,14,14,15]
-; AVX512VL-NEXT:    vpshufd {{.*#+}} ymm0 = ymm0[0,1,0,2,4,5,4,6]
 ; AVX512VL-NEXT:    vpshuflw {{.*#+}} ymm1 = mem[0,2,2,3,4,5,6,7,8,10,10,11,12,13,14,15]
 ; AVX512VL-NEXT:    vpshufhw {{.*#+}} ymm1 = ymm1[0,1,2,3,4,6,6,7,8,9,10,11,12,14,14,15]
-; AVX512VL-NEXT:    vpshufd {{.*#+}} ymm1 = ymm1[0,2,2,3,4,6,6,7]
-; AVX512VL-NEXT:    vpblendd {{.*#+}} ymm0 = ymm1[0,1],ymm0[2,3],ymm1[4,5],ymm0[6,7]
+; AVX512VL-NEXT:    vshufps {{.*#+}} ymm0 = ymm1[0,2],ymm0[0,2],ymm1[4,6],ymm0[4,6]
 ; AVX512VL-NEXT:    vpermq {{.*#+}} ymm0 = ymm0[0,2,1,3]
 ; AVX512VL-NEXT:    vmovdqa %ymm0, (%rsi)
 ; AVX512VL-NEXT:    retq
@@ -126,9 +124,11 @@ define void @shuffle_v32i16_to_v16i16(<32 x i16>* %L, <16 x i16>* %S) nounwind {
 ; AVX512BW:       # BB#0:
 ; AVX512BW-NEXT:    vmovdqu16 (%rdi), %zmm0
 ; AVX512BW-NEXT:    vextracti64x4 $1, %zmm0, %ymm1
-; AVX512BW-NEXT:    vpshufb {{.*#+}} ymm1 = ymm1[0,1,4,5,4,5,6,7,0,1,4,5,8,9,12,13,16,17,20,21,20,21,22,23,16,17,20,21,24,25,28,29]
-; AVX512BW-NEXT:    vpshufb {{.*#+}} ymm0 = ymm0[0,1,4,5,8,9,12,13,8,9,12,13,12,13,14,15,16,17,20,21,24,25,28,29,24,25,28,29,28,29,30,31]
-; AVX512BW-NEXT:    vpblendd {{.*#+}} ymm0 = ymm0[0,1],ymm1[2,3],ymm0[4,5],ymm1[6,7]
+; AVX512BW-NEXT:    vpshuflw {{.*#+}} ymm1 = ymm1[0,2,2,3,4,5,6,7,8,10,10,11,12,13,14,15]
+; AVX512BW-NEXT:    vpshufhw {{.*#+}} ymm1 = ymm1[0,1,2,3,4,6,6,7,8,9,10,11,12,14,14,15]
+; AVX512BW-NEXT:    vpshuflw {{.*#+}} ymm0 = ymm0[0,2,2,3,4,5,6,7,8,10,10,11,12,13,14,15]
+; AVX512BW-NEXT:    vpshufhw {{.*#+}} ymm0 = ymm0[0,1,2,3,4,6,6,7,8,9,10,11,12,14,14,15]
+; AVX512BW-NEXT:    vshufps {{.*#+}} ymm0 = ymm0[0,2],ymm1[0,2],ymm0[4,6],ymm1[4,6]
 ; AVX512BW-NEXT:    vpermq {{.*#+}} ymm0 = ymm0[0,2,1,3]
 ; AVX512BW-NEXT:    vmovdqa %ymm0, (%rsi)
 ; AVX512BW-NEXT:    retq
@@ -482,7 +482,7 @@ define void @shuffle_v64i8_to_v8i8(<64 x i8>* %L, <8 x i8>* %S) nounwind {
 ; AVX512BW-NEXT:    vpextrb $0, %xmm1, %ecx
 ; AVX512BW-NEXT:    vpextrb $8, %xmm0, %edx
 ; AVX512BW-NEXT:    vpextrb $0, %xmm0, %edi
-; AVX512BW-NEXT:    vpinsrb $0, %edi, %xmm0, %xmm0
+; AVX512BW-NEXT:    vmovd %edi, %xmm0
 ; AVX512BW-NEXT:    vpinsrb $1, %edx, %xmm0, %xmm0
 ; AVX512BW-NEXT:    vpinsrb $2, %ecx, %xmm0, %xmm0
 ; AVX512BW-NEXT:    vpinsrb $3, %eax, %xmm0, %xmm0
@@ -496,9 +496,9 @@ define void @shuffle_v64i8_to_v8i8(<64 x i8>* %L, <8 x i8>* %S) nounwind {
 ; AVX512BWVL-LABEL: shuffle_v64i8_to_v8i8:
 ; AVX512BWVL:       # BB#0:
 ; AVX512BWVL-NEXT:    vmovdqu8 (%rdi), %zmm0
-; AVX512BWVL-NEXT:    vpextrb $0, %xmm0, %eax
-; AVX512BWVL-NEXT:    vpinsrb $0, %eax, %xmm0, %xmm1
 ; AVX512BWVL-NEXT:    vpextrb $8, %xmm0, %eax
+; AVX512BWVL-NEXT:    vpextrb $0, %xmm0, %ecx
+; AVX512BWVL-NEXT:    vmovd %ecx, %xmm1
 ; AVX512BWVL-NEXT:    vpinsrb $2, %eax, %xmm1, %xmm1
 ; AVX512BWVL-NEXT:    vextracti32x4 $1, %zmm0, %xmm2
 ; AVX512BWVL-NEXT:    vpextrb $0, %xmm2, %eax

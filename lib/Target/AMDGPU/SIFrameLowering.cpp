@@ -21,22 +21,24 @@
 using namespace llvm;
 
 
-static ArrayRef<MCPhysReg> getAllSGPR128(const MachineFunction &MF,
-                                         const SIRegisterInfo *TRI) {
+static ArrayRef<MCPhysReg> getAllSGPR128(const SISubtarget &ST,
+                                         const MachineFunction &MF) {
   return makeArrayRef(AMDGPU::SGPR_128RegClass.begin(),
-                      TRI->getMaxNumSGPRs(MF) / 4);
+                      ST.getMaxNumSGPRs(MF) / 4);
 }
 
-static ArrayRef<MCPhysReg> getAllSGPRs(const MachineFunction &MF,
-                                       const SIRegisterInfo *TRI) {
+static ArrayRef<MCPhysReg> getAllSGPRs(const SISubtarget &ST,
+                                       const MachineFunction &MF) {
   return makeArrayRef(AMDGPU::SGPR_32RegClass.begin(),
-                      TRI->getMaxNumSGPRs(MF));
+                      ST.getMaxNumSGPRs(MF));
 }
 
-void SIFrameLowering::emitFlatScratchInit(const SIInstrInfo *TII,
-                                          const SIRegisterInfo* TRI,
+void SIFrameLowering::emitFlatScratchInit(const SISubtarget &ST,
                                           MachineFunction &MF,
                                           MachineBasicBlock &MBB) const {
+  const SIInstrInfo *TII = ST.getInstrInfo();
+  const SIRegisterInfo* TRI = &TII->getRegisterInfo();
+
   // We don't need this if we only have spills since there is no user facing
   // scratch.
 
@@ -59,15 +61,27 @@ void SIFrameLowering::emitFlatScratchInit(const SIInstrInfo *TII,
   MRI.addLiveIn(FlatScratchInitReg);
   MBB.addLiveIn(FlatScratchInitReg);
 
-  // Copy the size in bytes.
-  unsigned FlatScrInitHi = TRI->getSubReg(FlatScratchInitReg, AMDGPU::sub1);
-  BuildMI(MBB, I, DL, TII->get(AMDGPU::COPY), AMDGPU::FLAT_SCR_LO)
-    .addReg(FlatScrInitHi, RegState::Kill);
-
   unsigned FlatScrInitLo = TRI->getSubReg(FlatScratchInitReg, AMDGPU::sub0);
+  unsigned FlatScrInitHi = TRI->getSubReg(FlatScratchInitReg, AMDGPU::sub1);
 
   const SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
   unsigned ScratchWaveOffsetReg = MFI->getScratchWaveOffsetReg();
+
+  // Do a 64-bit pointer add.
+  if (ST.flatScratchIsPointer()) {
+    BuildMI(MBB, I, DL, TII->get(AMDGPU::S_ADD_U32), AMDGPU::FLAT_SCR_LO)
+      .addReg(FlatScrInitLo)
+      .addReg(ScratchWaveOffsetReg);
+    BuildMI(MBB, I, DL, TII->get(AMDGPU::S_ADDC_U32), AMDGPU::FLAT_SCR_HI)
+      .addReg(FlatScrInitHi)
+      .addImm(0);
+
+    return;
+  }
+
+  // Copy the size in bytes.
+  BuildMI(MBB, I, DL, TII->get(AMDGPU::COPY), AMDGPU::FLAT_SCR_LO)
+    .addReg(FlatScrInitHi, RegState::Kill);
 
   // Add wave offset in bytes to private base offset.
   // See comment in AMDKernelCodeT.h for enable_sgpr_flat_scratch_init.
@@ -111,7 +125,7 @@ unsigned SIFrameLowering::getReservedPrivateSegmentBufferReg(
   MachineRegisterInfo &MRI = MF.getRegInfo();
 
   unsigned NumPreloaded = (MFI->getNumPreloadedSGPRs() + 3) / 4;
-  ArrayRef<MCPhysReg> AllSGPR128s = getAllSGPR128(MF, TRI);
+  ArrayRef<MCPhysReg> AllSGPR128s = getAllSGPR128(ST, MF);
   AllSGPR128s = AllSGPR128s.slice(std::min(static_cast<unsigned>(AllSGPR128s.size()), NumPreloaded));
 
   // Skip the last 2 elements because the last one is reserved for VCC, and
@@ -146,7 +160,7 @@ unsigned SIFrameLowering::getReservedPrivateSegmentWaveByteOffsetReg(
 
   unsigned NumPreloaded = MFI->getNumPreloadedSGPRs();
 
-  ArrayRef<MCPhysReg> AllSGPRs = getAllSGPRs(MF, TRI);
+  ArrayRef<MCPhysReg> AllSGPRs = getAllSGPRs(ST, MF);
   if (NumPreloaded > AllSGPRs.size())
     return ScratchWaveOffsetReg;
 
@@ -229,7 +243,7 @@ void SIFrameLowering::emitPrologue(MachineFunction &MF,
   // emitted after frame indices are eliminated.
 
   if (MF.getFrameInfo().hasStackObjects() && MFI->hasFlatScratchInit())
-    emitFlatScratchInit(TII, TRI, MF, MBB);
+    emitFlatScratchInit(ST, MF, MBB);
 
   // We need to insert initialization of the scratch resource descriptor.
   unsigned PreloadedScratchWaveOffsetReg = TRI->getPreloadedValue(

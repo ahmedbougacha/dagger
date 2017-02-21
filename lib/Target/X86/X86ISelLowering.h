@@ -179,7 +179,7 @@ namespace llvm {
 
       /// Insert the lower 16-bits of a 32-bit value to a vector,
       /// corresponds to X86::PINSRW.
-      PINSRW, MMX_PINSRW,
+      PINSRW,
 
       /// Shuffle 16 8-bit values within a vector.
       PSHUFB,
@@ -195,9 +195,9 @@ namespace llvm {
       /// Blend where the selector is an immediate.
       BLENDI,
 
-      /// Blend where the condition has been shrunk.
-      /// This is used to emphasize that the condition mask is
-      /// no more valid for generic VSELECT optimizations.
+      /// Dynamic (non-constant condition) vector blend where only the sign bits
+      /// of the condition elements are used. This is used to enforce that the
+      /// condition mask is not valid for generic VSELECT optimizations.
       SHRUNKBLEND,
 
       /// Combined add and sub on an FP vector.
@@ -446,8 +446,7 @@ namespace llvm {
       // Broadcast subvector to vector.
       SUBV_BROADCAST,
 
-      // Insert/Extract vector element.
-      VINSERT,
+      // Extract vector element.
       VEXTRACT,
 
       /// SSE4A Extraction and Insertion.

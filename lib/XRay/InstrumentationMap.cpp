@@ -11,19 +11,26 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef XRAY_INSTRUMENTATIONMAP_H
-#define XRAY_INSTRUMENTATIONMAP_H
-
-#include "llvm/XRay/InstrumentationMap.h"
-
+#include "llvm/ADT/None.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Triple.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/Object/Binary.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/DataExtractor.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/XRay/XRayRecord.h"
+#include "llvm/Support/YAMLTraits.h"
+#include "llvm/XRay/InstrumentationMap.h"
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <system_error>
+#include <vector>
 
-namespace llvm {
-namespace xray {
+using namespace llvm;
+using namespace xray;
 
 Optional<int32_t> InstrumentationMap::getFunctionId(uint64_t Addr) const {
   auto I = FunctionIds.find(Addr);
@@ -39,24 +46,24 @@ Optional<uint64_t> InstrumentationMap::getFunctionAddr(int32_t FuncId) const {
   return None;
 }
 
-namespace {
-Error loadELF64(StringRef Filename,
-                object::OwningBinary<object::ObjectFile> &ObjFile,
-                InstrumentationMap::SledContainer &Sleds,
-                InstrumentationMap::FunctionAddressMap &FunctionAddresses,
-                InstrumentationMap::FunctionAddressReverseMap &FunctionIds) {
+static Error
+loadELF64(StringRef Filename, object::OwningBinary<object::ObjectFile> &ObjFile,
+          InstrumentationMap::SledContainer &Sleds,
+          InstrumentationMap::FunctionAddressMap &FunctionAddresses,
+          InstrumentationMap::FunctionAddressReverseMap &FunctionIds) {
   InstrumentationMap Map;
 
   // Find the section named "xray_instr_map".
   if (!ObjFile.getBinary()->isELF() ||
-      ObjFile.getBinary()->getArch() != Triple::x86_64)
+      !(ObjFile.getBinary()->getArch() == Triple::x86_64 ||
+        ObjFile.getBinary()->getArch() == Triple::ppc64le))
     return make_error<StringError>(
         "File format not supported (only does ELF little endian 64-bit).",
         std::make_error_code(std::errc::not_supported));
 
   StringRef Contents = "";
   const auto &Sections = ObjFile.getBinary()->sections();
-  auto I = find_if(Sections, [&](object::SectionRef Section) {
+  auto I = llvm::find_if(Sections, [&](object::SectionRef Section) {
     StringRef Name = "";
     if (Section.getName(Name))
       return false;
@@ -122,10 +129,11 @@ Error loadELF64(StringRef Filename,
   return Error::success();
 }
 
-Error loadYAML(int Fd, size_t FileSize, StringRef Filename,
-               InstrumentationMap::SledContainer &Sleds,
-               InstrumentationMap::FunctionAddressMap &FunctionAddresses,
-               InstrumentationMap::FunctionAddressReverseMap &FunctionIds) {
+static Error
+loadYAML(int Fd, size_t FileSize, StringRef Filename,
+         InstrumentationMap::SledContainer &Sleds,
+         InstrumentationMap::FunctionAddressMap &FunctionAddresses,
+         InstrumentationMap::FunctionAddressReverseMap &FunctionIds) {
   std::error_code EC;
   sys::fs::mapped_file_region MappedFile(
       Fd, sys::fs::mapped_file_region::mapmode::readonly, FileSize, 0, EC);
@@ -150,11 +158,11 @@ Error loadYAML(int Fd, size_t FileSize, StringRef Filename,
   }
   return Error::success();
 }
-} // namespace
 
 // FIXME: Create error types that encapsulate a bit more information than what
 // StringError instances contain.
-Expected<InstrumentationMap> loadInstrumentationMap(StringRef Filename) {
+Expected<InstrumentationMap>
+llvm::xray::loadInstrumentationMap(StringRef Filename) {
   // At this point we assume the file is an object file -- and if that doesn't
   // work, we treat it as YAML.
   // FIXME: Extend to support non-ELF and non-x86_64 binaries.
@@ -188,7 +196,3 @@ Expected<InstrumentationMap> loadInstrumentationMap(StringRef Filename) {
   }
   return Map;
 }
-}
-}
-
-#endif // XRAY_INSTRUMENTATIONMAP_H

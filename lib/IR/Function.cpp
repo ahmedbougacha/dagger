@@ -52,8 +52,6 @@ void Argument::setParent(Function *parent) {
   Parent = parent;
 }
 
-/// getArgNo - Return the index of this formal argument in its containing
-/// function.  For example in "void foo(int a, float b)" a is 0 and b is 1.
 unsigned Argument::getArgNo() const {
   const Function *F = getParent();
   assert(F && "Argument is not in a function");
@@ -66,9 +64,6 @@ unsigned Argument::getArgNo() const {
   return ArgIdx;
 }
 
-/// hasNonNullAttr - Return true if this argument has the nonnull attribute on
-/// it in its containing function. Also returns true if at least one byte is
-/// known to be dereferenceable and the pointer is in addrspace(0).
 bool Argument::hasNonNullAttr() const {
   if (!getType()->isPointerTy()) return false;
   if (getParent()->getAttributes().
@@ -80,8 +75,6 @@ bool Argument::hasNonNullAttr() const {
   return false;
 }
 
-/// hasByValAttr - Return true if this argument has the byval attribute on it
-/// in its containing function.
 bool Argument::hasByValAttr() const {
   if (!getType()->isPointerTy()) return false;
   return hasAttribute(Attribute::ByVal);
@@ -97,8 +90,6 @@ bool Argument::hasSwiftErrorAttr() const {
     hasAttribute(getArgNo()+1, Attribute::SwiftError);
 }
 
-/// \brief Return true if this argument has the inalloca attribute on it in
-/// its containing function.
 bool Argument::hasInAllocaAttr() const {
   if (!getType()->isPointerTy()) return false;
   return hasAttribute(Attribute::InAlloca);
@@ -129,54 +120,38 @@ uint64_t Argument::getDereferenceableOrNullBytes() const {
   return getParent()->getDereferenceableOrNullBytes(getArgNo()+1);
 }
 
-/// hasNestAttr - Return true if this argument has the nest attribute on
-/// it in its containing function.
 bool Argument::hasNestAttr() const {
   if (!getType()->isPointerTy()) return false;
   return hasAttribute(Attribute::Nest);
 }
 
-/// hasNoAliasAttr - Return true if this argument has the noalias attribute on
-/// it in its containing function.
 bool Argument::hasNoAliasAttr() const {
   if (!getType()->isPointerTy()) return false;
   return hasAttribute(Attribute::NoAlias);
 }
 
-/// hasNoCaptureAttr - Return true if this argument has the nocapture attribute
-/// on it in its containing function.
 bool Argument::hasNoCaptureAttr() const {
   if (!getType()->isPointerTy()) return false;
   return hasAttribute(Attribute::NoCapture);
 }
 
-/// hasSRetAttr - Return true if this argument has the sret attribute on
-/// it in its containing function.
 bool Argument::hasStructRetAttr() const {
   if (!getType()->isPointerTy()) return false;
   return hasAttribute(Attribute::StructRet);
 }
 
-/// hasReturnedAttr - Return true if this argument has the returned attribute on
-/// it in its containing function.
 bool Argument::hasReturnedAttr() const {
   return hasAttribute(Attribute::Returned);
 }
 
-/// hasZExtAttr - Return true if this argument has the zext attribute on it in
-/// its containing function.
 bool Argument::hasZExtAttr() const {
   return hasAttribute(Attribute::ZExt);
 }
 
-/// hasSExtAttr Return true if this argument has the sext attribute on it in its
-/// containing function.
 bool Argument::hasSExtAttr() const {
   return hasAttribute(Attribute::SExt);
 }
 
-/// Return true if this argument has the readonly or readnone attribute on it
-/// in its containing function.
 bool Argument::onlyReadsMemory() const {
   return getParent()->getAttributes().
       hasAttribute(getArgNo()+1, Attribute::ReadOnly) ||
@@ -184,7 +159,6 @@ bool Argument::onlyReadsMemory() const {
       hasAttribute(getArgNo()+1, Attribute::ReadNone);
 }
 
-/// addAttr - Add attributes to an argument.
 void Argument::addAttr(AttributeSet AS) {
   assert(AS.getNumSlots() <= 1 &&
          "Trying to add more than one attribute set to an argument!");
@@ -194,7 +168,6 @@ void Argument::addAttr(AttributeSet AS) {
                                                getArgNo() + 1, B));
 }
 
-/// removeAttr - Remove attributes from an argument.
 void Argument::removeAttr(AttributeSet AS) {
   assert(AS.getNumSlots() <= 1 &&
          "Trying to remove more than one attribute set from an argument!");
@@ -204,7 +177,6 @@ void Argument::removeAttr(AttributeSet AS) {
                                                   getArgNo() + 1, B));
 }
 
-/// hasAttribute - Checks if an argument has a given attribute.
 bool Argument::hasAttribute(Attribute::AttrKind Kind) const {
   return getParent()->hasAttribute(getArgNo() + 1, Kind);
 }
@@ -533,10 +505,18 @@ static std::string getMangledTypeStr(Type* Ty) {
   } else if (ArrayType* ATyp = dyn_cast<ArrayType>(Ty)) {
     Result += "a" + llvm::utostr(ATyp->getNumElements()) +
       getMangledTypeStr(ATyp->getElementType());
-  } else if (StructType* STyp = dyn_cast<StructType>(Ty)) {
-    assert(!STyp->isLiteral() && "TODO: implement literal types");
-    Result += STyp->getName();
-  } else if (FunctionType* FT = dyn_cast<FunctionType>(Ty)) {
+  } else if (StructType *STyp = dyn_cast<StructType>(Ty)) {
+    if (!STyp->isLiteral()) {
+      Result += "s_";
+      Result += STyp->getName();
+    } else {
+      Result += "sl_";
+      for (auto Elem : STyp->elements())
+        Result += getMangledTypeStr(Elem);
+    }
+    // Ensure nested structs are distinguishable.
+    Result += "s";
+  } else if (FunctionType *FT = dyn_cast<FunctionType>(Ty)) {
     Result += "f_" + getMangledTypeStr(FT->getReturnType());
     for (size_t i = 0; i < FT->getNumParams(); i++)
       Result += getMangledTypeStr(FT->getParamType(i));

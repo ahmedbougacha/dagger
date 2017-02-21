@@ -28,6 +28,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetIntrinsicInfo.h"
 #include "llvm/Target/TargetLowering.h"
 
@@ -270,10 +271,6 @@ bool IRTranslator::translateIndirectBr(const User &U,
 bool IRTranslator::translateLoad(const User &U, MachineIRBuilder &MIRBuilder) {
   const LoadInst &LI = cast<LoadInst>(U);
 
-  if (!TPC->isGlobalISelAbortEnabled() && LI.isAtomic())
-    return false;
-
-  assert(!LI.isAtomic() && "only non-atomic loads are supported at the moment");
   auto Flags = LI.isVolatile() ? MachineMemOperand::MOVolatile
                                : MachineMemOperand::MONone;
   Flags |= MachineMemOperand::MOLoad;
@@ -285,17 +282,13 @@ bool IRTranslator::translateLoad(const User &U, MachineIRBuilder &MIRBuilder) {
       Res, Addr,
       *MF->getMachineMemOperand(MachinePointerInfo(LI.getPointerOperand()),
                                 Flags, DL->getTypeStoreSize(LI.getType()),
-                                getMemOpAlignment(LI)));
+                                getMemOpAlignment(LI), AAMDNodes(), nullptr,
+                                LI.getSynchScope(), LI.getOrdering()));
   return true;
 }
 
 bool IRTranslator::translateStore(const User &U, MachineIRBuilder &MIRBuilder) {
   const StoreInst &SI = cast<StoreInst>(U);
-
-  if (!TPC->isGlobalISelAbortEnabled() && SI.isAtomic())
-    return false;
-
-  assert(!SI.isAtomic() && "only non-atomic stores supported at the moment");
   auto Flags = SI.isVolatile() ? MachineMemOperand::MOVolatile
                                : MachineMemOperand::MONone;
   Flags |= MachineMemOperand::MOStore;
@@ -310,7 +303,8 @@ bool IRTranslator::translateStore(const User &U, MachineIRBuilder &MIRBuilder) {
       *MF->getMachineMemOperand(
           MachinePointerInfo(SI.getPointerOperand()), Flags,
           DL->getTypeStoreSize(SI.getValueOperand()->getType()),
-          getMemOpAlignment(SI)));
+          getMemOpAlignment(SI), AAMDNodes(), nullptr, SI.getSynchScope(),
+          SI.getOrdering()));
   return true;
 }
 
@@ -554,6 +548,14 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
   switch (ID) {
   default:
     break;
+  case Intrinsic::lifetime_start:
+  case Intrinsic::lifetime_end:
+    // Stack coloring is not enabled in O0 (which we care about now) so we can
+    // drop these. Make sure someone notices when we start compiling at higher
+    // opts though.
+    if (MF->getTarget().getOptLevel() != CodeGenOpt::None)
+      return false;
+    return true;
   case Intrinsic::dbg_declare: {
     const DbgDeclareInst &DI = cast<DbgDeclareInst>(CI);
     assert(DI.getVariable() && "Missing variable");
@@ -576,6 +578,21 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
                                  DI.getVariable(), DI.getExpression());
     } else
       MIRBuilder.buildDirectDbgValue(Reg, DI.getVariable(), DI.getExpression());
+    return true;
+  }
+  case Intrinsic::vaend:
+    // No target I know of cares about va_end. Certainly no in-tree target
+    // does. Simplest intrinsic ever!
+    return true;
+  case Intrinsic::vastart: {
+    auto &TLI = *MF->getSubtarget().getTargetLowering();
+    Value *Ptr = CI.getArgOperand(0);
+    unsigned ListSize = TLI.getVaListSizeInBits(*DL) / 8;
+
+    MIRBuilder.buildInstr(TargetOpcode::G_VASTART)
+        .addUse(getOrCreateVReg(*Ptr))
+        .addMemOperand(MF->getMachineMemOperand(
+            MachinePointerInfo(Ptr), MachineMemOperand::MOStore, ListSize, 0));
     return true;
   }
   case Intrinsic::dbg_value: {
@@ -620,6 +637,12 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
     return translateOverflowIntrinsic(CI, TargetOpcode::G_UMULO, MIRBuilder);
   case Intrinsic::smul_with_overflow:
     return translateOverflowIntrinsic(CI, TargetOpcode::G_SMULO, MIRBuilder);
+  case Intrinsic::pow:
+    MIRBuilder.buildInstr(TargetOpcode::G_FPOW)
+        .addDef(getOrCreateVReg(CI))
+        .addUse(getOrCreateVReg(*CI.getArgOperand(0)))
+        .addUse(getOrCreateVReg(*CI.getArgOperand(1)));
+    return true;
   case Intrinsic::memcpy:
   case Intrinsic::memmove:
   case Intrinsic::memset:
@@ -820,15 +843,78 @@ bool IRTranslator::translateLandingPad(const User &U,
   return true;
 }
 
-bool IRTranslator::translateStaticAlloca(const AllocaInst &AI,
-                                         MachineIRBuilder &MIRBuilder) {
-  if (!TPC->isGlobalISelAbortEnabled() && !AI.isStaticAlloca())
-    return false;
+bool IRTranslator::translateAlloca(const User &U,
+                                   MachineIRBuilder &MIRBuilder) {
+  auto &AI = cast<AllocaInst>(U);
 
-  assert(AI.isStaticAlloca() && "only handle static allocas now");
-  unsigned Res = getOrCreateVReg(AI);
-  int FI = getOrCreateFrameIndex(AI);
-  MIRBuilder.buildFrameIndex(Res, FI);
+  if (AI.isStaticAlloca()) {
+    unsigned Res = getOrCreateVReg(AI);
+    int FI = getOrCreateFrameIndex(AI);
+    MIRBuilder.buildFrameIndex(Res, FI);
+    return true;
+  }
+
+  // Now we're in the harder dynamic case.
+  Type *Ty = AI.getAllocatedType();
+  unsigned Align =
+      std::max((unsigned)DL->getPrefTypeAlignment(Ty), AI.getAlignment());
+
+  unsigned NumElts = getOrCreateVReg(*AI.getArraySize());
+
+  LLT IntPtrTy = LLT::scalar(DL->getPointerSizeInBits());
+  if (MRI->getType(NumElts) != IntPtrTy) {
+    unsigned ExtElts = MRI->createGenericVirtualRegister(IntPtrTy);
+    MIRBuilder.buildZExtOrTrunc(ExtElts, NumElts);
+    NumElts = ExtElts;
+  }
+
+  unsigned AllocSize = MRI->createGenericVirtualRegister(IntPtrTy);
+  unsigned TySize = MRI->createGenericVirtualRegister(IntPtrTy);
+  MIRBuilder.buildConstant(TySize, -DL->getTypeAllocSize(Ty));
+  MIRBuilder.buildMul(AllocSize, NumElts, TySize);
+
+  LLT PtrTy = LLT{*AI.getType(), *DL};
+  auto &TLI = *MF->getSubtarget().getTargetLowering();
+  unsigned SPReg = TLI.getStackPointerRegisterToSaveRestore();
+
+  unsigned SPTmp = MRI->createGenericVirtualRegister(PtrTy);
+  MIRBuilder.buildCopy(SPTmp, SPReg);
+
+  unsigned AllocTmp = MRI->createGenericVirtualRegister(PtrTy);
+  MIRBuilder.buildGEP(AllocTmp, SPTmp, AllocSize);
+
+  // Handle alignment. We have to realign if the allocation granule was smaller
+  // than stack alignment, or the specific alloca requires more than stack
+  // alignment.
+  unsigned StackAlign =
+      MF->getSubtarget().getFrameLowering()->getStackAlignment();
+  Align = std::max(Align, StackAlign);
+  if (Align > StackAlign || DL->getTypeAllocSize(Ty) % StackAlign != 0) {
+    // Round the size of the allocation up to the stack alignment size
+    // by add SA-1 to the size. This doesn't overflow because we're computing
+    // an address inside an alloca.
+    unsigned AlignedAlloc = MRI->createGenericVirtualRegister(PtrTy);
+    MIRBuilder.buildPtrMask(AlignedAlloc, AllocTmp, Log2_32(Align));
+    AllocTmp = AlignedAlloc;
+  }
+
+  MIRBuilder.buildCopy(SPReg, AllocTmp);
+  MIRBuilder.buildCopy(getOrCreateVReg(AI), AllocTmp);
+
+  MF->getFrameInfo().CreateVariableSizedObject(Align ? Align : 1, &AI);
+  assert(MF->getFrameInfo().hasVarSizedObjects());
+  return true;
+}
+
+bool IRTranslator::translateVAArg(const User &U, MachineIRBuilder &MIRBuilder) {
+  // FIXME: We may need more info about the type. Because of how LLT works,
+  // we're completely discarding the i64/double distinction here (amongst
+  // others). Fortunately the ABIs I know of where that matters don't use va_arg
+  // anyway but that's not guaranteed.
+  MIRBuilder.buildInstr(TargetOpcode::G_VAARG)
+    .addDef(getOrCreateVReg(U))
+    .addUse(getOrCreateVReg(*U.getOperand(0)))
+    .addImm(DL->getABITypeAlignment(U.getType()));
   return true;
 }
 

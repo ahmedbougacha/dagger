@@ -78,7 +78,24 @@ define void @sequence_mapping([2 x i64] %in) {
   ; Legalizer was asserting when it enountered an unexpected default action.
 ; FALLBACK-WITH-REPORT-ERR: warning: Instruction selection used fallback path for legal_default
 ; FALLBACK-WITH-REPORT-LABEL: legal_default:
-define void @legal_default(i64 %in) {
-  insertvalue [2 x i64] undef, i64 %in, 0
+define void @legal_default([8 x i8] %in) {
+  insertvalue { [4 x i8], [8 x i8], [4 x i8] } undef, [8 x i8] %in, 1
   ret void
+}
+
+  ; AArch64 was asserting instead of returning an invalid mapping for unknown
+  ; sizes.
+; FALLBACK-WITH-REPORT-ERR: warning: Instruction selection used fallback path for sequence_sizes
+; FALLBACK-WITH-REPORT-LABEL: sequence_sizes:
+define i128 @sequence_sizes([8 x i8] %in) {
+  ret i128 undef
+}
+
+; Just to make sure we don't accidentally emit a normal load/store.
+; FALLBACK-WITH-REPORT-ERR: warning: Instruction selection used fallback path for atomic_ops
+; FALLBACK-WITH-REPORT-LABEL: atomic_ops:
+define i64 @atomic_ops(i64* %addr) {
+  store atomic i64 0, i64* %addr unordered, align 8
+  %res = load atomic i64, i64* %addr seq_cst, align 8
+  ret i64 %res
 }

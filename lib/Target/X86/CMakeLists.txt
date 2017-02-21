@@ -10,12 +10,19 @@ tablegen(LLVM X86GenDAGISel.inc -gen-dag-isel)
 tablegen(LLVM X86GenFastISel.inc -gen-fast-isel)
 tablegen(LLVM X86GenCallingConv.inc -gen-callingconv)
 tablegen(LLVM X86GenSubtargetInfo.inc -gen-subtarget)
+if(LLVM_BUILD_GLOBAL_ISEL)
+  tablegen(LLVM X86GenRegisterBank.inc -gen-register-bank)
+endif()
+
 tablegen(LLVM X86GenSema.inc -gen-semantics)
+
 add_public_tablegen_target(X86CommonTableGen)
 
 # Add GlobalISel files if the build option was enabled.
 set(GLOBAL_ISEL_FILES
   X86CallLowering.cpp
+  X86LegalizerInfo.cpp
+  X86RegisterBankInfo.cpp
   )
 
 if(LLVM_BUILD_GLOBAL_ISEL)

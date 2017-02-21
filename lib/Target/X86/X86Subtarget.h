@@ -18,33 +18,36 @@
 #include "X86ISelLowering.h"
 #include "X86InstrInfo.h"
 #include "X86SelectionDAGInfo.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/CodeGen/GlobalISel/GISelAccessor.h"
 #include "llvm/IR/CallingConv.h"
+#include "llvm/MC/MCInstrItineraries.h"
+#include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
-#include <string>
+#include <memory>
 
 #define GET_SUBTARGETINFO_HEADER
 #include "X86GenSubtargetInfo.inc"
 
 namespace llvm {
+
 class GlobalValue;
-class StringRef;
-class TargetMachine;
 
 /// The X86 backend supports a number of different styles of PIC.
 ///
 namespace PICStyles {
+
 enum Style {
   StubPIC,          // Used on i386-darwin in pic mode.
   GOT,              // Used on 32 bit elf on when in pic mode.
   RIPRel,           // Used on X86-64 when in pic mode.
   None              // Set when not in pic mode.
 };
-}
+
+} // end namespace PICStyles
 
 class X86Subtarget final : public X86GenSubtargetInfo {
-
 protected:
   enum X86SSEEnum {
     NoSSE, SSE1, SSE2, SSE3, SSSE3, SSE41, SSE42, AVX, AVX2, AVX512F
@@ -96,10 +99,13 @@ protected:
 
   /// Target has XSAVE instructions
   bool HasXSAVE;
+
   /// Target has XSAVEOPT instructions
   bool HasXSAVEOPT;
+
   /// Target has XSAVEC instructions
   bool HasXSAVEC;
+
   /// Target has XSAVES instructions
   bool HasXSAVES;
 
@@ -148,9 +154,6 @@ protected:
   /// Processor has RTM instructions.
   bool HasRTM;
 
-  /// Processor has HLE.
-  bool HasHLE;
-
   /// Processor has ADX instructions.
   bool HasADX;
 
@@ -168,6 +171,9 @@ protected:
 
   /// Processor has MONITORX/MWAITX instructions.
   bool HasMWAITX;
+
+  /// Processor has Cache Line Zero instruction
+  bool HasCLZERO;
 
   /// Processor has Prefetch with intent to Write instruction
   bool HasPFPREFETCHWT1;
@@ -265,23 +271,11 @@ protected:
   /// Processor supports MPX - Memory Protection Extensions
   bool HasMPX;
 
-  /// Processor supports Invalidate Process-Context Identifier
-  bool HasInvPCId;
-
-  /// Processor has VM Functions
-  bool HasVMFUNC;
-
-  /// Processor has Supervisor Mode Access Protection
-  bool HasSMAP;
-
   /// Processor has Software Guard Extensions
   bool HasSGX;
 
   /// Processor supports Flush Cache Line instruction
   bool HasCLFLUSHOPT;
-
-  /// Processor has Persistent Commit feature
-  bool HasPCOMMIT;
 
   /// Processor supports Cache Line Write Back instruction
   bool HasCLWB;
@@ -307,8 +301,8 @@ protected:
   /// This is used to avoid ifndefs spreading around while GISel is
   /// an optional library.
   std::unique_ptr<GISelAccessor> GISel;
-private:
 
+private:
   /// Override the stack alignment.
   unsigned StackAlignOverride;
 
@@ -341,13 +335,17 @@ public:
   const X86TargetLowering *getTargetLowering() const override {
     return &TLInfo;
   }
+
   const X86InstrInfo *getInstrInfo() const override { return &InstrInfo; }
+
   const X86FrameLowering *getFrameLowering() const override {
     return &FrameLowering;
   }
+
   const X86SelectionDAGInfo *getSelectionDAGInfo() const override {
     return &TSInfo;
   }
+
   const X86RegisterInfo *getRegisterInfo() const override {
     return &getInstrInfo()->getRegisterInfo();
   }
@@ -370,12 +368,14 @@ public:
   const InstructionSelector *getInstructionSelector() const override;
   const LegalizerInfo *getLegalizerInfo() const override;
   const RegisterBankInfo *getRegBankInfo() const override;
+
 private:
   /// Initialize the full set of dependencies so we can use an initializer
   /// list for X86Subtarget.
   X86Subtarget &initializeSubtargetDependencies(StringRef CPU, StringRef FS);
   void initializeEnvironment();
   void initSubtargetFeatures(StringRef CPU, StringRef FS);
+
 public:
   /// Is this x86_64? (disregarding specific ABI / programming model)
   bool is64Bit() const {
@@ -447,13 +447,13 @@ public:
   bool hasVBMI() const { return HasVBMI; }
   bool hasIFMA() const { return HasIFMA; }
   bool hasRTM() const { return HasRTM; }
-  bool hasHLE() const { return HasHLE; }
   bool hasADX() const { return HasADX; }
   bool hasSHA() const { return HasSHA; }
   bool hasPRFCHW() const { return HasPRFCHW; }
   bool hasRDSEED() const { return HasRDSEED; }
   bool hasLAHFSAHF() const { return HasLAHFSAHF; }
   bool hasMWAITX() const { return HasMWAITX; }
+  bool hasCLZERO() const { return HasCLZERO; }
   bool isBTMemSlow() const { return IsBTMemSlow; }
   bool isSHLDSlow() const { return IsSHLDSlow; }
   bool isPMULLDSlow() const { return IsPMULLDSlow; }
@@ -481,8 +481,9 @@ public:
   bool hasVLX() const { return HasVLX; }
   bool hasPKU() const { return HasPKU; }
   bool hasMPX() const { return HasMPX; }
+  bool hasCLFLUSHOPT() const { return HasCLFLUSHOPT; }
 
-  virtual bool isXRaySupported() const override { return is64Bit(); }
+  bool isXRaySupported() const override { return is64Bit(); }
 
   bool isAtom() const { return X86ProcFamily == IntelAtom; }
   bool isSLM() const { return X86ProcFamily == IntelSLM; }
@@ -628,6 +629,6 @@ public:
   }
 };
 
-} // End llvm namespace
+} // end namespace llvm
 
-#endif
+#endif // LLVM_LIB_TARGET_X86_X86SUBTARGET_H

@@ -183,18 +183,29 @@ class SourceFileRenderer:
 </html>
             '''.format(filename), file=self.stream)
 
-        self.html_formatter = HtmlFormatter()
-        self.cpp_lexer = CppLexer()
+        self.html_formatter = HtmlFormatter(encoding='utf-8')
+        self.cpp_lexer = CppLexer(stripnl=False)
 
-    def render_source_line(self, linenum, line):
-        html_line = highlight(line, self.cpp_lexer, self.html_formatter)
-        print('''
+    def render_source_lines(self, stream, line_remarks):
+        file_text = stream.read()
+        html_highlighted = highlight(file_text, self.cpp_lexer, self.html_formatter)
+
+        # Take off the header and footer, these must be
+        #   reapplied line-wise, within the page structure
+        html_highlighted = html_highlighted.replace('<div class="highlight"><pre>', '')
+        html_highlighted = html_highlighted.replace('</pre></div>', '')
+
+        for (linenum, html_line) in enumerate(html_highlighted.split('\n'), start=1):
+            print('''
 <tr>
 <td><a name=\"L{linenum}\">{linenum}</a></td>
 <td></td>
 <td></td>
-<td>{html_line}</td>
+<td><div class="highlight"><pre>{html_line}</pre></div></td>
 </tr>'''.format(**locals()), file=self.stream)
+
+            for remark in line_remarks.get(linenum, []):
+                self.render_inline_remarks(remark, html_line)
 
     def render_inline_remarks(self, r, line):
         inlining_context = r.DemangledFunctionName
@@ -237,10 +248,8 @@ class SourceFileRenderer:
 <td>Source</td>
 <td>Inline Context</td>
 </tr>''', file=self.stream)
-        for (linenum, line) in enumerate(self.source_stream.readlines(), start=1):
-            self.render_source_line(linenum, line)
-            for remark in line_remarks.get(linenum, []):
-                self.render_inline_remarks(remark, line)
+        self.render_source_lines(self.source_stream, line_remarks)
+
         print('''
 </table>
 </body>
@@ -316,8 +325,8 @@ def _render_file(source_dir, output_dir, ctx, entry):
     SourceFileRenderer(source_dir, output_dir, filename).render(remarks)
 
 
-def gather_results(pool, filenames):
-    remarks = pool.map(get_remarks, filenames)
+def gather_results(pmap, filenames):
+    remarks = pmap(get_remarks, filenames)
 
     def merge_file_remarks(file_remarks_job, all_remarks, merged):
         for filename, d in file_remarks_job.iteritems():
@@ -348,7 +357,7 @@ def map_remarks(all_remarks):
                     context.caller_loc[caller] = arg['DebugLoc']
 
 
-def generate_report(pool, all_remarks, file_remarks, source_dir, output_dir):
+def generate_report(pmap, all_remarks, file_remarks, source_dir, output_dir):
     try:
         os.makedirs(output_dir)
     except OSError as e:
@@ -358,7 +367,7 @@ def generate_report(pool, all_remarks, file_remarks, source_dir, output_dir):
             raise
 
     _render_file_bound = functools.partial(_render_file, source_dir, output_dir, context)
-    pool.map(_render_file_bound, file_remarks.items())
+    pmap(_render_file_bound, file_remarks.items())
 
     if context.should_display_hotness():
         sorted_remarks = sorted(all_remarks.itervalues(), key=lambda r: (r.Hotness, r.__dict__), reverse=True)
@@ -391,9 +400,14 @@ if __name__ == '__main__':
         parser.print_help()
         sys.exit(1)
 
-    pool = Pool(processes=args.jobs)
-    all_remarks, file_remarks = gather_results(pool, args.yaml_files)
+    if args.jobs == 1:
+        pmap = map
+    else:
+        pool = Pool(processes=args.jobs)
+        pmap = pool.map
+
+    all_remarks, file_remarks = gather_results(pmap, args.yaml_files)
 
     map_remarks(all_remarks)
 
-    generate_report(pool, all_remarks, file_remarks, args.source_dir, args.output_dir)
+    generate_report(pmap, all_remarks, file_remarks, args.source_dir, args.output_dir)

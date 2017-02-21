@@ -138,7 +138,6 @@ public:
 
   // Methods for support type inquiry through isa, cast, and
   // dyn_cast
-  static inline bool classof(const MemoryAccess *) { return true; }
   static inline bool classof(const Value *V) {
     unsigned ID = V->getValueID();
     return ID == MemoryUseVal || ID == MemoryPhiVal || ID == MemoryDefVal;
@@ -243,7 +242,6 @@ public:
   /// \brief Get the access that produces the memory state used by this Use.
   MemoryAccess *getDefiningAccess() const { return getOperand(0); }
 
-  static inline bool classof(const MemoryUseOrDef *) { return true; }
   static inline bool classof(const Value *MA) {
     return MA->getValueID() == MemoryUseVal || MA->getValueID() == MemoryDefVal;
   }
@@ -284,7 +282,6 @@ public:
   void *operator new(size_t s) { return User::operator new(s, 1); }
   void *operator new(size_t, unsigned) = delete;
 
-  static inline bool classof(const MemoryUse *) { return true; }
   static inline bool classof(const Value *MA) {
     return MA->getValueID() == MemoryUseVal;
   }
@@ -342,7 +339,6 @@ public:
   void *operator new(size_t s) { return User::operator new(s, 1); }
   void *operator new(size_t, unsigned) = delete;
 
-  static inline bool classof(const MemoryDef *) { return true; }
   static inline bool classof(const Value *MA) {
     return MA->getValueID() == MemoryDefVal;
   }
@@ -501,7 +497,6 @@ public:
     return getIncomingValue(Idx);
   }
 
-  static inline bool classof(const MemoryPhi *) { return true; }
   static inline bool classof(const Value *V) {
     return V->getValueID() == MemoryPhiVal;
   }
@@ -690,6 +685,11 @@ protected:
   // on the updater to fixup what it breaks, so it is not public.
   void moveTo(MemoryUseOrDef *What, BasicBlock *BB, AccessList::iterator Where);
   void moveTo(MemoryUseOrDef *What, BasicBlock *BB, InsertionPlace Point);
+  // Rename the dominator tree branch rooted at BB.
+  void renamePass(BasicBlock *BB, MemoryAccess *IncomingVal,
+                  SmallPtrSetImpl<BasicBlock *> &Visited) {
+    renamePass(DT->getNode(BB), IncomingVal, Visited, true, true);
+  }
 
 private:
   class CachingWalker;
@@ -713,12 +713,13 @@ private:
   MemoryAccess *findDominatingDef(BasicBlock *, enum InsertionPlace);
   void removeFromLookups(MemoryAccess *);
   void removeFromLists(MemoryAccess *, bool ShouldDelete = true);
-
   void placePHINodes(const SmallPtrSetImpl<BasicBlock *> &,
                      const DenseMap<const BasicBlock *, unsigned int> &);
-  MemoryAccess *renameBlock(BasicBlock *, MemoryAccess *);
+  MemoryAccess *renameBlock(BasicBlock *, MemoryAccess *, bool);
+  void renameSuccessorPhis(BasicBlock *, MemoryAccess *, bool);
   void renamePass(DomTreeNode *, MemoryAccess *IncomingVal,
-                  SmallPtrSet<BasicBlock *, 16> &Visited);
+                  SmallPtrSetImpl<BasicBlock *> &Visited,
+                  bool SkipVisited = false, bool RenameAllUses = false);
   AccessList *getOrCreateAccessList(const BasicBlock *);
   DefsList *getOrCreateDefsList(const BasicBlock *);
   void renumberBlock(const BasicBlock *) const;

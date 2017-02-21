@@ -17,7 +17,7 @@ elseif( CMAKE_HOST_UNIX )
   if( LLVM_ENABLE_THREADS AND HAVE_LIBATOMIC )
     set(system_libs ${system_libs} atomic)
   endif()
-  set(system_libs ${system_libs} ${PTHREAD_LIB})
+  set(system_libs ${system_libs} ${LLVM_PTHREAD_LIB})
   if ( LLVM_ENABLE_ZLIB AND HAVE_LIBZ )
     set(system_libs ${system_libs} z)
   endif()
@@ -47,6 +47,7 @@ add_llvm_library(LLVMSupport
   CrashRecoveryContext.cpp
   DataExtractor.cpp
   Debug.cpp
+  DebugCounter.cpp
   DeltaAlgorithm.cpp
   DAGDeltaAlgorithm.cpp
   Dwarf.cpp

@@ -152,10 +152,11 @@ static unsigned nonDbgMICount(MachineBasicBlock::const_instr_iterator MIB,
 /// On Hexagon, we have two instructions used to set-up the hardware loop
 /// (LOOP0, LOOP1) with corresponding endloop (ENDLOOP0, ENDLOOP1) instructions
 /// to indicate the end of a loop.
-static MachineInstr *findLoopInstr(MachineBasicBlock *BB, int EndLoopOp,
+static MachineInstr *findLoopInstr(MachineBasicBlock *BB, unsigned EndLoopOp,
+      MachineBasicBlock *TargetBB,
       SmallPtrSet<MachineBasicBlock *, 8> &Visited) {
-  int LOOPi;
-  int LOOPr;
+  unsigned LOOPi;
+  unsigned LOOPr;
   if (EndLoopOp == Hexagon::ENDLOOP0) {
     LOOPi = Hexagon::J2_loop0i;
     LOOPr = Hexagon::J2_loop0r;
@@ -165,26 +166,24 @@ static MachineInstr *findLoopInstr(MachineBasicBlock *BB, int EndLoopOp,
   }
 
   // The loop set-up instruction will be in a predecessor block
-  for (MachineBasicBlock::pred_iterator PB = BB->pred_begin(),
-         PE = BB->pred_end(); PB != PE; ++PB) {
+  for (MachineBasicBlock *PB : BB->predecessors()) {
     // If this has been visited, already skip it.
-    if (!Visited.insert(*PB).second)
+    if (!Visited.insert(PB).second)
       continue;
-    if (*PB == BB)
+    if (PB == BB)
       continue;
-    for (MachineBasicBlock::reverse_instr_iterator I = (*PB)->instr_rbegin(),
-           E = (*PB)->instr_rend(); I != E; ++I) {
-      int Opc = I->getOpcode();
+    for (auto I = PB->instr_rbegin(), E = PB->instr_rend(); I != E; ++I) {
+      unsigned Opc = I->getOpcode();
       if (Opc == LOOPi || Opc == LOOPr)
         return &*I;
-      // We've reached a different loop, which means the loop0 has been removed.
-      if (Opc == EndLoopOp)
+      // We've reached a different loop, which means the loop01 has been
+      // removed.
+      if (Opc == EndLoopOp && I->getOperand(0).getMBB() != TargetBB)
         return nullptr;
     }
     // Check the predecessors for the LOOP instruction.
-    MachineInstr *loop = findLoopInstr(*PB, EndLoopOp, Visited);
-    if (loop)
-      return loop;
+    if (MachineInstr *Loop = findLoopInstr(PB, EndLoopOp, TargetBB, Visited))
+      return Loop;
   }
   return nullptr;
 }
@@ -597,7 +596,8 @@ unsigned HexagonInstrInfo::insertBranch(MachineBasicBlock &MBB,
       // Since we're adding an ENDLOOP, there better be a LOOP instruction.
       // Check for it, and change the BB target if needed.
       SmallPtrSet<MachineBasicBlock *, 8> VisitedBBs;
-      MachineInstr *Loop = findLoopInstr(TBB, EndLoopOp, VisitedBBs);
+      MachineInstr *Loop = findLoopInstr(TBB, EndLoopOp, Cond[1].getMBB(),
+                                         VisitedBBs);
       assert(Loop != 0 && "Inserting an ENDLOOP without a LOOP");
       Loop->getOperand(0).setMBB(TBB);
       // Add the ENDLOOP after the finding the LOOP0.
@@ -637,7 +637,8 @@ unsigned HexagonInstrInfo::insertBranch(MachineBasicBlock &MBB,
     // Since we're adding an ENDLOOP, there better be a LOOP instruction.
     // Check for it, and change the BB target if needed.
     SmallPtrSet<MachineBasicBlock *, 8> VisitedBBs;
-    MachineInstr *Loop = findLoopInstr(TBB, EndLoopOp, VisitedBBs);
+    MachineInstr *Loop = findLoopInstr(TBB, EndLoopOp, Cond[1].getMBB(),
+                                       VisitedBBs);
     assert(Loop != 0 && "Inserting an ENDLOOP without a LOOP");
     Loop->getOperand(0).setMBB(TBB);
     // Add the ENDLOOP after the finding the LOOP0.
@@ -687,7 +688,8 @@ unsigned HexagonInstrInfo::reduceLoopCount(MachineBasicBlock &MBB,
   MachineFunction *MF = MBB.getParent();
   DebugLoc DL = Cmp.getDebugLoc();
   SmallPtrSet<MachineBasicBlock *, 8> VisitedBBs;
-  MachineInstr *Loop = findLoopInstr(&MBB, Cmp.getOpcode(), VisitedBBs);
+  MachineInstr *Loop = findLoopInstr(&MBB, Cmp.getOpcode(),
+                                     Cmp.getOperand(0).getMBB(), VisitedBBs);
   if (!Loop)
     return 0;
   // If the loop trip count is a compile-time value, then just change the
@@ -1411,9 +1413,19 @@ bool HexagonInstrInfo::DefinesPredicate(
   auto &HRI = getRegisterInfo();
   for (unsigned oper = 0; oper < MI.getNumOperands(); ++oper) {
     MachineOperand MO = MI.getOperand(oper);
-    if (MO.isReg() && MO.isDef()) {
+    if (MO.isReg()) {
+      if (!MO.isDef())
+        continue;
       const TargetRegisterClass* RC = HRI.getMinimalPhysRegClass(MO.getReg());
       if (RC == &Hexagon::PredRegsRegClass) {
+        Pred.push_back(MO);
+        return true;
+      }
+      continue;
+    } else if (MO.isRegMask()) {
+      for (unsigned PR : Hexagon::PredRegsRegClass) {
+        if (!MI.modifiesRegister(PR, &HRI))
+          continue;
         Pred.push_back(MO);
         return true;
       }
@@ -1713,7 +1725,7 @@ bool HexagonInstrInfo::isComplex(const MachineInstr &MI) const {
 
 // Return true if the instruction is a compund branch instruction.
 bool HexagonInstrInfo::isCompoundBranchInstr(const MachineInstr &MI) const {
-  return (getType(MI) == HexagonII::TypeCOMPOUND && MI.isBranch());
+  return getType(MI) == HexagonII::TypeCJ && MI.isBranch();
 }
 
 bool HexagonInstrInfo::isCondInst(const MachineInstr &MI) const {
@@ -3007,10 +3019,12 @@ bool HexagonInstrInfo::producesStall(const MachineInstr &MI,
 
 bool HexagonInstrInfo::predCanBeUsedAsDotNew(const MachineInstr &MI,
       unsigned PredReg) const {
-  for (unsigned opNum = 0; opNum < MI.getNumOperands(); opNum++) {
-    const MachineOperand &MO = MI.getOperand(opNum);
+  for (const MachineOperand &MO : MI.operands()) {
+    // Predicate register must be explicitly defined.
+    if (MO.isRegMask() && MO.clobbersPhysReg(PredReg))
+      return false;
     if (MO.isReg() && MO.isDef() && MO.isImplicit() && (MO.getReg() == PredReg))
-      return false; // Predicate register must be explicitly defined.
+      return false;
   }
 
   // Hexagon Programmer's Reference says that decbin, memw_locked, and
@@ -3413,7 +3427,9 @@ int HexagonInstrInfo::getDotNewOp(const MachineInstr &MI) const {
     return NVOpcode;
 
   switch (MI.getOpcode()) {
-  default: llvm_unreachable("Unknown .new type");
+  default:
+    llvm::report_fatal_error(std::string("Unknown .new type: ") +
+      std::to_string(MI.getOpcode()).c_str());
   case Hexagon::S4_storerb_ur:
     return Hexagon::S4_storerbnew_ur;
 

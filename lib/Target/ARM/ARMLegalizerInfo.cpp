@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARMLegalizerInfo.h"
+#include "ARMSubtarget.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Type.h"
@@ -23,7 +24,7 @@ using namespace llvm;
 #error "You shouldn't build this"
 #endif
 
-ARMLegalizerInfo::ARMLegalizerInfo() {
+ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
   using namespace TargetOpcode;
 
   const LLT p0 = LLT::pointer(0, 32);
@@ -32,10 +33,11 @@ ARMLegalizerInfo::ARMLegalizerInfo() {
   const LLT s8 = LLT::scalar(8);
   const LLT s16 = LLT::scalar(16);
   const LLT s32 = LLT::scalar(32);
+  const LLT s64 = LLT::scalar(64);
 
   setAction({G_FRAME_INDEX, p0}, Legal);
 
-  for (auto Ty : {s1, s8, s16, s32})
+  for (auto Ty : {s1, s8, s16, s32, p0})
     setAction({G_LOAD, Ty}, Legal);
   setAction({G_LOAD, 1, p0}, Legal);
 
@@ -46,6 +48,13 @@ ARMLegalizerInfo::ARMLegalizerInfo() {
     setAction({Op, s32}, Legal);
     for (auto Ty : {s1, s8, s16})
       setAction({Op, 1, Ty}, Legal);
+  }
+
+  if (ST.hasVFP2()) {
+    setAction({G_FADD, s32}, Legal);
+    setAction({G_FADD, s64}, Legal);
+
+    setAction({G_LOAD, s64}, Legal);
   }
 
   computeTables();

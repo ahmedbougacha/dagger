@@ -81,13 +81,13 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/MemorySSA.h"
+#include "llvm/Transforms/Utils/PredicateInfo.h"
 #include <unordered_map>
 #include <utility>
 #include <vector>
 using namespace llvm;
 using namespace PatternMatch;
 using namespace llvm::GVNExpression;
-
 #define DEBUG_TYPE "newgvn"
 
 STATISTIC(NumGVNInstrDeleted, "Number of instructions deleted");
@@ -200,6 +200,7 @@ template <> struct DenseMapInfo<const Expression *> {
 };
 } // end namespace llvm
 
+namespace {
 class NewGVN : public FunctionPass {
   DominatorTree *DT;
   const DataLayout *DL;
@@ -208,10 +209,19 @@ class NewGVN : public FunctionPass {
   AliasAnalysis *AA;
   MemorySSA *MSSA;
   MemorySSAWalker *MSSAWalker;
+  std::unique_ptr<PredicateInfo> PredInfo;
   BumpPtrAllocator ExpressionAllocator;
   ArrayRecycler<Value *> ArgRecycler;
 
+  // Number of function arguments, used by ranking
+  unsigned int NumFuncArgs;
+
   // Congruence class info.
+
+  // This class is called INITIAL in the paper. It is the class everything
+  // startsout in, and represents any value. Being an optimistic analysis,
+  // anything in the INITIAL class has the value TOP, which is indeterminate and
+  // equivalent to everything.
   CongruenceClass *InitialClass;
   std::vector<CongruenceClass *> CongruenceClasses;
   unsigned NextCongruenceNum;
@@ -219,6 +229,12 @@ class NewGVN : public FunctionPass {
   // Value Mappings.
   DenseMap<Value *, CongruenceClass *> ValueToClass;
   DenseMap<Value *, const Expression *> ValueToExpression;
+
+  // Mapping from predicate info we used to the instructions we used it with.
+  // In order to correctly ensure propagation, we must keep track of what
+  // comparisons we used, so that when the values of the comparisons change, we
+  // propagate the information to the places we used the comparison.
+  DenseMap<const Value *, SmallPtrSet<Instruction *, 2>> PredicateToUsers;
 
   // A table storing which memorydefs/phis represent a memory state provably
   // equivalent to another memory state.
@@ -288,7 +304,6 @@ private:
     AU.addRequired<TargetLibraryInfoWrapperPass>();
     AU.addRequired<MemorySSAWrapperPass>();
     AU.addRequired<AAResultsWrapperPass>();
-
     AU.addPreserved<DominatorTreeWrapperPass>();
     AU.addPreserved<GlobalsAAWrapperPass>();
   }
@@ -337,6 +352,7 @@ private:
   const Expression *performSymbolicPHIEvaluation(Instruction *);
   const Expression *performSymbolicAggrValueEvaluation(Instruction *);
   const Expression *performSymbolicCmpEvaluation(Instruction *);
+  const Expression *performSymbolicPredicateInfoEvaluation(Instruction *);
 
   // Congruence finding.
   Value *lookupOperandLeader(Value *) const;
@@ -347,10 +363,13 @@ private:
   MemoryAccess *lookupMemoryAccessEquiv(MemoryAccess *) const;
   bool isMemoryAccessTop(const MemoryAccess *) const;
 
+  // Ranking
+  unsigned int getRank(const Value *) const;
+  bool shouldSwapOperands(const Value *, const Value *) const;
+
   // Reachability handling.
   void updateReachableEdge(BasicBlock *, BasicBlock *);
   void processOutgoingEdges(TerminatorInst *, BasicBlock *);
-  bool isOnlyReachableViaThisEdge(const BasicBlockEdge &) const;
   Value *findConditionEquivalence(Value *) const;
 
   // Elimination.
@@ -371,15 +390,19 @@ private:
   // Various instruction touch utilities
   void markUsersTouched(Value *);
   void markMemoryUsersTouched(MemoryAccess *);
+  void markPredicateUsersTouched(Instruction *);
   void markLeaderChangeTouched(CongruenceClass *CC);
+  void addPredicateUsers(const PredicateBase *, Instruction *);
 
   // Utilities.
   void cleanupTables();
   std::pair<unsigned, unsigned> assignDFSNumbers(BasicBlock *, unsigned);
   void updateProcessedCount(Value *V);
   void verifyMemoryCongruency() const;
+  void verifyComparisons(Function &F);
   bool singleReachablePHIPath(const MemoryAccess *, const MemoryAccess *) const;
 };
+} // end anonymous namespace
 
 char NewGVN::ID = 0;
 
@@ -489,7 +512,7 @@ const Expression *NewGVN::createBinaryExpression(unsigned Opcode, Type *T,
     // of their operands get the same value number by sorting the operand value
     // numbers.  Since all commutative instructions have two operands it is more
     // efficient to sort by hand rather than using, say, std::sort.
-    if (Arg1 > Arg2)
+    if (shouldSwapOperands(Arg1, Arg2))
       std::swap(Arg1, Arg2);
   }
   E->op_push_back(lookupOperandLeader(Arg1));
@@ -557,7 +580,7 @@ const Expression *NewGVN::createExpression(Instruction *I) {
     // numbers.  Since all commutative instructions have two operands it is more
     // efficient to sort by hand rather than using, say, std::sort.
     assert(I->getNumOperands() == 2 && "Unsupported commutative instruction!");
-    if (E->getOperand(0) > E->getOperand(1))
+    if (shouldSwapOperands(E->getOperand(0), E->getOperand(1)))
       E->swapOperands(0, 1);
   }
 
@@ -573,7 +596,7 @@ const Expression *NewGVN::createExpression(Instruction *I) {
     // Sort the operand value numbers so x<y and y>x get the same value
     // number.
     CmpInst::Predicate Predicate = CI->getPredicate();
-    if (E->getOperand(0) > E->getOperand(1)) {
+    if (shouldSwapOperands(E->getOperand(0), E->getOperand(1))) {
       E->swapOperands(0, 1);
       Predicate = CmpInst::getSwappedPredicate(Predicate);
     }
@@ -658,10 +681,9 @@ const VariableExpression *NewGVN::createVariableExpression(Value *V) {
 }
 
 const Expression *NewGVN::createVariableOrConstant(Value *V) {
-  auto Leader = lookupOperandLeader(V);
-  if (auto *C = dyn_cast<Constant>(Leader))
+  if (auto *C = dyn_cast<Constant>(V))
     return createConstantExpression(C);
-  return createVariableExpression(Leader);
+  return createVariableExpression(V);
 }
 
 const ConstantExpression *NewGVN::createConstantExpression(Constant *C) {
@@ -689,8 +711,15 @@ const CallExpression *NewGVN::createCallExpression(CallInst *CI,
 // return it. Otherwise, return the operand itself.
 Value *NewGVN::lookupOperandLeader(Value *V) const {
   CongruenceClass *CC = ValueToClass.lookup(V);
-  if (CC && (CC != InitialClass))
+  if (CC) {
+    // Everything in INITIAL is represneted by undef, as it can be any value.
+    // We do have to make sure we get the type right though, so we can't set the
+    // RepLeader to undef.
+    if (CC == InitialClass)
+      return UndefValue::get(V->getType());
     return CC->RepStoredValue ? CC->RepStoredValue : CC->RepLeader;
+  }
+
   return V;
 }
 
@@ -747,15 +776,6 @@ const StoreExpression *NewGVN::createStoreExpression(StoreInst *SI,
   // things alias analysis can't on it's own (IE that a store and a
   // load have the same value, and thus, it isn't clobbering the load).
   return E;
-}
-
-// Utility function to check whether the congruence class has a member other
-// than the given instruction.
-bool hasMemberOtherThanUs(const CongruenceClass *CC, Instruction *I) {
-  // Either it has more than one store, in which case it must contain something
-  // other than us (because it's indexed by value), or if it only has one store
-  // right now, that member should not be us.
-  return CC->StoreCount > 1 || CC->Members.count(I) == 0;
 }
 
 const Expression *NewGVN::performSymbolicStoreEvaluation(Instruction *I) {
@@ -828,12 +848,103 @@ const Expression *NewGVN::performSymbolicLoadEvaluation(Instruction *I) {
   return E;
 }
 
+const Expression *
+NewGVN::performSymbolicPredicateInfoEvaluation(Instruction *I) {
+  auto *PI = PredInfo->getPredicateInfoFor(I);
+  if (!PI)
+    return nullptr;
+
+  DEBUG(dbgs() << "Found predicate info from instruction !\n");
+  auto *CopyOf = I->getOperand(0);
+  auto *Cond = dyn_cast<Instruction>(PI->Condition);
+  if (!Cond)
+    return nullptr;
+
+  // If this a copy of the condition, it must be either true or false depending
+  // on the predicate info type and edge
+  if (CopyOf == Cond) {
+    addPredicateUsers(PI, I);
+    if (isa<PredicateAssume>(PI))
+      return createConstantExpression(ConstantInt::getTrue(Cond->getType()));
+    if (auto *PBranch = dyn_cast<PredicateBranch>(PI)) {
+      if (PBranch->TrueEdge)
+        return createConstantExpression(ConstantInt::getTrue(Cond->getType()));
+      return createConstantExpression(ConstantInt::getFalse(Cond->getType()));
+    }
+  }
+  // Not a copy of the condition, so see what the predicates tell us about this
+  // value.
+  // Not a copy of the condition, so see what the predicates tell us about this
+  // value.  First, though, we check to make sure the value is actually a copy
+  // of one of the condition operands. It's possible, in certain cases, for it
+  // to be a copy of a predicateinfo copy. In particular, if two branch
+  // operations use the same condition, and one branch dominates the other, we
+  // will end up with a copy of a copy.  This is currently a small deficiency in
+  // predicateinfo.   What will end up happening here is that we will value
+  // number both copies the same anyway.
+  if (CopyOf != Cond->getOperand(0) && CopyOf != Cond->getOperand(1)) {
+    DEBUG(dbgs() << "Copy is not of any condition operands!");
+    return nullptr;
+  }
+  Value *FirstOp = lookupOperandLeader(Cond->getOperand(0));
+  Value *SecondOp = lookupOperandLeader(Cond->getOperand(1));
+  bool SwappedOps = false;
+  // Sort the ops
+  if (shouldSwapOperands(FirstOp, SecondOp)) {
+    std::swap(FirstOp, SecondOp);
+    SwappedOps = true;
+  }
+
+  // Everything below relies on the condition being a comparison.
+  auto *Cmp = dyn_cast<CmpInst>(Cond);
+  CmpInst::Predicate Predicate =
+      SwappedOps ? Cmp->getSwappedPredicate() : Cmp->getPredicate();
+
+  if (isa<PredicateAssume>(PI)) {
+    // If the comparison is true when the operands are equal, then we know the
+    // operands are equal, because assumes must always be true.
+    if (CmpInst::isTrueWhenEqual(Predicate)) {
+      addPredicateUsers(PI, I);
+      return createVariableOrConstant(FirstOp);
+    }
+  }
+  if (const auto *PBranch = dyn_cast<PredicateBranch>(PI)) {
+    // If we are *not* a copy of the comparison, we may equal to the other
+    // operand when the predicate implies something about equality of
+    // operations.  In particular, if the comparison is true/false when the
+    // operands are equal, and we are on the right edge, we know this operation
+    // is equal to something.
+    if ((PBranch->TrueEdge && Predicate == CmpInst::ICMP_EQ) ||
+        (!PBranch->TrueEdge && Predicate == CmpInst::ICMP_NE)) {
+      addPredicateUsers(PI, I);
+      return createVariableOrConstant(FirstOp);
+    }
+    // Handle the special case of floating point.
+    if (((PBranch->TrueEdge && Predicate == CmpInst::FCMP_OEQ) ||
+         (!PBranch->TrueEdge && Predicate == CmpInst::FCMP_UNE)) &&
+        isa<ConstantFP>(FirstOp) && !cast<ConstantFP>(FirstOp)->isZero()) {
+      addPredicateUsers(PI, I);
+      return createConstantExpression(cast<Constant>(FirstOp));
+    }
+  }
+  return nullptr;
+}
+
 // Evaluate read only and pure calls, and create an expression result.
 const Expression *NewGVN::performSymbolicCallEvaluation(Instruction *I) {
   auto *CI = cast<CallInst>(I);
-  if (AA->doesNotAccessMemory(CI))
+  if (auto *II = dyn_cast<IntrinsicInst>(I)) {
+    // Instrinsics with the returned attribute are copies of arguments.
+    if (auto *ReturnedValue = II->getReturnedArgOperand()) {
+      if (II->getIntrinsicID() == Intrinsic::ssa_copy)
+        if (const auto *Result = performSymbolicPredicateInfoEvaluation(I))
+          return Result;
+      return createVariableOrConstant(ReturnedValue);
+    }
+  }
+  if (AA->doesNotAccessMemory(CI)) {
     return createCallExpression(CI, nullptr);
-  if (AA->onlyReadsMemory(CI)) {
+  } else if (AA->onlyReadsMemory(CI)) {
     MemoryAccess *DefiningAccess = MSSAWalker->getClobberingMemoryAccess(CI);
     return createCallExpression(CI, lookupMemoryAccessEquiv(DefiningAccess));
   }
@@ -927,9 +1038,7 @@ const Expression *NewGVN::performSymbolicPHIEvaluation(Instruction *I) {
                  << "\n");
     E->deallocateOperands(ArgRecycler);
     ExpressionAllocator.Deallocate(E);
-    if (auto *C = dyn_cast<Constant>(AllSameValue))
-      return createConstantExpression(C);
-    return createVariableExpression(AllSameValue);
+    return createVariableOrConstant(AllSameValue);
   }
   return E;
 }
@@ -964,9 +1073,8 @@ const Expression *NewGVN::performSymbolicAggrValueEvaluation(Instruction *I) {
         // expression.
         assert(II->getNumArgOperands() == 2 &&
                "Expect two args for recognised intrinsics.");
-        return createBinaryExpression(Opcode, EI->getType(),
-                                      II->getArgOperand(0),
-                                      II->getArgOperand(1));
+        return createBinaryExpression(
+            Opcode, EI->getType(), II->getArgOperand(0), II->getArgOperand(1));
       }
     }
   }
@@ -974,16 +1082,117 @@ const Expression *NewGVN::performSymbolicAggrValueEvaluation(Instruction *I) {
   return createAggregateValueExpression(I);
 }
 const Expression *NewGVN::performSymbolicCmpEvaluation(Instruction *I) {
-  CmpInst *CI = dyn_cast<CmpInst>(I);
-  // See if our operands are equal and that implies something.
+  auto *CI = dyn_cast<CmpInst>(I);
+  // See if our operands are equal to those of a previous predicate, and if so,
+  // if it implies true or false.
   auto Op0 = lookupOperandLeader(CI->getOperand(0));
   auto Op1 = lookupOperandLeader(CI->getOperand(1));
+  auto OurPredicate = CI->getPredicate();
+  if (shouldSwapOperands(Op1, Op0)) {
+    std::swap(Op0, Op1);
+    OurPredicate = CI->getSwappedPredicate();
+  }
+
+  // Avoid processing the same info twice
+  const PredicateBase *LastPredInfo = nullptr;
+
+  // See if we know something about the comparison itself, like it is the target
+  // of an assume.
+  auto *CmpPI = PredInfo->getPredicateInfoFor(I);
+  if (dyn_cast_or_null<PredicateAssume>(CmpPI))
+    return createConstantExpression(ConstantInt::getTrue(CI->getType()));
+
   if (Op0 == Op1) {
+    // This condition does not depend on predicates, no need to add users
     if (CI->isTrueWhenEqual())
       return createConstantExpression(ConstantInt::getTrue(CI->getType()));
     else if (CI->isFalseWhenEqual())
       return createConstantExpression(ConstantInt::getFalse(CI->getType()));
   }
+
+  // NOTE: Because we are comparing both operands here and below, and using
+  // previous comparisons, we rely on fact that predicateinfo knows to mark
+  // comparisons that use renamed operands as users of the earlier comparisons.
+  // It is *not* enough to just mark predicateinfo renamed operands as users of
+  // the earlier comparisons, because the *other* operand may have changed in a
+  // previous iteration.
+  // Example:
+  // icmp slt %a, %b
+  // %b.0 = ssa.copy(%b)
+  // false branch:
+  // icmp slt %c, %b.0
+
+  // %c and %a may start out equal, and thus, the code below will say the second
+  // %icmp is false.  c may become equal to something else, and in that case the
+  // %second icmp *must* be reexamined, but would not if only the renamed
+  // %operands are considered users of the icmp.
+
+  // *Currently* we only check one level of comparisons back, and only mark one
+  // level back as touched when changes appen .  If you modify this code to look
+  // back farther through comparisons, you *must* mark the appropriate
+  // comparisons as users in PredicateInfo.cpp, or you will cause bugs.  See if
+  // we know something just from the operands themselves
+
+  // See if our operands have predicate info, so that we may be able to derive
+  // something from a previous comparison.
+  for (const auto &Op : CI->operands()) {
+    auto *PI = PredInfo->getPredicateInfoFor(Op);
+    if (const auto *PBranch = dyn_cast_or_null<PredicateBranch>(PI)) {
+      if (PI == LastPredInfo)
+        continue;
+      LastPredInfo = PI;
+      // TODO: Along the false edge, we may know more things too, like icmp of
+      // same operands is false.
+      // TODO: We only handle actual comparison conditions below, not and/or.
+      auto *BranchCond = dyn_cast<CmpInst>(PBranch->Condition);
+      if (!BranchCond)
+        continue;
+      auto *BranchOp0 = lookupOperandLeader(BranchCond->getOperand(0));
+      auto *BranchOp1 = lookupOperandLeader(BranchCond->getOperand(1));
+      auto BranchPredicate = BranchCond->getPredicate();
+      if (shouldSwapOperands(BranchOp1, BranchOp0)) {
+        std::swap(BranchOp0, BranchOp1);
+        BranchPredicate = BranchCond->getSwappedPredicate();
+      }
+      if (BranchOp0 == Op0 && BranchOp1 == Op1) {
+        if (PBranch->TrueEdge) {
+          // If we know the previous predicate is true and we are in the true
+          // edge then we may be implied true or false.
+          if (CmpInst::isImpliedTrueByMatchingCmp(OurPredicate,
+                                                  BranchPredicate)) {
+            addPredicateUsers(PI, I);
+            return createConstantExpression(
+                ConstantInt::getTrue(CI->getType()));
+          }
+
+          if (CmpInst::isImpliedFalseByMatchingCmp(OurPredicate,
+                                                   BranchPredicate)) {
+            addPredicateUsers(PI, I);
+            return createConstantExpression(
+                ConstantInt::getFalse(CI->getType()));
+          }
+
+        } else {
+          // Just handle the ne and eq cases, where if we have the same
+          // operands, we may know something.
+          if (BranchPredicate == OurPredicate) {
+            addPredicateUsers(PI, I);
+            // Same predicate, same ops,we know it was false, so this is false.
+            return createConstantExpression(
+                ConstantInt::getFalse(CI->getType()));
+          } else if (BranchPredicate ==
+                     CmpInst::getInversePredicate(OurPredicate)) {
+            addPredicateUsers(PI, I);
+            // Inverse predicate, we know the other was false, so this is true.
+            // FIXME: Double check this
+            return createConstantExpression(
+                ConstantInt::getTrue(CI->getType()));
+          }
+        }
+      }
+    }
+  }
+  // Create expression will take care of simplifyCmpInst
   return createExpression(I);
 }
 
@@ -1066,23 +1275,6 @@ const Expression *NewGVN::performSymbolicEvaluation(Value *V) {
   return E;
 }
 
-// There is an edge from 'Src' to 'Dst'.  Return true if every path from
-// the entry block to 'Dst' passes via this edge.  In particular 'Dst'
-// must not be reachable via another edge from 'Src'.
-bool NewGVN::isOnlyReachableViaThisEdge(const BasicBlockEdge &E) const {
-
-  // While in theory it is interesting to consider the case in which Dst has
-  // more than one predecessor, because Dst might be part of a loop which is
-  // only reachable from Src, in practice it is pointless since at the time
-  // GVN runs all such loops have preheaders, which means that Dst will have
-  // been changed to have only one predecessor, namely Src.
-  const BasicBlock *Pred = E.getEnd()->getSinglePredecessor();
-  const BasicBlock *Src = E.getStart();
-  assert((!Pred || Pred == Src) && "No edge between these basic blocks!");
-  (void)Src;
-  return Pred != nullptr;
-}
-
 void NewGVN::markUsersTouched(Value *V) {
   // Now mark the users as touched.
   for (auto *User : V->users()) {
@@ -1098,6 +1290,22 @@ void NewGVN::markMemoryUsersTouched(MemoryAccess *MA) {
     else
       TouchedInstructions.set(InstrDFS.lookup(U));
   }
+}
+
+// Add I to the set of users of a given predicate.
+void NewGVN::addPredicateUsers(const PredicateBase *PB, Instruction *I) {
+  if (auto *PBranch = dyn_cast<PredicateBranch>(PB))
+    PredicateToUsers[PBranch->Condition].insert(I);
+  else if (auto *PAssume = dyn_cast<PredicateBranch>(PB))
+    PredicateToUsers[PAssume->Condition].insert(I);
+}
+
+// Touch all the predicates that depend on this instruction.
+void NewGVN::markPredicateUsersTouched(Instruction *I) {
+  const auto Result = PredicateToUsers.find(I);
+  if (Result != PredicateToUsers.end())
+    for (auto *User : Result->second)
+      TouchedInstructions.set(InstrDFS.lookup(User));
 }
 
 // Touch the instructions that need to be updated after a congruence class has a
@@ -1207,7 +1415,7 @@ void NewGVN::moveValueToNewCongruenceClass(Instruction *I,
     }
 
     // We don't need to sort members if there is only 1, and we don't care about
-    // sorting the initial class because everything either gets out of it or is
+    // sorting the INITIAL class because everything either gets out of it or is
     // unreachable.
     if (OldClass->Members.size() == 1 || OldClass == InitialClass) {
       OldClass->RepLeader = *(OldClass->Members.begin());
@@ -1236,7 +1444,7 @@ void NewGVN::moveValueToNewCongruenceClass(Instruction *I,
 void NewGVN::performCongruenceFinding(Instruction *I, const Expression *E) {
   ValueToExpression[I] = E;
   // This is guaranteed to return something, since it will at least find
-  // INITIAL.
+  // TOP.
 
   CongruenceClass *IClass = ValueToClass[I];
   assert(IClass && "Should have found a IClass");
@@ -1301,6 +1509,8 @@ void NewGVN::performCongruenceFinding(Instruction *I, const Expression *E) {
     markUsersTouched(I);
     if (MemoryAccess *MA = MSSA->getMemoryAccess(I))
       markMemoryUsersTouched(MA);
+    if (auto *CI = dyn_cast<CmpInst>(I))
+      markPredicateUsersTouched(CI);
   }
 }
 
@@ -1425,8 +1635,7 @@ void NewGVN::processOutgoingEdges(TerminatorInst *TI, BasicBlock *B) {
 }
 
 // The algorithm initially places the values of the routine in the INITIAL
-// congruence
-// class. The leader of INITIAL is the undetermined value `TOP`.
+// congruence class. The leader of INITIAL is the undetermined value `TOP`.
 // When the algorithm has finished, values still in INITIAL are unreachable.
 void NewGVN::initializeCongruenceClasses(Function &F) {
   // FIXME now i can't remember why this is 2
@@ -1440,8 +1649,13 @@ void NewGVN::initializeCongruenceClasses(Function &F) {
       MemoryAccessToClass[MP] = InitialClass;
 
     for (auto &I : B) {
+      // Don't insert void terminators into the class. We don't value number
+      // them, and they just end up sitting in INITIAL.
+      if (isa<TerminatorInst>(I) && I.getType()->isVoidTy())
+        continue;
       InitialValues.insert(&I);
       ValueToClass[&I] = InitialClass;
+
       // All memory accesses are equivalent to live on entry to start. They must
       // be initialized to something so that initial changes are noticed. For
       // the maximal answer, we initialize them all to be the same as
@@ -1492,6 +1706,7 @@ void NewGVN::cleanupTables() {
   TouchedInstructions.clear();
   DominatedInstRange.clear();
   MemoryAccessToClass.clear();
+  PredicateToUsers.clear();
 }
 
 std::pair<unsigned, unsigned> NewGVN::assignDFSNumbers(BasicBlock *B,
@@ -1592,7 +1807,8 @@ void NewGVN::valueNumberInstruction(Instruction *I) {
     performCongruenceFinding(I, Symbolized);
   } else {
     // Handle terminators that return values. All of them produce values we
-    // don't currently understand.
+    // don't currently understand.  We don't place non-value producing
+    // terminators in a class.
     if (!I->getType()->isVoidTy()) {
       auto *Symbolized = createUnknownExpression(I);
       performCongruenceFinding(I, Symbolized);
@@ -1691,16 +1907,39 @@ void NewGVN::verifyMemoryCongruency() const {
   }
 }
 
+// Re-evaluate all the comparisons after value numbering and ensure they don't
+// change. If they changed, we didn't mark them touched properly.
+void NewGVN::verifyComparisons(Function &F) {
+#ifndef NDEBUG
+  for (auto &BB : F) {
+    if (!ReachableBlocks.count(&BB))
+      continue;
+    for (auto &I : BB) {
+      if (InstructionsToErase.count(&I))
+        continue;
+      if (isa<CmpInst>(&I)) {
+        auto *CurrentVal = ValueToClass.lookup(&I);
+        valueNumberInstruction(&I);
+        assert(CurrentVal == ValueToClass.lookup(&I) &&
+               "Re-evaluating comparison changed value");
+      }
+    }
+  }
+#endif
+}
+
 // This is the main transformation entry point.
 bool NewGVN::runGVN(Function &F, DominatorTree *_DT, AssumptionCache *_AC,
                     TargetLibraryInfo *_TLI, AliasAnalysis *_AA,
                     MemorySSA *_MSSA) {
   bool Changed = false;
+  NumFuncArgs = F.arg_size();
   DT = _DT;
   AC = _AC;
   TLI = _TLI;
   AA = _AA;
   MSSA = _MSSA;
+  PredInfo = make_unique<PredicateInfo>(F, *DT, *AC);
   DL = &F.getParent()->getDataLayout();
   MSSAWalker = MSSA->getWalker();
 
@@ -1709,9 +1948,9 @@ bool NewGVN::runGVN(Function &F, DominatorTree *_DT, AssumptionCache *_AC,
   unsigned ICount = 1;
   // Add an empty instruction to account for the fact that we start at 1
   DFSToInstr.emplace_back(nullptr);
-  // Note: We want RPO traversal of the blocks, which is not quite the same as
-  // dominator tree order, particularly with regard whether backedges get
-  // visited first or second, given a block with multiple successors.
+  // Note: We want ideal RPO traversal of the blocks, which is not quite the
+  // same as dominator tree order, particularly with regard whether backedges
+  // get visited first or second, given a block with multiple successors.
   // If we visit in the wrong order, we will end up performing N times as many
   // iterations.
   // The dominator tree does guarantee that, for a given dom tree node, it's
@@ -1775,6 +2014,9 @@ bool NewGVN::runGVN(Function &F, DominatorTree *_DT, AssumptionCache *_AC,
   while (TouchedInstructions.any()) {
     ++Iterations;
     // Walk through all the instructions in all the blocks in RPO.
+    // TODO: As we hit a new block, we should push and pop equalities into a
+    // table lookupOperandLeader can use, to catch things PredicateInfo
+    // might miss, like edge-only equivalences.
     for (int InstrNum = TouchedInstructions.find_first(); InstrNum != -1;
          InstrNum = TouchedInstructions.find_next(InstrNum)) {
 
@@ -1829,7 +2071,9 @@ bool NewGVN::runGVN(Function &F, DominatorTree *_DT, AssumptionCache *_AC,
   NumGVNMaxIterations = std::max(NumGVNMaxIterations.getValue(), Iterations);
 #ifndef NDEBUG
   verifyMemoryCongruency();
+  verifyComparisons(F);
 #endif
+
   Changed |= eliminateInstructions(F);
 
   // Delete all instructions marked for deletion.
@@ -2042,31 +2286,34 @@ void NewGVN::convertDenseToLoadsAndStores(
 }
 
 static void patchReplacementInstruction(Instruction *I, Value *Repl) {
+  auto *ReplInst = dyn_cast<Instruction>(Repl);
+  if (!ReplInst)
+    return;
+
   // Patch the replacement so that it is not more restrictive than the value
   // being replaced.
-  auto *Op = dyn_cast<BinaryOperator>(I);
-  auto *ReplOp = dyn_cast<BinaryOperator>(Repl);
+  // Note that if 'I' is a load being replaced by some operation,
+  // for example, by an arithmetic operation, then andIRFlags()
+  // would just erase all math flags from the original arithmetic
+  // operation, which is clearly not wanted and not needed.
+  if (!isa<LoadInst>(I))
+    ReplInst->andIRFlags(I);
 
-  if (Op && ReplOp)
-    ReplOp->andIRFlags(Op);
+  // FIXME: If both the original and replacement value are part of the
+  // same control-flow region (meaning that the execution of one
+  // guarantees the execution of the other), then we can combine the
+  // noalias scopes here and do better than the general conservative
+  // answer used in combineMetadata().
 
-  if (auto *ReplInst = dyn_cast<Instruction>(Repl)) {
-    // FIXME: If both the original and replacement value are part of the
-    // same control-flow region (meaning that the execution of one
-    // guarentees the executation of the other), then we can combine the
-    // noalias scopes here and do better than the general conservative
-    // answer used in combineMetadata().
-
-    // In general, GVN unifies expressions over different control-flow
-    // regions, and so we need a conservative combination of the noalias
-    // scopes.
-    unsigned KnownIDs[] = {
-        LLVMContext::MD_tbaa,           LLVMContext::MD_alias_scope,
-        LLVMContext::MD_noalias,        LLVMContext::MD_range,
-        LLVMContext::MD_fpmath,         LLVMContext::MD_invariant_load,
-        LLVMContext::MD_invariant_group};
-    combineMetadata(ReplInst, I, KnownIDs);
-  }
+  // In general, GVN unifies expressions over different control-flow
+  // regions, and so we need a conservative combination of the noalias
+  // scopes.
+  static const unsigned KnownIDs[] = {
+      LLVMContext::MD_tbaa,           LLVMContext::MD_alias_scope,
+      LLVMContext::MD_noalias,        LLVMContext::MD_range,
+      LLVMContext::MD_fpmath,         LLVMContext::MD_invariant_load,
+      LLVMContext::MD_invariant_group};
+  combineMetadata(ReplInst, I, KnownIDs);
 }
 
 static void patchAndReplaceAllUsesWith(Instruction *I, Value *Repl) {
@@ -2200,17 +2447,25 @@ bool NewGVN::eliminateInstructions(Function &F) {
     }
   }
 
-  for (CongruenceClass *CC : CongruenceClasses) {
+  for (CongruenceClass *CC : reverse(CongruenceClasses)) {
     // Track the equivalent store info so we can decide whether to try
     // dead store elimination.
     SmallVector<ValueDFS, 8> PossibleDeadStores;
 
-    // FIXME: We should eventually be able to replace everything still
-    // in the initial class with undef, as they should be unreachable.
-    // Right now, initial still contains some things we skip value
-    // numbering of (UNREACHABLE's, for example).
-    if (CC == InitialClass || CC->Dead)
+    if (CC->Dead)
       continue;
+    // Everything still in the INITIAL class is unreachable or dead.
+    if (CC == InitialClass) {
+#ifndef NDEBUG
+      for (auto M : CC->Members)
+        assert((!ReachableBlocks.count(cast<Instruction>(M)->getParent()) ||
+                InstructionsToErase.count(cast<Instruction>(M))) &&
+               "Everything in INITIAL should be unreachable or dead at this "
+               "point");
+#endif
+      continue;
+    }
+
     assert(CC->RepLeader && "We should have had a leader");
 
     // If this is a leader that is always available, and it's a
@@ -2293,15 +2548,14 @@ bool NewGVN::eliminateInstructions(Function &F) {
           // start using, we also push.
           // Otherwise, we walk along, processing members who are
           // dominated by this scope, and eliminate them.
-          bool ShouldPush =
-              Member && (EliminationStack.empty() || isa<Constant>(Member));
+          bool ShouldPush = Member && EliminationStack.empty();
           bool OutOfScope =
               !EliminationStack.isInScope(MemberDFSIn, MemberDFSOut);
 
           if (OutOfScope || ShouldPush) {
             // Sync to our current scope.
             EliminationStack.popUntilDFSScope(MemberDFSIn, MemberDFSOut);
-            ShouldPush |= Member && EliminationStack.empty();
+            bool ShouldPush = Member && EliminationStack.empty();
             if (ShouldPush) {
               EliminationStack.push_back(Member, MemberDFSIn, MemberDFSOut);
             }
@@ -2327,8 +2581,13 @@ bool NewGVN::eliminateInstructions(Function &F) {
 
           // If we replaced something in an instruction, handle the patching of
           // metadata.
-          if (auto *ReplacedInst = dyn_cast<Instruction>(MemberUse->get()))
-            patchReplacementInstruction(ReplacedInst, Result);
+          if (auto *ReplacedInst = dyn_cast<Instruction>(MemberUse->get())) {
+            // Skip this if we are replacing predicateinfo with its original
+            // operand, as we already know we can just drop it.
+            auto *PI = PredInfo->getPredicateInfoFor(ReplacedInst);
+            if (!PI || Result != PI->OriginalOp)
+              patchReplacementInstruction(ReplacedInst, Result);
+          }
 
           assert(isa<Instruction>(MemberUse->getUser()));
           MemberUse->set(Result);
@@ -2392,4 +2651,36 @@ bool NewGVN::eliminateInstructions(Function &F) {
   }
 
   return AnythingReplaced;
+}
+
+// This function provides global ranking of operations so that we can place them
+// in a canonical order.  Note that rank alone is not necessarily enough for a
+// complete ordering, as constants all have the same rank.  However, generally,
+// we will simplify an operation with all constants so that it doesn't matter
+// what order they appear in.
+unsigned int NewGVN::getRank(const Value *V) const {
+  // Prefer undef to anything else
+  if (isa<UndefValue>(V))
+    return 0;
+  if (isa<Constant>(V))
+    return 1;
+  else if (auto *A = dyn_cast<Argument>(V))
+    return 2 + A->getArgNo();
+
+  // Need to shift the instruction DFS by number of arguments + 3 to account for
+  // the constant and argument ranking above.
+  unsigned Result = InstrDFS.lookup(V);
+  if (Result > 0)
+    return 3 + NumFuncArgs + Result;
+  // Unreachable or something else, just return a really large number.
+  return ~0;
+}
+
+// This is a function that says whether two commutative operations should
+// have their order swapped when canonicalizing.
+bool NewGVN::shouldSwapOperands(const Value *A, const Value *B) const {
+  // Because we only care about a total ordering, and don't rewrite expressions
+  // in this order, we order by rank, which will give a strict weak ordering to
+  // everything but constants, and then we order by pointer address.
+  return std::make_pair(getRank(A), A) > std::make_pair(getRank(B), B);
 }

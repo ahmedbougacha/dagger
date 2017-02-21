@@ -249,6 +249,23 @@ public:
   /// <CalleeValueInfo, CalleeInfo> call edge pair.
   typedef std::pair<ValueInfo, CalleeInfo> EdgeTy;
 
+  /// An "identifier" for a virtual function. This contains the type identifier
+  /// represented as a GUID and the offset from the address point to the virtual
+  /// function pointer, where "address point" is as defined in the Itanium ABI:
+  /// https://mentorembedded.github.io/cxx-abi/abi.html#vtable-general
+  struct VFuncId {
+    GlobalValue::GUID GUID;
+    uint64_t Offset;
+  };
+
+  /// A specification for a virtual function call with all constant integer
+  /// arguments. This is used to perform virtual constant propagation on the
+  /// summary.
+  struct ConstVCall {
+    VFuncId VFunc;
+    std::vector<uint64_t> Args;
+  };
+
 private:
   /// Number of instructions (ignoring debug instructions, e.g.) computed
   /// during the initial compile step when the summary index is first built.
@@ -257,17 +274,47 @@ private:
   /// List of <CalleeValueInfo, CalleeInfo> call edge pairs from this function.
   std::vector<EdgeTy> CallGraphEdgeList;
 
-  /// List of type identifiers used by this function, represented as GUIDs.
-  std::vector<GlobalValue::GUID> TypeIdList;
+  /// All type identifier related information. Because these fields are
+  /// relatively uncommon we only allocate space for them if necessary.
+  struct TypeIdInfo {
+    /// List of type identifiers used by this function in llvm.type.test
+    /// intrinsics other than by an llvm.assume intrinsic, represented as GUIDs.
+    std::vector<GlobalValue::GUID> TypeTests;
+
+    /// List of virtual calls made by this function using (respectively)
+    /// llvm.assume(llvm.type.test) or llvm.type.checked.load intrinsics that do
+    /// not have all constant integer arguments.
+    std::vector<VFuncId> TypeTestAssumeVCalls, TypeCheckedLoadVCalls;
+
+    /// List of virtual calls made by this function using (respectively)
+    /// llvm.assume(llvm.type.test) or llvm.type.checked.load intrinsics with
+    /// all constant integer arguments.
+    std::vector<ConstVCall> TypeTestAssumeConstVCalls,
+        TypeCheckedLoadConstVCalls;
+  };
+
+  std::unique_ptr<TypeIdInfo> TIdInfo;
 
 public:
   /// Summary constructors.
   FunctionSummary(GVFlags Flags, unsigned NumInsts, std::vector<ValueInfo> Refs,
                   std::vector<EdgeTy> CGEdges,
-                  std::vector<GlobalValue::GUID> TypeIds)
+                  std::vector<GlobalValue::GUID> TypeTests,
+                  std::vector<VFuncId> TypeTestAssumeVCalls,
+                  std::vector<VFuncId> TypeCheckedLoadVCalls,
+                  std::vector<ConstVCall> TypeTestAssumeConstVCalls,
+                  std::vector<ConstVCall> TypeCheckedLoadConstVCalls)
       : GlobalValueSummary(FunctionKind, Flags, std::move(Refs)),
-        InstCount(NumInsts), CallGraphEdgeList(std::move(CGEdges)),
-        TypeIdList(std::move(TypeIds)) {}
+        InstCount(NumInsts), CallGraphEdgeList(std::move(CGEdges)) {
+    if (!TypeTests.empty() || !TypeTestAssumeVCalls.empty() ||
+        !TypeCheckedLoadVCalls.empty() || !TypeTestAssumeConstVCalls.empty() ||
+        !TypeCheckedLoadConstVCalls.empty())
+      TIdInfo = llvm::make_unique<TypeIdInfo>(TypeIdInfo{
+          std::move(TypeTests), std::move(TypeTestAssumeVCalls),
+          std::move(TypeCheckedLoadVCalls),
+          std::move(TypeTestAssumeConstVCalls),
+          std::move(TypeCheckedLoadConstVCalls)});
+  }
 
   /// Check if this is a function summary.
   static bool classof(const GlobalValueSummary *GVS) {
@@ -280,8 +327,77 @@ public:
   /// Return the list of <CalleeValueInfo, CalleeInfo> pairs.
   ArrayRef<EdgeTy> calls() const { return CallGraphEdgeList; }
 
-  /// Returns the list of type identifiers used by this function.
-  ArrayRef<GlobalValue::GUID> type_tests() const { return TypeIdList; }
+  /// Returns the list of type identifiers used by this function in
+  /// llvm.type.test intrinsics other than by an llvm.assume intrinsic,
+  /// represented as GUIDs.
+  ArrayRef<GlobalValue::GUID> type_tests() const {
+    if (TIdInfo)
+      return TIdInfo->TypeTests;
+    return {};
+  }
+
+  /// Returns the list of virtual calls made by this function using
+  /// llvm.assume(llvm.type.test) intrinsics that do not have all constant
+  /// integer arguments.
+  ArrayRef<VFuncId> type_test_assume_vcalls() const {
+    if (TIdInfo)
+      return TIdInfo->TypeTestAssumeVCalls;
+    return {};
+  }
+
+  /// Returns the list of virtual calls made by this function using
+  /// llvm.type.checked.load intrinsics that do not have all constant integer
+  /// arguments.
+  ArrayRef<VFuncId> type_checked_load_vcalls() const {
+    if (TIdInfo)
+      return TIdInfo->TypeCheckedLoadVCalls;
+    return {};
+  }
+
+  /// Returns the list of virtual calls made by this function using
+  /// llvm.assume(llvm.type.test) intrinsics with all constant integer
+  /// arguments.
+  ArrayRef<ConstVCall> type_test_assume_const_vcalls() const {
+    if (TIdInfo)
+      return TIdInfo->TypeTestAssumeConstVCalls;
+    return {};
+  }
+
+  /// Returns the list of virtual calls made by this function using
+  /// llvm.type.checked.load intrinsics with all constant integer arguments.
+  ArrayRef<ConstVCall> type_checked_load_const_vcalls() const {
+    if (TIdInfo)
+      return TIdInfo->TypeCheckedLoadConstVCalls;
+    return {};
+  }
+};
+
+template <> struct DenseMapInfo<FunctionSummary::VFuncId> {
+  static FunctionSummary::VFuncId getEmptyKey() { return {0, uint64_t(-1)}; }
+  static FunctionSummary::VFuncId getTombstoneKey() {
+    return {0, uint64_t(-2)};
+  }
+  static bool isEqual(FunctionSummary::VFuncId L, FunctionSummary::VFuncId R) {
+    return L.GUID == R.GUID && L.Offset == R.Offset;
+  }
+  static unsigned getHashValue(FunctionSummary::VFuncId I) { return I.GUID; }
+};
+
+template <> struct DenseMapInfo<FunctionSummary::ConstVCall> {
+  static FunctionSummary::ConstVCall getEmptyKey() {
+    return {{0, uint64_t(-1)}, {}};
+  }
+  static FunctionSummary::ConstVCall getTombstoneKey() {
+    return {{0, uint64_t(-2)}, {}};
+  }
+  static bool isEqual(FunctionSummary::ConstVCall L,
+                      FunctionSummary::ConstVCall R) {
+    return DenseMapInfo<FunctionSummary::VFuncId>::isEqual(L.VFunc, R.VFunc) &&
+           L.Args == R.Args;
+  }
+  static unsigned getHashValue(FunctionSummary::ConstVCall I) {
+    return I.VFunc.GUID;
+  }
 };
 
 /// \brief Global variable summary information to aid decisions and
@@ -323,8 +439,40 @@ struct TypeTestResolution {
   unsigned SizeM1BitWidth = 0;
 };
 
+struct WholeProgramDevirtResolution {
+  enum Kind {
+    Indir,      ///< Just do a regular virtual call
+    SingleImpl, ///< Single implementation devirtualization
+  } TheKind = Indir;
+
+  std::string SingleImplName;
+
+  struct ByArg {
+    enum Kind {
+      Indir,            ///< Just do a regular virtual call
+      UniformRetVal,    ///< Uniform return value optimization
+      UniqueRetVal,     ///< Unique return value optimization
+      VirtualConstProp, ///< Virtual constant propagation
+    } TheKind = Indir;
+
+    /// Additional information for the resolution:
+    /// - UniformRetVal: the uniform return value.
+    /// - UniqueRetVal: the return value associated with the unique vtable (0 or
+    ///   1).
+    uint64_t Info = 0;
+  };
+
+  /// Resolutions for calls with all constant integer arguments (excluding the
+  /// first argument, "this"), where the key is the argument vector.
+  std::map<std::vector<uint64_t>, ByArg> ResByArg;
+};
+
 struct TypeIdSummary {
   TypeTestResolution TTRes;
+
+  /// Mapping from byte offset to whole-program devirt resolution for that
+  /// (typeid, byte offset) pair.
+  std::map<uint64_t, WholeProgramDevirtResolution> WPDRes;
 };
 
 /// 160 bits SHA1

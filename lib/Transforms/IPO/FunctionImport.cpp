@@ -75,12 +75,6 @@ static cl::opt<bool> PrintImports("print-imports", cl::init(false), cl::Hidden,
 static cl::opt<bool> ComputeDead("compute-dead", cl::init(true), cl::Hidden,
                                  cl::desc("Compute dead symbols"));
 
-// Temporary allows the function import pass to disable always linking
-// referenced discardable symbols.
-static cl::opt<bool>
-    DontForceImportReferencedDiscardableSymbols("disable-force-link-odr",
-                                                cl::init(false), cl::Hidden);
-
 static cl::opt<bool> EnableImportMetadata(
     "enable-import-metadata", cl::init(
 #if !defined(NDEBUG)
@@ -659,14 +653,12 @@ void llvm::thinLTOInternalizeModule(Module &TheModule,
 // index.
 //
 Expected<bool> FunctionImporter::importFunctions(
-    Module &DestModule, const FunctionImporter::ImportMapTy &ImportList,
-    bool ForceImportReferencedDiscardableSymbols) {
+    Module &DestModule, const FunctionImporter::ImportMapTy &ImportList) {
   DEBUG(dbgs() << "Starting import for Module "
                << DestModule.getModuleIdentifier() << "\n");
   unsigned ImportedCount = 0;
 
-  // Linker that will be used for importing function
-  Linker TheLinker(DestModule);
+  IRMover Mover(DestModule);
   // Do the actual import of functions now, one Module at a time
   std::set<StringRef> ModuleNameOrderedList;
   for (auto &FunctionsToImportPerModule : ImportList) {
@@ -690,7 +682,7 @@ Expected<bool> FunctionImporter::importFunctions(
 
     auto &ImportGUIDs = FunctionsToImportPerModule->second;
     // Find the globals to import
-    DenseSet<const GlobalValue *> GlobalsToImport;
+    SetVector<GlobalValue *> GlobalsToImport;
     for (Function &F : *SrcModule) {
       if (!F.hasName())
         continue;
@@ -729,6 +721,13 @@ Expected<bool> FunctionImporter::importFunctions(
       }
     }
     for (GlobalAlias &GA : SrcModule->aliases()) {
+      // FIXME: This should eventually be controlled entirely by the summary.
+      if (FunctionImportGlobalProcessing::doImportAsDefinition(
+              &GA, &GlobalsToImport)) {
+        GlobalsToImport.insert(&GA);
+        continue;
+      }
+
       if (!GA.hasName())
         continue;
       auto GUID = GA.getGUID();
@@ -773,12 +772,9 @@ Expected<bool> FunctionImporter::importFunctions(
                << " from " << SrcModule->getSourceFileName() << "\n";
     }
 
-    // Instruct the linker that the client will take care of linkonce resolution
-    unsigned Flags = Linker::Flags::None;
-    if (!ForceImportReferencedDiscardableSymbols)
-      Flags |= Linker::Flags::DontForceLinkLinkonceODR;
-
-    if (TheLinker.linkInModule(std::move(SrcModule), Flags, &GlobalsToImport))
+    if (Mover.move(std::move(SrcModule), GlobalsToImport.getArrayRef(),
+                   [](GlobalValue &, IRMover::ValueAdder) {},
+                   /*IsPerformingImport=*/true))
       report_fatal_error("Function Import: link error");
 
     ImportedCount += GlobalsToImport.size();
@@ -838,8 +834,7 @@ static bool doImportingForModule(Module &M) {
     return loadFile(Identifier, M.getContext());
   };
   FunctionImporter Importer(*Index, ModuleLoader);
-  Expected<bool> Result = Importer.importFunctions(
-      M, ImportList, !DontForceImportReferencedDiscardableSymbols);
+  Expected<bool> Result = Importer.importFunctions(M, ImportList);
 
   // FIXME: Probably need to propagate Errors through the pass manager.
   if (!Result) {

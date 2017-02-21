@@ -41,6 +41,7 @@ LegalizerInfo::LegalizerInfo() : TablesInitialized(false) {
   DefaultActions[TargetOpcode::G_STORE] = NarrowScalar;
 
   DefaultActions[TargetOpcode::G_BRCOND] = WidenScalar;
+  DefaultActions[TargetOpcode::G_INSERT] = NarrowScalar;
 }
 
 void LegalizerInfo::computeTables() {
@@ -160,6 +161,7 @@ LLT LegalizerInfo::findLegalType(const InstrAspect &Aspect,
   case Legal:
   case Lower:
   case Libcall:
+  case Custom:
     return Aspect.Type;
   case NarrowScalar: {
     return findLegalType(Aspect,
@@ -179,4 +181,10 @@ LLT LegalizerInfo::findLegalType(const InstrAspect &Aspect,
                          [&](LLT Ty) -> LLT { return Ty.doubleElements(); });
   }
   }
+}
+
+bool LegalizerInfo::legalizeCustom(MachineInstr &MI,
+                                   MachineRegisterInfo &MRI,
+                                   MachineIRBuilder &MIRBuilder) const {
+  return false;
 }

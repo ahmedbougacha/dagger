@@ -1,4 +1,4 @@
-//==-- llvm/MC/MCRelocationInfo.h --------------------------------*- C++ -*-==//
+//===- llvm/MC/MCRelocationInfo.h -------------------------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -21,22 +21,18 @@
 
 namespace llvm {
 
-namespace object {
-class RelocationRef;
-}
-class MCExpr;
 class MCContext;
+class MCExpr;
 
 /// \brief Create MCExprs from relocations found in an object file.
 class MCRelocationInfo {
-  MCRelocationInfo(const MCRelocationInfo &) = delete;
-  void operator=(const MCRelocationInfo &) = delete;
-
 protected:
   MCContext &Ctx;
 
 public:
   MCRelocationInfo(MCContext &Ctx);
+  MCRelocationInfo(const MCRelocationInfo &) = delete;
+  MCRelocationInfo &operator=(const MCRelocationInfo &) = delete;
   virtual ~MCRelocationInfo();
 
   /// \brief Create an MCExpr for the relocation \p Rel.
@@ -52,6 +48,6 @@ public:
   createExprForCAPIVariantKind(const MCExpr *SubExpr, unsigned VariantKind);
 };
 
-}
+} // end namespace llvm
 
-#endif
+#endif // LLVM_MC_MCDISASSEMBLER_MCRELOCATIONINFO_H

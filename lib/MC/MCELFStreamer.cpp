@@ -11,38 +11,36 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/MC/MCELFStreamer.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCAsmBackend.h"
-#include "llvm/MC/MCAsmLayout.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCELFStreamer.h"
 #include "llvm/MC/MCExpr.h"
-#include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCFixup.h"
+#include "llvm/MC/MCFragment.h"
 #include "llvm/MC/MCObjectFileInfo.h"
-#include "llvm/MC/MCObjectStreamer.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCSectionELF.h"
+#include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbolELF.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/MC/MCValue.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
+#include <cassert>
+#include <cstdint>
 
 using namespace llvm;
 
 bool MCELFStreamer::isBundleLocked() const {
   return getCurrentSectionOnly()->isBundleLocked();
-}
-
-MCELFStreamer::~MCELFStreamer() {
 }
 
 void MCELFStreamer::mergeFragment(MCDataFragment *DF,
@@ -95,11 +93,9 @@ void MCELFStreamer::InitSections(bool NoExecStack) {
     SwitchSection(Ctx.getAsmInfo()->getNonexecutableStackSection(Ctx));
 }
 
-void MCELFStreamer::EmitLabel(MCSymbol *S) {
+void MCELFStreamer::EmitLabel(MCSymbol *S, SMLoc Loc) {
   auto *Symbol = cast<MCSymbolELF>(S);
-  assert(Symbol->isUndefined() && "Cannot define a symbol twice!");
-
-  MCObjectStreamer::EmitLabel(Symbol);
+  MCObjectStreamer::EmitLabel(Symbol, Loc);
 
   const MCSectionELF &Section =
       static_cast<const MCSectionELF &>(*getCurrentSectionOnly());
@@ -148,16 +144,7 @@ void MCELFStreamer::ChangeSection(MCSection *Section,
     Asm.registerSymbol(*Grp);
 
   this->MCObjectStreamer::ChangeSection(Section, Subsection);
-  MCContext &Ctx = getContext();
-  auto *Begin = cast_or_null<MCSymbolELF>(Section->getBeginSymbol());
-  if (!Begin) {
-    Begin = Ctx.getOrCreateSectionSymbol(*SectionELF);
-    Section->setBeginSymbol(Begin);
-  }
-  if (Begin->isUndefined()) {
-    Asm.registerSymbol(*Begin);
-    Begin->setType(ELF::STT_SECTION);
-  }
+  Asm.registerSymbol(*Section->getBeginSymbol());
 }
 
 void MCELFStreamer::EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) {
@@ -630,15 +617,6 @@ void MCELFStreamer::FinishImpl() {
   this->MCObjectStreamer::FinishImpl();
 }
 
-MCStreamer *llvm::createELFStreamer(MCContext &Context, MCAsmBackend &MAB,
-                                    raw_pwrite_stream &OS, MCCodeEmitter *CE,
-                                    bool RelaxAll) {
-  MCELFStreamer *S = new MCELFStreamer(Context, MAB, OS, CE);
-  if (RelaxAll)
-    S->getAssembler().setRelaxAll(true);
-  return S;
-}
-
 void MCELFStreamer::EmitThumbFunc(MCSymbol *Func) {
   llvm_unreachable("Generic ELF doesn't support this directive");
 }
@@ -671,4 +649,13 @@ void MCELFStreamer::EmitZerofill(MCSection *Section, MCSymbol *Symbol,
 void MCELFStreamer::EmitTBSSSymbol(MCSection *Section, MCSymbol *Symbol,
                                    uint64_t Size, unsigned ByteAlignment) {
   llvm_unreachable("ELF doesn't support this directive");
+}
+
+MCStreamer *llvm::createELFStreamer(MCContext &Context, MCAsmBackend &MAB,
+                                    raw_pwrite_stream &OS, MCCodeEmitter *CE,
+                                    bool RelaxAll) {
+  MCELFStreamer *S = new MCELFStreamer(Context, MAB, OS, CE);
+  if (RelaxAll)
+    S->getAssembler().setRelaxAll(true);
+  return S;
 }

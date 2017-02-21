@@ -50,6 +50,9 @@ LegalizerHelper::legalizeInstrStep(MachineInstr &MI,
     return lower(MI, std::get<1>(Action), std::get<2>(Action));
   case LegalizerInfo::FewerElements:
     return fewerElementsVector(MI, std::get<1>(Action), std::get<2>(Action));
+  case LegalizerInfo::Custom:
+    return LegalizerInfo.legalizeCustom(MI, MRI, MIRBuilder) ? Legalized
+                                                             : UnableToLegalize;
   default:
     return UnableToLegalize;
   }
@@ -92,6 +95,16 @@ void LegalizerHelper::extractParts(unsigned Reg, LLT Ty, int NumParts,
   MIRBuilder.buildExtract(VRegs, Indexes, Reg);
 }
 
+static RTLIB::Libcall getRTLibDesc(unsigned Opcode, unsigned Size) {
+  switch (Opcode) {
+  case TargetOpcode::G_FREM:
+    return Size == 64 ? RTLIB::REM_F64 : RTLIB::REM_F32;
+  case TargetOpcode::G_FPOW:
+    return Size == 64 ? RTLIB::POW_F64 : RTLIB::POW_F32;
+  }
+  llvm_unreachable("Unknown libcall function");
+}
+
 LegalizerHelper::LegalizeResult
 LegalizerHelper::libcall(MachineInstr &MI) {
   LLT Ty = MRI.getType(MI.getOperand(0).getReg());
@@ -101,14 +114,13 @@ LegalizerHelper::libcall(MachineInstr &MI) {
   switch (MI.getOpcode()) {
   default:
     return UnableToLegalize;
+  case TargetOpcode::G_FPOW:
   case TargetOpcode::G_FREM: {
     auto &Ctx = MIRBuilder.getMF().getFunction()->getContext();
     Type *Ty = Size == 64 ? Type::getDoubleTy(Ctx) : Type::getFloatTy(Ctx);
     auto &CLI = *MIRBuilder.getMF().getSubtarget().getCallLowering();
     auto &TLI = *MIRBuilder.getMF().getSubtarget().getTargetLowering();
-    const char *Name =
-        TLI.getLibcallName(Size == 64 ? RTLIB::REM_F64 : RTLIB::REM_F32);
-
+    const char *Name = TLI.getLibcallName(getRTLibDesc(MI.getOpcode(), Size));
     CLI.lowerCall(
         MIRBuilder, MachineOperand::CreateES(Name),
         {MI.getOperand(0).getReg(), Ty},
@@ -117,6 +129,17 @@ LegalizerHelper::libcall(MachineInstr &MI) {
     return Legalized;
   }
   }
+}
+
+void LegalizerHelper::findInsertionsForRange(
+    int64_t DstStart, int64_t DstEnd, MachineInstr::mop_iterator &CurOp,
+    MachineInstr::mop_iterator &EndOp, MachineInstr &MI) {
+  while (CurOp != MI.operands_end() && std::next(CurOp)->getImm() < DstStart)
+    CurOp += 2;
+
+  EndOp = CurOp;
+  while (EndOp != MI.operands_end() && std::next(EndOp)->getImm() < DstEnd)
+    EndOp += 2;
 }
 
 LegalizerHelper::LegalizeResult LegalizerHelper::narrowScalar(MachineInstr &MI,
@@ -158,6 +181,65 @@ LegalizerHelper::LegalizeResult LegalizerHelper::narrowScalar(MachineInstr &MI,
     }
     unsigned DstReg = MI.getOperand(0).getReg();
     MIRBuilder.buildSequence(DstReg, DstRegs, Indexes);
+    MI.eraseFromParent();
+    return Legalized;
+  }
+  case TargetOpcode::G_INSERT: {
+    if (TypeIdx != 0)
+      return UnableToLegalize;
+
+    unsigned NarrowSize = NarrowTy.getSizeInBits();
+    int NumParts =
+        MRI.getType(MI.getOperand(0).getReg()).getSizeInBits() / NarrowSize;
+
+    SmallVector<unsigned, 2> SrcRegs, DstRegs;
+    SmallVector<uint64_t, 2> Indexes;
+    extractParts(MI.getOperand(1).getReg(), NarrowTy, NumParts, SrcRegs);
+
+    MachineInstr::mop_iterator CurOp = MI.operands_begin() + 2, EndOp;
+    for (int i = 0; i < NumParts; ++i) {
+      unsigned DstStart = i * NarrowSize;
+      unsigned DstReg = MRI.createGenericVirtualRegister(NarrowTy);
+      Indexes.push_back(DstStart);
+
+      findInsertionsForRange(DstStart, DstStart + NarrowSize, CurOp, EndOp, MI);
+
+      if (CurOp == EndOp) {
+        // No part of the insert affects this subregister, forward the original.
+        DstRegs.push_back(SrcRegs[i]);
+        continue;
+      } else if (MRI.getType(CurOp->getReg()) == NarrowTy &&
+                 std::next(CurOp)->getImm() == DstStart) {
+        // The entire subregister is defined by this insert, forward the new
+        // value.
+        DstRegs.push_back(CurOp->getReg());
+        continue;
+      }
+
+      auto MIB = MIRBuilder.buildInstr(TargetOpcode::G_INSERT)
+        .addDef(DstReg)
+        .addUse(SrcRegs[i]);
+
+      for (; CurOp != EndOp; CurOp += 2) {
+        unsigned Reg = CurOp->getReg();
+        uint64_t Offset = std::next(CurOp)->getImm() - DstStart;
+
+        // Make sure we don't have a cross-register insert.
+        if (Offset + MRI.getType(Reg).getSizeInBits() > NarrowSize) {
+          // FIXME: we should handle this case, though it's unlikely to be
+          // common given ABI-related layout restrictions.
+          return UnableToLegalize;
+        }
+
+        MIB.addUse(Reg);
+        MIB.addImm(Offset);
+      }
+
+      DstRegs.push_back(DstReg);
+    }
+
+    assert(DstRegs.size() == (unsigned)NumParts && "not all parts covered");
+    MIRBuilder.buildSequence(MI.getOperand(0).getReg(), DstRegs, Indexes);
     MI.eraseFromParent();
     return Legalized;
   }
@@ -273,6 +355,29 @@ LegalizerHelper::widenScalar(MachineInstr &MI, unsigned TypeIdx, LLT WideTy) {
     MI.eraseFromParent();
     return Legalized;
   }
+  case TargetOpcode::G_SELECT: {
+    if (TypeIdx != 0)
+      return UnableToLegalize;
+
+    // Perform operation at larger width (any extension is fine here, high bits
+    // don't affect the result) and then truncate the result back to the
+    // original type.
+    unsigned Src1Ext = MRI.createGenericVirtualRegister(WideTy);
+    unsigned Src2Ext = MRI.createGenericVirtualRegister(WideTy);
+    MIRBuilder.buildAnyExt(Src1Ext, MI.getOperand(2).getReg());
+    MIRBuilder.buildAnyExt(Src2Ext, MI.getOperand(3).getReg());
+
+    unsigned DstExt = MRI.createGenericVirtualRegister(WideTy);
+    MIRBuilder.buildInstr(TargetOpcode::G_SELECT)
+        .addDef(DstExt)
+        .addReg(MI.getOperand(1).getReg())
+        .addUse(Src1Ext)
+        .addUse(Src2Ext);
+
+    MIRBuilder.buildTrunc(MI.getOperand(0).getReg(), DstExt);
+    MI.eraseFromParent();
+    return Legalized;
+  }
   case TargetOpcode::G_FPTOSI:
   case TargetOpcode::G_FPTOUI: {
     if (TypeIdx != 0)
@@ -306,6 +411,26 @@ LegalizerHelper::widenScalar(MachineInstr &MI, unsigned TypeIdx, LLT WideTy) {
         .addDef(MI.getOperand(0).getReg())
         .addUse(SrcExt);
 
+    MI.eraseFromParent();
+    return Legalized;
+  }
+  case TargetOpcode::G_INSERT: {
+    if (TypeIdx != 0)
+      return UnableToLegalize;
+
+    unsigned Src = MI.getOperand(1).getReg();
+    unsigned SrcExt = MRI.createGenericVirtualRegister(WideTy);
+    MIRBuilder.buildAnyExt(SrcExt, Src);
+
+    unsigned DstExt = MRI.createGenericVirtualRegister(WideTy);
+    auto MIB = MIRBuilder.buildInsert(DstExt, SrcExt, MI.getOperand(2).getReg(),
+                                      MI.getOperand(3).getImm());
+    for (unsigned OpNum = 4; OpNum < MI.getNumOperands(); OpNum += 2) {
+      MIB.addReg(MI.getOperand(OpNum).getReg());
+      MIB.addImm(MI.getOperand(OpNum + 1).getImm());
+    }
+
+    MIRBuilder.buildTrunc(MI.getOperand(0).getReg(), DstExt);
     MI.eraseFromParent();
     return Legalized;
   }
@@ -403,6 +528,33 @@ LegalizerHelper::lower(MachineInstr &MI, unsigned TypeIdx, LLT Ty) {
     MIRBuilder.buildMul(ProdReg, QuotReg, MI.getOperand(2).getReg());
     MIRBuilder.buildSub(MI.getOperand(0).getReg(), MI.getOperand(1).getReg(),
                         ProdReg);
+    MI.eraseFromParent();
+    return Legalized;
+  }
+  case TargetOpcode::G_SMULO:
+  case TargetOpcode::G_UMULO: {
+    // Generate G_UMULH/G_SMULH to check for overflow and a normal G_MUL for the
+    // result.
+    unsigned Res = MI.getOperand(0).getReg();
+    unsigned Overflow = MI.getOperand(1).getReg();
+    unsigned LHS = MI.getOperand(2).getReg();
+    unsigned RHS = MI.getOperand(3).getReg();
+
+    MIRBuilder.buildMul(Res, LHS, RHS);
+
+    unsigned Opcode = MI.getOpcode() == TargetOpcode::G_SMULO
+                          ? TargetOpcode::G_SMULH
+                          : TargetOpcode::G_UMULH;
+
+    unsigned HiPart = MRI.createGenericVirtualRegister(Ty);
+    MIRBuilder.buildInstr(Opcode)
+      .addDef(HiPart)
+      .addUse(LHS)
+      .addUse(RHS);
+
+    unsigned Zero = MRI.createGenericVirtualRegister(Ty);
+    MIRBuilder.buildConstant(Zero, 0);
+    MIRBuilder.buildICmp(CmpInst::ICMP_NE, Overflow, HiPart, Zero);
     MI.eraseFromParent();
     return Legalized;
   }

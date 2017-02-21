@@ -384,6 +384,16 @@ namespace {
     bool ComplexPatternFuncMutatesDAG() const override {
       return true;
     }
+
+    bool isSExtAbsoluteSymbolRef(unsigned Width, SDNode *N) const;
+
+    /// Returns whether this is a relocatable immediate in the range
+    /// [-2^Width .. 2^Width-1].
+    template <unsigned Width> bool isSExtRelocImm(SDNode *N) const {
+      if (auto *CN = dyn_cast<ConstantSDNode>(N))
+        return isInt<Width>(CN->getSExtValue());
+      return isSExtAbsoluteSymbolRef(Width, N);
+    }
   };
 }
 
@@ -1789,6 +1799,21 @@ SDNode *X86DAGToDAGISel::getGlobalBaseReg() {
   return CurDAG->getRegister(GlobalBaseReg, TLI->getPointerTy(DL)).getNode();
 }
 
+bool X86DAGToDAGISel::isSExtAbsoluteSymbolRef(unsigned Width, SDNode *N) const {
+  if (N->getOpcode() == ISD::TRUNCATE)
+    N = N->getOperand(0).getNode();
+  if (N->getOpcode() != X86ISD::Wrapper)
+    return false;
+
+  auto *GA = dyn_cast<GlobalAddressSDNode>(N->getOperand(0));
+  if (!GA)
+    return false;
+
+  Optional<ConstantRange> CR = GA->getGlobal()->getAbsoluteSymbolRange();
+  return CR && CR->getSignedMin().sge(-1ull << Width) &&
+         CR->getSignedMax().slt(1ull << Width);
+}
+
 /// Test whether the given X86ISD::CMP node has any uses which require the SF
 /// or OF bits to be accurate.
 static bool hasNoSignedComparisonUses(SDNode *N) {
@@ -1905,6 +1930,8 @@ static bool isLoadIncOrDecStore(StoreSDNode *StoreNode, unsigned Opc,
       SDValue Op = Chain.getOperand(i);
       if (Op == Load.getValue(1)) {
         ChainCheck = true;
+        // Drop Load, but keep its chain. No cycle check necessary.
+        ChainOps.push_back(Load.getOperand(0));
         continue;
       }
 

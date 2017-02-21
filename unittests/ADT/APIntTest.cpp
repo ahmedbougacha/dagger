@@ -446,6 +446,58 @@ TEST(APIntTest, compareLargeIntegers) {
   EXPECT_TRUE(!MinusTwo.slt(MinusTwo));
 }
 
+TEST(APIntTest, binaryOpsWithRawIntegers) {
+  // Single word check.
+  uint64_t E1 = 0x2CA7F46BF6569915ULL;
+  APInt A1(64, E1);
+
+  EXPECT_EQ(A1 & E1, E1);
+  EXPECT_EQ(A1 & 0, 0);
+  EXPECT_EQ(A1 & 1, 1);
+  EXPECT_EQ(A1 & 5, 5);
+  EXPECT_EQ(A1 & UINT64_MAX, E1);
+
+  EXPECT_EQ(A1 | E1, E1);
+  EXPECT_EQ(A1 | 0, E1);
+  EXPECT_EQ(A1 | 1, E1);
+  EXPECT_EQ(A1 | 2, E1 | 2);
+  EXPECT_EQ(A1 | UINT64_MAX, UINT64_MAX);
+
+  EXPECT_EQ(A1 ^ E1, 0);
+  EXPECT_EQ(A1 ^ 0, E1);
+  EXPECT_EQ(A1 ^ 1, E1 ^ 1);
+  EXPECT_EQ(A1 ^ 7, E1 ^ 7);
+  EXPECT_EQ(A1 ^ UINT64_MAX, ~E1);
+
+  // Multiword check.
+  uint64_t N = 0xEB6EB136591CBA21ULL;
+  integerPart E2[4] = {
+    N,
+    0x7B9358BD6A33F10AULL,
+    0x7E7FFA5EADD8846ULL,
+    0x305F341CA00B613DULL
+  };
+  APInt A2(integerPartWidth*4, E2);
+
+  EXPECT_EQ(A2 & N, N);
+  EXPECT_EQ(A2 & 0, 0);
+  EXPECT_EQ(A2 & 1, 1);
+  EXPECT_EQ(A2 & 5, 1);
+  EXPECT_EQ(A2 & UINT64_MAX, N);
+
+  EXPECT_EQ(A2 | N, A2);
+  EXPECT_EQ(A2 | 0, A2);
+  EXPECT_EQ(A2 | 1, A2);
+  EXPECT_EQ(A2 | 2, A2 + 2);
+  EXPECT_EQ(A2 | UINT64_MAX, A2 - N + UINT64_MAX);
+
+  EXPECT_EQ(A2 ^ N, A2 - N);
+  EXPECT_EQ(A2 ^ 0, A2);
+  EXPECT_EQ(A2 ^ 1, A2 - 1);
+  EXPECT_EQ(A2 ^ 7, A2 + 5);
+  EXPECT_EQ(A2 ^ UINT64_MAX, A2 - N + ~N);
+}
+
 TEST(APIntTest, rvalue_arithmetic) {
   // Test all combinations of lvalue/rvalue lhs/rhs of add/sub
 
@@ -1008,6 +1060,29 @@ TEST(APIntTest, Rotate) {
   EXPECT_EQ(APInt(8, 1),  APInt(8, 16).rotl(4));
   EXPECT_EQ(APInt(8, 16), APInt(8, 16).rotl(8));
 
+  EXPECT_EQ(APInt(32, 2), APInt(32, 1).rotl(33));
+  EXPECT_EQ(APInt(32, 2), APInt(32, 1).rotl(APInt(32, 33)));
+
+  EXPECT_EQ(APInt(32, 2), APInt(32, 1).rotl(33));
+  EXPECT_EQ(APInt(32, 2), APInt(32, 1).rotl(APInt(32, 33)));
+  EXPECT_EQ(APInt(32, 2), APInt(32, 1).rotl(APInt(33, 33)));
+  EXPECT_EQ(APInt(32, (1 << 8)), APInt(32, 1).rotl(APInt(32, 40)));
+  EXPECT_EQ(APInt(32, (1 << 30)), APInt(32, 1).rotl(APInt(31, 30)));
+  EXPECT_EQ(APInt(32, (1 << 31)), APInt(32, 1).rotl(APInt(31, 31)));
+
+  EXPECT_EQ(APInt(32, 1), APInt(32, 1).rotl(APInt(1, 0)));
+  EXPECT_EQ(APInt(32, 2), APInt(32, 1).rotl(APInt(1, 1)));
+
+  EXPECT_EQ(APInt(32, 16), APInt(32, 1).rotl(APInt(3, 4)));
+
+  EXPECT_EQ(APInt(32, 1), APInt(32, 1).rotl(APInt(64, 64)));
+  EXPECT_EQ(APInt(32, 2), APInt(32, 1).rotl(APInt(64, 65)));
+
+  EXPECT_EQ(APInt(7, 24), APInt(7, 3).rotl(APInt(7, 3)));
+  EXPECT_EQ(APInt(7, 24), APInt(7, 3).rotl(APInt(7, 10)));
+  EXPECT_EQ(APInt(7, 24), APInt(7, 3).rotl(APInt(5, 10)));
+  EXPECT_EQ(APInt(7, 6), APInt(7, 3).rotl(APInt(12, 120)));
+
   EXPECT_EQ(APInt(8, 16), APInt(8, 16).rotr(0));
   EXPECT_EQ(APInt(8, 8),  APInt(8, 16).rotr(1));
   EXPECT_EQ(APInt(8, 4),  APInt(8, 16).rotr(2));
@@ -1020,9 +1095,36 @@ TEST(APIntTest, Rotate) {
   EXPECT_EQ(APInt(8, 16),  APInt(8, 1).rotr(4));
   EXPECT_EQ(APInt(8, 1),   APInt(8, 1).rotr(8));
 
-  APInt Big(256, "00004000800000000000000000003fff8000000000000000", 16);
-  APInt Rot(256, "3fff80000000000000000000000000000000000040008000", 16);
+  EXPECT_EQ(APInt(32, (1 << 31)), APInt(32, 1).rotr(33));
+  EXPECT_EQ(APInt(32, (1 << 31)), APInt(32, 1).rotr(APInt(32, 33)));
+
+  EXPECT_EQ(APInt(32, (1 << 31)), APInt(32, 1).rotr(33));
+  EXPECT_EQ(APInt(32, (1 << 31)), APInt(32, 1).rotr(APInt(32, 33)));
+  EXPECT_EQ(APInt(32, (1 << 31)), APInt(32, 1).rotr(APInt(33, 33)));
+  EXPECT_EQ(APInt(32, (1 << 24)), APInt(32, 1).rotr(APInt(32, 40)));
+
+  EXPECT_EQ(APInt(32, (1 << 2)), APInt(32, 1).rotr(APInt(31, 30)));
+  EXPECT_EQ(APInt(32, (1 << 1)), APInt(32, 1).rotr(APInt(31, 31)));
+
+  EXPECT_EQ(APInt(32, 1), APInt(32, 1).rotr(APInt(1, 0)));
+  EXPECT_EQ(APInt(32, (1 << 31)), APInt(32, 1).rotr(APInt(1, 1)));
+
+  EXPECT_EQ(APInt(32, (1 << 28)), APInt(32, 1).rotr(APInt(3, 4)));
+
+  EXPECT_EQ(APInt(32, 1), APInt(32, 1).rotr(APInt(64, 64)));
+  EXPECT_EQ(APInt(32, (1 << 31)), APInt(32, 1).rotr(APInt(64, 65)));
+
+  EXPECT_EQ(APInt(7, 48), APInt(7, 3).rotr(APInt(7, 3)));
+  EXPECT_EQ(APInt(7, 48), APInt(7, 3).rotr(APInt(7, 10)));
+  EXPECT_EQ(APInt(7, 48), APInt(7, 3).rotr(APInt(5, 10)));
+  EXPECT_EQ(APInt(7, 65), APInt(7, 3).rotr(APInt(12, 120)));
+
+  APInt Big(256, "00004000800000000000000000003fff8000000000000003", 16);
+  APInt Rot(256, "3fff80000000000000030000000000000000000040008000", 16);
   EXPECT_EQ(Rot, Big.rotr(144));
+
+  EXPECT_EQ(APInt(32, 8), APInt(32, 1).rotl(Big));
+  EXPECT_EQ(APInt(32, (1 << 29)), APInt(32, 1).rotr(Big));
 }
 
 TEST(APIntTest, Splat) {

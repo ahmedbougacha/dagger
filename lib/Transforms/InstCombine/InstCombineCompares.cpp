@@ -230,7 +230,9 @@ Instruction *InstCombiner::foldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP,
     return nullptr;
 
   uint64_t ArrayElementCount = Init->getType()->getArrayNumElements();
-  if (ArrayElementCount > 1024) return nullptr; // Don't blow up on huge arrays.
+  // Don't blow up on huge arrays.
+  if (ArrayElementCount > MaxArraySizeForCombine)
+    return nullptr;
 
   // There are many forms of this optimization we can handle, for now, just do
   // the simple index into a single-dimensional array.
@@ -2370,8 +2372,24 @@ Instruction *InstCombiner::foldICmpAddConstant(ICmpInst &Cmp,
   // Fold icmp pred (add X, C2), C.
   Value *X = Add->getOperand(0);
   Type *Ty = Add->getType();
-  auto CR =
-      ConstantRange::makeExactICmpRegion(Cmp.getPredicate(), *C).subtract(*C2);
+  CmpInst::Predicate Pred = Cmp.getPredicate();
+
+  // If the add does not wrap, we can always adjust the compare by subtracting
+  // the constants. Equality comparisons are handled elsewhere. SGE/SLE are
+  // canonicalized to SGT/SLT.
+  if (Add->hasNoSignedWrap() &&
+      (Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SLT)) {
+    bool Overflow;
+    APInt NewC = C->ssub_ov(*C2, Overflow);
+    // If there is overflow, the result must be true or false.
+    // TODO: Can we assert there is no overflow because InstSimplify always
+    // handles those cases?
+    if (!Overflow)
+      // icmp Pred (add nsw X, C2), C --> icmp Pred X, (C - C2)
+      return new ICmpInst(Pred, X, ConstantInt::get(Ty, NewC));
+  }
+
+  auto CR = ConstantRange::makeExactICmpRegion(Pred, *C).subtract(*C2);
   const APInt &Upper = CR.getUpper();
   const APInt &Lower = CR.getLower();
   if (Cmp.isSigned()) {
@@ -2392,16 +2410,14 @@ Instruction *InstCombiner::foldICmpAddConstant(ICmpInst &Cmp,
   // X+C <u C2 -> (X & -C2) == C
   //   iff C & (C2-1) == 0
   //       C2 is a power of 2
-  if (Cmp.getPredicate() == ICmpInst::ICMP_ULT && C->isPowerOf2() &&
-      (*C2 & (*C - 1)) == 0)
+  if (Pred == ICmpInst::ICMP_ULT && C->isPowerOf2() && (*C2 & (*C - 1)) == 0)
     return new ICmpInst(ICmpInst::ICMP_EQ, Builder->CreateAnd(X, -(*C)),
                         ConstantExpr::getNeg(cast<Constant>(Y)));
 
   // X+C >u C2 -> (X & ~C2) != C
   //   iff C & C2 == 0
   //       C2+1 is a power of 2
-  if (Cmp.getPredicate() == ICmpInst::ICMP_UGT && (*C + 1).isPowerOf2() &&
-      (*C2 & *C) == 0)
+  if (Pred == ICmpInst::ICMP_UGT && (*C + 1).isPowerOf2() && (*C2 & *C) == 0)
     return new ICmpInst(ICmpInst::ICMP_NE, Builder->CreateAnd(X, ~(*C)),
                         ConstantExpr::getNeg(cast<Constant>(Y)));
 
@@ -2794,12 +2810,6 @@ Instruction *InstCombiner::foldICmpBinOp(ICmpInst &I) {
     C = BO1->getOperand(0);
     D = BO1->getOperand(1);
   }
-
-  // icmp (X+cst) < 0 --> X < -cst
-  if (NoOp0WrapProblem && ICmpInst::isSigned(Pred) && match(Op1, m_Zero()))
-    if (ConstantInt *RHSC = dyn_cast_or_null<ConstantInt>(B))
-      if (!RHSC->isMinValue(/*isSigned=*/true))
-        return new ICmpInst(Pred, A, ConstantExpr::getNeg(RHSC));
 
   // icmp (X+Y), X -> icmp Y, 0 for equalities or if there is no overflow.
   if ((A == Op1 || B == Op1) && NoOp0WrapProblem)

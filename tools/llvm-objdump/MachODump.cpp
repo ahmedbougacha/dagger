@@ -68,9 +68,6 @@ static cl::opt<std::string> DSYMFile("dsym",
 static cl::opt<bool> FullLeadingAddr("full-leading-addr",
                                      cl::desc("Print full leading address"));
 
-static cl::opt<bool> NoLeadingAddr("no-leading-addr",
-                                   cl::desc("Print no leading address"));
-
 static cl::opt<bool> NoLeadingHeaders("no-leading-headers",
                                       cl::desc("Print no leading headers"));
 
@@ -1142,7 +1139,7 @@ static void DumpInfoPlistSectionContents(StringRef Filename,
       StringRef BytesStr;
       Section.getContents(BytesStr);
       const char *sect = reinterpret_cast<const char *>(BytesStr.data());
-      outs() << sect;
+      outs() << format("%.*s", BytesStr.size(), sect) << "\n";
       return;
     }
   }
@@ -5274,42 +5271,70 @@ static void printObjc2_64bit_MetaData(MachOObjectFile *O, bool verbose) {
   SectionRef CL = get_section(O, "__OBJC2", "__class_list");
   if (CL == SectionRef())
     CL = get_section(O, "__DATA", "__objc_classlist");
+  if (CL == SectionRef())
+    CL = get_section(O, "__DATA_CONST", "__objc_classlist");
+  if (CL == SectionRef())
+    CL = get_section(O, "__DATA_DIRTY", "__objc_classlist");
   info.S = CL;
   walk_pointer_list_64("class", CL, O, &info, print_class64_t);
 
   SectionRef CR = get_section(O, "__OBJC2", "__class_refs");
   if (CR == SectionRef())
     CR = get_section(O, "__DATA", "__objc_classrefs");
+  if (CR == SectionRef())
+    CR = get_section(O, "__DATA_CONST", "__objc_classrefs");
+  if (CR == SectionRef())
+    CR = get_section(O, "__DATA_DIRTY", "__objc_classrefs");
   info.S = CR;
   walk_pointer_list_64("class refs", CR, O, &info, nullptr);
 
   SectionRef SR = get_section(O, "__OBJC2", "__super_refs");
   if (SR == SectionRef())
     SR = get_section(O, "__DATA", "__objc_superrefs");
+  if (SR == SectionRef())
+    SR = get_section(O, "__DATA_CONST", "__objc_superrefs");
+  if (SR == SectionRef())
+    SR = get_section(O, "__DATA_DIRTY", "__objc_superrefs");
   info.S = SR;
   walk_pointer_list_64("super refs", SR, O, &info, nullptr);
 
   SectionRef CA = get_section(O, "__OBJC2", "__category_list");
   if (CA == SectionRef())
     CA = get_section(O, "__DATA", "__objc_catlist");
+  if (CA == SectionRef())
+    CA = get_section(O, "__DATA_CONST", "__objc_catlist");
+  if (CA == SectionRef())
+    CA = get_section(O, "__DATA_DIRTY", "__objc_catlist");
   info.S = CA;
   walk_pointer_list_64("category", CA, O, &info, print_category64_t);
 
   SectionRef PL = get_section(O, "__OBJC2", "__protocol_list");
   if (PL == SectionRef())
     PL = get_section(O, "__DATA", "__objc_protolist");
+  if (PL == SectionRef())
+    PL = get_section(O, "__DATA_CONST", "__objc_protolist");
+  if (PL == SectionRef())
+    PL = get_section(O, "__DATA_DIRTY", "__objc_protolist");
   info.S = PL;
   walk_pointer_list_64("protocol", PL, O, &info, nullptr);
 
   SectionRef MR = get_section(O, "__OBJC2", "__message_refs");
   if (MR == SectionRef())
     MR = get_section(O, "__DATA", "__objc_msgrefs");
+  if (MR == SectionRef())
+    MR = get_section(O, "__DATA_CONST", "__objc_msgrefs");
+  if (MR == SectionRef())
+    MR = get_section(O, "__DATA_DIRTY", "__objc_msgrefs");
   info.S = MR;
   print_message_refs64(MR, &info);
 
   SectionRef II = get_section(O, "__OBJC2", "__image_info");
   if (II == SectionRef())
     II = get_section(O, "__DATA", "__objc_imageinfo");
+  if (II == SectionRef())
+    II = get_section(O, "__DATA_CONST", "__objc_imageinfo");
+  if (II == SectionRef())
+    II = get_section(O, "__DATA_DIRTY", "__objc_imageinfo");
   info.S = II;
   print_image_info64(II, &info);
 }
@@ -5340,75 +5365,75 @@ static void printObjc2_32bit_MetaData(MachOObjectFile *O, bool verbose) {
   info.adrp_addr = 0;
   info.adrp_inst = 0;
 
-  const SectionRef CL = get_section(O, "__OBJC2", "__class_list");
-  if (CL != SectionRef()) {
-    info.S = CL;
-    walk_pointer_list_32("class", CL, O, &info, print_class32_t);
-  } else {
-    const SectionRef CL = get_section(O, "__DATA", "__objc_classlist");
-    info.S = CL;
-    walk_pointer_list_32("class", CL, O, &info, print_class32_t);
-  }
+  SectionRef CL = get_section(O, "__OBJC2", "__class_list");
+  if (CL == SectionRef())
+    CL = get_section(O, "__DATA", "__objc_classlist");
+  if (CL == SectionRef())
+    CL = get_section(O, "__DATA_CONST", "__objc_classlist");
+  if (CL == SectionRef())
+    CL = get_section(O, "__DATA_DIRTY", "__objc_classlist");
+  info.S = CL;
+  walk_pointer_list_32("class", CL, O, &info, print_class32_t);
 
-  const SectionRef CR = get_section(O, "__OBJC2", "__class_refs");
-  if (CR != SectionRef()) {
-    info.S = CR;
-    walk_pointer_list_32("class refs", CR, O, &info, nullptr);
-  } else {
-    const SectionRef CR = get_section(O, "__DATA", "__objc_classrefs");
-    info.S = CR;
-    walk_pointer_list_32("class refs", CR, O, &info, nullptr);
-  }
+  SectionRef CR = get_section(O, "__OBJC2", "__class_refs");
+  if (CR == SectionRef())
+    CR = get_section(O, "__DATA", "__objc_classrefs");
+  if (CR == SectionRef())
+    CR = get_section(O, "__DATA_CONST", "__objc_classrefs");
+  if (CR == SectionRef())
+    CR = get_section(O, "__DATA_DIRTY", "__objc_classrefs");
+  info.S = CR;
+  walk_pointer_list_32("class refs", CR, O, &info, nullptr);
 
-  const SectionRef SR = get_section(O, "__OBJC2", "__super_refs");
-  if (SR != SectionRef()) {
-    info.S = SR;
-    walk_pointer_list_32("super refs", SR, O, &info, nullptr);
-  } else {
-    const SectionRef SR = get_section(O, "__DATA", "__objc_superrefs");
-    info.S = SR;
-    walk_pointer_list_32("super refs", SR, O, &info, nullptr);
-  }
+  SectionRef SR = get_section(O, "__OBJC2", "__super_refs");
+  if (SR == SectionRef())
+    SR = get_section(O, "__DATA", "__objc_superrefs");
+  if (SR == SectionRef())
+    SR = get_section(O, "__DATA_CONST", "__objc_superrefs");
+  if (SR == SectionRef())
+    SR = get_section(O, "__DATA_DIRTY", "__objc_superrefs");
+  info.S = SR;
+  walk_pointer_list_32("super refs", SR, O, &info, nullptr);
 
-  const SectionRef CA = get_section(O, "__OBJC2", "__category_list");
-  if (CA != SectionRef()) {
-    info.S = CA;
-    walk_pointer_list_32("category", CA, O, &info, print_category32_t);
-  } else {
-    const SectionRef CA = get_section(O, "__DATA", "__objc_catlist");
-    info.S = CA;
-    walk_pointer_list_32("category", CA, O, &info, print_category32_t);
-  }
+  SectionRef CA = get_section(O, "__OBJC2", "__category_list");
+  if (CA == SectionRef())
+    CA = get_section(O, "__DATA", "__objc_catlist");
+  if (CA == SectionRef())
+    CA = get_section(O, "__DATA_CONST", "__objc_catlist");
+  if (CA == SectionRef())
+    CA = get_section(O, "__DATA_DIRTY", "__objc_catlist");
+  info.S = CA;
+  walk_pointer_list_32("category", CA, O, &info, print_category32_t);
 
-  const SectionRef PL = get_section(O, "__OBJC2", "__protocol_list");
-  if (PL != SectionRef()) {
-    info.S = PL;
-    walk_pointer_list_32("protocol", PL, O, &info, nullptr);
-  } else {
-    const SectionRef PL = get_section(O, "__DATA", "__objc_protolist");
-    info.S = PL;
-    walk_pointer_list_32("protocol", PL, O, &info, nullptr);
-  }
+  SectionRef PL = get_section(O, "__OBJC2", "__protocol_list");
+  if (PL == SectionRef())
+    PL = get_section(O, "__DATA", "__objc_protolist");
+  if (PL == SectionRef())
+    PL = get_section(O, "__DATA_CONST", "__objc_protolist");
+  if (PL == SectionRef())
+    PL = get_section(O, "__DATA_DIRTY", "__objc_protolist");
+  info.S = PL;
+  walk_pointer_list_32("protocol", PL, O, &info, nullptr);
 
-  const SectionRef MR = get_section(O, "__OBJC2", "__message_refs");
-  if (MR != SectionRef()) {
-    info.S = MR;
-    print_message_refs32(MR, &info);
-  } else {
-    const SectionRef MR = get_section(O, "__DATA", "__objc_msgrefs");
-    info.S = MR;
-    print_message_refs32(MR, &info);
-  }
+  SectionRef MR = get_section(O, "__OBJC2", "__message_refs");
+  if (MR == SectionRef())
+    MR = get_section(O, "__DATA", "__objc_msgrefs");
+  if (MR == SectionRef())
+    MR = get_section(O, "__DATA_CONST", "__objc_msgrefs");
+  if (MR == SectionRef())
+    MR = get_section(O, "__DATA_DIRTY", "__objc_msgrefs");
+  info.S = MR;
+  print_message_refs32(MR, &info);
 
-  const SectionRef II = get_section(O, "__OBJC2", "__image_info");
-  if (II != SectionRef()) {
-    info.S = II;
-    print_image_info32(II, &info);
-  } else {
-    const SectionRef II = get_section(O, "__DATA", "__objc_imageinfo");
-    info.S = II;
-    print_image_info32(II, &info);
-  }
+  SectionRef II = get_section(O, "__OBJC2", "__image_info");
+  if (II == SectionRef())
+    II = get_section(O, "__DATA", "__objc_imageinfo");
+  if (II == SectionRef())
+    II = get_section(O, "__DATA_CONST", "__objc_imageinfo");
+  if (II == SectionRef())
+    II = get_section(O, "__DATA_DIRTY", "__objc_imageinfo");
+  info.S = II;
+  print_image_info32(II, &info);
 }
 
 static bool printObjc1_32bit_MetaData(MachOObjectFile *O, bool verbose) {
@@ -6602,6 +6627,12 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
     if (Bytes.size() == 0)
       return;
 
+    // If the section has symbols but no symbol at the start of the section
+    // these are used to make sure the bytes before the first symbol are
+    // disassembled.
+    bool FirstSymbol = true;
+    bool FirstSymbolAtSectionStart = true;
+
     // Disassemble symbol by symbol.
     for (unsigned SymIdx = 0; SymIdx != Symbols.size(); SymIdx++) {
       Expected<StringRef> SymNameOrErr = Symbols[SymIdx].getName();
@@ -6691,10 +6722,28 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
       // (i.e. we're not targeting M-class) and the function is Thumb.
       bool UseThumbTarget = IsThumb && ThumbTarget;
 
-      outs() << SymName << ":\n";
+      // If we are not specifying a symbol to start disassembly with and this
+      // is the first symbol in the section but not at the start of the section
+      // then move the disassembly index to the start of the section and
+      // don't print the symbol name just yet.  This is so the bytes before the
+      // first symbol are disassembled.
+      uint64_t SymbolStart = Start;
+      if (DisSymName.empty() && FirstSymbol && Start != 0) {
+        FirstSymbolAtSectionStart = false;
+        Start = 0;
+      }
+      else
+        outs() << SymName << ":\n";
+
       DILineInfo lastLine;
       for (uint64_t Index = Start; Index < End; Index += Size) {
         MCInst Inst;
+
+        // If this is the first symbol in the section and it was not at the
+        // start of the section, see if we are at its Index now and if so print
+        // the symbol name.
+        if (FirstSymbol && !FirstSymbolAtSectionStart && Index == SymbolStart)
+          outs() << SymName << ":\n";
 
         uint64_t PC = SectAddress + Index;
         if (!NoLeadingAddr) {
@@ -6788,6 +6837,9 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
           }
         }
       }
+      // Now that we are done disassembled the first symbol set the bool that
+      // were doing this to false.
+      FirstSymbol = false;
     }
     if (!symbolTableWorked) {
       // Reading the symbol table didn't work, disassemble the whole section.
@@ -9579,7 +9631,7 @@ static const char *get_dyld_bind_info_symbolname(uint64_t ReferenceValue,
       uint32_t SegIndex = Entry.segmentIndex();
       uint64_t OffsetInSeg = Entry.segmentOffset();
       if (!sectionTable.isValidSegIndexAndOffset(SegIndex, OffsetInSeg))
-        continue;
+        return nullptr;
       uint64_t Address = sectionTable.address(SegIndex, OffsetInSeg);
       StringRef name = Entry.symbolName();
       if (!name.empty())

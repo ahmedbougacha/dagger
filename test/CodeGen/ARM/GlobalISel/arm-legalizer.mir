@@ -8,6 +8,12 @@
   define void @test_add_s32() { ret void }
 
   define void @test_load_from_stack() { ret void }
+  define void @test_legal_loads() #0 { ret void }
+
+  define void @test_fadd_s32() #0 { ret void }
+  define void @test_fadd_s64() #0 { ret void }
+
+  attributes #0 = { "target-features"="+vfp2" }
 ...
 ---
 name:            test_sext_s8
@@ -151,8 +157,94 @@ body:             |
 
     ; This is legal, so we should find it unchanged in the output
     ; CHECK: [[FIVREG:%[0-9]+]](p0) = G_FRAME_INDEX %fixed-stack.[[FRAME_INDEX]]
-    ; CHECK: {{%[0-9]+}}(s32) = G_LOAD [[FIVREG]](p0)
+    ; CHECK: {{%[0-9]+}}(s32) = G_LOAD [[FIVREG]](p0) :: (load 4)
     %0(p0) = G_FRAME_INDEX %fixed-stack.2
-    %1(s32) = G_LOAD %0(p0)
+    %1(s32) = G_LOAD %0(p0) :: (load 4)
     BX_RET 14, _
+...
+---
+name:            test_legal_loads
+# CHECK-LABEL: name: test_legal_loads
+legalized:       false
+# CHECK: legalized: true
+regBankSelected: false
+selected:        false
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: _ }
+  - { id: 1, class: _ }
+  - { id: 2, class: _ }
+  - { id: 3, class: _ }
+  - { id: 4, class: _ }
+  - { id: 5, class: _ }
+  - { id: 6, class: _ }
+body:             |
+  bb.0:
+    liveins: %r0, %r1, %r2, %r3
+
+    ; These are all legal, so we should find them unchanged in the output
+    ; CHECK-DAG: {{%[0-9]+}}(s64) = G_LOAD %0
+    ; CHECK-DAG: {{%[0-9]+}}(s32) = G_LOAD %0
+    ; CHECK-DAG: {{%[0-9]+}}(s16) = G_LOAD %0
+    ; CHECK-DAG: {{%[0-9]+}}(s8) = G_LOAD %0
+    ; CHECK-DAG: {{%[0-9]+}}(s1) = G_LOAD %0
+    ; CHECK-DAG: {{%[0-9]+}}(p0) = G_LOAD %0
+    %0(p0) = COPY %r0
+    %1(s32) = G_LOAD %0(p0) :: (load 4)
+    %2(s16) = G_LOAD %0(p0) :: (load 2)
+    %3(s8)  = G_LOAD %0(p0) :: (load 1)
+    %4(s1)  = G_LOAD %0(p0) :: (load 1)
+    %5(p0)  = G_LOAD %0(p0) :: (load 4)
+    %6(s64) = G_LOAD %0(p0) :: (load 8)
+    BX_RET 14, _
+...
+---
+name:            test_fadd_s32
+# CHECK-LABEL: name: test_fadd_s32
+legalized:       false
+# CHECK: legalized: true
+regBankSelected: false
+selected:        false
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: _ }
+  - { id: 1, class: _ }
+  - { id: 2, class: _ }
+body:             |
+  bb.0:
+    liveins: %r0, %r1
+
+    %0(s32) = COPY %r0
+    %1(s32) = COPY %r1
+    %2(s32) = G_FADD %0, %1
+    ; G_FADD with s32 is legal, so we should find it unchanged in the output
+    ; CHECK: {{%[0-9]+}}(s32) = G_FADD {{%[0-9]+, %[0-9]+}}
+    %r0 = COPY %2(s32)
+    BX_RET 14, _, implicit %r0
+
+...
+---
+name:            test_fadd_s64
+# CHECK-LABEL: name: test_fadd_s64
+legalized:       false
+# CHECK: legalized: true
+regBankSelected: false
+selected:        false
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: _ }
+  - { id: 1, class: _ }
+  - { id: 2, class: _ }
+body:             |
+  bb.0:
+    liveins: %d0, %d1
+
+    %0(s64) = COPY %d0
+    %1(s64) = COPY %d1
+    %2(s64) = G_FADD %0, %1
+    ; G_FADD with s64 is legal, so we should find it unchanged in the output
+    ; CHECK: {{%[0-9]+}}(s64) = G_FADD {{%[0-9]+, %[0-9]+}}
+    %d0 = COPY %2(s64)
+    BX_RET 14, _, implicit %d0
+
 ...

@@ -34,7 +34,8 @@ class raw_pwrite_stream;
 Target &getTheWebAssemblyTarget32();
 Target &getTheWebAssemblyTarget64();
 
-MCCodeEmitter *createWebAssemblyMCCodeEmitter(const MCInstrInfo &MCII);
+MCCodeEmitter *createWebAssemblyMCCodeEmitter(const MCInstrInfo &MCII,
+                                              MCContext &Ctx);
 
 MCAsmBackend *createWebAssemblyAsmBackend(const Triple &TT);
 
@@ -47,6 +48,8 @@ enum OperandType {
   OPERAND_BASIC_BLOCK = MCOI::OPERAND_FIRST_TARGET,
   /// Local index.
   OPERAND_LOCAL,
+  /// Global index.
+  OPERAND_GLOBAL,
   /// 32-bit integer immediates.
   OPERAND_I32IMM,
   /// 64-bit integer immediates.

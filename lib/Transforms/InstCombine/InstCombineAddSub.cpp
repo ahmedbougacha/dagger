@@ -1044,9 +1044,16 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
 
   const APInt *Val;
   if (match(RHS, m_APInt(Val))) {
-    // X + (signbit) --> X ^ signbit
-    if (Val->isSignBit())
+    if (Val->isSignBit()) {
+      // If wrapping is not allowed, then the addition must set the sign bit:
+      // X + (signbit) --> X | signbit
+      if (I.hasNoSignedWrap() || I.hasNoUnsignedWrap())
+        return BinaryOperator::CreateOr(LHS, RHS);
+
+      // If wrapping is allowed, then the addition flips the sign bit of LHS:
+      // X + (signbit) --> X ^ signbit
       return BinaryOperator::CreateXor(LHS, RHS);
+    }
 
     // Is this add the last step in a convoluted sext?
     Value *X;
@@ -1062,12 +1069,9 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
         match(LHS, m_ZExt(m_NUWAdd(m_Value(X), m_APInt(C)))) &&
         Val->sge(-C->sext(Val->getBitWidth()))) {
       // (add (zext (add nuw X, C)), Val) -> (zext (add nuw X, C+Val))
-      return CastInst::Create(
-          Instruction::ZExt,
-          Builder->CreateNUWAdd(
-              X, Constant::getIntegerValue(X->getType(),
-                                           *C + Val->trunc(C->getBitWidth()))),
-          I.getType());
+      Constant *NewC =
+          ConstantInt::get(X->getType(), *C + Val->trunc(C->getBitWidth()));
+      return new ZExtInst(Builder->CreateNUWAdd(X, NewC), I.getType());
     }
   }
 

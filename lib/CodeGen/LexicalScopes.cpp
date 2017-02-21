@@ -14,14 +14,23 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/LexicalScopes.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
-#include "llvm/IR/DebugInfo.h"
-#include "llvm/IR/Function.h"
+#include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/FormattedStream.h"
+#include "llvm/Support/raw_ostream.h"
+#include <cassert>
+#include <string>
+#include <tuple>
+#include <utility>
+
 using namespace llvm;
 
 #define DEBUG_TYPE "lexicalscopes"
@@ -38,6 +47,10 @@ void LexicalScopes::reset() {
 
 /// initialize - Scan machine function and constuct lexical scope nest.
 void LexicalScopes::initialize(const MachineFunction &Fn) {
+  // Don't attempt any lexical scope creation for a NoDebug compile unit.
+  if (Fn.getFunction()->getSubprogram()->getUnit()->getEmissionKind() ==
+      DICompileUnit::NoDebug)
+    return;
   reset();
   MF = &Fn;
   SmallVector<InsnRange, 4> MIRanges;
@@ -54,7 +67,6 @@ void LexicalScopes::initialize(const MachineFunction &Fn) {
 void LexicalScopes::extractLexicalScopes(
     SmallVectorImpl<InsnRange> &MIRanges,
     DenseMap<const MachineInstr *, LexicalScope *> &MI2ScopeMap) {
-
   // Scan each instruction and create scopes. First build working set of scopes.
   for (const auto &MBB : *MF) {
     const MachineInstr *RangeBeginMI = nullptr;
@@ -127,6 +139,10 @@ LexicalScope *LexicalScopes::findLexicalScope(const DILocation *DL) {
 LexicalScope *LexicalScopes::getOrCreateLexicalScope(const DILocalScope *Scope,
                                                      const DILocation *IA) {
   if (IA) {
+    // Skip scopes inlined from a NoDebug compile unit.
+    if (Scope->getSubprogram()->getUnit()->getEmissionKind() ==
+        DICompileUnit::NoDebug)
+      return getOrCreateLexicalScope(IA);
     // Create an abstract scope for inlined function.
     getOrCreateAbstractScope(Scope);
     // Create an inlined scope for inlined function.
@@ -181,10 +197,9 @@ LexicalScopes::getOrCreateInlinedScope(const DILocalScope *Scope,
   else
     Parent = getOrCreateLexicalScope(InlinedAt);
 
-  I = InlinedLexicalScopeMap.emplace(std::piecewise_construct,
-                                     std::forward_as_tuple(P),
-                                     std::forward_as_tuple(Parent, Scope,
-                                                           InlinedAt, false))
+  I = InlinedLexicalScopeMap
+          .emplace(std::piecewise_construct, std::forward_as_tuple(P),
+                   std::forward_as_tuple(Parent, Scope, InlinedAt, false))
           .first;
   return &I->second;
 }
@@ -241,7 +256,6 @@ void LexicalScopes::constructScopeNest(LexicalScope *Scope) {
 void LexicalScopes::assignInstructionRanges(
     SmallVectorImpl<InsnRange> &MIRanges,
     DenseMap<const MachineInstr *, LexicalScope *> &MI2ScopeMap) {
-
   LexicalScope *PrevLexicalScope = nullptr;
   for (const auto &R : MIRanges) {
     LexicalScope *S = MI2ScopeMap.lookup(R.first);

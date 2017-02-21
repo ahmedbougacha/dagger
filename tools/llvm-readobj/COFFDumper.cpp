@@ -43,6 +43,7 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/DataExtractor.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/ScopedPrinter.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/Win64EH.h"
@@ -1014,7 +1015,7 @@ void COFFDumper::printCodeViewInlineeLines(StringRef Subsection) {
   msf::ByteStream S(Subsection);
   msf::StreamReader SR(S);
   uint32_t Signature;
-  error(SR.readInteger(Signature));
+  error(SR.readInteger(Signature, llvm::support::little));
   bool HasExtraFiles = Signature == unsigned(InlineeLinesSignature::ExtraFiles);
 
   while (!SR.empty()) {
@@ -1027,12 +1028,12 @@ void COFFDumper::printCodeViewInlineeLines(StringRef Subsection) {
 
     if (HasExtraFiles) {
       uint32_t ExtraFileCount;
-      error(SR.readInteger(ExtraFileCount));
+      error(SR.readInteger(ExtraFileCount, llvm::support::little));
       W.printNumber("ExtraFileCount", ExtraFileCount);
       ListScope ExtraFiles(W, "ExtraFiles");
       for (unsigned I = 0; I < ExtraFileCount; ++I) {
         uint32_t FileID;
-        error(SR.readInteger(FileID));
+        error(SR.readInteger(FileID, llvm::support::little));
         printFileNameForOffset("FileID", FileID);
       }
     }
@@ -1086,7 +1087,7 @@ void COFFDumper::mergeCodeViewTypes(TypeTableBuilder &CVTypes) {
         error(object_error::parse_failed);
       }
 
-      if (auto EC = mergeTypeStreams(CVTypes, Types)) {
+      if (auto EC = mergeTypeStreams(CVTypes, nullptr, Types)) {
         consumeError(std::move(EC));
         return error(object_error::parse_failed);
       }

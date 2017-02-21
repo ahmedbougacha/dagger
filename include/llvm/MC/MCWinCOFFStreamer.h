@@ -14,16 +14,15 @@
 #include "llvm/MC/MCObjectStreamer.h"
 
 namespace llvm {
+
 class MCAsmBackend;
 class MCContext;
 class MCCodeEmitter;
-class MCExpr;
 class MCInst;
 class MCSection;
 class MCSubtargetInfo;
 class MCSymbol;
 class StringRef;
-class raw_ostream;
 class raw_pwrite_stream;
 
 class MCWinCOFFStreamer : public MCObjectStreamer {
@@ -41,7 +40,7 @@ public:
   /// \{
 
   void InitSections(bool NoExecStack) override;
-  void EmitLabel(MCSymbol *Symbol) override;
+  void EmitLabel(MCSymbol *Symbol, SMLoc Loc = SMLoc()) override;
   void EmitAssemblerFlag(MCAssemblerFlag Flag) override;
   void EmitThumbFunc(MCSymbol *Func) override;
   bool EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute) override;
@@ -70,12 +69,13 @@ public:
 
 protected:
   const MCSymbol *CurSymbol;
+
   void EmitInstToData(const MCInst &Inst, const MCSubtargetInfo &STI) override;
 
 private:
   void Error(const Twine &Msg) const;
 };
-}
 
-#endif
+} // end namespace llvm
 
+#endif // LLVM_MC_MCWINCOFFSTREAMER_H

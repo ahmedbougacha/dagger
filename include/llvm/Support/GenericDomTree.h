@@ -684,6 +684,10 @@ protected:
        unsigned LastLinked);
 
   template <class GraphT>
+  friend unsigned ReverseDFSPass(DominatorTreeBaseByGraphTraits<GraphT> &DT,
+                                 typename GraphT::NodeRef V, unsigned N);
+
+  template <class GraphT>
   friend unsigned DFSPass(DominatorTreeBaseByGraphTraits<GraphT> &DT,
                           typename GraphT::NodeRef V, unsigned N);
 
@@ -778,11 +782,9 @@ public:
       Calculate<FT, NodeT *>(*this, F);
     } else {
       // Initialize the roots list
-      for (typename TraitsTy::nodes_iterator I = TraitsTy::nodes_begin(&F),
-                                             E = TraitsTy::nodes_end(&F);
-           I != E; ++I)
-        if (TraitsTy::child_begin(*I) == TraitsTy::child_end(*I))
-          addRoot(*I);
+      for (auto *Node : nodes(&F))
+        if (TraitsTy::child_begin(Node) == TraitsTy::child_end(Node))
+          addRoot(Node);
 
       Calculate<FT, Inverse<NodeT *>>(*this, F);
     }

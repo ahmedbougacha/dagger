@@ -36,6 +36,8 @@
   define void @mul_s32_gpr() { ret void }
   define void @mul_s64_gpr() { ret void }
 
+  define void @mulh_s64_gpr() { ret void }
+
   define void @sdiv_s32_gpr() { ret void }
   define void @sdiv_s64_gpr() { ret void }
 
@@ -111,6 +113,8 @@
   define i64 @fconst_s64() { ret i64 1234567890123 }
 
   define i8* @gep(i8* %in) { ret i8* undef }
+
+  define i8* @ptr_mask(i8* %in) { ret i8* undef }
 
   @var_local = global i8 0
   define i8* @global_local() { ret i8* undef }
@@ -696,6 +700,34 @@ body:             |
     %0(s64) = COPY %x0
     %1(s64) = COPY %x1
     %2(s64) = G_MUL %0, %1
+...
+
+---
+# Same as mul_s32_gpr for the s64 type.
+# CHECK-LABEL: name: mulh_s64_gpr
+name:            mulh_s64_gpr
+legalized:       true
+regBankSelected: true
+
+# CHECK:      registers:
+# CHECK-NEXT:  - { id: 0, class: gpr64 }
+# CHECK-NEXT:  - { id: 1, class: gpr64 }
+# CHECK-NEXT:  - { id: 2, class: gpr64 }
+# CHECK-NEXT:  - { id: 3, class: gpr64 }
+
+# CHECK:  body:
+# CHECK:    %0 = COPY %x0
+# CHECK:    %1 = COPY %x1
+# CHECK:    %2 = SMULHrr %0, %1
+# CHECK:    %3 = UMULHrr %0, %1
+body:             |
+  bb.0:
+    liveins: %x0, %x1
+
+    %0:gpr(s64) = COPY %x0
+    %1:gpr(s64) = COPY %x1
+    %2:gpr(s64) = G_SMULH %0, %1
+    %3:gpr(s64) = G_UMULH %0, %1
 ...
 
 ---
@@ -2011,6 +2043,21 @@ body:             |
     %0(p0) = COPY %x0
     %1(s64) = G_CONSTANT i64 42
     %2(p0) = G_GEP %0, %1(s64)
+...
+
+---
+# CHECK-LABEL: name: ptr_mask
+name:            ptr_mask
+legalized:       true
+regBankSelected: true
+
+# CHECK:  body:
+# CHECK: %1 = ANDXri %0, 8060
+body:             |
+  bb.0:
+      liveins: %x0
+    %0:gpr(p0) = COPY %x0
+    %1:gpr(p0) = G_PTR_MASK %0, 3
 ...
 
 ---

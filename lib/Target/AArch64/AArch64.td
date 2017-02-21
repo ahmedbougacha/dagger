@@ -118,7 +118,6 @@ def FeatureDisableLatencySchedHeuristic : SubtargetFeature<
 def FeatureUseRSqrt : SubtargetFeature<
     "use-reciprocal-square-root", "UseRSqrt", "true",
     "Use the reciprocal square root approximation">;
-
 //===----------------------------------------------------------------------===//
 // Architectures.
 //
@@ -167,6 +166,7 @@ include "AArch64SchedCyclone.td"
 include "AArch64SchedFalkor.td"
 include "AArch64SchedKryo.td"
 include "AArch64SchedM1.td"
+include "AArch64SchedThunderX.td"
 include "AArch64SchedVulcan.td"
 
 def ProcA35     : SubtargetFeature<"a35", "ARMProcFamily", "CortexA35",
@@ -305,6 +305,49 @@ def ProcVulcan  : SubtargetFeature<"vulcan", "ARMProcFamily", "Vulcan",
                                    FeaturePredictableSelectIsExpensive,
                                    HasV8_1aOps]>;
 
+def ProcThunderX : SubtargetFeature<"thunderx", "ARMProcFamily", "ThunderX",
+                                    "Cavium ThunderX processors", [
+                                    FeatureCRC,
+                                    FeatureCrypto,
+                                    FeatureFPARMv8,
+                                    FeaturePerfMon,
+                                    FeaturePostRAScheduler,
+                                    FeaturePredictableSelectIsExpensive,
+                                    FeatureNEON]>;
+
+def ProcThunderXT88 : SubtargetFeature<"thunderxt88", "ARMProcFamily",
+                                       "ThunderXT88",
+                                       "Cavium ThunderX processors", [
+                                       FeatureCRC,
+                                       FeatureCrypto,
+                                       FeatureFPARMv8,
+                                       FeaturePerfMon,
+                                       FeaturePostRAScheduler,
+                                       FeaturePredictableSelectIsExpensive,
+                                       FeatureNEON]>;
+
+def ProcThunderXT81 : SubtargetFeature<"thunderxt81", "ARMProcFamily",
+                                       "ThunderXT81",
+                                       "Cavium ThunderX processors", [
+                                       FeatureCRC,
+                                       FeatureCrypto,
+                                       FeatureFPARMv8,
+                                       FeaturePerfMon,
+                                       FeaturePostRAScheduler,
+                                       FeaturePredictableSelectIsExpensive,
+                                       FeatureNEON]>;
+
+def ProcThunderXT83 : SubtargetFeature<"thunderxt83", "ARMProcFamily",
+                                       "ThunderXT83",
+                                       "Cavium ThunderX processors", [
+                                       FeatureCRC,
+                                       FeatureCrypto,
+                                       FeatureFPARMv8,
+                                       FeaturePerfMon,
+                                       FeaturePostRAScheduler,
+                                       FeaturePredictableSelectIsExpensive,
+                                       FeatureNEON]>;
+
 def : ProcessorModel<"generic", NoSchedModel, [
                      FeatureCRC,
                      FeatureFPARMv8,
@@ -327,6 +370,11 @@ def : ProcessorModel<"exynos-m3", ExynosM1Model, [ProcExynosM2]>;
 def : ProcessorModel<"falkor", FalkorModel, [ProcFalkor]>;
 def : ProcessorModel<"kryo", KryoModel, [ProcKryo]>;
 def : ProcessorModel<"vulcan", VulcanModel, [ProcVulcan]>;
+// Cavium ThunderX/ThunderX T8X  Processors
+def : ProcessorModel<"thunderx", ThunderXT8XModel,  [ProcThunderX]>;
+def : ProcessorModel<"thunderxt88", ThunderXT8XModel,  [ProcThunderXT88]>;
+def : ProcessorModel<"thunderxt81", ThunderXT8XModel,  [ProcThunderXT81]>;
+def : ProcessorModel<"thunderxt83", ThunderXT8XModel,  [ProcThunderXT83]>;
 
 //===----------------------------------------------------------------------===//
 // Assembly parser

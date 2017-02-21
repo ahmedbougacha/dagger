@@ -816,3 +816,67 @@ def LoadAddrReg64 : MipsAsmPseudoInst<(outs GPR64Opnd:$rt), (ins mem:$addr),
                                        "dla\t$rt, $addr">;
 def LoadAddrImm64 : MipsAsmPseudoInst<(outs GPR64Opnd:$rt), (ins imm64:$imm64),
                                        "dla\t$rt, $imm64">;
+
+def DMULImmMacro : MipsAsmPseudoInst<(outs), (ins GPR64Opnd:$rs, GPR64Opnd:$rt,
+                                                  simm32_relaxed:$imm),
+                                     "dmul\t$rs, $rt, $imm">,
+                   ISA_MIPS3_NOT_32R6_64R6;
+def DMULOMacro : MipsAsmPseudoInst<(outs), (ins GPR64Opnd:$rs, GPR64Opnd:$rt,
+                                                GPR64Opnd:$rd),
+                                   "dmulo\t$rs, $rt, $rd">,
+                 ISA_MIPS3_NOT_32R6_64R6;
+def DMULOUMacro : MipsAsmPseudoInst<(outs), (ins GPR64Opnd:$rs, GPR64Opnd:$rt,
+                                                 GPR64Opnd:$rd),
+                                    "dmulou\t$rs, $rt, $rd">,
+                  ISA_MIPS3_NOT_32R6_64R6;
+
+def DMULMacro : MipsAsmPseudoInst<(outs), (ins GPR64Opnd:$rs, GPR64Opnd:$rt,
+                                               GPR64Opnd:$rd),
+                                  "dmul\t$rs, $rt, $rd"> {
+  let InsnPredicates = [HasMips3, NotMips64r6, NotCnMips];
+}
+
+let AdditionalPredicates = [NotInMicroMips] in {
+  def DSDivMacro : MipsAsmPseudoInst<(outs GPR64Opnd:$rd),
+                                     (ins GPR64Opnd:$rs, GPR64Opnd:$rt),
+                                     "ddiv\t$rd, $rs, $rt">,
+                   ISA_MIPS3_NOT_32R6_64R6;
+  def DSDivIMacro : MipsAsmPseudoInst<(outs GPR64Opnd:$rd),
+                                      (ins GPR64Opnd:$rs, imm64:$imm),
+                                      "ddiv\t$rd, $rs, $imm">,
+                    ISA_MIPS3_NOT_32R6_64R6;
+  def DUDivMacro : MipsAsmPseudoInst<(outs GPR64Opnd:$rd),
+                                     (ins GPR64Opnd:$rs, GPR64Opnd:$rt),
+                                     "ddivu\t$rd, $rs, $rt">,
+                   ISA_MIPS3_NOT_32R6_64R6;
+  def DUDivIMacro : MipsAsmPseudoInst<(outs GPR64Opnd:$rd),
+                                      (ins GPR64Opnd:$rs, imm64:$imm),
+                                      "ddivu\t$rd, $rs, $imm">,
+                    ISA_MIPS3_NOT_32R6_64R6;
+
+  // GAS expands 'div' and 'ddiv' differently when the destination
+  // register is $zero and the instruction is in the two operand
+  // form. 'ddiv' gets expanded, while 'div' is not expanded.
+
+  def : MipsInstAlias<"ddiv $rs, $rt", (DSDivMacro GPR64Opnd:$rs,
+                                               GPR64Opnd:$rs,
+                                               GPR64Opnd:$rt), 0>,
+        ISA_MIPS3_NOT_32R6_64R6;
+  def : MipsInstAlias<"ddiv $rd, $imm", (DSDivIMacro GPR64Opnd:$rd,
+                                                     GPR64Opnd:$rd,
+                                                     imm64:$imm), 0>,
+        ISA_MIPS3_NOT_32R6_64R6;
+
+  // GAS expands 'divu' and 'ddivu' differently when the destination
+  // register is $zero and the instruction is in the two operand
+  // form. 'ddivu' gets expanded, while 'divu' is not expanded.
+
+  def : MipsInstAlias<"ddivu $rt, $rs", (DUDivMacro GPR64Opnd:$rt,
+                                                    GPR64Opnd:$rt,
+                                                    GPR64Opnd:$rs), 0>,
+        ISA_MIPS3_NOT_32R6_64R6;
+  def : MipsInstAlias<"ddivu $rd, $imm", (DUDivIMacro GPR64Opnd:$rd,
+                                                      GPR64Opnd:$rd,
+                                                      imm64:$imm), 0>,
+        ISA_MIPS3_NOT_32R6_64R6;
+}

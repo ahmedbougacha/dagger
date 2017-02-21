@@ -1638,10 +1638,12 @@ void SelectionDAGBuilder::FindMergedConditions(const Value *Cond,
   // Skip over not part of the tree and remember to invert op and operands at
   // next level.
   if (BinaryOperator::isNot(Cond) && Cond->hasOneUse()) {
-    Cond = cast<Instruction>(Cond)->getOperand(0);
-    FindMergedConditions(Cond, TBB, FBB, CurBB, SwitchBB, Opc, TProb, FProb,
-                         !InvertCond);
-    return;
+    const Value *CondOp = BinaryOperator::getNotArgument(Cond);
+    if (InBlock(CondOp, CurBB->getBasicBlock())) {
+      FindMergedConditions(CondOp, TBB, FBB, CurBB, SwitchBB, Opc, TProb, FProb,
+                           !InvertCond);
+      return;
+    }
   }
 
   const Instruction *BOp = dyn_cast<Instruction>(Cond);
@@ -3102,14 +3104,10 @@ void SelectionDAGBuilder::visitShuffleVector(const User &I) {
 
   if (SrcNumElts > MaskNumElts) {
     // Analyze the access pattern of the vector to see if we can extract
-    // two subvectors and do the shuffle. The analysis is done by calculating
-    // the range of elements the mask access on both vectors.
-    int MinRange[2] = { static_cast<int>(SrcNumElts),
-                        static_cast<int>(SrcNumElts)};
-    int MaxRange[2] = {-1, -1};
-
-    for (unsigned i = 0; i != MaskNumElts; ++i) {
-      int Idx = Mask[i];
+    // two subvectors and do the shuffle.
+    int StartIdx[2] = { -1, -1 };  // StartIdx to extract from
+    bool CanExtract = true;
+    for (int Idx : Mask) {
       unsigned Input = 0;
       if (Idx < 0)
         continue;
@@ -3118,41 +3116,28 @@ void SelectionDAGBuilder::visitShuffleVector(const User &I) {
         Input = 1;
         Idx -= SrcNumElts;
       }
-      if (Idx > MaxRange[Input])
-        MaxRange[Input] = Idx;
-      if (Idx < MinRange[Input])
-        MinRange[Input] = Idx;
+
+      // If all the indices come from the same MaskNumElts sized portion of
+      // the sources we can use extract. Also make sure the extract wouldn't
+      // extract past the end of the source.
+      int NewStartIdx = alignDown(Idx, MaskNumElts);
+      if (NewStartIdx + MaskNumElts > SrcNumElts ||
+          (StartIdx[Input] >= 0 && StartIdx[Input] != NewStartIdx))
+        CanExtract = false;
+      // Make sure we always update StartIdx as we use it to track if all
+      // elements are undef.
+      StartIdx[Input] = NewStartIdx;
     }
 
-    // Check if the access is smaller than the vector size and can we find
-    // a reasonable extract index.
-    int RangeUse[2] = { -1, -1 };  // 0 = Unused, 1 = Extract, -1 = Can not
-                                   // Extract.
-    int StartIdx[2];  // StartIdx to extract from
-    for (unsigned Input = 0; Input < 2; ++Input) {
-      if (MinRange[Input] >= (int)SrcNumElts && MaxRange[Input] < 0) {
-        RangeUse[Input] = 0; // Unused
-        StartIdx[Input] = 0;
-        continue;
-      }
-
-      // Find a good start index that is a multiple of the mask length. Then
-      // see if the rest of the elements are in range.
-      StartIdx[Input] = (MinRange[Input]/MaskNumElts)*MaskNumElts;
-      if (MaxRange[Input] - StartIdx[Input] < (int)MaskNumElts &&
-          StartIdx[Input] + MaskNumElts <= SrcNumElts)
-        RangeUse[Input] = 1; // Extract from a multiple of the mask length.
-    }
-
-    if (RangeUse[0] == 0 && RangeUse[1] == 0) {
+    if (StartIdx[0] < 0 && StartIdx[1] < 0) {
       setValue(&I, DAG.getUNDEF(VT)); // Vectors are not used.
       return;
     }
-    if (RangeUse[0] >= 0 && RangeUse[1] >= 0) {
+    if (CanExtract) {
       // Extract appropriate subvector and generate a vector shuffle
       for (unsigned Input = 0; Input < 2; ++Input) {
         SDValue &Src = Input == 0 ? Src1 : Src2;
-        if (RangeUse[Input] == 0)
+        if (StartIdx[Input] < 0)
           Src = DAG.getUNDEF(VT);
         else {
           Src = DAG.getNode(
@@ -3163,16 +3148,12 @@ void SelectionDAGBuilder::visitShuffleVector(const User &I) {
       }
 
       // Calculate new mask.
-      SmallVector<int, 8> MappedOps;
-      for (unsigned i = 0; i != MaskNumElts; ++i) {
-        int Idx = Mask[i];
-        if (Idx >= 0) {
-          if (Idx < (int)SrcNumElts)
-            Idx -= StartIdx[0];
-          else
-            Idx -= SrcNumElts + StartIdx[1] - MaskNumElts;
-        }
-        MappedOps.push_back(Idx);
+      SmallVector<int, 8> MappedOps(Mask.begin(), Mask.end());
+      for (int &Idx : MappedOps) {
+        if (Idx >= (int)SrcNumElts)
+          Idx -= SrcNumElts + StartIdx[1] - MaskNumElts;
+        else if (Idx >= 0)
+          Idx -= StartIdx[0];
       }
 
       setValue(&I, DAG.getVectorShuffle(VT, DL, Src1, Src2, MappedOps));
@@ -3186,8 +3167,7 @@ void SelectionDAGBuilder::visitShuffleVector(const User &I) {
   EVT EltVT = VT.getVectorElementType();
   EVT IdxVT = TLI.getVectorIdxTy(DAG.getDataLayout());
   SmallVector<SDValue,8> Ops;
-  for (unsigned i = 0; i != MaskNumElts; ++i) {
-    int Idx = Mask[i];
+  for (int Idx : Mask) {
     SDValue Res;
 
     if (Idx < 0) {
@@ -5914,6 +5894,15 @@ void SelectionDAGBuilder::LowerCallTo(ImmutableCallSite CS, SDValue Callee,
 
   const Value *SwiftErrorVal = nullptr;
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+
+  // We can't tail call inside a function with a swifterror argument. Lowering
+  // does not support this yet. It would have to move into the swifterror
+  // register before the call.
+  auto *Caller = CS.getInstruction()->getParent()->getParent();
+  if (TLI.supportSwiftError() &&
+      Caller->getAttributes().hasAttrSomewhere(Attribute::SwiftError))
+    isTailCall = false;
+
   for (ImmutableCallSite::arg_iterator i = CS.arg_begin(), e = CS.arg_end();
        i != e; ++i) {
     const Value *V = *i;
@@ -6054,20 +6043,13 @@ void SelectionDAGBuilder::processIntegerCallValue(const Instruction &I,
   setValue(&I, Value);
 }
 
-/// visitMemCmpCall - See if we can lower a call to memcmp in an optimized form.
-/// If so, return true and lower it, otherwise return false and it will be
-/// lowered like a normal call.
+/// See if we can lower a memcmp call into an optimized form.  If so, return
+/// true and lower it, otherwise return false and it will be lowered like a
+/// normal call.
+/// The caller already checked that \p I calls the appropriate LibFunc with a
+/// correct prototype.
 bool SelectionDAGBuilder::visitMemCmpCall(const CallInst &I) {
-  // Verify that the prototype makes sense.  int memcmp(void*,void*,size_t)
-  if (I.getNumArgOperands() != 3)
-    return false;
-
   const Value *LHS = I.getArgOperand(0), *RHS = I.getArgOperand(1);
-  if (!LHS->getType()->isPointerTy() || !RHS->getType()->isPointerTy() ||
-      !I.getArgOperand(2)->getType()->isIntegerTy() ||
-      !I.getType()->isIntegerTy())
-    return false;
-
   const Value *Size = I.getArgOperand(2);
   const ConstantInt *CSize = dyn_cast<ConstantInt>(Size);
   if (CSize && CSize->getZExtValue() == 0) {
@@ -6157,22 +6139,15 @@ bool SelectionDAGBuilder::visitMemCmpCall(const CallInst &I) {
   return false;
 }
 
-/// visitMemChrCall -- See if we can lower a memchr call into an optimized
-/// form.  If so, return true and lower it, otherwise return false and it
-/// will be lowered like a normal call.
+/// See if we can lower a memchr call into an optimized form.  If so, return
+/// true and lower it, otherwise return false and it will be lowered like a
+/// normal call.
+/// The caller already checked that \p I calls the appropriate LibFunc with a
+/// correct prototype.
 bool SelectionDAGBuilder::visitMemChrCall(const CallInst &I) {
-  // Verify that the prototype makes sense.  void *memchr(void *, int, size_t)
-  if (I.getNumArgOperands() != 3)
-    return false;
-
   const Value *Src = I.getArgOperand(0);
   const Value *Char = I.getArgOperand(1);
   const Value *Length = I.getArgOperand(2);
-  if (!Src->getType()->isPointerTy() ||
-      !Char->getType()->isIntegerTy() ||
-      !Length->getType()->isIntegerTy() ||
-      !I.getType()->isPointerTy())
-    return false;
 
   const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
@@ -6188,15 +6163,12 @@ bool SelectionDAGBuilder::visitMemChrCall(const CallInst &I) {
   return false;
 }
 
-///
-/// visitMemPCpyCall -- lower a mempcpy call as a memcpy followed by code to
-/// to adjust the dst pointer by the size of the copied memory.
+/// See if we can lower a mempcpy call into an optimized form.  If so, return
+/// true and lower it, otherwise return false and it will be lowered like a
+/// normal call.
+/// The caller already checked that \p I calls the appropriate LibFunc with a
+/// correct prototype.
 bool SelectionDAGBuilder::visitMemPCpyCall(const CallInst &I) {
-
-  // Verify argument count: void *mempcpy(void *, const void *, size_t)
-  if (I.getNumArgOperands() != 3)
-    return false;
-
   SDValue Dst = getValue(I.getArgOperand(0));
   SDValue Src = getValue(I.getArgOperand(1));
   SDValue Size = getValue(I.getArgOperand(2));
@@ -6231,19 +6203,13 @@ bool SelectionDAGBuilder::visitMemPCpyCall(const CallInst &I) {
   return true;
 }
 
-/// visitStrCpyCall -- See if we can lower a strcpy or stpcpy call into an
-/// optimized form.  If so, return true and lower it, otherwise return false
-/// and it will be lowered like a normal call.
+/// See if we can lower a strcpy call into an optimized form.  If so, return
+/// true and lower it, otherwise return false and it will be lowered like a
+/// normal call.
+/// The caller already checked that \p I calls the appropriate LibFunc with a
+/// correct prototype.
 bool SelectionDAGBuilder::visitStrCpyCall(const CallInst &I, bool isStpcpy) {
-  // Verify that the prototype makes sense.  char *strcpy(char *, char *)
-  if (I.getNumArgOperands() != 2)
-    return false;
-
   const Value *Arg0 = I.getArgOperand(0), *Arg1 = I.getArgOperand(1);
-  if (!Arg0->getType()->isPointerTy() ||
-      !Arg1->getType()->isPointerTy() ||
-      !I.getType()->isPointerTy())
-    return false;
 
   const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
@@ -6260,19 +6226,13 @@ bool SelectionDAGBuilder::visitStrCpyCall(const CallInst &I, bool isStpcpy) {
   return false;
 }
 
-/// visitStrCmpCall - See if we can lower a call to strcmp in an optimized form.
-/// If so, return true and lower it, otherwise return false and it will be
-/// lowered like a normal call.
+/// See if we can lower a strcmp call into an optimized form.  If so, return
+/// true and lower it, otherwise return false and it will be lowered like a
+/// normal call.
+/// The caller already checked that \p I calls the appropriate LibFunc with a
+/// correct prototype.
 bool SelectionDAGBuilder::visitStrCmpCall(const CallInst &I) {
-  // Verify that the prototype makes sense.  int strcmp(void*,void*)
-  if (I.getNumArgOperands() != 2)
-    return false;
-
   const Value *Arg0 = I.getArgOperand(0), *Arg1 = I.getArgOperand(1);
-  if (!Arg0->getType()->isPointerTy() ||
-      !Arg1->getType()->isPointerTy() ||
-      !I.getType()->isIntegerTy())
-    return false;
 
   const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
@@ -6289,17 +6249,13 @@ bool SelectionDAGBuilder::visitStrCmpCall(const CallInst &I) {
   return false;
 }
 
-/// visitStrLenCall -- See if we can lower a strlen call into an optimized
-/// form.  If so, return true and lower it, otherwise return false and it
-/// will be lowered like a normal call.
+/// See if we can lower a strlen call into an optimized form.  If so, return
+/// true and lower it, otherwise return false and it will be lowered like a
+/// normal call.
+/// The caller already checked that \p I calls the appropriate LibFunc with a
+/// correct prototype.
 bool SelectionDAGBuilder::visitStrLenCall(const CallInst &I) {
-  // Verify that the prototype makes sense.  size_t strlen(char *)
-  if (I.getNumArgOperands() != 1)
-    return false;
-
   const Value *Arg0 = I.getArgOperand(0);
-  if (!Arg0->getType()->isPointerTy() || !I.getType()->isIntegerTy())
-    return false;
 
   const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
@@ -6314,19 +6270,13 @@ bool SelectionDAGBuilder::visitStrLenCall(const CallInst &I) {
   return false;
 }
 
-/// visitStrNLenCall -- See if we can lower a strnlen call into an optimized
-/// form.  If so, return true and lower it, otherwise return false and it
-/// will be lowered like a normal call.
+/// See if we can lower a strnlen call into an optimized form.  If so, return
+/// true and lower it, otherwise return false and it will be lowered like a
+/// normal call.
+/// The caller already checked that \p I calls the appropriate LibFunc with a
+/// correct prototype.
 bool SelectionDAGBuilder::visitStrNLenCall(const CallInst &I) {
-  // Verify that the prototype makes sense.  size_t strnlen(char *, size_t)
-  if (I.getNumArgOperands() != 2)
-    return false;
-
   const Value *Arg0 = I.getArgOperand(0), *Arg1 = I.getArgOperand(1);
-  if (!Arg0->getType()->isPointerTy() ||
-      !Arg1->getType()->isIntegerTy() ||
-      !I.getType()->isIntegerTy())
-    return false;
 
   const SelectionDAGTargetInfo &TSI = DAG.getSelectionDAGInfo();
   std::pair<SDValue, SDValue> Res =
@@ -6342,16 +6292,15 @@ bool SelectionDAGBuilder::visitStrNLenCall(const CallInst &I) {
   return false;
 }
 
-/// visitUnaryFloatCall - If a call instruction is a unary floating-point
-/// operation (as expected), translate it to an SDNode with the specified opcode
-/// and return true.
+/// See if we can lower a unary floating-point operation into an SDNode with
+/// the specified Opcode.  If so, return true and lower it, otherwise return
+/// false and it will be lowered like a normal call.
+/// The caller already checked that \p I calls the appropriate LibFunc with a
+/// correct prototype.
 bool SelectionDAGBuilder::visitUnaryFloatCall(const CallInst &I,
                                               unsigned Opcode) {
-  // Sanity check that it really is a unary floating-point call.
-  if (I.getNumArgOperands() != 1 ||
-      !I.getArgOperand(0)->getType()->isFloatingPointTy() ||
-      I.getType() != I.getArgOperand(0)->getType() ||
-      !I.onlyReadsMemory())
+  // We already checked this call's prototype; verify it doesn't modify errno.
+  if (!I.onlyReadsMemory())
     return false;
 
   SDValue Tmp = getValue(I.getArgOperand(0));
@@ -6359,17 +6308,15 @@ bool SelectionDAGBuilder::visitUnaryFloatCall(const CallInst &I,
   return true;
 }
 
-/// visitBinaryFloatCall - If a call instruction is a binary floating-point
-/// operation (as expected), translate it to an SDNode with the specified opcode
-/// and return true.
+/// See if we can lower a binary floating-point operation into an SDNode with
+/// the specified Opcode.  If so, return true and lower it, otherwise return
+/// false and it will be lowered like a normal call.
+/// The caller already checked that \p I calls the appropriate LibFunc with a
+/// correct prototype.
 bool SelectionDAGBuilder::visitBinaryFloatCall(const CallInst &I,
                                                unsigned Opcode) {
-  // Sanity check that it really is a binary floating-point call.
-  if (I.getNumArgOperands() != 2 ||
-      !I.getArgOperand(0)->getType()->isFloatingPointTy() ||
-      I.getType() != I.getArgOperand(0)->getType() ||
-      I.getType() != I.getArgOperand(1)->getType() ||
-      !I.onlyReadsMemory())
+  // We already checked this call's prototype; verify it doesn't modify errno.
+  if (!I.onlyReadsMemory())
     return false;
 
   SDValue Tmp0 = getValue(I.getArgOperand(0));
@@ -6411,18 +6358,16 @@ void SelectionDAGBuilder::visitCall(const CallInst &I) {
     // some reason.
     LibFunc Func;
     if (!I.isNoBuiltin() && !F->hasLocalLinkage() && F->hasName() &&
-        LibInfo->getLibFunc(F->getName(), Func) &&
+        LibInfo->getLibFunc(*F, Func) &&
         LibInfo->hasOptimizedCodeGen(Func)) {
       switch (Func) {
       default: break;
       case LibFunc_copysign:
       case LibFunc_copysignf:
       case LibFunc_copysignl:
-        if (I.getNumArgOperands() == 2 &&   // Basic sanity checks.
-            I.getArgOperand(0)->getType()->isFloatingPointTy() &&
-            I.getType() == I.getArgOperand(0)->getType() &&
-            I.getType() == I.getArgOperand(1)->getType() &&
-            I.onlyReadsMemory()) {
+        // We already checked this call's prototype; verify it doesn't modify
+        // errno.
+        if (I.onlyReadsMemory()) {
           SDValue LHS = getValue(I.getArgOperand(0));
           SDValue RHS = getValue(I.getArgOperand(1));
           setValue(&I, DAG.getNode(ISD::FCOPYSIGN, getCurSDLoc(),
@@ -8106,14 +8051,14 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
   }
 
   // Set up the incoming argument description vector.
-  unsigned Idx = 1;
-  for (Function::const_arg_iterator I = F.arg_begin(), E = F.arg_end();
-       I != E; ++I, ++Idx) {
+  unsigned Idx = 0;
+  for (const Argument &Arg : F.args()) {
+    ++Idx;
     SmallVector<EVT, 4> ValueVTs;
-    ComputeValueVTs(*TLI, DAG.getDataLayout(), I->getType(), ValueVTs);
-    bool isArgValueUsed = !I->use_empty();
+    ComputeValueVTs(*TLI, DAG.getDataLayout(), Arg.getType(), ValueVTs);
+    bool isArgValueUsed = !Arg.use_empty();
     unsigned PartBase = 0;
-    Type *FinalType = I->getType();
+    Type *FinalType = Arg.getType();
     if (F.getAttributes().hasAttribute(Idx, Attribute::ByVal))
       FinalType = cast<PointerType>(FinalType)->getElementType();
     bool NeedsRegBlock = TLI->functionArgumentNeedsConsecutiveRegisters(
@@ -8133,7 +8078,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
         // If we are using vectorcall calling convention, a structure that is
         // passed InReg - is surely an HVA
         if (F.getCallingConv() == CallingConv::X86_VectorCall &&
-            isa<StructType>(I->getType())) {
+            isa<StructType>(Arg.getType())) {
           // The first value of a structure is marked
           if (0 == Value)
             Flags.setHvaStart();
@@ -8165,7 +8110,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
           Flags.setByVal();
       }
       if (Flags.isByVal() || Flags.isInAlloca()) {
-        PointerType *Ty = cast<PointerType>(I->getType());
+        PointerType *Ty = cast<PointerType>(Arg.getType());
         Type *ElementTy = Ty->getElementType();
         Flags.setByValSize(DL.getTypeAllocSize(ElementTy));
         // For ByVal, alignment should be passed from FE.  BE will guess if
@@ -8228,7 +8173,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
 
   // Set up the argument values.
   unsigned i = 0;
-  Idx = 1;
+  Idx = 0;
   if (!FuncInfo->CanLowerReturn) {
     // Create a virtual register for the sret pointer, and put in a copy
     // from the sret argument into it.
@@ -8254,11 +8199,11 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
     ++i;
   }
 
-  for (Function::const_arg_iterator I = F.arg_begin(), E = F.arg_end(); I != E;
-      ++I, ++Idx) {
+  for (const Argument &Arg : F.args()) {
+    ++Idx;
     SmallVector<SDValue, 4> ArgValues;
     SmallVector<EVT, 4> ValueVTs;
-    ComputeValueVTs(*TLI, DAG.getDataLayout(), I->getType(), ValueVTs);
+    ComputeValueVTs(*TLI, DAG.getDataLayout(), Arg.getType(), ValueVTs);
     unsigned NumValues = ValueVTs.size();
 
     // If this argument is unused then remember its value. It is used to generate
@@ -8266,13 +8211,13 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
     bool isSwiftErrorArg =
         TLI->supportSwiftError() &&
         F.getAttributes().hasAttribute(Idx, Attribute::SwiftError);
-    if (I->use_empty() && NumValues && !isSwiftErrorArg) {
-      SDB->setUnusedArgValue(&*I, InVals[i]);
+    if (Arg.use_empty() && NumValues && !isSwiftErrorArg) {
+      SDB->setUnusedArgValue(&Arg, InVals[i]);
 
       // Also remember any frame index for use in FastISel.
       if (FrameIndexSDNode *FI =
           dyn_cast<FrameIndexSDNode>(InVals[i].getNode()))
-        FuncInfo->setArgumentFrameIndex(&*I, FI->getIndex());
+        FuncInfo->setArgumentFrameIndex(&Arg, FI->getIndex());
     }
 
     for (unsigned Val = 0; Val != NumValues; ++Val) {
@@ -8283,7 +8228,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
       // Even an apparant 'unused' swifterror argument needs to be returned. So
       // we do generate a copy for it that can be used on return from the
       // function.
-      if (!I->use_empty() || isSwiftErrorArg) {
+      if (!Arg.use_empty() || isSwiftErrorArg) {
         Optional<ISD::NodeType> AssertOp;
         if (F.getAttributes().hasAttribute(Idx, Attribute::SExt))
           AssertOp = ISD::AssertSext;
@@ -8305,18 +8250,18 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
     // Note down frame index.
     if (FrameIndexSDNode *FI =
         dyn_cast<FrameIndexSDNode>(ArgValues[0].getNode()))
-      FuncInfo->setArgumentFrameIndex(&*I, FI->getIndex());
+      FuncInfo->setArgumentFrameIndex(&Arg, FI->getIndex());
 
     SDValue Res = DAG.getMergeValues(makeArrayRef(ArgValues.data(), NumValues),
                                      SDB->getCurSDLoc());
 
-    SDB->setValue(&*I, Res);
+    SDB->setValue(&Arg, Res);
     if (!TM.Options.EnableFastISel && Res.getOpcode() == ISD::BUILD_PAIR) {
       if (LoadSDNode *LNode =
           dyn_cast<LoadSDNode>(Res.getOperand(0).getNode()))
         if (FrameIndexSDNode *FI =
             dyn_cast<FrameIndexSDNode>(LNode->getBasePtr().getNode()))
-        FuncInfo->setArgumentFrameIndex(&*I, FI->getIndex());
+        FuncInfo->setArgumentFrameIndex(&Arg, FI->getIndex());
     }
 
     // Update the SwiftErrorVRegDefMap.
@@ -8336,13 +8281,13 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
       // uses with vregs.
       unsigned Reg = cast<RegisterSDNode>(Res.getOperand(1))->getReg();
       if (TargetRegisterInfo::isVirtualRegister(Reg)) {
-        FuncInfo->ValueMap[&*I] = Reg;
+        FuncInfo->ValueMap[&Arg] = Reg;
         continue;
       }
     }
-    if (!isOnlyUsedInEntryBlock(&*I, TM.Options.EnableFastISel)) {
-      FuncInfo->InitializeRegForValue(&*I);
-      SDB->CopyToExportRegsIfNeeded(&*I);
+    if (!isOnlyUsedInEntryBlock(&Arg, TM.Options.EnableFastISel)) {
+      FuncInfo->InitializeRegForValue(&Arg);
+      SDB->CopyToExportRegsIfNeeded(&Arg);
     }
   }
 

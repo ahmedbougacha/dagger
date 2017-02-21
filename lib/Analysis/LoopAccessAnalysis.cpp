@@ -172,11 +172,6 @@ const SCEV *llvm::replaceSymbolicStrideSCEV(PredicatedScalarEvolution &PSE,
     // Strip casts.
     StrideVal = stripIntegerCast(StrideVal);
 
-    // Replace symbolic stride by one.
-    Value *One = ConstantInt::get(StrideVal->getType(), 1);
-    ValueToValueMap RewriteMap;
-    RewriteMap[StrideVal] = One;
-
     ScalarEvolution *SE = PSE.getSE();
     const auto *U = cast<SCEVUnknown>(SE->getSCEV(StrideVal));
     const auto *CT =
@@ -1058,35 +1053,50 @@ static unsigned getAddressSpaceOperand(Value *I) {
   return -1;
 }
 
-/// Saves the memory accesses after sorting it into vector argument 'Sorted'.
-void llvm::sortMemAccesses(ArrayRef<Value *> VL, const DataLayout &DL,
-                         ScalarEvolution &SE,
-                         SmallVectorImpl<Value *> &Sorted) {
-  SmallVector<std::pair<int, Value *>, 4> OffValPairs;
-  for (auto *Val : VL) {
-    // Compute the constant offset from the base pointer of each memory accesses
-    // and insert into the vector of key,value pair which needs to be sorted.
-    Value *Ptr = getPointerOperand(Val);
-    unsigned AS = getAddressSpaceOperand(Val);
-    unsigned PtrBitWidth = DL.getPointerSizeInBits(AS);
-    Type *Ty = cast<PointerType>(Ptr->getType())->getElementType();
-    APInt Size(PtrBitWidth, DL.getTypeStoreSize(Ty));
+bool llvm::sortMemAccesses(ArrayRef<Value *> VL, const DataLayout &DL,
+                           ScalarEvolution &SE,
+                           SmallVectorImpl<Value *> &Sorted) {
+  SmallVector<std::pair<int64_t, Value *>, 4> OffValPairs;
+  OffValPairs.reserve(VL.size());
+  Sorted.reserve(VL.size());
 
-    // FIXME: Currently the offsets are assumed to be constant.However this not
-    // always true as offsets can be variables also and we would need to
-    // consider the difference of the variable offsets.
-    APInt Offset(PtrBitWidth, 0);
-    Ptr->stripAndAccumulateInBoundsConstantOffsets(DL, Offset);
-    OffValPairs.push_back(std::make_pair(Offset.getSExtValue(), Val));
+  // Walk over the pointers, and map each of them to an offset relative to
+  // first pointer in the array.
+  Value *Ptr0 = getPointerOperand(VL[0]);
+  const SCEV *Scev0 = SE.getSCEV(Ptr0);
+  Value *Obj0 = GetUnderlyingObject(Ptr0, DL);
+
+  for (auto *Val : VL) {
+    Value *Ptr = getPointerOperand(Val);
+
+    // If a pointer refers to a different underlying object, bail - the
+    // pointers are by definition incomparable.
+    Value *CurrObj = GetUnderlyingObject(Ptr, DL);
+    if (CurrObj != Obj0)
+      return false;
+
+    const SCEVConstant *Diff =
+        dyn_cast<SCEVConstant>(SE.getMinusSCEV(SE.getSCEV(Ptr), Scev0));
+
+    // The pointers may not have a constant offset from each other, or SCEV
+    // may just not be smart enough to figure out they do. Regardless,
+    // there's nothing we can do.
+    if (!Diff)
+      return false;
+
+    OffValPairs.emplace_back(Diff->getAPInt().getSExtValue(), Val);
   }
+
   std::sort(OffValPairs.begin(), OffValPairs.end(),
-            [](const std::pair<int, Value *> &Left,
-               const std::pair<int, Value *> &Right) {
+            [](const std::pair<int64_t, Value *> &Left,
+               const std::pair<int64_t, Value *> &Right) {
               return Left.first < Right.first;
             });
 
-  for (auto& it : OffValPairs)
+  for (auto &it : OffValPairs)
     Sorted.push_back(it.second);
+
+  return true;
 }
 
 /// Returns true if the memory operations \p A and \p B are consecutive.
@@ -1236,6 +1246,73 @@ bool MemoryDepChecker::couldPreventStoreLoadForward(uint64_t Distance,
   return false;
 }
 
+/// Given a non-constant (unknown) dependence-distance \p Dist between two 
+/// memory accesses, that have the same stride whose absolute value is given
+/// in \p Stride, and that have the same type size \p TypeByteSize,
+/// in a loop whose takenCount is \p BackedgeTakenCount, check if it is
+/// possible to prove statically that the dependence distance is larger
+/// than the range that the accesses will travel through the execution of
+/// the loop. If so, return true; false otherwise. This is useful for
+/// example in loops such as the following (PR31098):
+///     for (i = 0; i < D; ++i) {
+///                = out[i];
+///       out[i+D] =
+///     }
+static bool isSafeDependenceDistance(const DataLayout &DL, ScalarEvolution &SE,
+                                     const SCEV &BackedgeTakenCount,
+                                     const SCEV &Dist, uint64_t Stride,
+                                     uint64_t TypeByteSize) {
+
+  // If we can prove that
+  //      (**) |Dist| > BackedgeTakenCount * Step
+  // where Step is the absolute stride of the memory accesses in bytes, 
+  // then there is no dependence.
+  //
+  // Ratioanle: 
+  // We basically want to check if the absolute distance (|Dist/Step|) 
+  // is >= the loop iteration count (or > BackedgeTakenCount). 
+  // This is equivalent to the Strong SIV Test (Practical Dependence Testing, 
+  // Section 4.2.1); Note, that for vectorization it is sufficient to prove 
+  // that the dependence distance is >= VF; This is checked elsewhere.
+  // But in some cases we can prune unknown dependence distances early, and 
+  // even before selecting the VF, and without a runtime test, by comparing 
+  // the distance against the loop iteration count. Since the vectorized code 
+  // will be executed only if LoopCount >= VF, proving distance >= LoopCount 
+  // also guarantees that distance >= VF.
+  //
+  const uint64_t ByteStride = Stride * TypeByteSize;
+  const SCEV *Step = SE.getConstant(BackedgeTakenCount.getType(), ByteStride);
+  const SCEV *Product = SE.getMulExpr(&BackedgeTakenCount, Step);
+
+  const SCEV *CastedDist = &Dist;
+  const SCEV *CastedProduct = Product;
+  uint64_t DistTypeSize = DL.getTypeAllocSize(Dist.getType());
+  uint64_t ProductTypeSize = DL.getTypeAllocSize(Product->getType());
+
+  // The dependence distance can be positive/negative, so we sign extend Dist; 
+  // The multiplication of the absolute stride in bytes and the 
+  // backdgeTakenCount is non-negative, so we zero extend Product.
+  if (DistTypeSize > ProductTypeSize)
+    CastedProduct = SE.getZeroExtendExpr(Product, Dist.getType());
+  else
+    CastedDist = SE.getNoopOrSignExtend(&Dist, Product->getType());
+
+  // Is  Dist - (BackedgeTakenCount * Step) > 0 ?
+  // (If so, then we have proven (**) because |Dist| >= Dist)
+  const SCEV *Minus = SE.getMinusSCEV(CastedDist, CastedProduct);
+  if (SE.isKnownPositive(Minus))
+    return true;
+
+  // Second try: Is  -Dist - (BackedgeTakenCount * Step) > 0 ?
+  // (If so, then we have proven (**) because |Dist| >= -1*Dist)
+  const SCEV *NegDist = SE.getNegativeSCEV(CastedDist);
+  Minus = SE.getMinusSCEV(NegDist, CastedProduct);
+  if (SE.isKnownPositive(Minus))
+    return true;
+
+  return false;
+}
+
 /// \brief Check the dependence for two accesses with the same stride \p Stride.
 /// \p Distance is the positive distance and \p TypeByteSize is type size in
 /// bytes.
@@ -1323,21 +1400,26 @@ MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
     return Dependence::Unknown;
   }
 
+  Type *ATy = APtr->getType()->getPointerElementType();
+  Type *BTy = BPtr->getType()->getPointerElementType();
+  auto &DL = InnermostLoop->getHeader()->getModule()->getDataLayout();
+  uint64_t TypeByteSize = DL.getTypeAllocSize(ATy);
+  uint64_t Stride = std::abs(StrideAPtr);
   const SCEVConstant *C = dyn_cast<SCEVConstant>(Dist);
   if (!C) {
+    if (TypeByteSize == DL.getTypeAllocSize(BTy) &&
+        isSafeDependenceDistance(DL, *(PSE.getSE()),
+                                 *(PSE.getBackedgeTakenCount()), *Dist, Stride,
+                                 TypeByteSize))
+      return Dependence::NoDep;
+
     DEBUG(dbgs() << "LAA: Dependence because of non-constant distance\n");
     ShouldRetryWithRuntimeCheck = true;
     return Dependence::Unknown;
   }
 
-  Type *ATy = APtr->getType()->getPointerElementType();
-  Type *BTy = BPtr->getType()->getPointerElementType();
-  auto &DL = InnermostLoop->getHeader()->getModule()->getDataLayout();
-  uint64_t TypeByteSize = DL.getTypeAllocSize(ATy);
-
   const APInt &Val = C->getAPInt();
   int64_t Distance = Val.getSExtValue();
-  uint64_t Stride = std::abs(StrideAPtr);
 
   // Attempt to prove strided accesses independent.
   if (std::abs(Distance) > 0 && Stride > 1 && ATy == BTy &&

@@ -129,6 +129,11 @@ static cl::opt<bool> EnablePhiElim(
   "enable-lsr-phielim", cl::Hidden, cl::init(true),
   cl::desc("Enable LSR phi elimination"));
 
+// The flag adds instruction count to solutions cost comparision.
+static cl::opt<bool> InsnsCost(
+  "lsr-insns-cost", cl::Hidden, cl::init(false),
+  cl::desc("Add instruction count to a LSR cost model"));
+
 #ifndef NDEBUG
 // Stress test IV chain generation.
 static cl::opt<bool> StressIVChain(
@@ -325,6 +330,8 @@ struct Formula {
 
   bool unscale();
 
+  bool hasZeroEnd() const;
+
   size_t getNumRegs() const;
   Type *getType() const;
 
@@ -456,6 +463,14 @@ bool Formula::unscale() {
   Scale = 0;
   BaseRegs.push_back(ScaledReg);
   ScaledReg = nullptr;
+  return true;
+}
+
+bool Formula::hasZeroEnd() const {
+  if (UnfoldedOffset || BaseOffset)
+    return false;
+  if (BaseRegs.size() != 1 || ScaledReg)
+    return false;
   return true;
 }
 
@@ -713,7 +728,7 @@ static GlobalValue *ExtractSymbol(const SCEV *&S, ScalarEvolution &SE) {
 static bool isAddressUse(Instruction *Inst, Value *OperandVal) {
   bool isAddress = isa<LoadInst>(Inst);
   if (StoreInst *SI = dyn_cast<StoreInst>(Inst)) {
-    if (SI->getOperand(1) == OperandVal)
+    if (SI->getPointerOperand() == OperandVal)
       isAddress = true;
   } else if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(Inst)) {
     // Addressing modes can also be folded into prefetches and a variety
@@ -725,6 +740,12 @@ static bool isAddressUse(Instruction *Inst, Value *OperandVal) {
           isAddress = true;
         break;
     }
+  } else if (AtomicRMWInst *RMW = dyn_cast<AtomicRMWInst>(Inst)) {
+    if (RMW->getPointerOperand() == OperandVal)
+      isAddress = true;
+  } else if (AtomicCmpXchgInst *CmpX = dyn_cast<AtomicCmpXchgInst>(Inst)) {
+    if (CmpX->getPointerOperand() == OperandVal)
+      isAddress = true;
   }
   return isAddress;
 }
@@ -737,6 +758,10 @@ static MemAccessTy getAccessType(const Instruction *Inst) {
     AccessTy.AddrSpace = SI->getPointerAddressSpace();
   } else if (const LoadInst *LI = dyn_cast<LoadInst>(Inst)) {
     AccessTy.AddrSpace = LI->getPointerAddressSpace();
+  } else if (const AtomicRMWInst *RMW = dyn_cast<AtomicRMWInst>(Inst)) {
+    AccessTy.AddrSpace = RMW->getPointerAddressSpace();
+  } else if (const AtomicCmpXchgInst *CmpX = dyn_cast<AtomicCmpXchgInst>(Inst)) {
+    AccessTy.AddrSpace = CmpX->getPointerAddressSpace();
   }
 
   // All pointers have the same requirements, so canonicalize them to an
@@ -885,6 +910,7 @@ namespace {
 class Cost {
   /// TODO: Some of these could be merged. Also, a lexical ordering
   /// isn't always optimal.
+  unsigned Insns;
   unsigned NumRegs;
   unsigned AddRecCost;
   unsigned NumIVMuls;
@@ -895,8 +921,8 @@ class Cost {
 
 public:
   Cost()
-    : NumRegs(0), AddRecCost(0), NumIVMuls(0), NumBaseAdds(0), ImmCost(0),
-      SetupCost(0), ScaleCost(0) {}
+    : Insns(0), NumRegs(0), AddRecCost(0), NumIVMuls(0), NumBaseAdds(0),
+      ImmCost(0), SetupCost(0), ScaleCost(0) {}
 
   bool operator<(const Cost &Other) const;
 
@@ -905,9 +931,9 @@ public:
 #ifndef NDEBUG
   // Once any of the metrics loses, they must all remain losers.
   bool isValid() {
-    return ((NumRegs | AddRecCost | NumIVMuls | NumBaseAdds
+    return ((Insns | NumRegs | AddRecCost | NumIVMuls | NumBaseAdds
              | ImmCost | SetupCost | ScaleCost) != ~0u)
-      || ((NumRegs & AddRecCost & NumIVMuls & NumBaseAdds
+      || ((Insns & NumRegs & AddRecCost & NumIVMuls & NumBaseAdds
            & ImmCost & SetupCost & ScaleCost) == ~0u);
   }
 #endif
@@ -1085,17 +1111,23 @@ void Cost::RateRegister(const SCEV *Reg,
                         const Loop *L,
                         ScalarEvolution &SE, DominatorTree &DT) {
   if (const SCEVAddRecExpr *AR = dyn_cast<SCEVAddRecExpr>(Reg)) {
-    // If this is an addrec for another loop, don't second-guess its addrec phi
-    // nodes. LSR isn't currently smart enough to reason about more than one
-    // loop at a time. LSR has already run on inner loops, will not run on outer
-    // loops, and cannot be expected to change sibling loops.
+    // If this is an addrec for another loop, it should be an invariant
+    // with respect to L since L is the innermost loop (at least
+    // for now LSR only handles innermost loops).
     if (AR->getLoop() != L) {
       // If the AddRec exists, consider it's register free and leave it alone.
       if (isExistingPhi(AR, SE))
         return;
 
-      // Otherwise, do not consider this formula at all.
-      Lose();
+      // It is bad to allow LSR for current loop to add induction variables
+      // for its sibling loops.
+      if (!AR->getLoop()->contains(L)) {
+        Lose();
+        return;
+      }
+
+      // Otherwise, it will be an invariant with respect to Loop L.
+      ++NumRegs;
       return;
     }
     AddRecCost += 1; /// TODO: This should be a function of the stride.
@@ -1154,6 +1186,9 @@ void Cost::RateFormula(const TargetTransformInfo &TTI,
                        SmallPtrSetImpl<const SCEV *> *LoserRegs) {
   assert(F.isCanonical() && "Cost is accurate only for canonical formula");
   // Tally up the registers.
+  unsigned PrevAddRecCost = AddRecCost;
+  unsigned PrevNumRegs = NumRegs;
+  unsigned PrevNumBaseAdds = NumBaseAdds;
   if (const SCEV *ScaledReg = F.ScaledReg) {
     if (VisitedRegs.count(ScaledReg)) {
       Lose();
@@ -1171,6 +1206,18 @@ void Cost::RateFormula(const TargetTransformInfo &TTI,
     RatePrimaryRegister(BaseReg, Regs, L, SE, DT, LoserRegs);
     if (isLoser())
       return;
+  }
+
+  // Treat every new register that exceeds TTI.getNumberOfRegisters() - 1 as
+  // additional instruction (at least fill).
+  unsigned TTIRegNum = TTI.getNumberOfRegisters(false) - 1;
+  if (NumRegs > TTIRegNum) {
+    // Cost already exceeded TTIRegNum, then only newly added register can add
+    // new instructions.
+    if (PrevNumRegs > TTIRegNum)
+      Insns += (NumRegs - PrevNumRegs);
+    else
+      Insns += (NumRegs - TTIRegNum);
   }
 
   // Determine how many (unfolded) adds we'll need inside the loop.
@@ -1201,11 +1248,30 @@ void Cost::RateFormula(const TargetTransformInfo &TTI,
         !TTI.isFoldableMemAccessOffset(Fixup.UserInst, Offset))
       NumBaseAdds++;
   }
+
+  // If ICmpZero formula ends with not 0, it could not be replaced by
+  // just add or sub. We'll need to compare final result of AddRec.
+  // That means we'll need an additional instruction.
+  // For -10 + {0, +, 1}:
+  // i = i + 1;
+  // cmp i, 10
+  //
+  // For {-10, +, 1}:
+  // i = i + 1;
+  if (LU.Kind == LSRUse::ICmpZero && !F.hasZeroEnd())
+    Insns++;
+  // Each new AddRec adds 1 instruction to calculation.
+  Insns += (AddRecCost - PrevAddRecCost);
+
+  // BaseAdds adds instructions for unfolded registers.
+  if (LU.Kind != LSRUse::ICmpZero)
+    Insns += NumBaseAdds - PrevNumBaseAdds;
   assert(isValid() && "invalid cost");
 }
 
 /// Set this cost to a losing value.
 void Cost::Lose() {
+  Insns = ~0u;
   NumRegs = ~0u;
   AddRecCost = ~0u;
   NumIVMuls = ~0u;
@@ -1217,6 +1283,8 @@ void Cost::Lose() {
 
 /// Choose the lower cost.
 bool Cost::operator<(const Cost &Other) const {
+  if (InsnsCost && Insns != Other.Insns)
+    return Insns < Other.Insns;
   return std::tie(NumRegs, AddRecCost, NumIVMuls, NumBaseAdds, ScaleCost,
                   ImmCost, SetupCost) <
          std::tie(Other.NumRegs, Other.AddRecCost, Other.NumIVMuls,
@@ -1225,6 +1293,7 @@ bool Cost::operator<(const Cost &Other) const {
 }
 
 void Cost::print(raw_ostream &OS) const {
+  OS << Insns << " instruction" << (Insns == 1 ? " " : "s ");
   OS << NumRegs << " reg" << (NumRegs == 1 ? "" : "s");
   if (AddRecCost != 0)
     OS << ", with addrec cost " << AddRecCost;
@@ -2497,7 +2566,12 @@ static Value *getWideOperand(Value *Oper) {
 static bool isCompatibleIVType(Value *LVal, Value *RVal) {
   Type *LType = LVal->getType();
   Type *RType = RVal->getType();
-  return (LType == RType) || (LType->isPointerTy() && RType->isPointerTy());
+  return (LType == RType) || (LType->isPointerTy() && RType->isPointerTy() &&
+                              // Different address spaces means (possibly)
+                              // different types of the pointer implementation,
+                              // e.g. i16 vs i32 so disallow that.
+                              (LType->getPointerAddressSpace() ==
+                               RType->getPointerAddressSpace()));
 }
 
 /// Return an approximation of this SCEV expression's "base", or NULL for any

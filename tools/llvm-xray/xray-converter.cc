@@ -88,7 +88,7 @@ void TraceConverter::exportAsYAML(const Trace &Records, raw_ostream &OS) {
                                        : llvm::to_string(R.FuncId),
                              R.TSC, R.TId});
   }
-  Output Out(OS);
+  Output Out(OS, nullptr, 0);
   Out << Trace;
 }
 
@@ -118,7 +118,9 @@ void TraceConverter::exportAsRAWv1(const Trace &Records, raw_ostream &OS) {
   // format.
   for (const auto &R : Records) {
     Writer.write(R.RecordType);
-    Writer.write(R.CPU);
+    // The on disk naive raw format uses 8 bit CPUs, but the record has 16.
+    // There's no choice but truncation.
+    Writer.write(static_cast<uint8_t>(R.CPU));
     switch (R.Type) {
     case RecordTypes::ENTER:
       Writer.write(uint8_t{0});

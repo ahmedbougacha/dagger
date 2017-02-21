@@ -368,7 +368,7 @@ static Error parseSegmentLoadCommand(
                             CmdName + " extends past the end of the file");
     if (S.vmsize != 0 && S.filesize > S.vmsize)
       return malformedError("load command " + Twine(LoadCommandIndex) +
-                            " fileoff field in " + CmdName +
+                            " filesize field in " + CmdName +
                             " greater than vmsize field");
     IsPageZeroSegment |= StringRef("__PAGEZERO").equals(S.segname);
   } else
@@ -2477,6 +2477,8 @@ Triple MachOObjectFile::getArchTriple(uint32_t CPUType, uint32_t CPUSubType,
   case MachO::CPU_TYPE_ARM64:
     switch (CPUSubType & ~MachO::CPU_SUBTYPE_MASK) {
     case MachO::CPU_SUBTYPE_ARM64_ALL:
+      if (McpuDefault)
+        *McpuDefault = "cyclone";
       if (ArchFlag)
         *ArchFlag = "arm64";
       return Triple("arm64-apple-darwin");

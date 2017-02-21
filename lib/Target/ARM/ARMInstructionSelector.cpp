@@ -54,8 +54,20 @@ static bool selectCopy(MachineInstr &I, const TargetInstrInfo &TII,
            DstSize <= SrcSize)) &&
          "Copy with different width?!");
 
-  assert(RegBank->getID() == ARM::GPRRegBankID && "Unsupported reg bank");
+  assert((RegBank->getID() == ARM::GPRRegBankID ||
+          RegBank->getID() == ARM::FPRRegBankID) &&
+         "Unsupported reg bank");
+
   const TargetRegisterClass *RC = &ARM::GPRRegClass;
+
+  if (RegBank->getID() == ARM::FPRRegBankID) {
+    if (DstSize == 32)
+      RC = &ARM::SPRRegClass;
+    else if (DstSize == 64)
+      RC = &ARM::DPRRegClass;
+    else
+      llvm_unreachable("Unsupported destination size");
+  }
 
   // No need to constrain SrcReg. It will get constrained when
   // we hit another of its uses or its defs.
@@ -68,13 +80,105 @@ static bool selectCopy(MachineInstr &I, const TargetInstrInfo &TII,
   return true;
 }
 
+static bool selectFAdd(MachineInstrBuilder &MIB, const ARMBaseInstrInfo &TII,
+                       MachineRegisterInfo &MRI) {
+  assert(TII.getSubtarget().hasVFP2() && "Can't select fp add without vfp");
+
+  LLT Ty = MRI.getType(MIB->getOperand(0).getReg());
+  unsigned ValSize = Ty.getSizeInBits();
+
+  if (ValSize == 32) {
+    if (TII.getSubtarget().useNEONForSinglePrecisionFP())
+      return false;
+    MIB->setDesc(TII.get(ARM::VADDS));
+  } else {
+    assert(ValSize == 64 && "Unsupported size for floating point value");
+    if (TII.getSubtarget().isFPOnlySP())
+      return false;
+    MIB->setDesc(TII.get(ARM::VADDD));
+  }
+  MIB.add(predOps(ARMCC::AL));
+
+  return true;
+}
+
+static bool selectSequence(MachineInstrBuilder &MIB,
+                           const ARMBaseInstrInfo &TII,
+                           MachineRegisterInfo &MRI,
+                           const TargetRegisterInfo &TRI,
+                           const RegisterBankInfo &RBI) {
+  assert(TII.getSubtarget().hasVFP2() && "Can't select sequence without VFP");
+
+  // We only support G_SEQUENCE as a way to stick together two scalar GPRs
+  // into one DPR.
+  unsigned VReg0 = MIB->getOperand(0).getReg();
+  (void)VReg0;
+  assert(MRI.getType(VReg0).getSizeInBits() == 64 &&
+         RBI.getRegBank(VReg0, MRI, TRI)->getID() == ARM::FPRRegBankID &&
+         "Unsupported operand for G_SEQUENCE");
+  unsigned VReg1 = MIB->getOperand(1).getReg();
+  (void)VReg1;
+  assert(MRI.getType(VReg1).getSizeInBits() == 32 &&
+         RBI.getRegBank(VReg1, MRI, TRI)->getID() == ARM::GPRRegBankID &&
+         "Unsupported operand for G_SEQUENCE");
+  unsigned VReg2 = MIB->getOperand(3).getReg();
+  (void)VReg2;
+  assert(MRI.getType(VReg2).getSizeInBits() == 32 &&
+         RBI.getRegBank(VReg2, MRI, TRI)->getID() == ARM::GPRRegBankID &&
+         "Unsupported operand for G_SEQUENCE");
+
+  // Remove the operands corresponding to the offsets.
+  MIB->RemoveOperand(4);
+  MIB->RemoveOperand(2);
+
+  MIB->setDesc(TII.get(ARM::VMOVDRR));
+  MIB.add(predOps(ARMCC::AL));
+
+  return true;
+}
+
+static bool selectExtract(MachineInstrBuilder &MIB, const ARMBaseInstrInfo &TII,
+                          MachineRegisterInfo &MRI,
+                          const TargetRegisterInfo &TRI,
+                          const RegisterBankInfo &RBI) {
+  assert(TII.getSubtarget().hasVFP2() && "Can't select extract without VFP");
+
+  // We only support G_EXTRACT as a way to break up one DPR into two GPRs.
+  unsigned VReg0 = MIB->getOperand(0).getReg();
+  (void)VReg0;
+  assert(MRI.getType(VReg0).getSizeInBits() == 32 &&
+         RBI.getRegBank(VReg0, MRI, TRI)->getID() == ARM::GPRRegBankID &&
+         "Unsupported operand for G_SEQUENCE");
+  unsigned VReg1 = MIB->getOperand(1).getReg();
+  (void)VReg1;
+  assert(MRI.getType(VReg1).getSizeInBits() == 32 &&
+         RBI.getRegBank(VReg1, MRI, TRI)->getID() == ARM::GPRRegBankID &&
+         "Unsupported operand for G_SEQUENCE");
+  unsigned VReg2 = MIB->getOperand(2).getReg();
+  (void)VReg2;
+  assert(MRI.getType(VReg2).getSizeInBits() == 64 &&
+         RBI.getRegBank(VReg2, MRI, TRI)->getID() == ARM::FPRRegBankID &&
+         "Unsupported operand for G_SEQUENCE");
+
+  // Remove the operands corresponding to the offsets.
+  MIB->RemoveOperand(4);
+  MIB->RemoveOperand(3);
+
+  MIB->setDesc(TII.get(ARM::VMOVRRD));
+  MIB.add(predOps(ARMCC::AL));
+
+  return true;
+}
+
 /// Select the opcode for simple extensions (that translate to a single SXT/UXT
 /// instruction). Extension operations more complicated than that should not
-/// invoke this.
+/// invoke this. Returns the original opcode if it doesn't know how to select a
+/// better one.
 static unsigned selectSimpleExtOpc(unsigned Opc, unsigned Size) {
   using namespace TargetOpcode;
 
-  assert((Size == 8 || Size == 16) && "Unsupported size");
+  if (Size != 8 && Size != 16)
+    return Opc;
 
   if (Opc == G_SEXT)
     return Size == 8 ? ARM::SXTB : ARM::SXTH;
@@ -82,23 +186,39 @@ static unsigned selectSimpleExtOpc(unsigned Opc, unsigned Size) {
   if (Opc == G_ZEXT)
     return Size == 8 ? ARM::UXTB : ARM::UXTH;
 
-  llvm_unreachable("Unsupported opcode");
+  return Opc;
 }
 
 /// Select the opcode for simple loads. For types smaller than 32 bits, the
-/// value will be zero extended.
-static unsigned selectLoadOpCode(unsigned Size) {
-  switch (Size) {
-  case 1:
-  case 8:
-    return ARM::LDRBi12;
-  case 16:
-    return ARM::LDRH;
-  case 32:
-    return ARM::LDRi12;
+/// value will be zero extended. Returns G_LOAD if it doesn't know how to select
+/// an opcode.
+static unsigned selectLoadOpCode(unsigned RegBank, unsigned Size) {
+  if (RegBank == ARM::GPRRegBankID) {
+    switch (Size) {
+    case 1:
+    case 8:
+      return ARM::LDRBi12;
+    case 16:
+      return ARM::LDRH;
+    case 32:
+      return ARM::LDRi12;
+    default:
+      return TargetOpcode::G_LOAD;
+    }
   }
 
-  llvm_unreachable("Unsupported size");
+  if (RegBank == ARM::FPRRegBankID) {
+    switch (Size) {
+    case 32:
+      return ARM::VLDRS;
+    case 64:
+      return ARM::VLDRD;
+    default:
+      return TargetOpcode::G_LOAD;
+    }
+  }
+
+  return TargetOpcode::G_LOAD;
 }
 
 bool ARMInstructionSelector::select(MachineInstr &I) const {
@@ -163,6 +283,8 @@ bool ARMInstructionSelector::select(MachineInstr &I) const {
     case 8:
     case 16: {
       unsigned NewOpc = selectSimpleExtOpc(I.getOpcode(), SrcSize);
+      if (NewOpc == I.getOpcode())
+        return false;
       I.setDesc(TII.get(NewOpc));
       MIB.addImm(0).add(predOps(ARMCC::AL));
       break;
@@ -177,6 +299,10 @@ bool ARMInstructionSelector::select(MachineInstr &I) const {
     I.setDesc(TII.get(ARM::ADDrr));
     MIB.add(predOps(ARMCC::AL)).add(condCodeOp());
     break;
+  case G_FADD:
+    if (!selectFAdd(MIB, TII, MRI))
+      return false;
+    break;
   case G_FRAME_INDEX:
     // Add 0 to the given frame index and hope it will eventually be folded into
     // the user(s).
@@ -184,19 +310,41 @@ bool ARMInstructionSelector::select(MachineInstr &I) const {
     MIB.addImm(0).add(predOps(ARMCC::AL)).add(condCodeOp());
     break;
   case G_LOAD: {
-    LLT ValTy = MRI.getType(I.getOperand(0).getReg());
+    const auto &MemOp = **I.memoperands_begin();
+    if (MemOp.getOrdering() != AtomicOrdering::NotAtomic) {
+      DEBUG(dbgs() << "Atomic load/store not supported yet\n");
+      return false;
+    }
+
+    unsigned Reg = I.getOperand(0).getReg();
+    unsigned RegBank = RBI.getRegBank(Reg, MRI, TRI)->getID();
+
+    LLT ValTy = MRI.getType(Reg);
     const auto ValSize = ValTy.getSizeInBits();
 
-    if (ValSize != 32 && ValSize != 16 && ValSize != 8 && ValSize != 1)
+    assert((ValSize != 64 || TII.getSubtarget().hasVFP2()) &&
+           "Don't know how to load 64-bit value without VFP");
+
+    const auto NewOpc = selectLoadOpCode(RegBank, ValSize);
+    if (NewOpc == G_LOAD)
       return false;
 
-    const auto NewOpc = selectLoadOpCode(ValSize);
     I.setDesc(TII.get(NewOpc));
 
     if (NewOpc == ARM::LDRH)
       // LDRH has a funny addressing mode (there's already a FIXME for it).
       MIB.addReg(0);
     MIB.addImm(0).add(predOps(ARMCC::AL));
+    break;
+  }
+  case G_SEQUENCE: {
+    if (!selectSequence(MIB, TII, MRI, TRI, RBI))
+      return false;
+    break;
+  }
+  case G_EXTRACT: {
+    if (!selectExtract(MIB, TII, MRI, TRI, RBI))
+      return false;
     break;
   }
   default:

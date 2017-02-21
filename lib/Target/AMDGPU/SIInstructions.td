@@ -111,8 +111,7 @@ def V_MOV_B64_PSEUDO : VPseudoInstSI <(outs VReg_64:$vdst),
                                       (ins VSrc_b64:$src0)>;
 } // End let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Uses = [EXEC]
 
-def S_TRAP_PSEUDO : VPseudoInstSI <(outs), (ins),
-  [(trap)]> {
+def S_TRAP_PSEUDO : SPseudoInstSI <(outs), (ins i16imm:$simm16)> {
   let hasSideEffects = 1;
   let SALU = 1;
   let usesCustomInserter = 1;
@@ -390,6 +389,15 @@ def SI_PC_ADD_REL_OFFSET : SPseudoInstSI <
 } // End SubtargetPredicate = isGCN
 
 let Predicates = [isGCN] in {
+def : Pat<
+  (trap),
+  (S_TRAP_PSEUDO TRAPTYPE.LLVM_TRAP)
+>;
+
+def : Pat<
+  (debugtrap),
+  (S_TRAP_PSEUDO TRAPTYPE.LLVM_DEBUG_TRAP)
+>;
 
 def : Pat<
   (int_amdgcn_else i64:$src, bb:$target),
@@ -808,27 +816,6 @@ def : Pat <
 /********** ================== **********/
 
 def : POW_Common <V_LOG_F32_e32, V_EXP_F32_e32, V_MUL_LEGACY_F32_e32>;
-
-def : Pat <
-  (int_AMDGPU_cube v4f32:$src),
-  (REG_SEQUENCE VReg_128,
-    (V_CUBETC_F32 0 /* src0_modifiers */, (f32 (EXTRACT_SUBREG $src, sub0)),
-                  0 /* src1_modifiers */, (f32 (EXTRACT_SUBREG $src, sub1)),
-                  0 /* src2_modifiers */, (f32 (EXTRACT_SUBREG $src, sub2)),
-                  0 /* clamp */, 0 /* omod */), sub0,
-    (V_CUBESC_F32 0 /* src0_modifiers */, (f32 (EXTRACT_SUBREG $src, sub0)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub1)),
-                  0 /* src2_modifiers */,(f32 (EXTRACT_SUBREG $src, sub2)),
-                  0 /* clamp */, 0 /* omod */), sub1,
-    (V_CUBEMA_F32 0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub0)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub1)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub2)),
-                  0 /* clamp */, 0 /* omod */), sub2,
-    (V_CUBEID_F32 0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub0)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub1)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub2)),
-                  0 /* clamp */, 0 /* omod */), sub3)
->;
 
 def : Pat <
   (i32 (sext i1:$src0)),

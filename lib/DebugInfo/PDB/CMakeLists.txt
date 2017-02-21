@@ -39,10 +39,12 @@ add_pdb_impl_folder(Native
   Native/InfoStreamBuilder.cpp
   Native/ModInfo.cpp
   Native/ModStream.cpp
+  Native/NativeRawSymbol.cpp
   Native/NamedStreamMap.cpp
   Native/NativeSession.cpp
   Native/PDBFile.cpp
   Native/PDBFileBuilder.cpp
+  Native/PDBTypeServerHandler.cpp
   Native/PublicsStream.cpp
   Native/RawError.cpp
   Native/StringTable.cpp

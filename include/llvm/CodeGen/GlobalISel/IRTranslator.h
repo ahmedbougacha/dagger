@@ -155,11 +155,6 @@ private:
   bool translateCast(unsigned Opcode, const User &U,
                      MachineIRBuilder &MIRBuilder);
 
-  /// Translate static alloca instruction (i.e. one  of constant size and in the
-  /// first basic block).
-  bool translateStaticAlloca(const AllocaInst &Inst,
-                             MachineIRBuilder &MIRBuilder);
-
   /// Translate a phi instruction.
   bool translatePHI(const User &U, MachineIRBuilder &MIRBuilder);
 
@@ -202,6 +197,8 @@ private:
 
   bool translateGetElementPtr(const User &U, MachineIRBuilder &MIRBuilder);
 
+  bool translateAlloca(const User &U, MachineIRBuilder &MIRBuilder);
+
   /// Translate return (ret) instruction.
   /// The target needs to implement CallLowering::lowerReturn for
   /// this to succeed.
@@ -238,9 +235,6 @@ private:
   }
   bool translateSRem(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateBinaryOp(TargetOpcode::G_SREM, U, MIRBuilder);
-  }
-  bool translateAlloca(const User &U, MachineIRBuilder &MIRBuilder) {
-    return translateStaticAlloca(cast<AllocaInst>(U), MIRBuilder);
   }
   bool translateIntToPtr(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateCast(TargetOpcode::G_INTTOPTR, U, MIRBuilder);
@@ -306,6 +300,8 @@ private:
     return translateBinaryOp(TargetOpcode::G_FREM, U, MIRBuilder);
   }
 
+  bool translateVAArg(const User &U, MachineIRBuilder &MIRBuilder);
+
   // Stubs to keep the compiler happy while we implement the rest of the
   // translation.
   bool translateResume(const User &U, MachineIRBuilder &MIRBuilder) {
@@ -342,9 +338,6 @@ private:
     return false;
   }
   bool translateUserOp2(const User &U, MachineIRBuilder &MIRBuilder) {
-    return false;
-  }
-  bool translateVAArg(const User &U, MachineIRBuilder &MIRBuilder) {
     return false;
   }
   bool translateExtractElement(const User &U, MachineIRBuilder &MIRBuilder) {

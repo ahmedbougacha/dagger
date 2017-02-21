@@ -199,6 +199,15 @@ const DIType *DbgVariable::getType() const {
   return Ty;
 }
 
+ArrayRef<DbgVariable::FrameIndexExpr> DbgVariable::getFrameIndexExprs() const {
+  std::sort(FrameIndexExprs.begin(), FrameIndexExprs.end(),
+            [](const FrameIndexExpr &A, const FrameIndexExpr &B) -> bool {
+              return A.Expr->getFragmentInfo()->OffsetInBits <
+                     B.Expr->getFragmentInfo()->OffsetInBits;
+            });
+  return FrameIndexExprs;
+}
+
 static const DwarfAccelTable::Atom TypeAtoms[] = {
     DwarfAccelTable::Atom(dwarf::DW_ATOM_die_offset, dwarf::DW_FORM_data4),
     DwarfAccelTable::Atom(dwarf::DW_ATOM_die_tag, dwarf::DW_FORM_data2),
@@ -1129,20 +1138,9 @@ static DebugLoc findPrologueEndLoc(const MachineFunction *MF) {
 
 // Gather pre-function debug information.  Assumes being called immediately
 // after the function entry point has been emitted.
-void DwarfDebug::beginFunction(const MachineFunction *MF) {
+void DwarfDebug::beginFunctionImpl(const MachineFunction *MF) {
   CurFn = MF;
 
-  // If there's no debug info for the function we're not going to do anything.
-  if (!MMI->hasDebugInfo())
-    return;
-
-  auto DI = MF->getFunction()->getSubprogram();
-  if (!DI)
-    return;
-
-  // Grab the lexical scopes for the function, if we don't have any of those
-  // then we're not going to be able to do anything.
-  DebugHandlerBase::beginFunction(MF);
   if (LScopes.empty())
     return;
 
@@ -1181,22 +1179,20 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
   }
 }
 
+void DwarfDebug::skippedNonDebugFunction() {
+  // If we don't have a subprogram for this function then there will be a hole
+  // in the range information. Keep note of this by setting the previously used
+  // section to nullptr.
+  PrevCU = nullptr;
+  CurFn = nullptr;
+}
+
 // Gather and emit post-function debug information.
-void DwarfDebug::endFunction(const MachineFunction *MF) {
+void DwarfDebug::endFunctionImpl(const MachineFunction *MF) {
+  const DISubprogram *SP = MF->getFunction()->getSubprogram();
+
   assert(CurFn == MF &&
       "endFunction should be called with the same function as beginFunction");
-
-  const DISubprogram *SP = MF->getFunction()->getSubprogram();
-  if (!MMI->hasDebugInfo() || !SP ||
-      SP->getUnit()->getEmissionKind() == DICompileUnit::NoDebug) {
-    // If we don't have a subprogram for this function then there will be a hole
-    // in the range information. Keep note of this by setting the previously
-    // used section to nullptr.
-    PrevCU = nullptr;
-    CurFn = nullptr;
-    DebugHandlerBase::endFunction(MF);
-    return;
-  }
 
   // Set DwarfDwarfCompileUnitID in MCContext to default value.
   Asm->OutStreamer->getContext().setDwarfCompileUnitID(0);
@@ -1220,7 +1216,6 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
     assert(InfoHolder.getScopeVariables().empty());
     PrevLabel = nullptr;
     CurFn = nullptr;
-    DebugHandlerBase::endFunction(MF);
     return;
   }
 
@@ -1256,7 +1251,6 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
   InfoHolder.getScopeVariables().clear();
   PrevLabel = nullptr;
   CurFn = nullptr;
-  DebugHandlerBase::endFunction(MF);
 }
 
 // Register a source line with debug info. Returns the  unique label that was
@@ -1351,6 +1345,18 @@ void DwarfDebug::emitAccelTypes() {
 /// computeIndexValue - Compute the gdb index value for the DIE and CU.
 static dwarf::PubIndexEntryDescriptor computeIndexValue(DwarfUnit *CU,
                                                         const DIE *Die) {
+  // Entities that ended up only in a Type Unit reference the CU instead (since
+  // the pub entry has offsets within the CU there's no real offset that can be
+  // provided anyway). As it happens all such entities (namespaces and types,
+  // types only in C++ at that) are rendered as TYPE+EXTERNAL. If this turns out
+  // not to be true it would be necessary to persist this information from the
+  // point at which the entry is added to the index data structure - since by
+  // the time the index is built from that, the original type/namespace DIE in a
+  // type unit has already been destroyed so it can't be queried for properties
+  // like tag, etc.
+  if (Die->getTag() == dwarf::DW_TAG_compile_unit)
+    return dwarf::PubIndexEntryDescriptor(dwarf::GIEK_TYPE,
+                                          dwarf::GIEL_EXTERNAL);
   dwarf::GDBIndexEntryLinkage Linkage = dwarf::GIEL_STATIC;
 
   // We could have a specification DIE that has our most of our knowledge,

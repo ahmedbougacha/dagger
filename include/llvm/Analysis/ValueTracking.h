@@ -31,6 +31,7 @@ template <typename T> class ArrayRef;
   class Instruction;
   class Loop;
   class LoopInfo;
+  class OptimizationRemarkEmitter;
   class MDNode;
   class StringRef;
   class TargetLibraryInfo;
@@ -52,7 +53,8 @@ template <typename T> class ArrayRef;
                         const DataLayout &DL, unsigned Depth = 0,
                         AssumptionCache *AC = nullptr,
                         const Instruction *CxtI = nullptr,
-                        const DominatorTree *DT = nullptr);
+                        const DominatorTree *DT = nullptr,
+                        OptimizationRemarkEmitter *ORE = nullptr);
   /// Compute known bits from the range metadata.
   /// \p KnownZero the set of bits that are known to be zero
   /// \p KnownOne the set of bits that are known to be one
@@ -86,8 +88,10 @@ template <typename T> class ArrayRef;
 
   /// Return true if the given value is known to be non-zero when defined. For
   /// vectors, return true if every element is known to be non-zero when
-  /// defined. Supports values with integer or pointer type and vectors of
-  /// integers.
+  /// defined. For pointers, if the context instruction and dominator tree are
+  /// specified, perform context-sensitive analysis and return true if the
+  /// pointer couldn't possibly be null at the specified instruction.
+  /// Supports values with integer or pointer type and vectors of integers.
   bool isKnownNonZero(const Value *V, const DataLayout &DL, unsigned Depth = 0,
                       AssumptionCache *AC = nullptr,
                       const Instruction *CxtI = nullptr,
