@@ -878,8 +878,13 @@ rolb	$2, %bpl
 # CHECK-NEXT: [[V3:%.+]] = add i64 [[R11_0]], [[V2]]
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i16*
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V6:%.+]] = zext i8 15 to i16
+# CHECK-NEXT: [[V7:%.+]] = shl i16 [[V5]], [[V6]]
+# CHECK-NEXT: [[V8:%.+]] = sub i16 16, [[V6]]
+# CHECK-NEXT: [[V9:%.+]] = lshr i16 [[V5]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = or i16 [[V7]], [[V9]]
+# CHECK-NEXT: store i16 [[V10]], i16* [[V4]], align 1
+# CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 rorw	2(%r11,%rbx,2)
 
 ## ROR16mCL
@@ -963,8 +968,13 @@ rorw	$2, %r8w
 # CHECK-NEXT: [[V3:%.+]] = add i64 [[R11_0]], [[V2]]
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i32*
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V6:%.+]] = zext i8 31 to i32
+# CHECK-NEXT: [[V7:%.+]] = shl i32 [[V5]], [[V6]]
+# CHECK-NEXT: [[V8:%.+]] = sub i32 32, [[V6]]
+# CHECK-NEXT: [[V9:%.+]] = lshr i32 [[V5]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = or i32 [[V7]], [[V9]]
+# CHECK-NEXT: store i32 [[V10]], i32* [[V4]], align 1
+# CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 rorl	2(%r11,%rbx,2)
 
 ## ROR32mCL
@@ -1048,8 +1058,13 @@ rorl	$2, %r8d
 # CHECK-NEXT: [[V3:%.+]] = add i64 [[R11_0]], [[V2]]
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i64*
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V6:%.+]] = zext i8 63 to i64
+# CHECK-NEXT: [[V7:%.+]] = shl i64 [[V5]], [[V6]]
+# CHECK-NEXT: [[V8:%.+]] = sub i64 64, [[V6]]
+# CHECK-NEXT: [[V9:%.+]] = lshr i64 [[V5]], [[V8]]
+# CHECK-NEXT: [[V10:%.+]] = or i64 [[V7]], [[V9]]
+# CHECK-NEXT: store i64 [[V10]], i64* [[V4]], align 1
+# CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 rorq	2(%r11,%rbx,2)
 
 ## ROR64mCL
@@ -1133,8 +1148,12 @@ rorq	$2, %r11
 # CHECK-NEXT: [[V3:%.+]] = add i64 [[R11_0]], [[V2]]
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i8*
 # CHECK-NEXT: [[V5:%.+]] = load i8, i8* [[V4]], align 1
-# CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
+# CHECK-NEXT: [[V6:%.+]] = shl i8 [[V5]], 7
+# CHECK-NEXT: [[V7:%.+]] = sub i8 8, 7
+# CHECK-NEXT: [[V8:%.+]] = lshr i8 [[V5]], [[V7]]
+# CHECK-NEXT: [[V9:%.+]] = or i8 [[V6]], [[V8]]
+# CHECK-NEXT: store i8 [[V9]], i8* [[V4]], align 1
+# CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 rorb	2(%r11,%rbx,2)
 
 ## ROR8mCL
