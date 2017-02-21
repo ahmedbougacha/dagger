@@ -105,7 +105,32 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
     Value *immTarget = Builder.getInt64(TheMCInst.Address + offset);
     return Builder.CreateIntToPtr(immTarget, ResTy);
   }
+  case AArch64::OpTypes::arith_extended_reg32_i64:
+  case AArch64::OpTypes::arith_extended_reg32_i32:
+  case AArch64::OpTypes::arith_extended_reg32to64_i64: {
+    //Type *ResTy = ResEVT.getTypeForEVT(Ctx);
 
+    Value *R = getReg(getRegOp(MIOperandNo));
+    const unsigned ExtImm = getImmOp(MIOperandNo + 1);
+
+    const auto ShiftType = AArch64_AM::getArithExtendType(ExtImm);
+    const auto ShiftImm = AArch64_AM::getArithShiftValue(ExtImm);
+
+    if (ShiftType != AArch64_AM::UXTB)
+      return nullptr;
+
+    R = Builder.CreateZExt(
+      Builder.CreateTruncOrBitCast(R, Builder.getInt8Ty()), R->getType());
+
+    if (ShiftImm) {
+      R = Builder.CreateShl(R, ConstantInt::get(R->getType(), ShiftImm));
+    }
+
+    R = Builder.CreateZExtOrBitCast(R, getResultTy(0));
+    return R;
+  }
+  case AArch64::OpTypes::arith_shifted_reg32:
+  case AArch64::OpTypes::arith_shifted_reg64:
   case AArch64::OpTypes::logical_shifted_reg32:
   case AArch64::OpTypes::logical_shifted_reg64: {
     Value *R = getReg(getRegOp(MIOperandNo));
