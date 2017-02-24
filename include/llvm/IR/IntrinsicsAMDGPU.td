@@ -206,6 +206,10 @@ def int_amdgcn_fract : Intrinsic<
   [llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]
 >;
 
+def int_amdgcn_cvt_pkrtz : Intrinsic<
+  [llvm_v2f16_ty], [llvm_float_ty, llvm_float_ty], [IntrNoMem]
+>;
+
 def int_amdgcn_class : Intrinsic<
   [llvm_i1_ty], [llvm_anyfloat_ty, llvm_i32_ty], [IntrNoMem]
 >;
@@ -565,7 +569,14 @@ def int_amdgcn_ds_swizzle :
   GCCBuiltin<"__builtin_amdgcn_ds_swizzle">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
 
-// llvm.amdgcn.lerp
+def int_amdgcn_ubfe : Intrinsic<[llvm_anyint_ty],
+  [LLVMMatchType<0>, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]
+>;
+
+def int_amdgcn_sbfe : Intrinsic<[llvm_anyint_ty],
+  [LLVMMatchType<0>, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]
+>;
+
 def int_amdgcn_lerp :
   GCCBuiltin<"__builtin_amdgcn_lerp">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;

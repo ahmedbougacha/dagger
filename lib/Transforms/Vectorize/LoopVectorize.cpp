@@ -267,21 +267,6 @@ static bool hasCyclesInLoopBody(const Loop &L) {
   return false;
 }
 
-/// \brief This modifies LoopAccessReport to initialize message with
-/// loop-vectorizer-specific part.
-class VectorizationReport : public LoopAccessReport {
-public:
-  VectorizationReport(Instruction *I = nullptr)
-      : LoopAccessReport("loop not vectorized: ", I) {}
-
-  /// \brief This allows promotion of the loop-access analysis report into the
-  /// loop-vectorizer report.  It modifies the message to add the
-  /// loop-vectorizer-specific part of the message.
-  explicit VectorizationReport(const LoopAccessReport &R)
-      : LoopAccessReport(Twine("loop not vectorized: ") + R.str(),
-                         R.getInstr()) {}
-};
-
 /// A helper function for converting Scalar types to vector types.
 /// If the incoming type is void, we return void. If the VF is 1, we return
 /// the scalar type.
@@ -1535,14 +1520,6 @@ private:
   OptimizationRemarkEmitter &ORE;
 };
 
-static void emitAnalysisDiag(const Loop *TheLoop,
-                             const LoopVectorizeHints &Hints,
-                             OptimizationRemarkEmitter &ORE,
-                             const LoopAccessReport &Message) {
-  const char *Name = Hints.vectorizeAnalysisPassName();
-  LoopAccessReport::emitAnalysis(Message, TheLoop, Name, ORE);
-}
-
 static void emitMissedWarning(Function *F, Loop *L,
                               const LoopVectorizeHints &LH,
                               OptimizationRemarkEmitter *ORE) {
@@ -1755,14 +1732,6 @@ private:
   /// better choice for the main induction than the existing one.
   void addInductionPhi(PHINode *Phi, const InductionDescriptor &ID,
                        SmallPtrSetImpl<Value *> &AllowedExit);
-
-  /// Report an analysis message to assist the user in diagnosing loops that are
-  /// not vectorized.  These are handled as LoopAccessReport rather than
-  /// VectorizationReport because the << operator of VectorizationReport returns
-  /// LoopAccessReport.
-  void emitAnalysis(const LoopAccessReport &Message) const {
-    emitAnalysisDiag(TheLoop, *Hints, *ORE, Message);
-  }
 
   /// Create an analysis remark that explains why vectorization failed
   ///
@@ -6025,6 +5994,11 @@ void InterleavedAccessInfo::analyzeInterleaving(
       if (DesA.Stride != DesB.Stride || DesA.Size != DesB.Size)
         continue;
 
+      // Ignore A if the memory object of A and B don't belong to the same
+      // address space
+      if (getMemInstAddressSpace(A) != getMemInstAddressSpace(B))
+        continue;
+
       // Calculate the distance from A to B.
       const SCEVConstant *DistToB = dyn_cast<SCEVConstant>(
           PSE.getSE()->getMinusSCEV(DesA.Scev, DesB.Scev));
@@ -6068,35 +6042,35 @@ void InterleavedAccessInfo::analyzeInterleaving(
       releaseGroup(Group);
 
   // Remove interleaved groups with gaps (currently only loads) whose memory
-  // accesses may wrap around. We have to revisit the getPtrStride analysis, 
-  // this time with ShouldCheckWrap=true, since collectConstStrideAccesses does 
+  // accesses may wrap around. We have to revisit the getPtrStride analysis,
+  // this time with ShouldCheckWrap=true, since collectConstStrideAccesses does
   // not check wrapping (see documentation there).
-  // FORNOW we use Assume=false; 
-  // TODO: Change to Assume=true but making sure we don't exceed the threshold 
+  // FORNOW we use Assume=false;
+  // TODO: Change to Assume=true but making sure we don't exceed the threshold
   // of runtime SCEV assumptions checks (thereby potentially failing to
-  // vectorize altogether). 
+  // vectorize altogether).
   // Additional optional optimizations:
-  // TODO: If we are peeling the loop and we know that the first pointer doesn't 
+  // TODO: If we are peeling the loop and we know that the first pointer doesn't
   // wrap then we can deduce that all pointers in the group don't wrap.
-  // This means that we can forcefully peel the loop in order to only have to 
-  // check the first pointer for no-wrap. When we'll change to use Assume=true 
+  // This means that we can forcefully peel the loop in order to only have to
+  // check the first pointer for no-wrap. When we'll change to use Assume=true
   // we'll only need at most one runtime check per interleaved group.
   //
   for (InterleaveGroup *Group : LoadGroups) {
 
     // Case 1: A full group. Can Skip the checks; For full groups, if the wide
-    // load would wrap around the address space we would do a memory access at 
-    // nullptr even without the transformation. 
-    if (Group->getNumMembers() == Group->getFactor()) 
+    // load would wrap around the address space we would do a memory access at
+    // nullptr even without the transformation.
+    if (Group->getNumMembers() == Group->getFactor())
       continue;
 
-    // Case 2: If first and last members of the group don't wrap this implies 
+    // Case 2: If first and last members of the group don't wrap this implies
     // that all the pointers in the group don't wrap.
     // So we check only group member 0 (which is always guaranteed to exist),
-    // and group member Factor - 1; If the latter doesn't exist we rely on 
+    // and group member Factor - 1; If the latter doesn't exist we rely on
     // peeling (if it is a non-reveresed accsess -- see Case 3).
     Value *FirstMemberPtr = getPointerOperand(Group->getMember(0));
-    if (!getPtrStride(PSE, FirstMemberPtr, TheLoop, Strides, /*Assume=*/false, 
+    if (!getPtrStride(PSE, FirstMemberPtr, TheLoop, Strides, /*Assume=*/false,
                       /*ShouldCheckWrap=*/true)) {
       DEBUG(dbgs() << "LV: Invalidate candidate interleaved group due to "
                       "first group member potentially pointer-wrapping.\n");

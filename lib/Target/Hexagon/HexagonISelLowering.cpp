@@ -1062,6 +1062,18 @@ SDValue HexagonTargetLowering::LowerPREFETCH(SDValue Op,
   return DAG.getNode(HexagonISD::DCFETCH, DL, MVT::Other, Chain, Addr, Zero);
 }
 
+// Custom-handle ISD::READCYCLECOUNTER because the target-independent SDNode
+// is marked as having side-effects, while the register read on Hexagon does
+// not have any. TableGen refuses to accept the direct pattern from that node
+// to the A4_tfrcpp.
+SDValue HexagonTargetLowering::LowerREADCYCLECOUNTER(SDValue Op,
+                                                     SelectionDAG &DAG) const {
+  SDValue Chain = Op.getOperand(0);
+  SDLoc dl(Op);
+  SDVTList VTs = DAG.getVTList(MVT::i32, MVT::Other);
+  return DAG.getNode(HexagonISD::READCYCLE, dl, VTs, Chain);
+}
+
 SDValue HexagonTargetLowering::LowerINTRINSIC_VOID(SDValue Op,
       SelectionDAG &DAG) const {
   SDValue Chain = Op.getOperand(0);
@@ -1278,17 +1290,6 @@ static bool isSExtFree(SDValue N) {
   if (N.getOpcode() == ISD::LOAD)
     return true;
   return false;
-}
-
-SDValue HexagonTargetLowering::LowerCTPOP(SDValue Op, SelectionDAG &DAG) const {
-  SDLoc dl(Op);
-  SDValue InpVal = Op.getOperand(0);
-  if (isa<ConstantSDNode>(InpVal)) {
-    uint64_t V = cast<ConstantSDNode>(InpVal)->getZExtValue();
-    return DAG.getTargetConstant(countPopulation(V), dl, MVT::i64);
-  }
-  SDValue PopOut = DAG.getNode(HexagonISD::POPCOUNT, dl, MVT::i32, InpVal);
-  return DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i64, PopOut);
 }
 
 SDValue HexagonTargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
@@ -1828,6 +1829,7 @@ HexagonTargetLowering::HexagonTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Expand);
   setOperationAction(ISD::INLINEASM, MVT::Other, Custom);
   setOperationAction(ISD::PREFETCH, MVT::Other, Custom);
+  setOperationAction(ISD::READCYCLECOUNTER, MVT::i64, Custom);
   setOperationAction(ISD::INTRINSIC_VOID, MVT::Other, Custom);
   setOperationAction(ISD::EH_RETURN, MVT::Other, Custom);
   setOperationAction(ISD::GLOBAL_OFFSET_TABLE, MVT::i32, Custom);
@@ -1898,7 +1900,12 @@ HexagonTargetLowering::HexagonTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::CTPOP, MVT::i8,  Promote);
   setOperationAction(ISD::CTPOP, MVT::i16, Promote);
   setOperationAction(ISD::CTPOP, MVT::i32, Promote);
-  setOperationAction(ISD::CTPOP, MVT::i64, Custom);
+  setOperationAction(ISD::CTPOP, MVT::i64, Legal);
+
+  setOperationAction(ISD::BITREVERSE, MVT::i32, Legal);
+  setOperationAction(ISD::BITREVERSE, MVT::i64, Legal);
+  setOperationAction(ISD::BSWAP, MVT::i32, Legal);
+  setOperationAction(ISD::BSWAP, MVT::i64, Legal);
 
   // We custom lower i64 to i64 mul, so that it is not considered as a legal
   // operation. There is a pattern that will match i64 mul and transform it
@@ -1908,7 +1915,7 @@ HexagonTargetLowering::HexagonTargetLowering(const TargetMachine &TM,
   for (unsigned IntExpOp :
        { ISD::SDIV,      ISD::UDIV,      ISD::SREM,      ISD::UREM,
          ISD::SDIVREM,   ISD::UDIVREM,   ISD::ROTL,      ISD::ROTR,
-         ISD::BSWAP,     ISD::SHL_PARTS, ISD::SRA_PARTS, ISD::SRL_PARTS,
+         ISD::SHL_PARTS, ISD::SRA_PARTS, ISD::SRL_PARTS,
          ISD::SMUL_LOHI, ISD::UMUL_LOHI }) {
     setOperationAction(IntExpOp, MVT::i32, Expand);
     setOperationAction(IntExpOp, MVT::i64, Expand);
@@ -2275,7 +2282,6 @@ const char* HexagonTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case HexagonISD::INSERTRP:      return "HexagonISD::INSERTRP";
   case HexagonISD::JT:            return "HexagonISD::JT";
   case HexagonISD::PACKHL:        return "HexagonISD::PACKHL";
-  case HexagonISD::POPCOUNT:      return "HexagonISD::POPCOUNT";
   case HexagonISD::RET_FLAG:      return "HexagonISD::RET_FLAG";
   case HexagonISD::SHUFFEB:       return "HexagonISD::SHUFFEB";
   case HexagonISD::SHUFFEH:       return "HexagonISD::SHUFFEH";
@@ -2303,6 +2309,7 @@ const char* HexagonTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case HexagonISD::VSRLW:         return "HexagonISD::VSRLW";
   case HexagonISD::VSXTBH:        return "HexagonISD::VSXTBH";
   case HexagonISD::VSXTBW:        return "HexagonISD::VSXTBW";
+  case HexagonISD::READCYCLE:     return "HexagonISD::READCYCLE";
   case HexagonISD::OP_END:        break;
   }
   return nullptr;
@@ -2975,11 +2982,11 @@ HexagonTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     case ISD::DYNAMIC_STACKALLOC:   return LowerDYNAMIC_STACKALLOC(Op, DAG);
     case ISD::SETCC:                return LowerSETCC(Op, DAG);
     case ISD::VSELECT:              return LowerVSELECT(Op, DAG);
-    case ISD::CTPOP:                return LowerCTPOP(Op, DAG);
     case ISD::INTRINSIC_WO_CHAIN:   return LowerINTRINSIC_WO_CHAIN(Op, DAG);
     case ISD::INTRINSIC_VOID:       return LowerINTRINSIC_VOID(Op, DAG);
     case ISD::INLINEASM:            return LowerINLINEASM(Op, DAG);
     case ISD::PREFETCH:             return LowerPREFETCH(Op, DAG);
+    case ISD::READCYCLECOUNTER:     return LowerREADCYCLECOUNTER(Op, DAG);
   }
 }
 

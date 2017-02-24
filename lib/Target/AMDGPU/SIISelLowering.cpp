@@ -188,6 +188,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::INTRINSIC_W_CHAIN, MVT::Other, Custom);
   setOperationAction(ISD::INTRINSIC_VOID, MVT::v2i16, Custom);
   setOperationAction(ISD::INTRINSIC_VOID, MVT::v2f16, Custom);
+  setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::v2f16, Custom);
 
   setOperationAction(ISD::BRCOND, MVT::Other, Custom);
   setOperationAction(ISD::BR_CC, MVT::i1, Expand);
@@ -1533,11 +1534,12 @@ static bool setM0ToIndexFromSGPR(const SIInstrInfo *TII,
   }
 
   if (Offset == 0) {
-    BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_MOV_B32), AMDGPU::M0).add(*Idx);
+    BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_MOV_B32), AMDGPU::M0)
+      .add(*Idx);
   } else {
     BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_ADD_I32), AMDGPU::M0)
-        .add(*Idx)
-        .addImm(Offset);
+      .add(*Idx)
+      .addImm(Offset);
   }
 
   return true;
@@ -1802,10 +1804,10 @@ MachineBasicBlock *SITargetLowering::EmitInstrWithCustomInserter(
         .addReg(AMDGPU::SGPR0_SGPR1, RegState::Implicit);
     } else {
       switch (TrapType) {
-      case SISubtarget::TrapCodeLLVMTrap:
+      case SISubtarget::TrapIDLLVMTrap:
         BuildMI(*BB, MI, DL, TII->get(AMDGPU::S_ENDPGM));
         break;
-      case SISubtarget::TrapCodeLLVMDebugTrap: {
+      case SISubtarget::TrapIDLLVMDebugTrap: {
         DiagnosticInfoUnsupported NoTrap(*MF->getFunction(),
                                          "debugtrap handler not supported",
                                          DL,
@@ -2012,6 +2014,23 @@ void SITargetLowering::ReplaceNodeResults(SDNode *N,
     if (SDValue Res = lowerEXTRACT_VECTOR_ELT(SDValue(N, 0), DAG))
       Results.push_back(Res);
     return;
+  }
+  case ISD::INTRINSIC_WO_CHAIN: {
+    unsigned IID = cast<ConstantSDNode>(N->getOperand(0))->getZExtValue();
+    switch (IID) {
+    case Intrinsic::amdgcn_cvt_pkrtz: {
+      SDValue Src0 = N->getOperand(1);
+      SDValue Src1 = N->getOperand(2);
+      SDLoc SL(N);
+      SDValue Cvt = DAG.getNode(AMDGPUISD::CVT_PKRTZ_F16_F32, SL, MVT::i32,
+                                Src0, Src1);
+
+      Results.push_back(DAG.getNode(ISD::BITCAST, SL, MVT::v2f16, Cvt));
+      return;
+    }
+    default:
+      break;
+    }
   }
   default:
     break;
@@ -2690,10 +2709,6 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
                        Op.getOperand(1),
                        Op.getOperand(2),
                        Op.getOperand(3));
-  case AMDGPUIntrinsic::SI_packf16:
-    if (Op.getOperand(1).isUndef() && Op.getOperand(2).isUndef())
-      return DAG.getUNDEF(MVT::i32);
-    return Op;
   case Intrinsic::amdgcn_interp_mov: {
     SDValue M0 = copyToM0(DAG, DAG.getEntryNode(), DL, Op.getOperand(4));
     SDValue Glue = M0.getValue(1);
@@ -2809,8 +2824,25 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     return DAG.getNode(AMDGPUISD::FMUL_LEGACY, DL, VT,
                        Op.getOperand(1), Op.getOperand(2));
   case Intrinsic::amdgcn_sffbh:
-  case AMDGPUIntrinsic::AMDGPU_flbit_i32: // Legacy name.
     return DAG.getNode(AMDGPUISD::FFBH_I32, DL, VT, Op.getOperand(1));
+  case Intrinsic::amdgcn_sbfe:
+    return DAG.getNode(AMDGPUISD::BFE_I32, DL, VT,
+                       Op.getOperand(1), Op.getOperand(2), Op.getOperand(3));
+  case Intrinsic::amdgcn_ubfe:
+    return DAG.getNode(AMDGPUISD::BFE_U32, DL, VT,
+                       Op.getOperand(1), Op.getOperand(2), Op.getOperand(3));
+  case Intrinsic::amdgcn_cvt_pkrtz: {
+    // FIXME: Stop adding cast if v2f16 legal.
+    EVT VT = Op.getValueType();
+    SDValue Node = DAG.getNode(AMDGPUISD::CVT_PKRTZ_F16_F32, DL, MVT::i32,
+                               Op.getOperand(1), Op.getOperand(2));
+    return DAG.getNode(ISD::BITCAST, DL, VT, Node);
+  }
+  case AMDGPUIntrinsic::SI_packf16: { // Legacy name
+    EVT VT = Op.getValueType();
+    return DAG.getNode(AMDGPUISD::CVT_PKRTZ_F16_F32, DL, VT,
+                       Op.getOperand(1), Op.getOperand(2));
+  }
   default:
     return AMDGPUTargetLowering::LowerOperation(Op, DAG);
   }
@@ -2873,7 +2905,7 @@ SDValue SITargetLowering::LowerINTRINSIC_VOID(SDValue Op,
   unsigned IntrinsicID = cast<ConstantSDNode>(Op.getOperand(1))->getZExtValue();
 
   switch (IntrinsicID) {
-      case Intrinsic::amdgcn_exp: {
+  case Intrinsic::amdgcn_exp: {
     const ConstantSDNode *Tgt = cast<ConstantSDNode>(Op.getOperand(2));
     const ConstantSDNode *En = cast<ConstantSDNode>(Op.getOperand(3));
     const ConstantSDNode *Done = cast<ConstantSDNode>(Op.getOperand(8));
@@ -3995,8 +4027,10 @@ static bool isKnownNeverSNan(SelectionDAG &DAG, SDValue Op) {
   return DAG.isKnownNeverNaN(Op);
 }
 
-static SDValue performFPMed3ImmCombine(SelectionDAG &DAG, const SDLoc &SL,
-                                       SDValue Op0, SDValue Op1) {
+SDValue SITargetLowering::performFPMed3ImmCombine(SelectionDAG &DAG,
+                                                  const SDLoc &SL,
+                                                  SDValue Op0,
+                                                  SDValue Op1) const {
   ConstantFPSDNode *K1 = dyn_cast<ConstantFPSDNode>(Op1);
   if (!K1)
     return SDValue();
@@ -4008,6 +4042,21 @@ static SDValue performFPMed3ImmCombine(SelectionDAG &DAG, const SDLoc &SL,
   // Ordered >= (although NaN inputs should have folded away by now).
   APFloat::cmpResult Cmp = K0->getValueAPF().compare(K1->getValueAPF());
   if (Cmp == APFloat::cmpGreaterThan)
+    return SDValue();
+
+  // TODO: Check IEEE bit enabled?
+  EVT VT = K0->getValueType(0);
+  if (Subtarget->enableDX10Clamp()) {
+    // If dx10_clamp is enabled, NaNs clamp to 0.0. This is the same as the
+    // hardware fmed3 behavior converting to a min.
+    // FIXME: Should this be allowing -0.0?
+    if (K1->isExactlyValue(1.0) && K0->isExactlyValue(0.0))
+      return DAG.getNode(AMDGPUISD::CLAMP, SL, VT, Op0.getOperand(0));
+  }
+
+  // No med3 for f16, but clamp is possible.
+  // TODO: gfx9 has med3 f16
+  if (VT == MVT::f16 || VT == MVT::f64)
     return SDValue();
 
   // This isn't safe with signaling NaNs because in IEEE mode, min/max on a
@@ -4025,6 +4074,7 @@ SDValue SITargetLowering::performMinMaxCombine(SDNode *N,
                                                DAGCombinerInfo &DCI) const {
   SelectionDAG &DAG = DCI.DAG;
 
+  EVT VT = N->getValueType(0);
   unsigned Opc = N->getOpcode();
   SDValue Op0 = N->getOperand(0);
   SDValue Op1 = N->getOperand(1);
@@ -4032,7 +4082,9 @@ SDValue SITargetLowering::performMinMaxCombine(SDNode *N,
   // Only do this if the inner op has one use since this will just increases
   // register pressure for no benefit.
 
-  if (Opc != AMDGPUISD::FMIN_LEGACY && Opc != AMDGPUISD::FMAX_LEGACY) {
+
+  if (Opc != AMDGPUISD::FMIN_LEGACY && Opc != AMDGPUISD::FMAX_LEGACY &&
+      VT != MVT::f64) {
     // max(max(a, b), c) -> max3(a, b, c)
     // min(min(a, b), c) -> min3(a, b, c)
     if (Op0.getOpcode() == Opc && Op0.hasOneUse()) {
@@ -4074,11 +4126,76 @@ SDValue SITargetLowering::performMinMaxCombine(SDNode *N,
   if (((Opc == ISD::FMINNUM && Op0.getOpcode() == ISD::FMAXNUM) ||
        (Opc == AMDGPUISD::FMIN_LEGACY &&
         Op0.getOpcode() == AMDGPUISD::FMAX_LEGACY)) &&
-      N->getValueType(0) == MVT::f32 && Op0.hasOneUse()) {
+      (VT == MVT::f32 || VT == MVT::f64 ||
+       (VT == MVT::f16 && Subtarget->has16BitInsts())) &&
+      Op0.hasOneUse()) {
     if (SDValue Res = performFPMed3ImmCombine(DAG, SDLoc(N), Op0, Op1))
       return Res;
   }
 
+  return SDValue();
+}
+
+static bool isClampZeroToOne(SDValue A, SDValue B) {
+  if (ConstantFPSDNode *CA = dyn_cast<ConstantFPSDNode>(A)) {
+    if (ConstantFPSDNode *CB = dyn_cast<ConstantFPSDNode>(B)) {
+      // FIXME: Should this be allowing -0.0?
+      return (CA->isExactlyValue(0.0) && CB->isExactlyValue(1.0)) ||
+             (CA->isExactlyValue(1.0) && CB->isExactlyValue(0.0));
+    }
+  }
+
+  return false;
+}
+
+// FIXME: Should only worry about snans for version with chain.
+SDValue SITargetLowering::performFMed3Combine(SDNode *N,
+                                              DAGCombinerInfo &DCI) const {
+  EVT VT = N->getValueType(0);
+  // v_med3_f32 and v_max_f32 behave identically wrt denorms, exceptions and
+  // NaNs. With a NaN input, the order of the operands may change the result.
+
+  SelectionDAG &DAG = DCI.DAG;
+  SDLoc SL(N);
+
+  SDValue Src0 = N->getOperand(0);
+  SDValue Src1 = N->getOperand(1);
+  SDValue Src2 = N->getOperand(2);
+
+  if (isClampZeroToOne(Src0, Src1)) {
+    // const_a, const_b, x -> clamp is safe in all cases including signaling
+    // nans.
+    // FIXME: Should this be allowing -0.0?
+    return DAG.getNode(AMDGPUISD::CLAMP, SL, VT, Src2);
+  }
+
+  // FIXME: dx10_clamp behavior assumed in instcombine. Should we really bother
+  // handling no dx10-clamp?
+  if (Subtarget->enableDX10Clamp()) {
+    // If NaNs is clamped to 0, we are free to reorder the inputs.
+
+    if (isa<ConstantFPSDNode>(Src0) && !isa<ConstantFPSDNode>(Src1))
+      std::swap(Src0, Src1);
+
+    if (isa<ConstantFPSDNode>(Src1) && !isa<ConstantFPSDNode>(Src2))
+      std::swap(Src1, Src2);
+
+    if (isa<ConstantFPSDNode>(Src0) && !isa<ConstantFPSDNode>(Src1))
+      std::swap(Src0, Src1);
+
+    if (isClampZeroToOne(Src1, Src2))
+      return DAG.getNode(AMDGPUISD::CLAMP, SL, VT, Src0);
+  }
+
+  return SDValue();
+}
+
+SDValue SITargetLowering::performCvtPkRTZCombine(SDNode *N,
+                                                 DAGCombinerInfo &DCI) const {
+  SDValue Src0 = N->getOperand(0);
+  SDValue Src1 = N->getOperand(1);
+  if (Src0.isUndef() && Src1.isUndef())
+    return DCI.DAG.getUNDEF(N->getValueType(0));
   return SDValue();
 }
 
@@ -4291,7 +4408,6 @@ SDValue SITargetLowering::PerformDAGCombine(SDNode *N,
   case AMDGPUISD::FMIN_LEGACY:
   case AMDGPUISD::FMAX_LEGACY: {
     if (DCI.getDAGCombineLevel() >= AfterLegalizeDAG &&
-        N->getValueType(0) != MVT::f64 &&
         getTargetMachine().getOptLevel() > CodeGenOpt::None)
       return performMinMaxCombine(N, DCI);
     break;
@@ -4348,6 +4464,10 @@ SDValue SITargetLowering::PerformDAGCombine(SDNode *N,
   case AMDGPUISD::CVT_F32_UBYTE2:
   case AMDGPUISD::CVT_F32_UBYTE3:
     return performCvtF32UByteNCombine(N, DCI);
+  case AMDGPUISD::FMED3:
+    return performFMed3Combine(N, DCI);
+  case AMDGPUISD::CVT_PKRTZ_F16_F32:
+    return performCvtPkRTZCombine(N, DCI);
   }
   return AMDGPUTargetLowering::PerformDAGCombine(N, DCI);
 }
@@ -4375,6 +4495,10 @@ void SITargetLowering::adjustWritemask(MachineSDNode *&Node,
   // Try to figure out the used register components
   for (SDNode::use_iterator I = Node->use_begin(), E = Node->use_end();
        I != E; ++I) {
+
+    // Don't look at users of the chain.
+    if (I.getUse().getResNo() != 0)
+      continue;
 
     // Abort if we can't understand the usage
     if (!I->isMachineOpcode() ||
@@ -4673,6 +4797,8 @@ SITargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
         return std::make_pair(0U, &AMDGPU::SReg_128RegClass);
       case 256:
         return std::make_pair(0U, &AMDGPU::SReg_256RegClass);
+      case 512:
+        return std::make_pair(0U, &AMDGPU::SReg_512RegClass);
       }
 
     case 'v':

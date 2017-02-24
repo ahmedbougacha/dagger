@@ -74,15 +74,19 @@ public:
     TrapHandlerAbiHsa = 1
   };
 
-  enum TrapCode {
-    TrapCodeBreakPoint = 0,
-    TrapCodeLLVMTrap = 1,
-    TrapCodeLLVMDebugTrap = 2,
-    TrapCodeHSADebugTrap = 3
+  enum TrapID {
+    TrapIDHardwareReserved = 0,
+    TrapIDHSADebugTrap = 1,
+    TrapIDLLVMTrap = 2,
+    TrapIDLLVMDebugTrap = 3,
+    TrapIDDebugBreakpoint = 7,
+    TrapIDDebugReserved8 = 8,
+    TrapIDDebugReservedFE = 0xfe,
+    TrapIDDebugReservedFF = 0xff
   };
 
   enum TrapRegValues {
-    TrapCodeLLVMTrapRegValue = 1
+    LLVMTrapHandlerRegValue = 1
   };
 
 protected:
@@ -103,6 +107,7 @@ protected:
   bool FP32Denormals;
   bool FP64FP16Denormals;
   bool FPExceptions;
+  bool DX10Clamp;
   bool FlatForGlobal;
   bool UnalignedScratchAccess;
   bool UnalignedBufferAccess;
@@ -294,10 +299,6 @@ public:
     return DumpCode;
   }
 
-  bool enableIEEEBit(const MachineFunction &MF) const {
-    return AMDGPU::isCompute(MF.getFunction()->getCallingConv());
-  }
-
   /// Return the amount of LDS that can be used that will not restrict the
   /// occupancy lower than WaveCount.
   unsigned getMaxLocalMemSizeWithWaveCount(unsigned WaveCount,
@@ -321,6 +322,14 @@ public:
 
   bool hasFPExceptions() const {
     return FPExceptions;
+  }
+
+  bool enableDX10Clamp() const {
+    return DX10Clamp;
+  }
+
+  bool enableIEEEBit(const MachineFunction &MF) const {
+    return AMDGPU::isCompute(MF.getFunction()->getCallingConv());
   }
 
   bool useFlatForGlobal() const {

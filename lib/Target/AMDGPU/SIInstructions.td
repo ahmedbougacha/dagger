@@ -391,12 +391,12 @@ def SI_PC_ADD_REL_OFFSET : SPseudoInstSI <
 let Predicates = [isGCN] in {
 def : Pat<
   (trap),
-  (S_TRAP_PSEUDO TRAPTYPE.LLVM_TRAP)
+  (S_TRAP_PSEUDO TRAPID.LLVM_TRAP)
 >;
 
 def : Pat<
   (debugtrap),
-  (S_TRAP_PSEUDO TRAPTYPE.LLVM_DEBUG_TRAP)
+  (S_TRAP_PSEUDO TRAPID.LLVM_DEBUG_TRAP)
 >;
 
 def : Pat<
@@ -647,11 +647,19 @@ def : BitConvert <v16f32, v16i32, VReg_512>;
 /********** Src & Dst modifiers **********/
 /********** =================== **********/
 
-def : Pat <
-  (AMDGPUclamp (VOP3Mods0Clamp f32:$src0, i32:$src0_modifiers, i32:$omod),
-               (f32 FP_ZERO), (f32 FP_ONE)),
-  (V_ADD_F32_e64 $src0_modifiers, $src0, 0, (i32 0), 1, $omod)
+
+// If denormals are not enabled, it only impacts the compare of the
+// inputs. The output result is not flushed.
+class ClampPat<Instruction inst, ValueType vt> : Pat <
+  (vt (AMDGPUclamp
+        (VOP3Mods0Clamp vt:$src0, i32:$src0_modifiers, i32:$omod))),
+  (inst i32:$src0_modifiers, vt:$src0,
+        i32:$src0_modifiers, vt:$src0, DSTCLAMP.ENABLE, $omod)
 >;
+
+def : ClampPat<V_MAX_F32_e64, f32>;
+def : ClampPat<V_MAX_F64, f64>;
+def : ClampPat<V_MAX_F16_e64, f16>;
 
 /********** ================================ **********/
 /********** Floating point absolute/negative **********/
@@ -1035,6 +1043,11 @@ def : Pat <
 >;
 
 def : Pat <
+  (i1 (trunc i16:$a)),
+  (V_CMP_EQ_U32_e64 (S_AND_B32 (i32 1), $a), (i32 1))
+>;
+
+def : Pat <
   (i1 (trunc i64:$a)),
   (V_CMP_EQ_U32_e64 (S_AND_B32 (i32 1),
                     (i32 (EXTRACT_SUBREG $a, sub0))), (i32 1))
@@ -1061,8 +1074,7 @@ multiclass BFMPatterns <ValueType vt, InstSI BFM, InstSI MOV> {
 
 defm : BFMPatterns <i32, S_BFM_B32, S_MOV_B32>;
 // FIXME: defm : BFMPatterns <i64, S_BFM_B64, S_MOV_B64>;
-
-def : BFEPattern <V_BFE_U32, S_MOV_B32>;
+defm : BFEPattern <V_BFE_U32, V_BFE_I32, S_MOV_B32>;
 
 def : Pat<
   (fcanonicalize (f16 (VOP3Mods f16:$src, i32:$src_mods))),

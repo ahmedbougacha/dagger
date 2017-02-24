@@ -12,6 +12,7 @@ tablegen(LLVM X86GenCallingConv.inc -gen-callingconv)
 tablegen(LLVM X86GenSubtargetInfo.inc -gen-subtarget)
 if(LLVM_BUILD_GLOBAL_ISEL)
   tablegen(LLVM X86GenRegisterBank.inc -gen-register-bank)
+  tablegen(LLVM X86GenGlobalISel.inc -gen-global-isel)
 endif()
 
 tablegen(LLVM X86GenSema.inc -gen-semantics)
@@ -23,6 +24,7 @@ set(GLOBAL_ISEL_FILES
   X86CallLowering.cpp
   X86LegalizerInfo.cpp
   X86RegisterBankInfo.cpp
+  X86InstructionSelector.cpp
   )
 
 if(LLVM_BUILD_GLOBAL_ISEL)

@@ -50,7 +50,6 @@ namespace HexagonISD {
       JT,          // Jump table.
       CP,          // Constant pool.
 
-      POPCOUNT,
       COMBINE,
       PACKHL,
       VSPLATB,
@@ -86,6 +85,7 @@ namespace HexagonISD {
       TC_RETURN,
       EH_RETURN,
       DCFETCH,
+      READCYCLE,
 
       OP_END
     };
@@ -146,6 +146,7 @@ namespace HexagonISD {
     SDValue LowerDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINLINEASM(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerPREFETCH(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerREADCYCLECOUNTER(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEH_LABEL(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEH_RETURN(SDValue Op, SelectionDAG &DAG) const;
     SDValue
@@ -179,7 +180,6 @@ namespace HexagonISD {
 
     SDValue LowerSETCC(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVSELECT(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerCTPOP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerATOMIC_FENCE(SDValue Op, SelectionDAG& DAG) const;
     SDValue LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const;
