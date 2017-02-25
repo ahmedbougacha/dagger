@@ -42,12 +42,14 @@ void DCModule::initializeDebugInfo(StringRef OutputDirectory) {
   SmallString<128> DebugDirPath = OutputDirectory;
   if (auto EC = sys::fs::make_absolute(DebugDirPath)) {
     DEBUG(dbgs() << "Invalid debug info directory: " << EC.message() << "\n");
+    (void)EC;
     return;
   }
 
   if (auto EC = sys::fs::create_directory(DebugDirPath)) {
     DEBUG(dbgs() << "Failed to create debug info directory: " << EC.message()
                  << "\n");
+    (void)EC;
     return;
   }
 
@@ -57,8 +59,11 @@ void DCModule::initializeDebugInfo(StringRef OutputDirectory) {
   int DebugFD = -1;
   if (auto EC = sys::fs::createUniqueFile(DebugPathModel, DebugFD, DebugPath)) {
     DEBUG(dbgs() << "Failed to write debug info .s: " << EC.message() << "\n");
+    (void)EC;
     return;
   }
+
+  // Now that we can't fail for any reason, setup all the DI data structures.
 
   DebugStream.emplace(DebugFD, /*shouldClose=*/true);
   DEBUG(dbgs() << "Opened debug info .s: " << DebugPath << "\n");
