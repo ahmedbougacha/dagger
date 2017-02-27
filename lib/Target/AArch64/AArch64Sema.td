@@ -19,6 +19,7 @@ include "llvm/DC/Semantics.td"
 //===
 
 // Branching instructions
+def : Semantics<B, [(br (bitconvert am_b_target:$addr))]>;
 def : Semantics<BL, [(set LR, PC), (AArch64call imm:$addr)]>;
 def : Semantics<BLR, [(set LR, PC), (AArch64call GPR64:$Rn)]>;
 
