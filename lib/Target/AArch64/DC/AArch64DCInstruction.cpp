@@ -93,16 +93,44 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
       return nullptr;
     return ConstantInt::get(getResultTy(0), Imm);
   }
-  case AArch64::OpTypes::am_bl_target: {
+  case AArch64::OpTypes::am_bl_target:
+  case AArch64::OpTypes::am_ldrlit: {
     auto *ResTy = Builder.getInt8PtrTy();
 
-    // bl target is an offset in number of (4byte) instructions from PC
+    // target is an offset in number of (4byte) instructions from PC
     // target = PC + (imm * 4)
     // TODO: add check that offset is +-128MB from PC?
+    //       aml_ldrlit is identical except +-1MB from PC.
     signed offset = getImmOp(MIOperandNo)*4;
-    Value *blTarget = Builder.getInt64(TheMCInst.Address + offset);
-    return Builder.CreateIntToPtr(blTarget, ResTy);
+    Value *immTarget = Builder.getInt64(TheMCInst.Address + offset);
+    return Builder.CreateIntToPtr(immTarget, ResTy);
   }
+  case AArch64::OpTypes::arith_extended_reg32_i64:
+  case AArch64::OpTypes::arith_extended_reg32_i32:
+  case AArch64::OpTypes::arith_extended_reg32to64_i64: {
+    //Type *ResTy = ResEVT.getTypeForEVT(Ctx);
+
+    Value *R = getReg(getRegOp(MIOperandNo));
+    const unsigned ExtImm = getImmOp(MIOperandNo + 1);
+
+    const auto ShiftType = AArch64_AM::getArithExtendType(ExtImm);
+    const auto ShiftImm = AArch64_AM::getArithShiftValue(ExtImm);
+
+    if (ShiftType != AArch64_AM::UXTB)
+      return nullptr;
+
+    R = Builder.CreateZExt(
+      Builder.CreateTruncOrBitCast(R, Builder.getInt8Ty()), R->getType());
+
+    if (ShiftImm) {
+      R = Builder.CreateShl(R, ConstantInt::get(R->getType(), ShiftImm));
+    }
+
+    R = Builder.CreateZExtOrBitCast(R, getResultTy(0));
+    return R;
+  }
+  case AArch64::OpTypes::arith_shifted_reg32:
+  case AArch64::OpTypes::arith_shifted_reg64:
   case AArch64::OpTypes::logical_shifted_reg32:
   case AArch64::OpTypes::logical_shifted_reg64: {
     Value *R = getReg(getRegOp(MIOperandNo));
@@ -127,13 +155,32 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
     return ConstantInt::get(getResultTy(0), Imm);
   }
   case AArch64::OpTypes::simm7s4: {
-    return translateScaledImmediate(MIOperandNo, 4);
+    return translateScaledImmediate(MIOperandNo, 4, 32);
   }
   case AArch64::OpTypes::simm7s8: {
-    return translateScaledImmediate(MIOperandNo, 8);
+    return translateScaledImmediate(MIOperandNo, 8, 32);
   }
   case AArch64::OpTypes::simm7s16: {
-    return translateScaledImmediate(MIOperandNo, 16);
+    return translateScaledImmediate(MIOperandNo, 16, 32);
+  }
+  case AArch64::OpTypes::simm9: {
+    // simm9 is not scaled, so scale arg = 1
+    return translateScaledImmediate(MIOperandNo, 1, 64);
+  }
+  case AArch64::OpTypes::uimm12s1: {
+   return translateScaledImmediate(MIOperandNo, 1, 64);
+  }
+  case AArch64::OpTypes::uimm12s2: {
+    return translateScaledImmediate(MIOperandNo, 2, 64);
+  }
+  case AArch64::OpTypes::uimm12s4: {
+    return translateScaledImmediate(MIOperandNo, 4, 64);
+  }
+  case AArch64::OpTypes::uimm12s8: {
+    return translateScaledImmediate(MIOperandNo, 8, 64);
+  }
+  case AArch64::OpTypes::uimm12s16: {
+    return translateScaledImmediate(MIOperandNo, 16, 64);
   }
   default:
     errs() << "Unknown AArch64 operand type found in semantics: "
@@ -158,8 +205,9 @@ bool AArch64DCInstruction::doesSubRegIndexClearSuper(unsigned SubRegIdx) {
 }
 
 Value *AArch64DCInstruction::translateScaledImmediate(unsigned MIOperandNo,
-                                                      unsigned Scale) {
-  APInt Val = APInt(32, getImmOp(MIOperandNo));
-  APInt APScale = APInt(32, Scale);
+                                                      unsigned Scale,
+                                                      unsigned Bits) {
+  APInt Val = APInt(Bits, getImmOp(MIOperandNo));
+  APInt APScale = APInt(Bits, Scale);
   return Builder.getInt(Val * APScale);
 }
