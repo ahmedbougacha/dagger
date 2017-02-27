@@ -79,6 +79,31 @@ bool AArch64DCInstruction::translateTargetOpcode(unsigned Opcode) {
 
 Value *AArch64DCInstruction::translateComplexPattern(unsigned Pattern) {
   switch (Pattern) {
+  case AArch64::ComplexPattern::AddrModeWRO_8:
+  case AArch64::ComplexPattern::AddrModeWRO_16:
+  case AArch64::ComplexPattern::AddrModeWRO_32:
+  case AArch64::ComplexPattern::AddrModeWRO_64:
+  case AArch64::ComplexPattern::AddrModeXRO_8:
+  case AArch64::ComplexPattern::AddrModeXRO_16:
+  case AArch64::ComplexPattern::AddrModeXRO_32:
+  case AArch64::ComplexPattern::AddrModeXRO_64: {
+    Value *Base = getOperand(0);
+    Value *Offset = getOperand(1);
+    ConstantInt *ro_Wextend = cast<ConstantInt>(getOperand(2));
+
+    const unsigned Signed = ro_Wextend->getZExtValue() & 1;
+    const unsigned DoShift = ro_Wextend->getZExtValue() & 2;
+    assert(!(ro_Wextend->getZExtValue() & ~3ULL));
+    if (DoShift != 0)
+      return nullptr;
+
+    if (Signed)
+      Offset = Builder.CreateSExt(Offset, Base->getType());
+    else
+      Offset = Builder.CreateZExt(Offset, Base->getType());
+
+    return Builder.CreateAdd(Base, Offset);
+  }
   case AArch64::ComplexPattern::AddrModeIndexed8:
   case AArch64::ComplexPattern::AddrModeIndexed16:
   case AArch64::ComplexPattern::AddrModeIndexed32:
@@ -166,6 +191,20 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
   }
   case AArch64::OpTypes::uimm12s16: {
     return translateScaledImmediate(MIOperandNo, 16, 64);
+  }
+  case AArch64::OpTypes::ro_Wextend8:
+  case AArch64::OpTypes::ro_Wextend16:
+  case AArch64::OpTypes::ro_Wextend32:
+  case AArch64::OpTypes::ro_Wextend64:
+  case AArch64::OpTypes::ro_Wextend128:
+  case AArch64::OpTypes::ro_Xextend8:
+  case AArch64::OpTypes::ro_Xextend16:
+  case AArch64::OpTypes::ro_Xextend32:
+  case AArch64::OpTypes::ro_Xextend64:
+  case AArch64::OpTypes::ro_Xextend128: {
+    const unsigned Signed = getImmOp(MIOperandNo);
+    const unsigned DoShift = getImmOp(MIOperandNo + 1);
+    return Builder.getInt64(Signed + (DoShift << 1));
   }
   default:
     errs() << "Unknown AArch64 operand type found in semantics: "
