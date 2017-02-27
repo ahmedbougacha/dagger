@@ -78,6 +78,16 @@ bool AArch64DCInstruction::translateTargetOpcode(unsigned Opcode) {
 }
 
 Value *AArch64DCInstruction::translateComplexPattern(unsigned Pattern) {
+  switch (Pattern) {
+  case AArch64::ComplexPattern::AddrModeIndexed8:
+  case AArch64::ComplexPattern::AddrModeIndexed16:
+  case AArch64::ComplexPattern::AddrModeIndexed32:
+  case AArch64::ComplexPattern::AddrModeIndexed64:
+  case AArch64::ComplexPattern::AddrModeIndexed128: {
+    Value *Base = getOperand(0), *Idx = getOperand(1);
+    return Builder.CreateAdd(Base, Idx);
+  }
+  }
   return nullptr;
 }
 
