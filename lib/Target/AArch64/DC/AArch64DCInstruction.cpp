@@ -136,9 +136,9 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
     // target = PC + (imm * 4)
     // TODO: add check that offset is +-128MB from PC?
     //       aml_ldrlit is identical except +-1MB from PC.
-    signed offset = getImmOp(MIOperandNo)*4;
-    Value *immTarget = Builder.getInt64(TheMCInst.Address + offset);
-    return Builder.CreateIntToPtr(immTarget, ResTy);
+    int Offset = getImmOp(MIOperandNo)*4;
+    Value *ImmTarget = Builder.getInt64(TheMCInst.Address + Offset);
+    return Builder.CreateIntToPtr(ImmTarget, ResTy);
   }
 
   case AArch64::OpTypes::logical_shifted_reg32:
