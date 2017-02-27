@@ -103,6 +103,18 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
     Value *blTarget = Builder.getInt64(TheMCInst.Address + offset);
     return Builder.CreateIntToPtr(blTarget, ResTy);
   }
+  case AArch64::OpTypes::fpimm16: {
+    int Imm = AArch64_AM::getFP16Imm(APInt(16, getImmOp(MIOperandNo)));
+    return Builder.getInt16(Imm);
+  }
+  case AArch64::OpTypes::fpimm32: {
+    int Imm = AArch64_AM::getFP32Imm(APInt(32, getImmOp(MIOperandNo)));
+    return Builder.getInt32(Imm);
+  }
+  case AArch64::OpTypes::fpimm64: {
+    int Imm = AArch64_AM::getFP64Imm(APInt(64, getImmOp(MIOperandNo)));
+    return Builder.getInt32(Imm);
+  }
   case AArch64::OpTypes::logical_shifted_reg32:
   case AArch64::OpTypes::logical_shifted_reg64: {
     Value *R = getReg(getRegOp(MIOperandNo));
