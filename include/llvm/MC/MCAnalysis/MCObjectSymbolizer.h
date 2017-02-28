@@ -190,6 +190,8 @@ public:
   MCELFObjectSymbolizer(MCContext &Ctx,
                         std::unique_ptr<MCRelocationInfo> RelInfo,
                         const object::ELFObjectFileBase &OF);
+private:
+  void gatherEntrypoints();
 };
 
 }

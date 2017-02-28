@@ -247,12 +247,34 @@ MCELFObjectSymbolizer::MCELFObjectSymbolizer(
     : MCObjectSymbolizer(Ctx, std::move(RelInfo), OF, shouldSkipELFSection),
       OF(OF) {
 
-  // Refine the main entrypoint if possible.
-  // FIXME: We only handle 64bit LE ELF.
-  if (auto *EF = dyn_cast<ELF64LEObjectFile>(&OF))
-    MainEntrypoint = EF->getELFFile()->getHeader()->e_entry;
+  if(MainEntrypoint.hasValue() == false){
+      
+    DEBUG(dbgs() << "Found stripped ELF file, search for main()-entrypoint.\n");
+        
+    // look for entrypoint
+    gatherEntrypoints();
+        
+    // check if we now have found the main()-Entrypoint
+    if(MainEntrypoint.hasValue() == true){
+      DEBUG(dbgs() << "Found main()-entrypoint");
+    }else if(auto *EF = dyn_cast<ELF64LEObjectFile>(&OF)){
+      DEBUG(dbgs() << "Main()-entrypoint not found - use "
+                      "the entrypoint in the ELF-header.\n");
+      //FIXME: We only handle 64bit LE ELF.
+      MainEntrypoint = EF->getELFFile()->getHeader()->e_entry;
+    }else{
+      report_fatal_error("Could not autodetect entrypoint for ELF file.");
+    }
+  }
 }
 
+void MCELFObjectSymbolizer::gatherEntrypoints() {
+  // Refine the main entrypoint in a stripped ELF-File if possible.
+  // FIXME: Find solution to find the real Entrypoint of an stripped ELF-File.
+  // The Entrypoint specified in the ELF-Header is not useful, because it calls
+  // __libc_start_main and does not return in a way daggger could detect it.
+  return;
+}
 //===- MCObjectSymbolizer -------------------------------------------------===//
 
 MCObjectSymbolizer::MCObjectSymbolizer(
@@ -273,11 +295,12 @@ MCObjectSymbolizer::MCObjectSymbolizer(
     StringRef Name = unwrapOrReportError(Symbol.getName());
     uint64_t Addr = unwrapOrReportError(Symbol.getAddress());
 
-    if (Name == "main" || Name == "_main")
-      MainEntrypoint = Addr;
+    if (Name == "main" || Name == "_main"){
+        MainEntrypoint = Addr;
+    }
     Entrypoints.push_back(Addr);
+    }
   }
-}
 
 Optional<uint64_t> MCObjectSymbolizer::getMainEntrypoint() {
   return MainEntrypoint;
