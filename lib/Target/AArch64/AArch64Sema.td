@@ -111,6 +111,19 @@ defm : LoadStorePairPrePostIndex<"Q", FPR128, f128, 16>;
 //===
 
 // Arithmetic Instruction
+def : Semantics<ADDWrs, [(set GPR32:$Rd, (add GPR32:$Rn, arith_shifted_reg32:$Rm))]>;
+def : Semantics<SUBWrs, [(set GPR32:$Rd, (sub GPR32:$Rn, arith_shifted_reg32:$Rm))]>;
+def : Semantics<ADDXrs, [(set GPR64:$Rd, (add GPR64:$Rn, arith_shifted_reg64:$Rm))]>;
+def : Semantics<SUBXrs, [(set GPR64:$Rd, (sub GPR64:$Rn, arith_shifted_reg64:$Rm))]>;
+
+def : Semantics<ADDWrx, [(set GPR32sp:$R1, (add GPR32sp:$R2, arith_extended_reg32_i32:$R3))]>;
+def : Semantics<SUBWrx, [(set GPR32sp:$R1, (sub GPR32sp:$R2, arith_extended_reg32_i32:$R3))]>;
+def : Semantics<ADDXrx, [(set GPR64sp:$R1, (add GPR64sp:$R2, arith_extended_reg32to64_i64:$R3))]>;
+def : Semantics<SUBXrx, [(set GPR64sp:$R1, (sub GPR64sp:$R2, arith_extended_reg32to64_i64:$R3))]>;
+
+def : Semantics<ADDWri, [(set GPR32sp:$Rd, (add GPR32sp:$Rn, addsub_shifted_imm32:$imm))]>;
+def : Semantics<SUBWri, [(set GPR32sp:$Rd, (sub GPR32sp:$Rn, addsub_shifted_imm32:$imm))]>;
+def : Semantics<ADDXri, [(set GPR64sp:$Rd, (add GPR64sp:$Rn, addsub_shifted_imm64:$imm))]>;
 def : Semantics<SUBXri, [(set GPR64sp:$Rd, (sub GPR64sp:$Rn, addsub_shifted_imm64:$imm))]>;
 
 // Move Instructions
