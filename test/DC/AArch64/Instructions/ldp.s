@@ -41,8 +41,7 @@ ldp		d16, d17, [x18]
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V8:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V9:%.+]] = add i64 [[X16_2]], [[V8]]
-; CHECK-NEXT: [[V10:%.+]] = add i64 8, [[V9]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V10]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V9]], metadata !"X16")
 ldp	d17, d18, [x16], #0
 
 ;; LDPDpre
@@ -68,8 +67,7 @@ ldp	d17, d18, [x16], #0
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V12:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V13:%.+]] = add i64 [[X16_2]], [[V12]]
-; CHECK-NEXT: [[V14:%.+]] = add i64 8, [[V13]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V14]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V13]], metadata !"X16")
 ldp	d17, d18, [x16, #0]!
 
 ;; LDPQi
@@ -113,8 +111,7 @@ ldp		q16, q17, [x18]
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V8:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V9:%.+]] = add i64 [[X16_2]], [[V8]]
-; CHECK-NEXT: [[V10:%.+]] = add i64 16, [[V9]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V10]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V9]], metadata !"X16")
 ldp	q17, q18, [x16], #0
 
 ;; LDPQpre
@@ -140,8 +137,7 @@ ldp	q17, q18, [x16], #0
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V12:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V13:%.+]] = add i64 [[X16_2]], [[V12]]
-; CHECK-NEXT: [[V14:%.+]] = add i64 16, [[V13]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V14]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V13]], metadata !"X16")
 ldp	q17, q18, [x16, #0]!
 
 ;; LDPSi
@@ -185,8 +181,7 @@ ldp		s16, s17, [x18]
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V8:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V9:%.+]] = add i64 [[X16_2]], [[V8]]
-; CHECK-NEXT: [[V10:%.+]] = add i64 4, [[V9]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V10]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V9]], metadata !"X16")
 ldp	s17, s18, [x16], #0
 
 ;; LDPSpre
@@ -212,8 +207,7 @@ ldp	s17, s18, [x16], #0
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V12:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V13:%.+]] = add i64 [[X16_2]], [[V12]]
-; CHECK-NEXT: [[V14:%.+]] = add i64 4, [[V13]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V14]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V13]], metadata !"X16")
 ldp	s17, s18, [x16, #0]!
 
 ;; LDPWi
@@ -253,8 +247,7 @@ ldp		w16, w17, [x18]
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V6:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V7:%.+]] = add i64 [[X16_2]], [[V6]]
-; CHECK-NEXT: [[V8:%.+]] = add i64 4, [[V7]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V8]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V7]], metadata !"X16")
 ldp	w17, w18, [x16], #0
 
 ;; LDPWpre
@@ -278,8 +271,7 @@ ldp	w17, w18, [x16], #0
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V10:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V11:%.+]] = add i64 [[X16_2]], [[V10]]
-; CHECK-NEXT: [[V12:%.+]] = add i64 4, [[V11]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V12]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V11]], metadata !"X16")
 ldp	w17, w18, [x16, #0]!
 
 ;; LDPXi
@@ -319,8 +311,7 @@ ldp		x16, x17, [x18]
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V6:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V7:%.+]] = add i64 [[X16_2]], [[V6]]
-; CHECK-NEXT: [[V8:%.+]] = add i64 8, [[V7]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V8]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V7]], metadata !"X16")
 ldp	x17, x18, [x16], #0
 
 ;; LDPXpre
@@ -344,8 +335,7 @@ ldp	x17, x18, [x16], #0
 ; CHECK-NEXT: [[X16_2:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[V10:%.+]] = sext i32 0 to i64
 ; CHECK-NEXT: [[V11:%.+]] = add i64 [[X16_2]], [[V10]]
-; CHECK-NEXT: [[V12:%.+]] = add i64 8, [[V11]]
-; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V12]], metadata !"X16")
+; CHECK-NEXT: call void @llvm.dc.setreg.i64(i64 [[V11]], metadata !"X16")
 ldp	x17, x18, [x16, #0]!
 
 ret

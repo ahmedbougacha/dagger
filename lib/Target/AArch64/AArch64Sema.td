@@ -81,22 +81,22 @@ multiclass LoadStorePairPrePostIndex<string regname, RegisterClass regtype, Valu
   def : Semantics<!cast<Instruction>("STP" # regname # "pre"), [
           (store (Ty regtype:$Rt), (bitconvert (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))),
           (store (Ty regtype:$Rt2), (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset))))),
-          (set GPR64sp:$wback, (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))]>;
+          (set GPR64sp:$wback, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))]>;
 
   def : Semantics<!cast<Instruction>("LDP" # regname # "pre"), [
           (set (Ty regtype:$Rt), (Ty (load (bitconvert (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))),
           (set (Ty regtype:$Rt2), (Ty (load (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset))))))),
-          (set GPR64sp:$wback, (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))]>;
+          (set GPR64sp:$wback, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))]>;
 
   def : Semantics<!cast<Instruction>("STP" # regname # "post"), [
           (store (Ty regtype:$Rt), GPR64sp:$Rn),
           (store (Ty regtype:$Rt2), (bitconvert (add scale, GPR64sp:$Rn))),
-          (set GPR64sp:$wback, (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))]>;
+          (set GPR64sp:$wback, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))]>;
 
   def : Semantics<!cast<Instruction>("LDP" # regname # "post"), [
           (set (Ty regtype:$Rt), (Ty (load GPR64sp:$Rn))),
           (set (Ty regtype:$Rt2), (Ty (load (bitconvert (add scale, GPR64sp:$Rn))))),
-          (set GPR64sp:$wback, (bitconvert (add scale, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))))]>;
+          (set GPR64sp:$wback, (add GPR64sp:$Rn, (sext !cast<Operand>("simm7s" # scale):$offset)))]>;
 }
 
 // LSP/STP instructions
