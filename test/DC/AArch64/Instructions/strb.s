@@ -30,6 +30,8 @@ strb	w17, [x16, #0]!
 ; CHECK-NEXT: [[W16_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W16")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
+; CHECK-NEXT: [[V1:%.+]] = zext i32 [[W18_0]] to i64
+; CHECK-NEXT: [[V2:%.+]] = add i64 [[X17_0]], [[V1]]
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 strb	w16, [x17, w18, uxtw]
@@ -42,6 +44,7 @@ strb	w16, [x17, w18, uxtw]
 ; CHECK-NEXT: [[W16_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W16")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: [[X18_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X18")
+; CHECK-NEXT: [[V1:%.+]] = add i64 [[X17_0]], [[X18_0]]
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 strb		w16, [x17, x18]
@@ -53,6 +56,7 @@ strb		w16, [x17, x18]
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[W16_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W16")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
+; CHECK-NEXT: [[V1:%.+]] = add i64 [[X17_0]], 0
 ; CHECK-NEXT: call void @llvm.trap()
 ; CHECK-NEXT: unreachable
 strb		w16, [x17]
