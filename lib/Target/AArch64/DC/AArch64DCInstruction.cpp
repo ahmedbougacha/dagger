@@ -162,6 +162,14 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
     R = Builder.CreateZExtOrBitCast(R, getResultTy(0));
     return R;
   }
+  case AArch64::OpTypes::logical_imm32: {
+    return Builder.getInt32(
+        AArch64_AM::decodeLogicalImmediate(getImmOp(MIOperandNo), 32));
+  }
+  case AArch64::OpTypes::logical_imm64: {
+    return Builder.getInt64(
+        AArch64_AM::decodeLogicalImmediate(getImmOp(MIOperandNo), 64));
+  }
   case AArch64::OpTypes::arith_shifted_reg32:
   case AArch64::OpTypes::arith_shifted_reg64:
   case AArch64::OpTypes::logical_shifted_reg32:
