@@ -152,8 +152,8 @@ const MCBinaryExpr *MCBinaryExpr::create(Opcode Opc, const MCExpr *LHS,
 }
 
 const MCUnaryExpr *MCUnaryExpr::create(Opcode Opc, const MCExpr *Expr,
-                                       MCContext &Ctx) {
-  return new (Ctx) MCUnaryExpr(Opc, Expr);
+                                       MCContext &Ctx, SMLoc Loc) {
+  return new (Ctx) MCUnaryExpr(Opc, Expr, Loc);
 }
 
 const MCConstantExpr *MCConstantExpr::create(int64_t Value, MCContext &Ctx) {
@@ -286,6 +286,7 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_Hexagon_IE: return "IE";
   case VK_Hexagon_IE_GOT: return "IEGOT";
   case VK_WebAssembly_FUNCTION: return "FUNCTION";
+  case VK_WebAssembly_TYPEINDEX: return "TYPEINDEX";
   case VK_AMDGPU_GOTPCREL32_LO: return "gotpcrel32@lo";
   case VK_AMDGPU_GOTPCREL32_HI: return "gotpcrel32@hi";
   case VK_AMDGPU_REL32_LO: return "rel32@lo";

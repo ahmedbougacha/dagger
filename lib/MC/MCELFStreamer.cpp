@@ -143,7 +143,7 @@ void MCELFStreamer::ChangeSection(MCSection *Section,
   if (Grp)
     Asm.registerSymbol(*Grp);
 
-  this->MCObjectStreamer::ChangeSection(Section, Subsection);
+  changeSectionImpl(Section, Subsection);
   Asm.registerSymbol(*Section->getBeginSymbol());
 }
 
@@ -346,13 +346,6 @@ void MCELFStreamer::EmitValueToAlignment(unsigned ByteAlignment,
     report_fatal_error("Emitting values inside a locked bundle is forbidden");
   MCObjectStreamer::EmitValueToAlignment(ByteAlignment, Value,
                                          ValueSize, MaxBytesToEmit);
-}
-
-// Add a symbol for the file name of this module. They start after the
-// null symbol and don't count as normal symbol, i.e. a non-STT_FILE symbol
-// with the same name may appear.
-void MCELFStreamer::EmitFileDirective(StringRef Filename) {
-  getAssembler().addFileName(Filename);
 }
 
 void MCELFStreamer::EmitIdent(StringRef IdentString) {
@@ -622,22 +615,6 @@ void MCELFStreamer::EmitThumbFunc(MCSymbol *Func) {
 }
 
 void MCELFStreamer::EmitSymbolDesc(MCSymbol *Symbol, unsigned DescValue) {
-  llvm_unreachable("ELF doesn't support this directive");
-}
-
-void MCELFStreamer::BeginCOFFSymbolDef(const MCSymbol *Symbol) {
-  llvm_unreachable("ELF doesn't support this directive");
-}
-
-void MCELFStreamer::EmitCOFFSymbolStorageClass(int StorageClass) {
-  llvm_unreachable("ELF doesn't support this directive");
-}
-
-void MCELFStreamer::EmitCOFFSymbolType(int Type) {
-  llvm_unreachable("ELF doesn't support this directive");
-}
-
-void MCELFStreamer::EndCOFFSymbolDef() {
   llvm_unreachable("ELF doesn't support this directive");
 }
 

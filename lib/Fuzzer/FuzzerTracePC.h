@@ -49,7 +49,6 @@ class TracePC {
  public:
   static const size_t kNumPCs = 1 << 21;
 
-  void HandleTrace(uint32_t *guard, uintptr_t PC);
   void HandleInit(uint32_t *start, uint32_t *stop);
   void HandleCallerCallee(uintptr_t Caller, uintptr_t Callee);
   template <class T> void HandleCmp(uintptr_t PC, T Arg1, T Arg2);
@@ -57,7 +56,7 @@ class TracePC {
   void SetUseCounters(bool UC) { UseCounters = UC; }
   void SetUseValueProfile(bool VP) { UseValueProfile = VP; }
   void SetPrintNewPCs(bool P) { DoPrintNewPCs = P; }
-  template <class Callback> size_t CollectFeatures(Callback CB);
+  template <class Callback> size_t CollectFeatures(Callback CB) const;
 
   void ResetMaps() {
     ValueProfileMap.Reset();
@@ -74,8 +73,6 @@ class TracePC {
 
   void AddValueForMemcmp(void *caller_pc, const void *s1, const void *s2,
                          size_t n, bool StopAtZero);
-
-  bool UsingTracePcGuard() const {return NumModules; }
 
   TableOfRecentCompares<uint32_t, 32> TORC4;
   TableOfRecentCompares<uint64_t, 32> TORC8;
@@ -111,8 +108,7 @@ private:
 };
 
 template <class Callback>
-size_t TracePC::CollectFeatures(Callback CB) {
-  if (!UsingTracePcGuard()) return 0;
+size_t TracePC::CollectFeatures(Callback CB) const {
   size_t Res = 0;
   const size_t Step = 8;
   uint8_t *Counters = this->Counters();
@@ -125,7 +121,6 @@ size_t TracePC::CollectFeatures(Callback CB) {
     for (size_t i = Idx; i < Idx + Step; i++) {
       uint8_t Counter = (Bundle >> ((i - Idx) * 8)) & 0xff;
       if (!Counter) continue;
-      Counters[i] = 0;
       unsigned Bit = 0;
       /**/ if (Counter >= 128) Bit = 7;
       else if (Counter >= 32) Bit = 6;

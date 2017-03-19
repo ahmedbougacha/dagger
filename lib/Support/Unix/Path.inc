@@ -48,6 +48,8 @@
 # endif
 #endif
 
+#include <pwd.h>
+
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <sys/attr.h>
@@ -372,6 +374,9 @@ static bool is_local_impl(struct STATVFS &Vfs) {
   default:
     return true;
   }
+#elif defined(__CYGWIN__)
+  // Cygwin doesn't expose this information; would need to use Win32 API.
+  return false;
 #else
   return !!(STATVFS_F_FLAG(Vfs) & MNT_LOCAL);
 #endif
@@ -475,6 +480,46 @@ std::error_code equivalent(const Twine &A, const Twine &B, bool &result) {
   return std::error_code();
 }
 
+static void expandTildeExpr(SmallVectorImpl<char> &Path) {
+  StringRef PathStr(Path.begin(), Path.size());
+  if (PathStr.empty() || !PathStr.startswith("~"))
+    return;
+
+  PathStr = PathStr.drop_front();
+  StringRef Expr =
+      PathStr.take_until([](char c) { return path::is_separator(c); });
+  StringRef Remainder = PathStr.substr(Expr.size() + 1);
+  SmallString<128> Storage;
+  if (Expr.empty()) {
+    // This is just ~/..., resolve it to the current user's home dir.
+    if (!path::home_directory(Storage)) {
+      // For some reason we couldn't get the home directory.  Just exit.
+      return;
+    }
+
+    // Overwrite the first character and insert the rest.
+    Path[0] = Storage[0];
+    Path.insert(Path.begin() + 1, Storage.begin() + 1, Storage.end());
+    return;
+  }
+
+  // This is a string of the form ~username/, look up this user's entry in the
+  // password database.
+  struct passwd *Entry = nullptr;
+  std::string User = Expr.str();
+  Entry = ::getpwnam(User.c_str());
+
+  if (!Entry) {
+    // Unable to look up the entry, just return back the original path.
+    return;
+  }
+
+  Storage = Remainder;
+  Path.clear();
+  Path.append(Entry->pw_dir, Entry->pw_dir + strlen(Entry->pw_dir));
+  llvm::sys::path::append(Path, Storage);
+}
+
 static std::error_code fillStatus(int StatRet, const struct stat &Status,
                              file_status &Result) {
   if (StatRet != 0) {
@@ -500,8 +545,10 @@ static std::error_code fillStatus(int StatRet, const struct stat &Status,
     Type = file_type::fifo_file;
   else if (S_ISSOCK(Status.st_mode))
     Type = file_type::socket_file;
+  else if (S_ISLNK(Status.st_mode))
+    Type = file_type::symlink_file;
 
-  perms Perms = static_cast<perms>(Status.st_mode);
+  perms Perms = static_cast<perms>(Status.st_mode) & all_perms;
   Result =
       file_status(Type, Perms, Status.st_dev, Status.st_ino, Status.st_atime,
                   Status.st_mtime, Status.st_uid, Status.st_gid,
@@ -510,12 +557,12 @@ static std::error_code fillStatus(int StatRet, const struct stat &Status,
   return std::error_code();
 }
 
-std::error_code status(const Twine &Path, file_status &Result) {
+std::error_code status(const Twine &Path, file_status &Result, bool Follow) {
   SmallString<128> PathStorage;
   StringRef P = Path.toNullTerminatedStringRef(PathStorage);
 
   struct stat Status;
-  int StatRet = ::stat(P.begin(), &Status);
+  int StatRet = (Follow ? ::stat : ::lstat)(P.begin(), &Status);
   return fillStatus(StatRet, Status, Result);
 }
 
@@ -523,6 +570,15 @@ std::error_code status(int FD, file_status &Result) {
   struct stat Status;
   int StatRet = ::fstat(FD, &Status);
   return fillStatus(StatRet, Status, Result);
+}
+
+std::error_code setPermissions(const Twine &Path, perms Permissions) {
+  SmallString<128> PathStorage;
+  StringRef P = Path.toNullTerminatedStringRef(PathStorage);
+
+  if (::chmod(P.begin(), Permissions))
+    return std::error_code(errno, std::generic_category());
+  return std::error_code();
 }
 
 std::error_code setLastModificationAndAccessTime(int FD, TimePoint<> Time) {
@@ -616,7 +672,8 @@ int mapped_file_region::alignment() {
 }
 
 std::error_code detail::directory_iterator_construct(detail::DirIterState &it,
-                                                StringRef path){
+                                                     StringRef path,
+                                                     bool follow_symlinks) {
   SmallString<128> path_null(path);
   DIR *directory = ::opendir(path_null.c_str());
   if (!directory)
@@ -625,7 +682,7 @@ std::error_code detail::directory_iterator_construct(detail::DirIterState &it,
   it.IterationHandle = reinterpret_cast<intptr_t>(directory);
   // Add something for replace_filename to replace.
   path::append(path_null, ".");
-  it.CurrentEntry = directory_entry(path_null.str());
+  it.CurrentEntry = directory_entry(path_null.str(), follow_symlinks);
   return directory_iterator_increment(it);
 }
 
@@ -793,6 +850,68 @@ std::error_code getPathFromOpenFD(int FD, SmallVectorImpl<char> &ResultPath) {
   return std::error_code();
 }
 
+template <typename T>
+static std::error_code remove_directories_impl(const T &Entry,
+                                               bool IgnoreErrors) {
+  std::error_code EC;
+  directory_iterator Begin(Entry, EC, false);
+  directory_iterator End;
+  while (Begin != End) {
+    auto &Item = *Begin;
+    file_status st;
+    EC = Item.status(st);
+    if (EC && !IgnoreErrors)
+      return EC;
+
+    if (is_directory(st)) {
+      EC = remove_directories_impl(Item, IgnoreErrors);
+      if (EC && !IgnoreErrors)
+        return EC;
+    }
+
+    EC = fs::remove(Item.path(), true);
+    if (EC && !IgnoreErrors)
+      return EC;
+
+    Begin.increment(EC);
+    if (EC && !IgnoreErrors)
+      return EC;
+  }
+  return std::error_code();
+}
+
+std::error_code remove_directories(const Twine &path, bool IgnoreErrors) {
+  auto EC = remove_directories_impl(path, IgnoreErrors);
+  if (EC && !IgnoreErrors)
+    return EC;
+  EC = fs::remove(path, true);
+  if (EC && !IgnoreErrors)
+    return EC;
+  return std::error_code();
+}
+
+std::error_code real_path(const Twine &path, SmallVectorImpl<char> &dest,
+                          bool expand_tilde) {
+  dest.clear();
+  if (path.isTriviallyEmpty())
+    return std::error_code();
+
+  if (expand_tilde) {
+    SmallString<128> Storage;
+    path.toVector(Storage);
+    expandTildeExpr(Storage);
+    return real_path(Storage, dest, false);
+  }
+
+  int fd;
+  std::error_code EC = openFileForRead(path, fd, &dest);
+
+  if (EC)
+    return EC;
+  ::close(fd);
+  return std::error_code();
+}
+
 } // end namespace fs
 
 namespace path {
@@ -803,7 +922,6 @@ bool home_directory(SmallVectorImpl<char> &result) {
     result.append(RequestedDir, RequestedDir + strlen(RequestedDir));
     return true;
   }
-
   return false;
 }
 

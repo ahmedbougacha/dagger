@@ -106,7 +106,6 @@ static std::list<claimed_file> Modules;
 static DenseMap<int, void *> FDToLeaderHandle;
 static StringMap<ResolutionInfo> ResInfo;
 static std::vector<std::string> Cleanup;
-static llvm::TargetOptions TargetOpts;
 
 namespace options {
   enum OutputType {
@@ -832,11 +831,15 @@ static ld_plugin_status allSymbolsReadHook() {
         llvm::make_unique<llvm::raw_fd_ostream>(FD, true));
   };
 
-  auto AddFile = [&](size_t Task, StringRef Path) { Filenames[Task] = Path; };
+  auto AddBuffer = [&](size_t Task, std::unique_ptr<MemoryBuffer> MB) {
+    // Note that this requires that the memory buffers provided to AddBuffer are
+    // backed by a file.
+    Filenames[Task] = MB->getBufferIdentifier();
+  };
 
   NativeObjectCache Cache;
   if (!options::cache_dir.empty())
-    Cache = localCache(options::cache_dir, AddFile);
+    Cache = check(localCache(options::cache_dir, AddBuffer));
 
   check(Lto->run(AddStream, Cache));
 

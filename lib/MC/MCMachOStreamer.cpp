@@ -92,35 +92,12 @@ public:
   void EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                         unsigned ByteAlignment) override;
 
-  void BeginCOFFSymbolDef(const MCSymbol *Symbol) override {
-    llvm_unreachable("macho doesn't support this directive");
-  }
-
-  void EmitCOFFSymbolStorageClass(int StorageClass) override {
-    llvm_unreachable("macho doesn't support this directive");
-  }
-
-  void EmitCOFFSymbolType(int Type) override {
-    llvm_unreachable("macho doesn't support this directive");
-  }
-
-  void EndCOFFSymbolDef() override {
-    llvm_unreachable("macho doesn't support this directive");
-  }
-
   void EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                              unsigned ByteAlignment) override;
   void EmitZerofill(MCSection *Section, MCSymbol *Symbol = nullptr,
                     uint64_t Size = 0, unsigned ByteAlignment = 0) override;
   void EmitTBSSSymbol(MCSection *Section, MCSymbol *Symbol, uint64_t Size,
                       unsigned ByteAlignment = 0) override;
-
-  void EmitFileDirective(StringRef Filename) override {
-    // FIXME: Just ignore the .file; it isn't important enough to fail the
-    // entire assembly.
-
-    // report_fatal_error("unsupported directive: '.file'");
-  }
 
   void EmitIdent(StringRef IdentString) override {
     llvm_unreachable("macho doesn't support this directive");
@@ -165,7 +142,7 @@ static bool canGoAfterDWARF(const MCSectionMachO &MSec) {
 void MCMachOStreamer::ChangeSection(MCSection *Section,
                                     const MCExpr *Subsection) {
   // Change the section normally.
-  bool Created = MCObjectStreamer::changeSectionImpl(Section, Subsection);
+  bool Created = changeSectionImpl(Section, Subsection);
   const MCSectionMachO &MSec = *cast<MCSectionMachO>(Section);
   StringRef SegName = MSec.getSegmentName();
   if (SegName == "__DWARF")

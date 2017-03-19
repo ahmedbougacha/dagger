@@ -50,7 +50,9 @@ public:
   virtual void EmitRuntimeMetadata(const FeatureBitset &Features,
                                    const Module &M) = 0;
 
-  virtual void EmitRuntimeMetadata(StringRef Metadata) = 0;
+  /// \returns False on success, true on failure.
+  virtual bool EmitRuntimeMetadata(const FeatureBitset &Features,
+                                   StringRef Metadata) = 0;
 };
 
 class AMDGPUTargetAsmStreamer : public AMDGPUTargetStreamer {
@@ -75,13 +77,16 @@ public:
   void EmitRuntimeMetadata(const FeatureBitset &Features,
                            const Module &M) override;
 
-  void EmitRuntimeMetadata(StringRef Metadata) override;
+  /// \returns False on success, true on failure.
+  bool EmitRuntimeMetadata(const FeatureBitset &Features,
+                           StringRef Metadata) override;
 };
 
 class AMDGPUTargetELFStreamer : public AMDGPUTargetStreamer {
   MCStreamer &Streamer;
 
-  void EmitAMDGPUNote(const MCExpr *DescSize, AMDGPU::PT_NOTE::NoteType Type,
+  void EmitAMDGPUNote(const MCExpr *DescSize,
+                      AMDGPU::ElfNote::NoteType Type,
                       function_ref<void(MCELFStreamer &)> EmitDesc);
 
 public:
@@ -107,7 +112,9 @@ public:
   void EmitRuntimeMetadata(const FeatureBitset &Features,
                            const Module &M) override;
 
-  void EmitRuntimeMetadata(StringRef Metadata) override;
+  /// \returns False on success, true on failure.
+  bool EmitRuntimeMetadata(const FeatureBitset &Features,
+                           StringRef Metadata) override;
 };
 
 }

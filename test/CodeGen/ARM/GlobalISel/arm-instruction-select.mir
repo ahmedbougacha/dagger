@@ -18,6 +18,9 @@
 
   define void @test_stores() #0 { ret void }
 
+  define void @test_gep() { ret void }
+  define void @test_constants() { ret void }
+
   define void @test_soft_fp_double() #0 { ret void }
 
   attributes #0 = { "target-features"="+vfp2,-neonfp" }
@@ -323,13 +326,19 @@ body:             |
     ; CHECK: [[FI32VREG:%[0-9]+]] = ADDri %fixed-stack.[[FI32]], 0, 14, _, _
 
     %1(s32) = G_LOAD %0(p0) :: (load 4)
-    ; CHECK: {{%[0-9]+}} = LDRi12 [[FI32VREG]], 0, 14, _
+    ; CHECK: [[LD32VREG:%[0-9]+]] = LDRi12 [[FI32VREG]], 0, 14, _
+
+    %r0 = COPY %1
+    ; CHECK: %r0 = COPY [[LD32VREG]]
 
     %2(p0) = G_FRAME_INDEX %fixed-stack.0
     ; CHECK: [[FI1VREG:%[0-9]+]] = ADDri %fixed-stack.[[FI1]], 0, 14, _, _
 
     %3(s1) = G_LOAD %2(p0) :: (load 1)
-    ; CHECK: {{%[0-9]+}} = LDRBi12 [[FI1VREG]], 0, 14, _
+    ; CHECK: [[LD1VREG:%[0-9]+]] = LDRBi12 [[FI1VREG]], 0, 14, _
+
+    %r0 = COPY %3
+    ; CHECK: %r0 = COPY [[LD1VREG]]
 
     BX_RET 14, _
     ; CHECK: BX_RET 14, _
@@ -437,6 +446,51 @@ body:             |
     BX_RET 14, _
 ...
 ---
+name:            test_gep
+# CHECK-LABEL: name: test_gep
+legalized:       true
+regBankSelected: true
+selected:        false
+# CHECK: selected: true
+registers:
+  - { id: 0, class: gprb }
+  - { id: 1, class: gprb }
+  - { id: 2, class: gprb }
+# CHECK: id: [[PTR:[0-9]+]], class: gpr
+# CHECK: id: [[OFF:[0-9]+]], class: gpr
+# CHECK: id: [[GEP:[0-9]+]], class: gpr
+body:             |
+  bb.0:
+    liveins: %r0, %r1
+
+    %0(p0) = COPY %r0
+    %1(s32) = COPY %r1
+
+    %2(p0) = G_GEP %0, %1(s32)
+    ; CHECK: %[[GEP]] = ADDrr %[[PTR]], %[[OFF]], 14, _, _
+
+    %r0 = COPY %2(p0)
+    BX_RET 14, _, implicit %r0
+...
+---
+name:            test_constants
+# CHECK-LABEL: name: test_constants
+legalized:       true
+regBankSelected: true
+selected:        false
+# CHECK: selected: true
+registers:
+  - { id: 0, class: gprb }
+# CHECK: id: [[C:[0-9]+]], class: gpr
+body:             |
+  bb.0:
+    %0(s32) = G_CONSTANT 42
+    ; CHECK: %[[C]] = MOVi 42, 14, _, _
+
+    %r0 = COPY %0(s32)
+    BX_RET 14, _, implicit %r0
+...
+---
 name:            test_soft_fp_double
 # CHECK-LABEL: name: test_soft_fp_double
 legalized:       true
@@ -467,8 +521,10 @@ body:             |
     %2(s64) = G_SEQUENCE %0(s32), 0, %1(s32), 1
     ; CHECK: %[[DREG]] = VMOVDRR [[IN1]], [[IN2]]
 
-    %3(s32), %4(s32) = G_EXTRACT %2(s64), 0, 32
-    ; CHECK: [[OUT1:%[0-9]+]], [[OUT2:%[0-9]+]] = VMOVRRD %[[DREG]]
+    %3(s32) = G_EXTRACT %2(s64), 0
+    %4(s32) = G_EXTRACT %2(s64), 32
+    ; CHECK: [[OUT1:%[0-9]+]] = VGETLNi32 %[[DREG]], 0
+    ; CHECK: [[OUT2:%[0-9]+]] = VGETLNi32 %[[DREG]], 1
 
     %r0 = COPY %3
     ; CHECK: %r0 = COPY [[OUT1]]

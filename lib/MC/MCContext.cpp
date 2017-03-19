@@ -56,8 +56,9 @@ AsSecureLogFileName("as-secure-log-file-name",
 MCContext::MCContext(const MCAsmInfo *mai, const MCRegisterInfo *mri,
                      const MCObjectFileInfo *mofi, const SourceMgr *mgr,
                      bool DoAutoReset)
-    : SrcMgr(mgr), MAI(mai), MRI(mri), MOFI(mofi), Symbols(Allocator),
-      UsedNames(Allocator), CurrentDwarfLoc(0, 0, 0, DWARF2_FLAG_IS_STMT, 0, 0),
+    : SrcMgr(mgr), InlineSrcMgr(nullptr), MAI(mai), MRI(mri), MOFI(mofi),
+      Symbols(Allocator), UsedNames(Allocator),
+      CurrentDwarfLoc(0, 0, 0, DWARF2_FLAG_IS_STMT, 0, 0),
       AutoReset(DoAutoReset) {
   SecureLogFile = AsSecureLogFileName;
 
@@ -316,9 +317,14 @@ MCSectionELF *MCContext::createELFSectionImpl(StringRef Section, unsigned Type,
                                               unsigned EntrySize,
                                               const MCSymbolELF *Group,
                                               unsigned UniqueID,
-                                              const MCSectionELF *Associated) {
+                                              const MCSymbolELF *Associated) {
   MCSymbolELF *R;
   MCSymbol *&Sym = Symbols[Section];
+  // A section symbol can not redefine regular symbols. There may be multiple
+  // sections with the same name, in which case the first such section wins.
+  if (Sym && Sym->isDefined() &&
+      (!Sym->isInSection() || Sym->getSection().getBeginSymbol() != Sym))
+    reportError(SMLoc(), "invalid symbol redefinition");
   if (Sym && Sym->isUndefined()) {
     R = cast<MCSymbolELF>(Sym);
   } else {
@@ -329,7 +335,6 @@ MCSectionELF *MCContext::createELFSectionImpl(StringRef Section, unsigned Type,
   }
   R->setBinding(ELF::STB_LOCAL);
   R->setType(ELF::STT_SECTION);
-  R->setRedefinable(true);
 
   auto *Ret = new (ELFAllocator.Allocate()) MCSectionELF(
       Section, Type, Flags, K, EntrySize, Group, UniqueID, R, Associated);
@@ -345,15 +350,15 @@ MCSectionELF *MCContext::createELFSectionImpl(StringRef Section, unsigned Type,
 MCSectionELF *MCContext::createELFRelSection(const Twine &Name, unsigned Type,
                                              unsigned Flags, unsigned EntrySize,
                                              const MCSymbolELF *Group,
-                                             const MCSectionELF *Associated) {
+                                             const MCSectionELF *RelInfoSection) {
   StringMap<bool>::iterator I;
   bool Inserted;
   std::tie(I, Inserted) =
       RelSecNames.insert(std::make_pair(Name.str(), true));
 
-  return createELFSectionImpl(I->getKey(), Type, Flags,
-                              SectionKind::getReadOnly(), EntrySize, Group,
-                              true, Associated);
+  return createELFSectionImpl(
+      I->getKey(), Type, Flags, SectionKind::getReadOnly(), EntrySize, Group,
+      true, cast<MCSymbolELF>(RelInfoSection->getBeginSymbol()));
 }
 
 MCSectionELF *MCContext::getELFNamedSection(const Twine &Prefix,
@@ -366,7 +371,7 @@ MCSectionELF *MCContext::getELFNamedSection(const Twine &Prefix,
 MCSectionELF *MCContext::getELFSection(const Twine &Section, unsigned Type,
                                        unsigned Flags, unsigned EntrySize,
                                        const Twine &Group, unsigned UniqueID,
-                                       const MCSectionELF *Associated) {
+                                       const MCSymbolELF *Associated) {
   MCSymbolELF *GroupSym = nullptr;
   if (!Group.isTriviallyEmpty() && !Group.str().empty())
     GroupSym = cast<MCSymbolELF>(getOrCreateSymbol(Group));
@@ -379,7 +384,7 @@ MCSectionELF *MCContext::getELFSection(const Twine &Section, unsigned Type,
                                        unsigned Flags, unsigned EntrySize,
                                        const MCSymbolELF *GroupSym,
                                        unsigned UniqueID,
-                                       const MCSectionELF *Associated) {
+                                       const MCSymbolELF *Associated) {
   StringRef Group = "";
   if (GroupSym)
     Group = GroupSym->getName();

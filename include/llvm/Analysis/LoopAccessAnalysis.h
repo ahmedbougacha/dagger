@@ -93,7 +93,7 @@ struct VectorizerParams {
 class MemoryDepChecker {
 public:
   typedef PointerIntPair<Value *, 1, bool> MemAccessInfo;
-  typedef SmallPtrSet<MemAccessInfo, 8> MemAccessInfoSet;
+  typedef SmallVector<MemAccessInfo, 8> MemAccessInfoList;
   /// \brief Set of potential dependent memory accesses.
   typedef EquivalenceClasses<MemAccessInfo> DepCandidates;
 
@@ -188,7 +188,7 @@ public:
   /// \brief Check whether the dependencies between the accesses are safe.
   ///
   /// Only checks sets with elements in \p CheckDeps.
-  bool areDepsSafe(DepCandidates &AccessSets, MemAccessInfoSet &CheckDeps,
+  bool areDepsSafe(DepCandidates &AccessSets, MemAccessInfoList &CheckDeps,
                    const ValueToValueMap &Strides);
 
   /// \brief No memory dependence was encountered that would inhibit
@@ -656,16 +656,6 @@ const SCEV *replaceSymbolicStrideSCEV(PredicatedScalarEvolution &PSE,
 int64_t getPtrStride(PredicatedScalarEvolution &PSE, Value *Ptr, const Loop *Lp,
                      const ValueToValueMap &StridesMap = ValueToValueMap(),
                      bool Assume = false, bool ShouldCheckWrap = true);
-
-/// \brief Try to sort an array of loads / stores.
-///
-/// An array of loads / stores can only be sorted if all pointer operands
-/// refer to the same object, and the differences between these pointers 
-/// are known to be constant. If that is the case, this returns true, and the
-/// sorted array is returned in \p Sorted. Otherwise, this returns false, and
-/// \p Sorted is invalid.
-bool sortMemAccesses(ArrayRef<Value *> VL, const DataLayout &DL,
-                     ScalarEvolution &SE, SmallVectorImpl<Value *> &Sorted);
 
 /// \brief Returns true if the memory operations \p A and \p B are consecutive.
 /// This is a simple API that does not depend on the analysis pass. 

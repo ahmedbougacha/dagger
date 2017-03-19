@@ -173,34 +173,29 @@ let isTerminator = 1 in {
 
 def SI_IF: CFPseudoInstSI <
   (outs SReg_64:$dst), (ins SReg_64:$vcc, brtarget:$target),
-  [(set i64:$dst, (int_amdgcn_if i1:$vcc, bb:$target))], 1, 1> {
+  [(set i64:$dst, (AMDGPUif i1:$vcc, bb:$target))], 1, 1> {
   let Constraints = "";
   let Size = 12;
-  let mayLoad = 1;
-  let mayStore = 1;
   let hasSideEffects = 1;
 }
 
 def SI_ELSE : CFPseudoInstSI <
-  (outs SReg_64:$dst), (ins SReg_64:$src, brtarget:$target, i1imm:$execfix), [], 1, 1> {
+  (outs SReg_64:$dst),
+  (ins SReg_64:$src, brtarget:$target, i1imm:$execfix), [], 1, 1> {
   let Constraints = "$src = $dst";
   let Size = 12;
-  let mayStore = 1;
-  let mayLoad = 1;
   let hasSideEffects = 1;
 }
 
 def SI_LOOP : CFPseudoInstSI <
   (outs), (ins SReg_64:$saved, brtarget:$target),
-  [(int_amdgcn_loop i64:$saved, bb:$target)], 1, 1> {
+  [(AMDGPUloop i64:$saved, bb:$target)], 1, 1> {
   let Size = 8;
-  let isBranch = 1;
+  let isBranch = 0;
   let hasSideEffects = 1;
-  let mayLoad = 1;
-  let mayStore = 1;
 }
 
-} // End isBranch = 1, isTerminator = 1
+} // End isTerminator = 1
 
 def SI_END_CF : CFPseudoInstSI <
   (outs), (ins SReg_64:$saved),
@@ -208,9 +203,9 @@ def SI_END_CF : CFPseudoInstSI <
   let Size = 4;
   let isAsCheapAsAMove = 1;
   let isReMaterializable = 1;
-  let mayLoad = 1;
-  let mayStore = 1;
   let hasSideEffects = 1;
+  let mayLoad = 1; // FIXME: Should not need memory flags
+  let mayStore = 1;
 }
 
 def SI_BREAK : CFPseudoInstSI <
@@ -400,7 +395,7 @@ def : Pat<
 >;
 
 def : Pat<
-  (int_amdgcn_else i64:$src, bb:$target),
+  (AMDGPUelse i64:$src, bb:$target),
   (SI_ELSE $src, $target, 0)
 >;
 
@@ -467,7 +462,7 @@ def : Pat <
 
 // fp_to_fp16 patterns
 def : Pat <
-  (i32 (fp_to_f16 (f32 (VOP3Mods0 f32:$src0, i32:$src0_modifiers, i1:$clamp, i32:$omod)))),
+  (i32 (AMDGPUfp_to_f16 (f32 (VOP3Mods0 f32:$src0, i32:$src0_modifiers, i1:$clamp, i32:$omod)))),
   (V_CVT_F16_F32_e64 $src0_modifiers, f32:$src0, $clamp, $omod)
 >;
 
@@ -507,6 +502,16 @@ multiclass FMADPat <ValueType vt, Instruction inst> {
 
 defm : FMADPat <f16, V_MAC_F16_e64>;
 defm : FMADPat <f32, V_MAC_F32_e64>;
+
+class FMADModsPat<Instruction inst, SDPatternOperator mad_opr> : Pat<
+  (f32 (mad_opr (VOP3Mods f32:$src0, i32:$src0_mod),
+  (VOP3Mods f32:$src1, i32:$src1_mod),
+  (VOP3Mods f32:$src2, i32:$src2_mod))),
+  (inst $src0_mod, $src0, $src1_mod, $src1,
+  $src2_mod, $src2, DSTCLAMP.NONE, DSTOMOD.NONE)
+>;
+
+def : FMADModsPat<V_MAD_F32, AMDGPUfmad_ftz>;
 
 multiclass SelectPat <ValueType vt, Instruction inst> {
   def : Pat <
@@ -606,6 +611,16 @@ def : BitConvert <i32, f32, VGPR_32>;
 def : BitConvert <f32, i32, VGPR_32>;
 def : BitConvert <i32, f32, SReg_32>;
 def : BitConvert <f32, i32, SReg_32>;
+def : BitConvert <v2i16, i32, SReg_32>;
+def : BitConvert <i32, v2i16, SReg_32>;
+def : BitConvert <v2f16, i32, SReg_32>;
+def : BitConvert <i32, v2f16, SReg_32>;
+def : BitConvert <v2i16, v2f16, SReg_32>;
+def : BitConvert <v2f16, v2i16, SReg_32>;
+def : BitConvert <v2f16, f32, SReg_32>;
+def : BitConvert <f32, v2f16, SReg_32>;
+def : BitConvert <v2i16, f32, SReg_32>;
+def : BitConvert <f32, v2i16, SReg_32>;
 
 // 64-bit bitcast
 def : BitConvert <i64, f64, VReg_64>;
@@ -757,6 +772,25 @@ def : Pat <
 def : Pat <
   (fneg (fabs f16:$src)),
   (S_OR_B32 $src, (S_MOV_B32 (i32 0x00008000))) // Set sign bit
+>;
+
+def : Pat <
+  (fneg v2f16:$src),
+  (V_XOR_B32_e64 (S_MOV_B32 (i32 0x80008000)), $src)
+>;
+
+def : Pat <
+  (fabs v2f16:$src),
+  (V_AND_B32_e64 (S_MOV_B32 (i32 0x7fff7fff)), $src)
+>;
+
+// This is really (fneg (fabs v2f16:$src))
+//
+// fabs is not reported as free because there is modifier for it in
+// VOP3P instructions, so it is turned into the bit op.
+def : Pat <
+  (fneg (v2f16 (bitconvert (and_oneuse i32:$src, 0x7fff7fff)))),
+  (S_OR_B32 (S_MOV_B32 (i32 0x80008000)), $src) // Set sign bit
 >;
 
 /********** ================== **********/
@@ -1091,6 +1125,12 @@ def : Pat<
   (V_MUL_F64 0, CONST.FP64_ONE, $src_mods, $src, 0, 0)
 >;
 
+def : Pat<
+  (fcanonicalize (v2f16 (VOP3PMods v2f16:$src, i32:$src_mods))),
+  (V_PK_MUL_F16 SRCMODS.OP_SEL_1, (i32 CONST.V2FP16_ONE), $src_mods, $src, DSTCLAMP.NONE)
+>;
+
+
 // Allow integer inputs
 class ExpPattern<SDPatternOperator node, ValueType vt, Instruction Inst> : Pat<
   (node (i8 timm:$tgt), (i8 timm:$en), vt:$src0, vt:$src1, vt:$src2, vt:$src3, (i1 timm:$compr), (i1 timm:$vm)),
@@ -1099,6 +1139,40 @@ class ExpPattern<SDPatternOperator node, ValueType vt, Instruction Inst> : Pat<
 
 def : ExpPattern<AMDGPUexport, i32, EXP>;
 def : ExpPattern<AMDGPUexport_done, i32, EXP_DONE>;
+
+def : Pat <
+  (v2i16 (build_vector i16:$src0, i16:$src1)),
+  (v2i16 (S_PACK_LL_B32_B16 $src0, $src1))
+>;
+
+// With multiple uses of the shift, this will duplicate the shift and
+// increase register pressure.
+def : Pat <
+  (v2i16 (build_vector i16:$src0, (i16 (trunc (srl_oneuse i32:$src1, (i32 16)))))),
+  (v2i16 (S_PACK_LH_B32_B16 i16:$src0, i32:$src1))
+>;
+
+def : Pat <
+  (v2i16 (build_vector (i16 (trunc (srl_oneuse i32:$src0, (i32 16)))),
+                       (i16 (trunc (srl_oneuse i32:$src1, (i32 16)))))),
+  (v2i16 (S_PACK_HH_B32_B16 $src0, $src1))
+>;
+
+// TODO: Should source modifiers be matched to v_pack_b32_f16?
+def : Pat <
+  (v2f16 (build_vector f16:$src0, f16:$src1)),
+  (v2f16 (S_PACK_LL_B32_B16 $src0, $src1))
+>;
+
+// def : Pat <
+//   (v2f16 (scalar_to_vector f16:$src0)),
+//   (COPY $src0)
+// >;
+
+// def : Pat <
+//   (v2i16 (scalar_to_vector i16:$src0)),
+//   (COPY $src0)
+// >;
 
 //===----------------------------------------------------------------------===//
 // Fract Patterns
@@ -1137,6 +1211,14 @@ def : Pat <
 // Miscellaneous Optimization Patterns
 //============================================================================//
 
+// Undo sub x, c -> add x, -c canonicalization since c is more likely
+// an inline immediate than -c.
+// TODO: Also do for 64-bit.
+def : Pat<
+  (add i32:$src0, (i32 NegSubInlineConst32:$src1)),
+  (S_SUB_I32 $src0, NegSubInlineConst32:$src1)
+>;
+
 def : SHA256MaPattern <V_BFI_B32, V_XOR_B32_e64>;
 
 def : IntMed3Pat<V_MED3_I32, smax, smax_oneuse, smin_oneuse>;
@@ -1156,14 +1238,11 @@ class FPMed3Pat<ValueType vt,
 
 def : FPMed3Pat<f32, V_MED3_F32>;
 
-
-// Undo sub x, c -> add x, -c canonicalization since c is more likely
-// an inline immediate than -c.
-// TODO: Also do for 64-bit.
-def : Pat<
-  (add i32:$src0, (i32 NegSubInlineConst32:$src1)),
-  (S_SUB_I32 $src0, NegSubInlineConst32:$src1)
->;
+let Predicates = [isGFX9] in {
+def : FPMed3Pat<f16, V_MED3_F16>;
+def : IntMed3Pat<V_MED3_I16, smax, smax_oneuse, smin_oneuse, i16>;
+def : IntMed3Pat<V_MED3_U16, umax, umax_oneuse, umin_oneuse, i16>;
+} // End Predicates = [isGFX9]
 
 //============================================================================//
 // Assembler aliases

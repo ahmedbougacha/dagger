@@ -478,13 +478,12 @@ define <4 x i8> @wide_shuf(<4 x i32> %x) {
   ret <4 x i8> %trunc
 }
 
-; FIXME:
 ; trunc (shuffle X, undef, SplatMask) --> shuffle (trunc X), undef, SplatMask
 
 define <4 x i8> @wide_splat1(<4 x i32> %x) {
 ; CHECK-LABEL: @wide_splat1(
-; CHECK-NEXT:    [[SHUF:%.*]] = shufflevector <4 x i32> %x, <4 x i32> undef, <4 x i32> <i32 2, i32 2, i32 2, i32 2>
-; CHECK-NEXT:    [[TRUNC:%.*]] = trunc <4 x i32> [[SHUF]] to <4 x i8>
+; CHECK-NEXT:    [[TMP1:%.*]] = trunc <4 x i32> %x to <4 x i8>
+; CHECK-NEXT:    [[TRUNC:%.*]] = shufflevector <4 x i8> [[TMP1]], <4 x i8> undef, <4 x i32> <i32 2, i32 2, i32 2, i32 2>
 ; CHECK-NEXT:    ret <4 x i8> [[TRUNC]]
 ;
   %shuf = shufflevector <4 x i32> %x, <4 x i32> undef, <4 x i32> <i32 2, i32 2, i32 2, i32 2>
@@ -492,14 +491,13 @@ define <4 x i8> @wide_splat1(<4 x i32> %x) {
   ret <4 x i8> %trunc
 }
 
-; FIXME:
 ; Test weird types.
 ; trunc (shuffle X, undef, SplatMask) --> shuffle (trunc X), undef, SplatMask
 
 define <3 x i31> @wide_splat2(<3 x i33> %x) {
 ; CHECK-LABEL: @wide_splat2(
-; CHECK-NEXT:    [[SHUF:%.*]] = shufflevector <3 x i33> %x, <3 x i33> undef, <3 x i32> <i32 1, i32 1, i32 1>
-; CHECK-NEXT:    [[TRUNC:%.*]] = trunc <3 x i33> [[SHUF]] to <3 x i31>
+; CHECK-NEXT:    [[TMP1:%.*]] = trunc <3 x i33> %x to <3 x i31>
+; CHECK-NEXT:    [[TRUNC:%.*]] = shufflevector <3 x i31> [[TMP1]], <3 x i31> undef, <3 x i32> <i32 1, i32 1, i32 1>
 ; CHECK-NEXT:    ret <3 x i31> [[TRUNC]]
 ;
   %shuf = shufflevector <3 x i33> %x, <3 x i33> undef, <3 x i32> <i32 1, i32 1, i32 1>
@@ -520,5 +518,18 @@ define <3 x i31> @wide_splat3(<3 x i33> %x) {
   %shuf = shufflevector <3 x i33> %x, <3 x i33> undef, <3 x i32> <i32 undef, i32 1, i32 1>
   %trunc = trunc <3 x i33> %shuf to <3 x i31>
   ret <3 x i31> %trunc
+}
+
+; TODO: The shuffle extends the length of the input vector. Should we shrink this?
+
+define <8 x i8> @wide_lengthening_splat(<4 x i16> %v) {
+; CHECK-LABEL: @wide_lengthening_splat(
+; CHECK-NEXT:    [[SHUF:%.*]] = shufflevector <4 x i16> %v, <4 x i16> undef, <8 x i32> zeroinitializer
+; CHECK-NEXT:    [[TR:%.*]] = trunc <8 x i16> [[SHUF]] to <8 x i8>
+; CHECK-NEXT:    ret <8 x i8> [[TR]]
+;
+  %shuf = shufflevector <4 x i16> %v, <4 x i16> %v, <8 x i32> zeroinitializer
+  %tr = trunc <8 x i16> %shuf to <8 x i8>
+  ret <8 x i8> %tr
 }
 

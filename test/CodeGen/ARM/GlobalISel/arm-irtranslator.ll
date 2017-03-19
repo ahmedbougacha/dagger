@@ -258,8 +258,10 @@ define arm_aapcscc double @test_double_aapcscc(double %p0, double %p1, double %p
 ; CHECK: [[FIP5:%[0-9]+]](p0) = G_FRAME_INDEX %fixed-stack.[[P5]]
 ; CHECK: [[VREGP5:%[0-9]+]](s64) = G_LOAD [[FIP5]](p0)
 ; CHECK: [[VREGV:%[0-9]+]](s64) = G_FADD [[VREGP1]], [[VREGP5]]
-; LITTLE: [[VREGVLO:%[0-9]+]](s32), [[VREGVHI:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0, 32
-; BIG: [[VREGVHI:%[0-9]+]](s32), [[VREGVLO:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0, 32
+; LITTLE: [[VREGVLO:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0
+; LITTLE: [[VREGVHI:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 32
+; BIG: [[VREGVHI:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0
+; BIG: [[VREGVLO:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 32
 ; CHECK-DAG: %r0 = COPY [[VREGVLO]]
 ; CHECK-DAG: %r1 = COPY [[VREGVHI]]
 ; CHECK: BX_RET 14, _, implicit %r0, implicit %r1
@@ -303,8 +305,10 @@ define arm_aapcscc double @test_double_gap_aapcscc(float %filler, double %p0,
 ; CHECK: [[FIP1:%[0-9]+]](p0) = G_FRAME_INDEX %fixed-stack.[[P1]]
 ; CHECK: [[VREGP1:%[0-9]+]](s64) = G_LOAD [[FIP1]](p0)
 ; CHECK: [[VREGV:%[0-9]+]](s64) = G_FADD [[VREGP0]], [[VREGP1]]
-; LITTLE: [[VREGVLO:%[0-9]+]](s32), [[VREGVHI:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0, 32
-; BIG: [[VREGVHI:%[0-9]+]](s32), [[VREGVLO:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0, 32
+; LITTLE: [[VREGVLO:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0
+; LITTLE: [[VREGVHI:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 32
+; BIG: [[VREGVHI:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0
+; BIG: [[VREGVLO:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 32
 ; CHECK-DAG: %r0 = COPY [[VREGVLO]]
 ; CHECK-DAG: %r1 = COPY [[VREGVHI]]
 ; CHECK: BX_RET 14, _, implicit %r0, implicit %r1
@@ -326,8 +330,10 @@ define arm_aapcscc double @test_double_gap2_aapcscc(double %p0, float %filler,
 ; CHECK: [[FIP1:%[0-9]+]](p0) = G_FRAME_INDEX %fixed-stack.[[P1]]
 ; CHECK: [[VREGP1:%[0-9]+]](s64) = G_LOAD [[FIP1]](p0)
 ; CHECK: [[VREGV:%[0-9]+]](s64) = G_FADD [[VREGP0]], [[VREGP1]]
-; LITTLE: [[VREGVLO:%[0-9]+]](s32), [[VREGVHI:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0, 32
-; BIG: [[VREGVHI:%[0-9]+]](s32), [[VREGVLO:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0, 32
+; LITTLE: [[VREGVLO:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0
+; LITTLE: [[VREGVHI:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 32
+; BIG: [[VREGVHI:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 0
+; BIG: [[VREGVLO:%[0-9]+]](s32) = G_EXTRACT [[VREGV]](s64), 32
 ; CHECK-DAG: %r0 = COPY [[VREGVLO]]
 ; CHECK-DAG: %r1 = COPY [[VREGVHI]]
 ; CHECK: BX_RET 14, _, implicit %r0, implicit %r1
@@ -359,48 +365,103 @@ entry:
   ret void
 }
 
-declare arm_aapcscc i32* @simple_params_target(i32, i32*)
+declare arm_aapcscc i32* @simple_reg_params_target(i32, i32*)
 
-define arm_aapcscc i32* @test_call_simple_params(i32 *%a, i32 %b) {
-; CHECK-LABEL: name: test_call_simple_params
+define arm_aapcscc i32* @test_call_simple_reg_params(i32 *%a, i32 %b) {
+; CHECK-LABEL: name: test_call_simple_reg_params
 ; CHECK-DAG: [[AVREG:%[0-9]+]](p0) = COPY %r0
 ; CHECK-DAG: [[BVREG:%[0-9]+]](s32) = COPY %r1
 ; CHECK: ADJCALLSTACKDOWN 0, 14, _, implicit-def %sp, implicit %sp
 ; CHECK-DAG: %r0 = COPY [[BVREG]]
 ; CHECK-DAG: %r1 = COPY [[AVREG]]
-; CHECK: BLX @simple_params_target, csr_aapcs, implicit-def %lr, implicit %sp, implicit %r0, implicit %r1, implicit-def %r0
+; CHECK: BLX @simple_reg_params_target, csr_aapcs, implicit-def %lr, implicit %sp, implicit %r0, implicit %r1, implicit-def %r0
 ; CHECK: [[RVREG:%[0-9]+]](p0) = COPY %r0
 ; CHECK: ADJCALLSTACKUP 0, 0, 14, _, implicit-def %sp, implicit %sp
 ; CHECK: %r0 = COPY [[RVREG]]
 ; CHECK: BX_RET 14, _, implicit %r0
 entry:
-  %r = notail call arm_aapcscc i32 *@simple_params_target(i32 %b, i32 *%a)
+  %r = notail call arm_aapcscc i32 *@simple_reg_params_target(i32 %b, i32 *%a)
   ret i32 *%r
 }
 
-declare arm_aapcscc signext i16 @ext_target(i8 signext, i8 zeroext, i16 signext, i16 zeroext)
+declare arm_aapcscc i32* @simple_stack_params_target(i32, i32*, i32, i32*, i32, i32*)
 
-define arm_aapcscc signext i16 @test_call_ext_params(i8 %a, i16 %b) {
+define arm_aapcscc i32* @test_call_simple_stack_params(i32 *%a, i32 %b) {
+; CHECK-LABEL: name: test_call_simple_stack_params
+; CHECK-DAG: [[AVREG:%[0-9]+]](p0) = COPY %r0
+; CHECK-DAG: [[BVREG:%[0-9]+]](s32) = COPY %r1
+; CHECK: ADJCALLSTACKDOWN 8, 14, _, implicit-def %sp, implicit %sp
+; CHECK-DAG: %r0 = COPY [[BVREG]]
+; CHECK-DAG: %r1 = COPY [[AVREG]]
+; CHECK-DAG: %r2 = COPY [[BVREG]]
+; CHECK-DAG: %r3 = COPY [[AVREG]]
+; CHECK: [[SP1:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[OFF1:%[0-9]+]](s32) = G_CONSTANT i32 0
+; CHECK: [[FI1:%[0-9]+]](p0) = G_GEP [[SP1]], [[OFF1]](s32)
+; CHECK: G_STORE [[BVREG]](s32), [[FI1]](p0){{.*}}store 4
+; CHECK: [[SP2:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[OFF2:%[0-9]+]](s32) = G_CONSTANT i32 4
+; CHECK: [[FI2:%[0-9]+]](p0) = G_GEP [[SP2]], [[OFF2]](s32)
+; CHECK: G_STORE [[AVREG]](p0), [[FI2]](p0){{.*}}store 4
+; CHECK: BLX @simple_stack_params_target, csr_aapcs, implicit-def %lr, implicit %sp, implicit %r0, implicit %r1, implicit %r2, implicit %r3, implicit-def %r0
+; CHECK: [[RVREG:%[0-9]+]](p0) = COPY %r0
+; CHECK: ADJCALLSTACKUP 8, 0, 14, _, implicit-def %sp, implicit %sp
+; CHECK: %r0 = COPY [[RVREG]]
+; CHECK: BX_RET 14, _, implicit %r0
+entry:
+  %r = notail call arm_aapcscc i32 *@simple_stack_params_target(i32 %b, i32 *%a, i32 %b, i32 *%a, i32 %b, i32 *%a)
+  ret i32 *%r
+}
+
+declare arm_aapcscc signext i16 @ext_target(i8 signext, i8 zeroext, i16 signext, i16 zeroext, i8 signext, i8 zeroext, i16 signext, i16 zeroext, i1 zeroext)
+
+define arm_aapcscc signext i16 @test_call_ext_params(i8 %a, i16 %b, i1 %c) {
 ; CHECK-LABEL: name: test_call_ext_params
 ; CHECK-DAG: [[AVREG:%[0-9]+]](s8) = COPY %r0
 ; CHECK-DAG: [[BVREG:%[0-9]+]](s16) = COPY %r1
-; CHECK: ADJCALLSTACKDOWN 0, 14, _, implicit-def %sp, implicit %sp
-; CHECK-DAG: [[SEXTA:%[0-9]+]](s32) = G_SEXT [[AVREG]](s8)
-; CHECK-DAG: %r0 = COPY [[SEXTA]]
-; CHECK-DAG: [[ZEXTA:%[0-9]+]](s32) = G_ZEXT [[AVREG]](s8)
-; CHECK-DAG: %r1 = COPY [[ZEXTA]]
-; CHECK-DAG: [[SEXTB:%[0-9]+]](s32) = G_SEXT [[BVREG]](s16)
-; CHECK-DAG: %r2 = COPY [[SEXTB]]
-; CHECK-DAG: [[ZEXTB:%[0-9]+]](s32) = G_ZEXT [[BVREG]](s16)
-; CHECK-DAG: %r3 = COPY [[ZEXTB]]
+; CHECK-DAG: [[CVREG:%[0-9]+]](s1) = COPY %r2
+; CHECK: ADJCALLSTACKDOWN 20, 14, _, implicit-def %sp, implicit %sp
+; CHECK: [[SEXTA:%[0-9]+]](s32) = G_SEXT [[AVREG]](s8)
+; CHECK: %r0 = COPY [[SEXTA]]
+; CHECK: [[ZEXTA:%[0-9]+]](s32) = G_ZEXT [[AVREG]](s8)
+; CHECK: %r1 = COPY [[ZEXTA]]
+; CHECK: [[SEXTB:%[0-9]+]](s32) = G_SEXT [[BVREG]](s16)
+; CHECK: %r2 = COPY [[SEXTB]]
+; CHECK: [[ZEXTB:%[0-9]+]](s32) = G_ZEXT [[BVREG]](s16)
+; CHECK: %r3 = COPY [[ZEXTB]]
+; CHECK: [[SP1:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[OFF1:%[0-9]+]](s32) = G_CONSTANT i32 0
+; CHECK: [[FI1:%[0-9]+]](p0) = G_GEP [[SP1]], [[OFF1]](s32)
+; CHECK: [[SEXTA2:%[0-9]+]](s32) = G_SEXT [[AVREG]]
+; CHECK: G_STORE [[SEXTA2]](s32), [[FI1]](p0){{.*}}store 4
+; CHECK: [[SP2:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[OFF2:%[0-9]+]](s32) = G_CONSTANT i32 4
+; CHECK: [[FI2:%[0-9]+]](p0) = G_GEP [[SP2]], [[OFF2]](s32)
+; CHECK: [[ZEXTA2:%[0-9]+]](s32) = G_ZEXT [[AVREG]]
+; CHECK: G_STORE [[ZEXTA2]](s32), [[FI2]](p0){{.*}}store 4
+; CHECK: [[SP3:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[OFF3:%[0-9]+]](s32) = G_CONSTANT i32 8
+; CHECK: [[FI3:%[0-9]+]](p0) = G_GEP [[SP3]], [[OFF3]](s32)
+; CHECK: [[SEXTB2:%[0-9]+]](s32) = G_SEXT [[BVREG]]
+; CHECK: G_STORE [[SEXTB2]](s32), [[FI3]](p0){{.*}}store 4
+; CHECK: [[SP4:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[OFF4:%[0-9]+]](s32) = G_CONSTANT i32 12
+; CHECK: [[FI4:%[0-9]+]](p0) = G_GEP [[SP4]], [[OFF4]](s32)
+; CHECK: [[ZEXTB2:%[0-9]+]](s32) = G_ZEXT [[BVREG]]
+; CHECK: G_STORE [[ZEXTB2]](s32), [[FI4]](p0){{.*}}store 4
+; CHECK: [[SP5:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[OFF5:%[0-9]+]](s32) = G_CONSTANT i32 16
+; CHECK: [[FI5:%[0-9]+]](p0) = G_GEP [[SP5]], [[OFF5]](s32)
+; CHECK: [[ZEXTC:%[0-9]+]](s32) = G_ZEXT [[CVREG]]
+; CHECK: G_STORE [[ZEXTC]](s32), [[FI5]](p0){{.*}}store 4
 ; CHECK: BLX @ext_target, csr_aapcs, implicit-def %lr, implicit %sp, implicit %r0, implicit %r1, implicit %r2, implicit %r3, implicit-def %r0
 ; CHECK: [[RVREG:%[0-9]+]](s16) = COPY %r0
-; CHECK: ADJCALLSTACKUP 0, 0, 14, _, implicit-def %sp, implicit %sp
+; CHECK: ADJCALLSTACKUP 20, 0, 14, _, implicit-def %sp, implicit %sp
 ; CHECK: [[RExtVREG:%[0-9]+]](s32) = G_SEXT [[RVREG]]
 ; CHECK: %r0 = COPY [[RExtVREG]]
 ; CHECK: BX_RET 14, _, implicit %r0
 entry:
-  %r = notail call arm_aapcscc signext i16 @ext_target(i8 signext %a, i8 zeroext %a, i16 signext %b, i16 zeroext %b)
+  %r = notail call arm_aapcscc signext i16 @ext_target(i8 signext %a, i8 zeroext %a, i16 signext %b, i16 zeroext %b, i8 signext %a, i8 zeroext %a, i16 signext %b, i16 zeroext %b, i1 zeroext %c)
   ret i16 %r
 }
 
@@ -423,7 +484,7 @@ entry:
   ret double %r
 }
 
-declare arm_aapcscc double @aapcscc_fp_target(float, double)
+declare arm_aapcscc double @aapcscc_fp_target(float, double, float, double)
 
 define arm_aapcscc double @test_call_aapcs_fp_params(double %a, float %b) {
 ; CHECK-LABEL: name: test_call_aapcs_fp_params
@@ -432,26 +493,36 @@ define arm_aapcscc double @test_call_aapcs_fp_params(double %a, float %b) {
 ; LITTLE-DAG: [[AVREG:%[0-9]+]](s64) = G_SEQUENCE [[A1]](s32), 0, [[A2]](s32), 32
 ; BIG-DAG: [[AVREG:%[0-9]+]](s64) = G_SEQUENCE [[A2]](s32), 0, [[A1]](s32), 32
 ; CHECK-DAG: [[BVREG:%[0-9]+]](s32) = COPY %r2
-; CHECK: ADJCALLSTACKDOWN 0, 14, _, implicit-def %sp, implicit %sp
+; CHECK: ADJCALLSTACKDOWN 16, 14, _, implicit-def %sp, implicit %sp
 ; CHECK-DAG: %r0 = COPY [[BVREG]]
-; CHECK-DAG: [[A1:%[0-9]+]](s32), [[A2:%[0-9]+]](s32) = G_EXTRACT [[AVREG]](s64), 0, 32
+; CHECK-DAG: [[A1:%[0-9]+]](s32) = G_EXTRACT [[AVREG]](s64), 0
+; CHECK-DAG: [[A2:%[0-9]+]](s32) = G_EXTRACT [[AVREG]](s64), 32
 ; LITTLE-DAG: %r2 = COPY [[A1]]
 ; LITTLE-DAG: %r3 = COPY [[A2]]
 ; BIG-DAG: %r2 = COPY [[A2]]
 ; BIG-DAG: %r3 = COPY [[A1]]
+; CHECK: [[SP1:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[OFF1:%[0-9]+]](s32) = G_CONSTANT i32 0
+; CHECK: [[FI1:%[0-9]+]](p0) = G_GEP [[SP1]], [[OFF1]](s32)
+; CHECK: G_STORE [[BVREG]](s32), [[FI1]](p0){{.*}}store 4
+; CHECK: [[SP2:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[OFF2:%[0-9]+]](s32) = G_CONSTANT i32 8
+; CHECK: [[FI2:%[0-9]+]](p0) = G_GEP [[SP2]], [[OFF2]](s32)
+; CHECK: G_STORE [[AVREG]](s64), [[FI2]](p0){{.*}}store 8
 ; CHECK: BLX @aapcscc_fp_target, csr_aapcs, implicit-def %lr, implicit %sp, implicit %r0, implicit %r2, implicit %r3, implicit-def %r0, implicit-def %r1
 ; CHECK-DAG: [[R1:%[0-9]+]](s32) = COPY %r0
 ; CHECK-DAG: [[R2:%[0-9]+]](s32) = COPY %r1
 ; LITTLE: [[RVREG:%[0-9]+]](s64) = G_SEQUENCE [[R1]](s32), 0, [[R2]](s32), 32
 ; BIG: [[RVREG:%[0-9]+]](s64) = G_SEQUENCE [[R2]](s32), 0, [[R1]](s32), 32
-; CHECK: ADJCALLSTACKUP 0, 0, 14, _, implicit-def %sp, implicit %sp
-; CHECK: [[R1:%[0-9]+]](s32), [[R2:%[0-9]+]](s32) = G_EXTRACT [[RVREG]](s64), 0, 32
+; CHECK: ADJCALLSTACKUP 16, 0, 14, _, implicit-def %sp, implicit %sp
+; CHECK: [[R1:%[0-9]+]](s32) = G_EXTRACT [[RVREG]](s64), 0
+; CHECK: [[R2:%[0-9]+]](s32) = G_EXTRACT [[RVREG]](s64), 32
 ; LITTLE-DAG: %r0 = COPY [[R1]]
 ; LITTLE-DAG: %r1 = COPY [[R2]]
 ; BIG-DAG: %r0 = COPY [[R2]]
 ; BIG-DAG: %r1 = COPY [[R1]]
 ; CHECK: BX_RET 14, _, implicit %r0, implicit %r1
 entry:
-  %r = notail call arm_aapcscc double @aapcscc_fp_target(float %b, double %a)
+  %r = notail call arm_aapcscc double @aapcscc_fp_target(float %b, double %a, float %b, double %a)
   ret double %r
 }

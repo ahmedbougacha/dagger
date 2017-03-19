@@ -34,6 +34,9 @@ add_llvm_library(LLVMSupport
   ARMAttributeParser.cpp
   ARMWinEH.cpp
   Allocator.cpp
+  BinaryStreamError.cpp
+  BinaryStreamReader.cpp
+  BinaryStreamWriter.cpp
   BlockFrequency.cpp
   BranchProbability.cpp
   CachePruning.cpp
@@ -68,6 +71,7 @@ add_llvm_library(LLVMSupport
   LineIterator.cpp
   Locale.cpp
   LockFileManager.cpp
+  LowLevelType.cpp
   ManagedStatic.cpp
   MathExtras.cpp
   MemoryBuffer.cpp

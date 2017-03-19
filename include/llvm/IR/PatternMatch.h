@@ -157,6 +157,19 @@ inline match_combine_or<match_zero, match_neg_zero> m_AnyZero() {
   return m_CombineOr(m_Zero(), m_NegZero());
 }
 
+struct match_nan {
+  template <typename ITy> bool match(ITy *V) {
+    if (const auto *C = dyn_cast<ConstantFP>(V)) {
+      const APFloat &APF = C->getValueAPF();
+      return APF.isNaN();
+    }
+    return false;
+  }
+};
+
+/// Match an arbitrary NaN constant. This includes quiet and signalling nans.
+inline match_nan m_NaN() { return match_nan(); }
+
 struct apint_match {
   const APInt *&Res;
   apint_match(const APInt *&R) : Res(R) {}
@@ -812,6 +825,13 @@ inline CastClass_match<OpTy, Instruction::SExt> m_SExt(const OpTy &Op) {
 template <typename OpTy>
 inline CastClass_match<OpTy, Instruction::ZExt> m_ZExt(const OpTy &Op) {
   return CastClass_match<OpTy, Instruction::ZExt>(Op);
+}
+
+template <typename OpTy>
+inline match_combine_or<CastClass_match<OpTy, Instruction::ZExt>,
+                        CastClass_match<OpTy, Instruction::SExt>>
+m_ZExtOrSExt(const OpTy &Op) {
+  return m_CombineOr(m_ZExt(Op), m_SExt(Op));
 }
 
 /// \brief Matches UIToFP.

@@ -94,10 +94,7 @@ bool Legalizer::combineExtracts(MachineInstr &MI, MachineRegisterInfo &MRI,
            "unexpected physical register in G_SEQUENCE");
 
     // Finally we can replace the uses.
-    for (auto &Use : MRI.use_operands(ExtractReg)) {
-      Changed = true;
-      Use.setReg(OrigReg);
-    }
+    MRI.replaceRegWith(ExtractReg, OrigReg);
   }
 
   if (AllDefsReplaced) {
@@ -116,6 +113,36 @@ bool Legalizer::combineExtracts(MachineInstr &MI, MachineRegisterInfo &MRI,
   return Changed;
 }
 
+bool Legalizer::combineMerges(MachineInstr &MI, MachineRegisterInfo &MRI,
+                              const TargetInstrInfo &TII) {
+  if (MI.getOpcode() != TargetOpcode::G_UNMERGE_VALUES)
+    return false;
+
+  unsigned NumDefs = MI.getNumOperands() - 1;
+  unsigned SrcReg = MI.getOperand(NumDefs).getReg();
+  MachineInstr &MergeI = *MRI.def_instr_begin(SrcReg);
+  if (MergeI.getOpcode() != TargetOpcode::G_MERGE_VALUES)
+    return false;
+
+  if (MergeI.getNumOperands() - 1 != NumDefs)
+    return false;
+
+  // FIXME: is a COPY appropriate if the types mismatch? We know both registers
+  // are allocatable by now.
+  if (MRI.getType(MI.getOperand(0).getReg()) !=
+      MRI.getType(MergeI.getOperand(1).getReg()))
+    return false;
+
+  for (unsigned Idx = 0; Idx < NumDefs; ++Idx)
+    MRI.replaceRegWith(MI.getOperand(Idx).getReg(),
+                       MergeI.getOperand(Idx + 1).getReg());
+
+  MI.eraseFromParent();
+  if (MRI.use_empty(MergeI.getOperand(0).getReg()))
+    MergeI.eraseFromParent();
+  return true;
+}
+
 bool Legalizer::runOnMachineFunction(MachineFunction &MF) {
   // If the ISel pipeline failed, do not bother running that pass.
   if (MF.getProperties().hasProperty(
@@ -124,7 +151,6 @@ bool Legalizer::runOnMachineFunction(MachineFunction &MF) {
   DEBUG(dbgs() << "Legalize Machine IR for: " << MF.getName() << '\n');
   init(MF);
   const TargetPassConfig &TPC = getAnalysis<TargetPassConfig>();
-  const LegalizerInfo &LegalizerInfo = *MF.getSubtarget().getLegalizerInfo();
   MachineOptimizationRemarkEmitter MORE(MF, /*MBFI=*/nullptr);
   LegalizerHelper Helper(MF);
 
@@ -146,7 +172,7 @@ bool Legalizer::runOnMachineFunction(MachineFunction &MF) {
       if (!isPreISelGenericOpcode(MI->getOpcode()))
         continue;
 
-      auto Res = Helper.legalizeInstr(*MI, LegalizerInfo);
+      auto Res = Helper.legalizeInstr(*MI);
 
       // Error out if we couldn't legalize this instruction. We may want to fall
       // back to DAG ISel instead in the future.
@@ -169,6 +195,7 @@ bool Legalizer::runOnMachineFunction(MachineFunction &MF) {
       NextMI = std::next(MI);
 
       Changed |= combineExtracts(*MI, MRI, TII);
+      Changed |= combineMerges(*MI, MRI, TII);
     }
   }
 

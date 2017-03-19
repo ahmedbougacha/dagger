@@ -18,6 +18,7 @@
 
 #include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/MC/MCStreamer.h"
+#include "llvm/Support/Wasm.h"
 
 namespace llvm {
 
@@ -31,11 +32,13 @@ public:
   explicit WebAssemblyTargetStreamer(MCStreamer &S);
 
   /// .param
-  virtual void emitParam(ArrayRef<MVT> Types) = 0;
+  virtual void emitParam(MCSymbol *Symbol, ArrayRef<MVT> Types) = 0;
   /// .result
-  virtual void emitResult(ArrayRef<MVT> Types) = 0;
+  virtual void emitResult(MCSymbol *Symbol, ArrayRef<MVT> Types) = 0;
   /// .local
   virtual void emitLocal(ArrayRef<MVT> Types) = 0;
+  /// .globalvar
+  virtual void emitGlobal(ArrayRef<MVT> Types) = 0;
   /// .endfunc
   virtual void emitEndFunc() = 0;
   /// .functype
@@ -48,6 +51,9 @@ public:
   virtual void emitIndIdx(const MCExpr *Value) = 0;
   /// .import_global
   virtual void emitGlobalImport(StringRef name) = 0;
+
+protected:
+  void emitValueType(wasm::ValType Type);
 };
 
 /// This part is for ascii assembly output
@@ -57,9 +63,10 @@ class WebAssemblyTargetAsmStreamer final : public WebAssemblyTargetStreamer {
 public:
   WebAssemblyTargetAsmStreamer(MCStreamer &S, formatted_raw_ostream &OS);
 
-  void emitParam(ArrayRef<MVT> Types) override;
-  void emitResult(ArrayRef<MVT> Types) override;
+  void emitParam(MCSymbol *Symbol, ArrayRef<MVT> Types) override;
+  void emitResult(MCSymbol *Symbol, ArrayRef<MVT> Types) override;
   void emitLocal(ArrayRef<MVT> Types) override;
+  void emitGlobal(ArrayRef<MVT> Types) override;
   void emitEndFunc() override;
   void emitIndirectFunctionType(StringRef name,
                                 SmallVectorImpl<MVT> &Params,
@@ -73,9 +80,10 @@ class WebAssemblyTargetELFStreamer final : public WebAssemblyTargetStreamer {
 public:
   explicit WebAssemblyTargetELFStreamer(MCStreamer &S);
 
-  void emitParam(ArrayRef<MVT> Types) override;
-  void emitResult(ArrayRef<MVT> Types) override;
+  void emitParam(MCSymbol *Symbol, ArrayRef<MVT> Types) override;
+  void emitResult(MCSymbol *Symbol, ArrayRef<MVT> Types) override;
   void emitLocal(ArrayRef<MVT> Types) override;
+  void emitGlobal(ArrayRef<MVT> Types) override;
   void emitEndFunc() override;
   void emitIndirectFunctionType(StringRef name,
                                 SmallVectorImpl<MVT> &Params,
@@ -89,9 +97,10 @@ class WebAssemblyTargetWasmStreamer final : public WebAssemblyTargetStreamer {
 public:
   explicit WebAssemblyTargetWasmStreamer(MCStreamer &S);
 
-  void emitParam(ArrayRef<MVT> Types) override;
-  void emitResult(ArrayRef<MVT> Types) override;
+  void emitParam(MCSymbol *Symbol, ArrayRef<MVT> Types) override;
+  void emitResult(MCSymbol *Symbol, ArrayRef<MVT> Types) override;
   void emitLocal(ArrayRef<MVT> Types) override;
+  void emitGlobal(ArrayRef<MVT> Types) override;
   void emitEndFunc() override;
   void emitIndirectFunctionType(StringRef name,
                                 SmallVectorImpl<MVT> &Params,

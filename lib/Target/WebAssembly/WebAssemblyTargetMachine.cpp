@@ -85,6 +85,14 @@ WebAssemblyTargetMachine::WebAssemblyTargetMachine(
   // 'unreachable' instructions which is meant for that case.
   this->Options.TrapUnreachable = true;
 
+  // WebAssembly treats each function as an independent unit. Force
+  // -ffunction-sections, effectively, so that we can emit them independently.
+  if (!TT.isOSBinFormatELF()) {
+    this->Options.FunctionSections = true;
+    this->Options.DataSections = true;
+    this->Options.UniqueSectionNames = true;
+  }
+
   initAsmInfo();
 
   // Note that we don't use setRequiresStructuredCFG(true). It disables
@@ -264,13 +272,19 @@ void WebAssemblyPassConfig::addPreEmitPass() {
     addPass(createWebAssemblyRegColoring());
   }
 
+  // Eliminate multiple-entry loops. Do this before inserting explicit get_local
+  // and set_local operators because we create a new variable that we want
+  // converted into a local.
+  addPass(createWebAssemblyFixIrreducibleControlFlow());
+
   // Insert explicit get_local and set_local operators.
   addPass(createWebAssemblyExplicitLocals());
 
-  // Eliminate multiple-entry loops.
-  addPass(createWebAssemblyFixIrreducibleControlFlow());
+  // Sort the blocks of the CFG into topological order, a prerequisite for
+  // BLOCK and LOOP markers.
+  addPass(createWebAssemblyCFGSort());
 
-  // Put the CFG in structured form; insert BLOCK and LOOP markers.
+  // Insert BLOCK and LOOP markers.
   addPass(createWebAssemblyCFGStackify());
 
   // Lower br_unless into br_if.

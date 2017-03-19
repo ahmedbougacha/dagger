@@ -263,6 +263,10 @@ bool isVI(const MCSubtargetInfo &STI);
 /// \p STI otherwise return \p Reg.
 unsigned getMCReg(unsigned Reg, const MCSubtargetInfo &STI);
 
+/// \brief Convert hardware register \p Reg to a pseudo register
+LLVM_READNONE
+unsigned mc2PseudoReg(unsigned Reg);
+
 /// \brief Can this operand also contain immediate values?
 bool isSISrcOperand(const MCInstrDesc &Desc, unsigned OpNo);
 
@@ -301,6 +305,8 @@ inline unsigned getOperandSize(const MCOperandInfo &OpInfo) {
   case AMDGPU::OPERAND_REG_IMM_FP16:
   case AMDGPU::OPERAND_REG_INLINE_C_INT16:
   case AMDGPU::OPERAND_REG_INLINE_C_FP16:
+  case AMDGPU::OPERAND_REG_INLINE_C_V2INT16:
+  case AMDGPU::OPERAND_REG_INLINE_C_V2FP16:
     return 2;
 
   default:
@@ -322,6 +328,9 @@ bool isInlinableLiteral32(int32_t Literal, bool HasInv2Pi);
 
 LLVM_READNONE
 bool isInlinableLiteral16(int16_t Literal, bool HasInv2Pi);
+
+LLVM_READNONE
+bool isInlinableLiteralV216(int32_t Literal, bool HasInv2Pi);
 
 bool isUniformMMO(const MachineMemOperand *MMO);
 

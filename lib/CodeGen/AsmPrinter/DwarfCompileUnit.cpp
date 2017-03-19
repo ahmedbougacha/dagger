@@ -1,3 +1,16 @@
+//===-- llvm/CodeGen/DwarfCompileUnit.cpp - Dwarf Compile Units -----------===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file contains support for constructing a dwarf compile unit.
+//
+//===----------------------------------------------------------------------===//
+
 #include "DwarfCompileUnit.h"
 #include "DwarfExpression.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -188,7 +201,7 @@ DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(
       }
       if (Expr) {
         DwarfExpr->addFragmentOffset(Expr);
-        DwarfExpr->AddExpression(Expr);
+        DwarfExpr->addExpression(Expr);
       }
     }
   }
@@ -507,8 +520,8 @@ DIE *DwarfCompileUnit::constructVariableDIEImpl(const DbgVariable &DV,
         DIEDwarfExpression DwarfExpr(*Asm, *this, *Loc);
         // If there is an expression, emit raw unsigned bytes.
         DwarfExpr.addFragmentOffset(Expr);
-        DwarfExpr.AddUnsignedConstant(DVInsn->getOperand(0).getImm());
-        DwarfExpr.AddExpression(Expr);
+        DwarfExpr.addUnsignedConstant(DVInsn->getOperand(0).getImm());
+        DwarfExpr.addExpression(Expr);
         addBlock(*VariableDie, dwarf::DW_AT_location, DwarfExpr.finalize());
       } else
         addConstantValue(*VariableDie, DVInsn->getOperand(0), DV.getType());
@@ -532,9 +545,9 @@ DIE *DwarfCompileUnit::constructVariableDIEImpl(const DbgVariable &DV,
     const TargetFrameLowering *TFI = Asm->MF->getSubtarget().getFrameLowering();
     int Offset = TFI->getFrameIndexReference(*Asm->MF, Fragment.FI, FrameReg);
     DwarfExpr.addFragmentOffset(Fragment.Expr);
-    DwarfExpr.AddMachineRegIndirect(*Asm->MF->getSubtarget().getRegisterInfo(),
+    DwarfExpr.addMachineRegIndirect(*Asm->MF->getSubtarget().getRegisterInfo(),
                                     FrameReg, Offset);
-    DwarfExpr.AddExpression(Fragment.Expr);
+    DwarfExpr.addExpression(Fragment.Expr);
   }
   addBlock(*VariableDie, dwarf::DW_AT_location, DwarfExpr.finalize());
 
@@ -690,7 +703,10 @@ void DwarfCompileUnit::emitHeader(bool UseOffsets) {
     Asm->OutStreamer->EmitLabel(LabelBegin);
   }
 
-  DwarfUnit::emitHeader(UseOffsets);
+  dwarf::UnitType UT = Skeleton ? dwarf::DW_UT_split_compile
+                                : DD->useSplitDwarf() ? dwarf::DW_UT_skeleton
+                                                      : dwarf::DW_UT_compile;
+  DwarfUnit::emitCommonHeader(UseOffsets, UT);
 }
 
 /// addGlobalName - Add a new global name to the compile unit.
@@ -755,11 +771,11 @@ void DwarfCompileUnit::addAddress(DIE &Die, dwarf::Attribute Attribute,
 
   bool validReg;
   if (Location.isReg())
-    validReg = Expr.AddMachineReg(*Asm->MF->getSubtarget().getRegisterInfo(),
+    validReg = Expr.addMachineReg(*Asm->MF->getSubtarget().getRegisterInfo(),
                                   Location.getReg());
   else
     validReg =
-        Expr.AddMachineRegIndirect(*Asm->MF->getSubtarget().getRegisterInfo(),
+        Expr.addMachineRegIndirect(*Asm->MF->getSubtarget().getRegisterInfo(),
                                    Location.getReg(), Location.getOffset());
 
   if (!validReg)
@@ -785,13 +801,13 @@ void DwarfCompileUnit::addComplexAddress(const DbgVariable &DV, DIE &Die,
   DwarfExpr.addFragmentOffset(Expr);
   bool ValidReg =
       Location.getOffset()
-          ? DwarfExpr.AddMachineRegIndirect(TRI, Reg, Location.getOffset())
-          : DwarfExpr.AddMachineRegExpression(TRI, ExprCursor, Reg);
+          ? DwarfExpr.addMachineRegIndirect(TRI, Reg, Location.getOffset())
+          : DwarfExpr.addMachineRegExpression(TRI, ExprCursor, Reg);
 
   if (!ValidReg)
     return;
 
-  DwarfExpr.AddExpression(std::move(ExprCursor));
+  DwarfExpr.addExpression(std::move(ExprCursor));
 
   // Now attach the location information to the DIE.
   addBlock(Die, Attribute, Loc);

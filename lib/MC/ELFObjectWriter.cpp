@@ -242,6 +242,7 @@ public:
 
   void writeRelocations(const MCAssembler &Asm, const MCSectionELF &Sec);
 
+  using MCObjectWriter::isSymbolRefDifferenceFullyResolvedImpl;
   bool isSymbolRefDifferenceFullyResolvedImpl(const MCAssembler &Asm,
                                               const MCSymbol &SymA,
                                               const MCFragment &FB, bool InSet,
@@ -902,6 +903,8 @@ void ELFObjectWriter::computeSymbolTable(
 
   StrTabBuilder.finalize();
 
+  // File symbols are emitted first and handled separately from normal symbols,
+  // i.e. a non-STT_FILE symbol with the same name may appear.
   for (const std::string &Name : FileNames)
     Writer.writeSymbol(StrTabBuilder.getOffset(Name),
                        ELF::STT_FILE | ELF::STB_LOCAL, 0, 0, ELF::STV_DEFAULT,
@@ -1153,8 +1156,8 @@ void ELFObjectWriter::writeSection(const SectionIndexMapTy &SectionIndexMap,
   case ELF::SHT_RELA: {
     sh_link = SymbolTableIndex;
     assert(sh_link && ".symtab not found");
-    const MCSectionELF *InfoSection = Section.getAssociatedSection();
-    sh_info = SectionIndexMap.lookup(InfoSection);
+    const MCSection *InfoSection = Section.getAssociatedSection();
+    sh_info = SectionIndexMap.lookup(cast<MCSectionELF>(InfoSection));
     break;
   }
 
@@ -1174,8 +1177,11 @@ void ELFObjectWriter::writeSection(const SectionIndexMapTy &SectionIndexMap,
     break;
   }
 
-  if (Section.getFlags() & ELF::SHF_LINK_ORDER)
-    sh_link = SectionIndexMap.lookup(Section.getAssociatedSection());
+  if (Section.getFlags() & ELF::SHF_LINK_ORDER) {
+    const MCSymbol *Sym = Section.getAssociatedSymbol();
+    const MCSectionELF *Sec = cast<MCSectionELF>(&Sym->getSection());
+    sh_link = SectionIndexMap.lookup(Sec);
+  }
 
   WriteSecHdrEntry(StrTabBuilder.getOffset(Section.getSectionName()),
                    Section.getType(), Section.getFlags(), 0, Offset, Size,
@@ -1299,7 +1305,8 @@ void ELFObjectWriter::writeObject(MCAssembler &Asm,
     // Remember the offset into the file for this section.
     uint64_t SecStart = getStream().tell();
 
-    writeRelocations(Asm, *RelSection->getAssociatedSection());
+    writeRelocations(Asm,
+                     cast<MCSectionELF>(*RelSection->getAssociatedSection()));
 
     uint64_t SecEnd = getStream().tell();
     SectionOffsets[RelSection] = std::make_pair(SecStart, SecEnd);

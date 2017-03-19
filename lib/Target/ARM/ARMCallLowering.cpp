@@ -53,11 +53,26 @@ namespace {
 struct OutgoingValueHandler : public CallLowering::ValueHandler {
   OutgoingValueHandler(MachineIRBuilder &MIRBuilder, MachineRegisterInfo &MRI,
                        MachineInstrBuilder &MIB, CCAssignFn *AssignFn)
-      : ValueHandler(MIRBuilder, MRI, AssignFn), MIB(MIB) {}
+      : ValueHandler(MIRBuilder, MRI, AssignFn), MIB(MIB), StackSize(0) {}
 
   unsigned getStackAddress(uint64_t Size, int64_t Offset,
                            MachinePointerInfo &MPO) override {
-    llvm_unreachable("Don't know how to get a stack address yet");
+    assert((Size == 1 || Size == 2 || Size == 4 || Size == 8) &&
+           "Unsupported size");
+
+    LLT p0 = LLT::pointer(0, 32);
+    LLT s32 = LLT::scalar(32);
+    unsigned SPReg = MRI.createGenericVirtualRegister(p0);
+    MIRBuilder.buildCopy(SPReg, ARM::SP);
+
+    unsigned OffsetReg = MRI.createGenericVirtualRegister(s32);
+    MIRBuilder.buildConstant(OffsetReg, Offset);
+
+    unsigned AddrReg = MRI.createGenericVirtualRegister(p0);
+    MIRBuilder.buildGEP(AddrReg, SPReg, OffsetReg);
+
+    MPO = MachinePointerInfo::getStack(MIRBuilder.getMF(), Offset);
+    return AddrReg;
   }
 
   void assignValueToReg(unsigned ValVReg, unsigned PhysReg,
@@ -75,7 +90,14 @@ struct OutgoingValueHandler : public CallLowering::ValueHandler {
 
   void assignValueToAddress(unsigned ValVReg, unsigned Addr, uint64_t Size,
                             MachinePointerInfo &MPO, CCValAssign &VA) override {
-    llvm_unreachable("Don't know how to assign a value to an address yet");
+    assert((Size == 1 || Size == 2 || Size == 4 || Size == 8) &&
+           "Unsupported size");
+
+    unsigned ExtReg = extendRegister(ValVReg, VA);
+    auto MMO = MIRBuilder.getMF().getMachineMemOperand(
+        MPO, MachineMemOperand::MOStore, VA.getLocVT().getStoreSize(),
+        /* Alignment */ 0);
+    MIRBuilder.buildStore(ExtReg, Addr, *MMO);
   }
 
   unsigned assignCustomValue(const CallLowering::ArgInfo &Arg,
@@ -96,8 +118,8 @@ struct OutgoingValueHandler : public CallLowering::ValueHandler {
 
     unsigned NewRegs[] = {MRI.createGenericVirtualRegister(LLT::scalar(32)),
                           MRI.createGenericVirtualRegister(LLT::scalar(32))};
-
-    MIRBuilder.buildExtract(NewRegs, {0, 32}, Arg.Reg);
+    MIRBuilder.buildExtract(NewRegs[0], Arg.Reg, 0);
+    MIRBuilder.buildExtract(NewRegs[1], Arg.Reg, 32);
 
     bool IsLittle = MIRBuilder.getMF().getSubtarget<ARMSubtarget>().isLittle();
     if (!IsLittle)
@@ -109,7 +131,19 @@ struct OutgoingValueHandler : public CallLowering::ValueHandler {
     return 1;
   }
 
+  bool assignArg(unsigned ValNo, MVT ValVT, MVT LocVT,
+                 CCValAssign::LocInfo LocInfo,
+                 const CallLowering::ArgInfo &Info, CCState &State) override {
+    if (AssignFn(ValNo, ValVT, LocVT, LocInfo, Info.Flags, State))
+      return true;
+
+    StackSize =
+        std::max(StackSize, static_cast<uint64_t>(State.getNextStackOffset()));
+    return false;
+  }
+
   MachineInstrBuilder &MIB;
+  uint64_t StackSize;
 };
 } // End anonymous namespace.
 
@@ -303,8 +337,7 @@ bool ARMCallLowering::lowerFormalArguments(MachineIRBuilder &MIRBuilder,
   if (Subtarget->useSoftFloat() || !Subtarget->hasVFP2())
     return false;
 
-  auto &Args = F.getArgumentList();
-  for (auto &Arg : Args)
+  for (auto &Arg : F.args())
     if (!isSupportedType(DL, TLI, Arg.getType()))
       return false;
 
@@ -313,7 +346,7 @@ bool ARMCallLowering::lowerFormalArguments(MachineIRBuilder &MIRBuilder,
 
   SmallVector<ArgInfo, 8> ArgInfos;
   unsigned Idx = 0;
-  for (auto &Arg : Args) {
+  for (auto &Arg : F.args()) {
     ArgInfo AInfo(VRegs[Idx], Arg.getType());
     setArgFlags(AInfo, Idx + 1, DL, F);
     splitToValueTypes(AInfo, ArgInfos, DL, MF.getRegInfo());
@@ -352,9 +385,7 @@ bool ARMCallLowering::lowerCall(MachineIRBuilder &MIRBuilder,
   if (MF.getSubtarget<ARMSubtarget>().genLongCalls())
     return false;
 
-  MIRBuilder.buildInstr(ARM::ADJCALLSTACKDOWN)
-      .addImm(0)
-      .add(predOps(ARMCC::AL));
+  auto CallSeqStart = MIRBuilder.buildInstr(ARM::ADJCALLSTACKDOWN);
 
   // FIXME: This is the calling convention of the caller - we should use the
   // calling convention of the callee instead.
@@ -397,8 +428,12 @@ bool ARMCallLowering::lowerCall(MachineIRBuilder &MIRBuilder,
       return false;
   }
 
+  // We now know the size of the stack - update the ADJCALLSTACKDOWN
+  // accordingly.
+  CallSeqStart.addImm(ArgHandler.StackSize).add(predOps(ARMCC::AL));
+
   MIRBuilder.buildInstr(ARM::ADJCALLSTACKUP)
-      .addImm(0)
+      .addImm(ArgHandler.StackSize)
       .addImm(0)
       .add(predOps(ARMCC::AL));
 

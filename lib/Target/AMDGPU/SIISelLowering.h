@@ -86,6 +86,8 @@ class SITargetLowering final : public AMDGPUTargetLowering {
 
   SDValue performFPMed3ImmCombine(SelectionDAG &DAG, const SDLoc &SL,
                                   SDValue Op0, SDValue Op1) const;
+  SDValue performIntMed3ImmCombine(SelectionDAG &DAG, const SDLoc &SL,
+                                   SDValue Op0, SDValue Op1, bool Signed) const;
   SDValue performMinMaxCombine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performFMed3Combine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performCvtPkRTZCombine(SDNode *N, DAGCombinerInfo &DCI) const;
@@ -100,7 +102,7 @@ class SITargetLowering final : public AMDGPUTargetLowering {
   bool isLegalFlatAddressingMode(const AddrMode &AM) const;
   bool isLegalMUBUFAddressingMode(const AddrMode &AM) const;
 
-  bool isCFIntrinsic(const SDNode *Intr) const;
+  unsigned isCFIntrinsic(const SDNode *Intr) const;
 
   void createDebuggerPrologueStackObjects(MachineFunction &MF) const;
 
@@ -121,11 +123,15 @@ public:
 
   const SISubtarget *getSubtarget() const;
 
+  bool isShuffleMaskLegal(const SmallVectorImpl<int> &/*Mask*/,
+                          EVT /*VT*/) const override;
+
   bool getTgtMemIntrinsic(IntrinsicInfo &, const CallInst &,
                           unsigned IntrinsicID) const override;
 
-  bool isShuffleMaskLegal(const SmallVectorImpl<int> &/*Mask*/,
-                          EVT /*VT*/) const override;
+  bool getAddrModeArguments(IntrinsicInst * /*I*/,
+                            SmallVectorImpl<Value*> &/*Ops*/,
+                            Type *&/*AccessTy*/) const override;
 
   bool isLegalAddressingMode(const DataLayout &DL, const AddrMode &AM, Type *Ty,
                              unsigned AS) const override;

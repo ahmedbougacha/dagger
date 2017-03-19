@@ -8,15 +8,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/DebugInfo/PDB/Native/ModInfo.h"
-#include "llvm/DebugInfo/MSF/StreamReader.h"
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
+#include "llvm/Support/BinaryStreamReader.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MathExtras.h"
 #include <cstdint>
 
 using namespace llvm;
-using namespace llvm::msf;
 using namespace llvm::pdb;
 using namespace llvm::support;
 
@@ -26,15 +25,15 @@ ModInfo::ModInfo(const ModInfo &Info) = default;
 
 ModInfo::~ModInfo() = default;
 
-Error ModInfo::initialize(ReadableStreamRef Stream, ModInfo &Info) {
-  StreamReader Reader(Stream);
+Error ModInfo::initialize(BinaryStreamRef Stream, ModInfo &Info) {
+  BinaryStreamReader Reader(Stream);
   if (auto EC = Reader.readObject(Info.Layout))
     return EC;
 
-  if (auto EC = Reader.readZeroString(Info.ModuleName))
+  if (auto EC = Reader.readCString(Info.ModuleName))
     return EC;
 
-  if (auto EC = Reader.readZeroString(Info.ObjFileName))
+  if (auto EC = Reader.readCString(Info.ObjFileName))
     return EC;
   return Error::success();
 }

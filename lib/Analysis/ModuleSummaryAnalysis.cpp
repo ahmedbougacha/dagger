@@ -259,6 +259,11 @@ computeFunctionSummary(ModuleSummaryIndex &Index, const Module &M,
       }
     }
 
+  // Explicit add hot edges to enforce importing for designated GUIDs for
+  // sample PGO, to enable the same inlines as the profiled optimized binary.
+  for (auto &I : F.getImportGUIDs())
+    CallGraphEdges[I].updateHotness(CalleeInfo::HotnessType::Hot);
+
   bool NonRenamableLocal = isNonRenamableLocal(F);
   bool NotEligibleForImport =
       NonRenamableLocal || HasInlineAsmMaybeReferencingInternal ||
@@ -405,9 +410,8 @@ ModuleSummaryIndex llvm::buildModuleSummaryIndex(
     // be listed on the llvm.used or llvm.compiler.used global and marked as
     // referenced from there.
     ModuleSymbolTable::CollectAsmSymbols(
-        Triple(M.getTargetTriple()), M.getModuleInlineAsm(),
-        [&M, &Index, &CantBePromoted](StringRef Name,
-                                      object::BasicSymbolRef::Flags Flags) {
+        M, [&M, &Index, &CantBePromoted](StringRef Name,
+                                         object::BasicSymbolRef::Flags Flags) {
           // Symbols not marked as Weak or Global are local definitions.
           if (Flags & (object::BasicSymbolRef::SF_Weak |
                        object::BasicSymbolRef::SF_Global))

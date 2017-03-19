@@ -6325,6 +6325,7 @@ static unsigned CopyToFromAsymmetricReg(unsigned &DestReg, unsigned &SrcReg,
       return X86::KMOVWrk;
     }
     if (X86::GR8RegClass.contains(DestReg)) {
+      assert(!isHReg(DestReg) && "Cannot move between mask and h-reg");
       DestReg = getX86SubSuperRegister(DestReg, 32);
       return Subtarget.hasDQI() ? X86::KMOVBrk : X86::KMOVWrk;
     }
@@ -6348,6 +6349,7 @@ static unsigned CopyToFromAsymmetricReg(unsigned &DestReg, unsigned &SrcReg,
       return X86::KMOVWkr;
     }
     if (X86::GR8RegClass.contains(SrcReg)) {
+      assert(!isHReg(SrcReg) && "Cannot move between mask and h-reg");
       SrcReg = getX86SubSuperRegister(SrcReg, 32);
       return Subtarget.hasDQI() ? X86::KMOVBkr : X86::KMOVWkr;
     }
@@ -8043,7 +8045,7 @@ static bool hasPartialRegUpdate(unsigned Opcode) {
   return false;
 }
 
-/// Inform the ExeDepsFix pass how many idle
+/// Inform the ExecutionDepsFix pass how many idle
 /// instructions we would like before a partial register update.
 unsigned X86InstrInfo::getPartialRegUpdateClearance(
     const MachineInstr &MI, unsigned OpNum,
@@ -8196,8 +8198,8 @@ static bool hasUndefRegUpdate(unsigned Opcode) {
   return false;
 }
 
-/// Inform the ExeDepsFix pass how many idle instructions we would like before
-/// certain undef register reads.
+/// Inform the ExecutionDepsFix pass how many idle instructions we would like
+/// before certain undef register reads.
 ///
 /// This catches the VCVTSI2SD family of instructions:
 ///
@@ -10175,28 +10177,6 @@ X86InstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
   return makeArrayRef(TargetFlags);
 }
 
-bool X86InstrInfo::isTailCall(const MachineInstr &Inst) const {
-  switch (Inst.getOpcode()) {
-    case X86::TCRETURNdi:
-    case X86::TCRETURNmi:
-    case X86::TCRETURNri:
-    case X86::TCRETURNdi64:
-    case X86::TCRETURNmi64:
-    case X86::TCRETURNri64:
-    case X86::TAILJMPd:
-    case X86::TAILJMPm:
-    case X86::TAILJMPr:
-    case X86::TAILJMPd64:
-    case X86::TAILJMPm64:
-    case X86::TAILJMPr64:
-    case X86::TAILJMPm64_REX:
-    case X86::TAILJMPr64_REX:
-      return true;
-    default:
-      return false;
-  }
-}
-
 namespace {
   /// Create Global Base Reg pass. This initializes the PIC
   /// global base register for x86-32.
@@ -10383,3 +10363,124 @@ namespace {
 char LDTLSCleanup::ID = 0;
 FunctionPass*
 llvm::createCleanupLocalDynamicTLSPass() { return new LDTLSCleanup(); }
+
+unsigned X86InstrInfo::getOutliningBenefit(size_t SequenceSize,
+                                           size_t Occurrences,
+                                           bool CanBeTailCall) const {
+  unsigned NotOutlinedSize = SequenceSize * Occurrences;
+  unsigned OutlinedSize;
+
+  // Is it a tail call?
+  if (CanBeTailCall) {
+    // If yes, we don't have to include a return instruction-- it's already in
+    // our sequence. So we have one occurrence of the sequence + #Occurrences
+    // calls.
+    OutlinedSize = SequenceSize + Occurrences;
+  } else {
+    // If not, add one for the return instruction.
+    OutlinedSize = (SequenceSize + 1) + Occurrences;
+  }
+
+  // Return the number of instructions saved by outlining this sequence.
+  return NotOutlinedSize > OutlinedSize ? NotOutlinedSize - OutlinedSize : 0;
+}
+
+bool X86InstrInfo::isFunctionSafeToOutlineFrom(MachineFunction &MF) const {
+  return MF.getFunction()->hasFnAttribute(Attribute::NoRedZone);
+}
+
+X86GenInstrInfo::MachineOutlinerInstrType
+X86InstrInfo::getOutliningType(MachineInstr &MI) const {
+
+  // Don't allow debug values to impact outlining type.
+  if (MI.isDebugValue() || MI.isIndirectDebugValue())
+    return MachineOutlinerInstrType::Invisible;
+
+  // Is this a tail call? If yes, we can outline as a tail call.
+  if (isTailCall(MI))
+    return MachineOutlinerInstrType::Legal;
+
+  // Is this the terminator of a basic block?
+  if (MI.isTerminator() || MI.isReturn()) {
+
+    // Does its parent have any successors in its MachineFunction?
+    if (MI.getParent()->succ_empty())
+        return MachineOutlinerInstrType::Legal;
+
+    // It does, so we can't tail call it.
+    return MachineOutlinerInstrType::Illegal;
+  }
+
+  // Don't outline anything that modifies or reads from the stack pointer.
+  //
+  // FIXME: There are instructions which are being manually built without
+  // explicit uses/defs so we also have to check the MCInstrDesc. We should be
+  // able to remove the extra checks once those are fixed up. For example,
+  // sometimes we might get something like %RAX<def> = POP64r 1. This won't be
+  // caught by modifiesRegister or readsRegister even though the instruction
+  // really ought to be formed so that modifiesRegister/readsRegister would
+  // catch it.
+  if (MI.modifiesRegister(X86::RSP, &RI) || MI.readsRegister(X86::RSP, &RI) ||
+      MI.getDesc().hasImplicitUseOfPhysReg(X86::RSP) ||
+      MI.getDesc().hasImplicitDefOfPhysReg(X86::RSP)) 
+    return MachineOutlinerInstrType::Illegal;
+
+  // Outlined calls change the instruction pointer, so don't read from it.
+  if (MI.readsRegister(X86::RIP, &RI) ||
+      MI.getDesc().hasImplicitUseOfPhysReg(X86::RIP) ||
+      MI.getDesc().hasImplicitDefOfPhysReg(X86::RIP))
+    return MachineOutlinerInstrType::Illegal;
+
+  // Positions can't safely be outlined.
+  if (MI.isPosition())
+    return MachineOutlinerInstrType::Illegal;
+
+  // Make sure none of the operands of this instruction do anything tricky.
+  for (const MachineOperand &MOP : MI.operands())
+    if (MOP.isCPI() || MOP.isJTI() || MOP.isCFIIndex() || MOP.isFI() ||
+        MOP.isTargetIndex())
+      return MachineOutlinerInstrType::Illegal;
+
+  return MachineOutlinerInstrType::Legal;
+}
+
+void X86InstrInfo::insertOutlinerEpilogue(MachineBasicBlock &MBB,
+                                          MachineFunction &MF,
+                                          bool IsTailCall) const {
+
+  // If we're a tail call, we already have a return, so don't do anything.
+  if (IsTailCall)
+    return;
+
+  // We're a normal call, so our sequence doesn't have a return instruction.
+  // Add it in.
+  MachineInstr *retq = BuildMI(MF, DebugLoc(), get(X86::RETQ));
+  MBB.insert(MBB.end(), retq);
+}
+
+void X86InstrInfo::insertOutlinerPrologue(MachineBasicBlock &MBB,
+                                          MachineFunction &MF,
+                                          bool IsTailCall) const {
+  return;
+}
+
+MachineBasicBlock::iterator
+X86InstrInfo::insertOutlinedCall(Module &M, MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator &It,
+                                 MachineFunction &MF,
+                                 bool IsTailCall) const {
+  // Is it a tail call?
+  if (IsTailCall) {
+    // Yes, just insert a JMP.
+    It = MBB.insert(It,
+                  BuildMI(MF, DebugLoc(), get(X86::JMP_1))
+                      .addGlobalAddress(M.getNamedValue(MF.getName())));
+  } else {
+    // No, insert a call.
+    It = MBB.insert(It,
+                  BuildMI(MF, DebugLoc(), get(X86::CALL64pcrel32))
+                      .addGlobalAddress(M.getNamedValue(MF.getName())));
+  }
+
+  return It;
+}

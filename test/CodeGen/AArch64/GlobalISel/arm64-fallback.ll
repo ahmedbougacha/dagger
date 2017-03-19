@@ -73,7 +73,7 @@ define void @odd_type(i42* %addr) {
 
   ; RegBankSelect crashed when given invalid mappings, and AArch64's
   ; implementation produce valid-but-nonsense mappings for G_SEQUENCE.
-; FALLBACK-WITH-REPORT-ERR: remark: <unknown>:0:0: unable to map instruction: %vreg0<def>(s128) = G_SEQUENCE %vreg1, 0, %vreg2, 64; GPR:%vreg1,%vreg2 (in function: sequence_mapping)
+; FALLBACK-WITH-REPORT-ERR: remark: <unknown>:0:0: unable to map instruction
 ; FALLBACK-WITH-REPORT-ERR: warning: Instruction selection used fallback path for sequence_mapping
 ; FALLBACK-WITH-REPORT-OUT-LABEL: sequence_mapping:
 define void @sequence_mapping([2 x i64] %in) {
@@ -81,7 +81,7 @@ define void @sequence_mapping([2 x i64] %in) {
 }
 
   ; Legalizer was asserting when it enountered an unexpected default action.
-; FALLBACK-WITH-REPORT-ERR: remark: <unknown>:0:0: unable to legalize instruction: %vreg9<def>(s128) = G_INSERT %vreg10, %vreg0, 32; (in function: legal_default)
+; FALLBACK-WITH-REPORT-ERR: remark: <unknown>:0:0: unable to map instruction
 ; FALLBACK-WITH-REPORT-ERR: warning: Instruction selection used fallback path for legal_default
 ; FALLBACK-WITH-REPORT-LABEL: legal_default:
 define void @legal_default([8 x i8] %in) {
@@ -106,4 +106,35 @@ define i64 @atomic_ops(i64* %addr) {
   store atomic i64 0, i64* %addr unordered, align 8
   %res = load atomic i64, i64* %addr seq_cst, align 8
   ret i64 %res
+}
+
+; Make sure we don't mess up metadata arguments.
+declare void @llvm.write_register.i64(metadata, i64)
+
+; FALLBACK-WITH-REPORT-ERR: remark: <unknown>:0:0: unable to translate instruction: call: ' call void @llvm.write_register.i64(metadata !0, i64 0)' (in function: test_write_register_intrin)
+; FALLBACK-WITH-REPORT-ERR: warning: Instruction selection used fallback path for test_write_register_intrin
+; FALLBACK-WITH-REPORT-LABEL: test_write_register_intrin:
+define void @test_write_register_intrin() {
+  call void @llvm.write_register.i64(metadata !{!"sp"}, i64 0)
+  ret void
+}
+
+@_ZTIi = external global i8*
+declare i32 @__gxx_personality_v0(...)
+
+; Check that we fallback on invoke translation failures.
+; FALLBACK-WITH-REPORT-ERR: remark: <unknown>:0:0: unable to translate instruction: invoke: '  invoke void %callee(i128 0)
+; FALLBACK-WITH-REPORT-NEXT:   to label %continue unwind label %broken' (in function: invoke_weird_type)
+; FALLBACK-WITH-REPORT-ERR: warning: Instruction selection used fallback path for invoke_weird_type
+; FALLBACK-WITH-REPORT-OUT-LABEL: invoke_weird_type:
+define void @invoke_weird_type(void(i128)* %callee) personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*) {
+  invoke void %callee(i128 0)
+    to label %continue unwind label %broken
+
+broken:
+  landingpad { i8*, i32 } catch i8* bitcast(i8** @_ZTIi to i8*)
+  ret void
+
+continue:
+  ret void
 }

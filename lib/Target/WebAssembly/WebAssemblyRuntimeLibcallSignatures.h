@@ -15,9 +15,9 @@
 #ifndef LLVM_LIB_TARGET_WEBASSEMBLY_RUNTIME_LIBCALL_SIGNATURES_H
 #define LLVM_LIB_TARGET_WEBASSEMBLY_RUNTIME_LIBCALL_SIGNATURES_H
 
+#include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/RuntimeLibcalls.h"
-#include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 
 namespace llvm {
 
@@ -25,13 +25,12 @@ class WebAssemblySubtarget;
 
 extern void GetSignature(const WebAssemblySubtarget &Subtarget,
                          RTLIB::Libcall LC,
-                         SmallVectorImpl<unsigned> &Rets,
-                         SmallVectorImpl<unsigned> &Params);
+                         SmallVectorImpl<wasm::ValType> &Rets,
+                         SmallVectorImpl<wasm::ValType> &Params);
 
 extern void GetSignature(const WebAssemblySubtarget &Subtarget,
-                         const char *Name,
-                         SmallVectorImpl<unsigned> &Rets,
-                         SmallVectorImpl<unsigned> &Params);
+                         const char *Name, SmallVectorImpl<wasm::ValType> &Rets,
+                         SmallVectorImpl<wasm::ValType> &Params);
 
 } // end namespace llvm
 

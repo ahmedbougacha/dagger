@@ -7,8 +7,10 @@ add_llvm_unittest(SupportTests
   AllocatorTest.cpp
   ARMAttributeParser.cpp
   ArrayRecyclerTest.cpp
+  BinaryStreamTest.cpp
   BlockFrequencyTest.cpp
   BranchProbabilityTest.cpp
+  CachePruningTest.cpp
   Casting.cpp
   Chrono.cpp
   CommandLineTest.cpp

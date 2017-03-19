@@ -7,15 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Dumps debug information present in PDB files.  This utility makes use of
-// the Microsoft Windows SDK, so will not compile or run on non-Windows
-// platforms.
+// Dumps debug information present in PDB files.
 //
 //===----------------------------------------------------------------------===//
 
 #include "llvm-pdbdump.h"
 
 #include "Analyze.h"
+#include "Diff.h"
 #include "LLVMOutputStyle.h"
 #include "LinePrinter.h"
 #include "OutputStyle.h"
@@ -31,7 +30,6 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/config.h"
-#include "llvm/DebugInfo/MSF/ByteStream.h"
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
 #include "llvm/DebugInfo/PDB/GenericError.h"
 #include "llvm/DebugInfo/PDB/IPDBEnumChildren.h"
@@ -41,6 +39,7 @@
 #include "llvm/DebugInfo/PDB/Native/DbiStreamBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStreamBuilder.h"
+#include "llvm/DebugInfo/PDB/Native/ModInfoBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFileBuilder.h"
@@ -55,6 +54,7 @@
 #include "llvm/DebugInfo/PDB/PDBSymbolExe.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolFunc.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolThunk.h"
+#include "llvm/Support/BinaryByteStream.h"
 #include "llvm/Support/COM.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ConvertUTF.h"
@@ -81,6 +81,9 @@ cl::SubCommand RawSubcommand("raw", "Dump raw structure of the PDB file");
 cl::SubCommand
     PrettySubcommand("pretty",
                      "Dump semantic information about types and symbols");
+
+cl::SubCommand DiffSubcommand("diff", "Diff the contents of 2 PDB files");
+
 cl::SubCommand
     YamlToPdbSubcommand("yaml2pdb",
                         "Generate a PDB file from a YAML description");
@@ -121,6 +124,9 @@ cl::opt<uint64_t> LoadAddress(
     "load-address",
     cl::desc("Assume the module is loaded at the specified address"),
     cl::cat(OtherOptions), cl::sub(PrettySubcommand));
+cl::opt<bool> Native("native", cl::desc("Use native PDB reader instead of DIA"),
+  cl::cat(OtherOptions), cl::sub(PrettySubcommand));
+
 cl::list<std::string> ExcludeTypes(
     "exclude-types", cl::desc("Exclude types by regular expression"),
     cl::ZeroOrMore, cl::cat(FilterCategory), cl::sub(PrettySubcommand));
@@ -158,6 +164,17 @@ cl::opt<bool> NoClassDefs("no-class-definitions",
 cl::opt<bool> NoEnumDefs("no-enum-definitions",
                          cl::desc("Don't display full enum definitions"),
                          cl::cat(FilterCategory), cl::sub(PrettySubcommand));
+}
+
+namespace diff {
+cl::opt<bool> Pedantic("pedantic",
+                       cl::desc("Finds all differences (even structural ones "
+                                "that produce otherwise identical PDBs)"),
+                       cl::sub(DiffSubcommand));
+
+cl::list<std::string> InputFilenames(cl::Positional,
+                                     cl::desc("<first> <second>"),
+                                     cl::OneOrMore, cl::sub(DiffSubcommand));
 }
 
 namespace raw {
@@ -277,6 +294,9 @@ cl::opt<bool>
                   cl::desc("Do not dump MSF file headers (you will not be able "
                            "to generate a fresh PDB from the resulting YAML)"),
                   cl::sub(PdbToYamlSubcommand), cl::init(false));
+cl::opt<bool> Minimal("minimal",
+                      cl::desc("Don't write fields with default values"),
+                      cl::sub(PdbToYamlSubcommand), cl::init(false));
 
 cl::opt<bool> StreamMetadata(
     "stream-metadata",
@@ -351,13 +371,13 @@ static void yamlToPdb(StringRef Path) {
   llvm::yaml::Input In(Buffer->getBuffer());
   pdb::yaml::PdbObject YamlObj(Allocator);
   In >> YamlObj;
-  if (!YamlObj.Headers.hasValue())
-    ExitOnErr(make_error<GenericError>(generic_error_code::unspecified,
-                                       "Yaml does not contain MSF headers"));
 
   PDBFileBuilder Builder(Allocator);
 
-  ExitOnErr(Builder.initialize(YamlObj.Headers->SuperBlock.BlockSize));
+  uint32_t BlockSize = 4096;
+  if (YamlObj.Headers.hasValue())
+    BlockSize = YamlObj.Headers->SuperBlock.BlockSize;
+  ExitOnErr(Builder.initialize(BlockSize));
   // Add each of the reserved streams.  We ignore stream metadata in the
   // yaml, because we will reconstruct our own view of the streams.  For
   // example, the YAML may say that there were 20 streams in the original
@@ -373,53 +393,68 @@ static void yamlToPdb(StringRef Path) {
       Strings.insert(S);
   }
 
-  if (YamlObj.PdbStream.hasValue()) {
-    auto &InfoBuilder = Builder.getInfoBuilder();
-    InfoBuilder.setAge(YamlObj.PdbStream->Age);
-    InfoBuilder.setGuid(YamlObj.PdbStream->Guid);
-    InfoBuilder.setSignature(YamlObj.PdbStream->Signature);
-    InfoBuilder.setVersion(YamlObj.PdbStream->Version);
-  }
+  pdb::yaml::PdbInfoStream DefaultInfoStream;
+  pdb::yaml::PdbDbiStream DefaultDbiStream;
+  pdb::yaml::PdbTpiStream DefaultTpiStream;
 
-  if (YamlObj.DbiStream.hasValue()) {
-    auto &DbiBuilder = Builder.getDbiBuilder();
-    DbiBuilder.setAge(YamlObj.DbiStream->Age);
-    DbiBuilder.setBuildNumber(YamlObj.DbiStream->BuildNumber);
-    DbiBuilder.setFlags(YamlObj.DbiStream->Flags);
-    DbiBuilder.setMachineType(YamlObj.DbiStream->MachineType);
-    DbiBuilder.setPdbDllRbld(YamlObj.DbiStream->PdbDllRbld);
-    DbiBuilder.setPdbDllVersion(YamlObj.DbiStream->PdbDllVersion);
-    DbiBuilder.setVersionHeader(YamlObj.DbiStream->VerHeader);
-    for (const auto &MI : YamlObj.DbiStream->ModInfos) {
-      ExitOnErr(DbiBuilder.addModuleInfo(MI.Obj, MI.Mod));
-      for (auto S : MI.SourceFiles)
-        ExitOnErr(DbiBuilder.addModuleSourceFile(MI.Mod, S));
+  const auto &Info = YamlObj.PdbStream.getValueOr(DefaultInfoStream);
+
+  auto &InfoBuilder = Builder.getInfoBuilder();
+  InfoBuilder.setAge(Info.Age);
+  InfoBuilder.setGuid(Info.Guid);
+  InfoBuilder.setSignature(Info.Signature);
+  InfoBuilder.setVersion(Info.Version);
+  for (auto F : Info.Features)
+    InfoBuilder.addFeature(F);
+
+  const auto &Dbi = YamlObj.DbiStream.getValueOr(DefaultDbiStream);
+  auto &DbiBuilder = Builder.getDbiBuilder();
+  DbiBuilder.setAge(Dbi.Age);
+  DbiBuilder.setBuildNumber(Dbi.BuildNumber);
+  DbiBuilder.setFlags(Dbi.Flags);
+  DbiBuilder.setMachineType(Dbi.MachineType);
+  DbiBuilder.setPdbDllRbld(Dbi.PdbDllRbld);
+  DbiBuilder.setPdbDllVersion(Dbi.PdbDllVersion);
+  DbiBuilder.setVersionHeader(Dbi.VerHeader);
+  for (const auto &MI : Dbi.ModInfos) {
+    auto &ModiBuilder = ExitOnErr(DbiBuilder.addModuleInfo(MI.Mod));
+
+    for (auto S : MI.SourceFiles)
+      ExitOnErr(DbiBuilder.addModuleSourceFile(MI.Mod, S));
+    if (MI.Modi.hasValue()) {
+      const auto &ModiStream = *MI.Modi;
+      ModiBuilder.setObjFileName(MI.Obj);
+      for (auto Symbol : ModiStream.Symbols)
+        ModiBuilder.addSymbol(Symbol.Record);
     }
   }
 
-  if (YamlObj.TpiStream.hasValue()) {
-    auto &TpiBuilder = Builder.getTpiBuilder();
-    TpiBuilder.setVersionHeader(YamlObj.TpiStream->Version);
-    for (const auto &R : YamlObj.TpiStream->Records)
-      TpiBuilder.addTypeRecord(R.Record);
-  }
+  auto &TpiBuilder = Builder.getTpiBuilder();
+  const auto &Tpi = YamlObj.TpiStream.getValueOr(DefaultTpiStream);
+  TpiBuilder.setVersionHeader(Tpi.Version);
+  for (const auto &R : Tpi.Records)
+    TpiBuilder.addTypeRecord(R.Record);
 
-  if (YamlObj.IpiStream.hasValue()) {
-    auto &IpiBuilder = Builder.getIpiBuilder();
-    IpiBuilder.setVersionHeader(YamlObj.IpiStream->Version);
-    for (const auto &R : YamlObj.IpiStream->Records)
-      IpiBuilder.addTypeRecord(R.Record);
-  }
+  const auto &Ipi = YamlObj.IpiStream.getValueOr(DefaultTpiStream);
+  auto &IpiBuilder = Builder.getIpiBuilder();
+  IpiBuilder.setVersionHeader(Ipi.Version);
+  for (const auto &R : Ipi.Records)
+    IpiBuilder.addTypeRecord(R.Record);
 
   ExitOnErr(Builder.commit(opts::yaml2pdb::YamlPdbOutputFile));
 }
 
-static void pdb2Yaml(StringRef Path) {
-  std::unique_ptr<IPDBSession> Session;
+static PDBFile &loadPDB(StringRef Path, std::unique_ptr<IPDBSession> &Session) {
   ExitOnErr(loadDataForPDB(PDB_ReaderType::Native, Path, Session));
 
-  NativeSession *RS = static_cast<NativeSession *>(Session.get());
-  PDBFile &File = RS->getPDBFile();
+  NativeSession *NS = static_cast<NativeSession *>(Session.get());
+  return NS->getPDBFile();
+}
+
+static void pdb2Yaml(StringRef Path) {
+  std::unique_ptr<IPDBSession> Session;
+  auto &File = loadPDB(Path, Session);
+
   auto O = llvm::make_unique<YAMLOutputStyle>(File);
   O = llvm::make_unique<YAMLOutputStyle>(File);
 
@@ -428,10 +463,8 @@ static void pdb2Yaml(StringRef Path) {
 
 static void dumpRaw(StringRef Path) {
   std::unique_ptr<IPDBSession> Session;
-  ExitOnErr(loadDataForPDB(PDB_ReaderType::Native, Path, Session));
+  auto &File = loadPDB(Path, Session);
 
-  NativeSession *RS = static_cast<NativeSession *>(Session.get());
-  PDBFile &File = RS->getPDBFile();
   auto O = llvm::make_unique<LLVMOutputStyle>(File);
 
   ExitOnErr(O->dump());
@@ -439,11 +472,20 @@ static void dumpRaw(StringRef Path) {
 
 static void dumpAnalysis(StringRef Path) {
   std::unique_ptr<IPDBSession> Session;
-  ExitOnErr(loadDataForPDB(PDB_ReaderType::Native, Path, Session));
-
-  NativeSession *NS = static_cast<NativeSession *>(Session.get());
-  PDBFile &File = NS->getPDBFile();
+  auto &File = loadPDB(Path, Session);
   auto O = llvm::make_unique<AnalysisStyle>(File);
+
+  ExitOnErr(O->dump());
+}
+
+static void diff(StringRef Path1, StringRef Path2) {
+  std::unique_ptr<IPDBSession> Session1;
+  std::unique_ptr<IPDBSession> Session2;
+
+  auto &File1 = loadPDB(Path1, Session1);
+  auto &File2 = loadPDB(Path2, Session2);
+
+  auto O = llvm::make_unique<DiffStyle>(File1, File2);
 
   ExitOnErr(O->dump());
 }
@@ -451,7 +493,9 @@ static void dumpAnalysis(StringRef Path) {
 static void dumpPretty(StringRef Path) {
   std::unique_ptr<IPDBSession> Session;
 
-  ExitOnErr(loadDataForPDB(PDB_ReaderType::DIA, Path, Session));
+  const auto ReaderType =
+      opts::pretty::Native ? PDB_ReaderType::Native : PDB_ReaderType::DIA;
+  ExitOnErr(loadDataForPDB(ReaderType, Path, Session));
 
   if (opts::pretty::LoadAddress)
     Session->setLoadAddress(opts::pretty::LoadAddress);
@@ -669,6 +713,12 @@ int main(int argc_, const char *argv_[]) {
   } else if (opts::RawSubcommand) {
     std::for_each(opts::raw::InputFilenames.begin(),
                   opts::raw::InputFilenames.end(), dumpRaw);
+  } else if (opts::DiffSubcommand) {
+    if (opts::diff::InputFilenames.size() != 2) {
+      errs() << "diff subcommand expects exactly 2 arguments.\n";
+      exit(1);
+    }
+    diff(opts::diff::InputFilenames[0], opts::diff::InputFilenames[1]);
   }
 
   outs().flush();

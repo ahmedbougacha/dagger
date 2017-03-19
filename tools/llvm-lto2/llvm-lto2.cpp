@@ -157,9 +157,11 @@ int main(int argc, char **argv) {
         Res.FinalDefinitionInLinkageUnit = true;
       else if (C == 'x')
         Res.VisibleToRegularObj = true;
-      else
+      else {
         llvm::errs() << "invalid character " << C << " in resolution: " << R
                      << '\n';
+        return 1;
+      }
     }
     CommandLineResolutions[{FileName, SymbolName}].push_back(Res);
   }
@@ -273,18 +275,13 @@ int main(int argc, char **argv) {
     return llvm::make_unique<lto::NativeObjectStream>(std::move(S));
   };
 
-  auto AddFile = [&](size_t Task, StringRef Path) {
-    auto ReloadedBufferOrErr = MemoryBuffer::getFile(Path);
-    if (auto EC = ReloadedBufferOrErr.getError())
-      report_fatal_error(Twine("Can't reload cached file '") + Path + "': " +
-                         EC.message() + "\n");
-
-    *AddStream(Task)->OS << (*ReloadedBufferOrErr)->getBuffer();
+  auto AddBuffer = [&](size_t Task, std::unique_ptr<MemoryBuffer> MB) {
+    *AddStream(Task)->OS << MB->getBuffer();
   };
 
   NativeObjectCache Cache;
   if (!CacheDir.empty())
-    Cache = localCache(CacheDir, AddFile);
+    Cache = check(localCache(CacheDir, AddBuffer), "failed to create cache");
 
   check(Lto.run(AddStream, Cache), "LTO::run failed");
 }

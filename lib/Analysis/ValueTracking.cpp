@@ -255,30 +255,6 @@ static void computeKnownBitsAddSub(bool Add, const Value *Op0, const Value *Op1,
                                    APInt &KnownZero, APInt &KnownOne,
                                    APInt &KnownZero2, APInt &KnownOne2,
                                    unsigned Depth, const Query &Q) {
-  if (!Add) {
-    if (const ConstantInt *CLHS = dyn_cast<ConstantInt>(Op0)) {
-      // We know that the top bits of C-X are clear if X contains less bits
-      // than C (i.e. no wrap-around can happen).  For example, 20-X is
-      // positive if we can prove that X is >= 0 and < 16.
-      if (!CLHS->getValue().isNegative()) {
-        unsigned BitWidth = KnownZero.getBitWidth();
-        unsigned NLZ = (CLHS->getValue()+1).countLeadingZeros();
-        // NLZ can't be BitWidth with no sign bit
-        APInt MaskV = APInt::getHighBitsSet(BitWidth, NLZ+1);
-        computeKnownBits(Op1, KnownZero2, KnownOne2, Depth + 1, Q);
-
-        // If all of the MaskV bits are known to be zero, then we know the
-        // output top bits are zero, because we now know that the output is
-        // from [0-C].
-        if ((KnownZero2 & MaskV) == MaskV) {
-          unsigned NLZ2 = CLHS->getValue().countLeadingZeros();
-          // Top bits known zero.
-          KnownZero = APInt::getHighBitsSet(BitWidth, NLZ2);
-        }
-      }
-    }
-  }
-
   unsigned BitWidth = KnownZero.getBitWidth();
 
   // If an initial sequence of bits in the result is not needed, the
@@ -321,11 +297,11 @@ static void computeKnownBitsAddSub(bool Add, const Value *Op0, const Value *Op1,
       // Adding two non-negative numbers, or subtracting a negative number from
       // a non-negative one, can't wrap into negative.
       if (LHSKnownZero.isNegative() && KnownZero2.isNegative())
-        KnownZero |= APInt::getSignBit(BitWidth);
+        KnownZero.setSignBit();
       // Adding two negative numbers, or subtracting a non-negative number from
       // a negative one, can't wrap into non-negative.
       else if (LHSKnownOne.isNegative() && KnownOne2.isNegative())
-        KnownOne |= APInt::getSignBit(BitWidth);
+        KnownOne.setSignBit();
     }
   }
 }
@@ -732,7 +708,7 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
 
       if (RHSKnownZero.isNegative()) {
         // We know that the sign bit is zero.
-        KnownZero |= APInt::getSignBit(BitWidth);
+        KnownZero.setSignBit();
       }
     // assume(v >_s c) where c is at least -1.
     } else if (match(Arg, m_ICmp(Pred, m_V, m_Value(A))) &&
@@ -743,7 +719,7 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
 
       if (RHSKnownOne.isAllOnesValue() || RHSKnownZero.isNegative()) {
         // We know that the sign bit is zero.
-        KnownZero |= APInt::getSignBit(BitWidth);
+        KnownZero.setSignBit();
       }
     // assume(v <=_s c) where c is negative
     } else if (match(Arg, m_ICmp(Pred, m_V, m_Value(A))) &&
@@ -754,7 +730,7 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
 
       if (RHSKnownOne.isNegative()) {
         // We know that the sign bit is one.
-        KnownOne |= APInt::getSignBit(BitWidth);
+        KnownOne.setSignBit();
       }
     // assume(v <_s c) where c is non-positive
     } else if (match(Arg, m_ICmp(Pred, m_V, m_Value(A))) &&
@@ -765,7 +741,7 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
 
       if (RHSKnownZero.isAllOnesValue() || RHSKnownOne.isNegative()) {
         // We know that the sign bit is one.
-        KnownOne |= APInt::getSignBit(BitWidth);
+        KnownOne.setSignBit();
       }
     // assume(v <=_u c)
     } else if (match(Arg, m_ICmp(Pred, m_V, m_Value(A))) &&
@@ -847,6 +823,14 @@ static void computeKnownBitsFromShiftOperator(
   }
 
   computeKnownBits(I->getOperand(1), KnownZero, KnownOne, Depth + 1, Q);
+
+  // If the shift amount could be greater than or equal to the bit-width of the LHS, the
+  // value could be undef, so we don't know anything about it.
+  if ((~KnownZero).uge(BitWidth)) {
+    KnownZero.clearAllBits();
+    KnownOne.clearAllBits();
+    return;
+  }
 
   // Note: We cannot use KnownZero.getLimitedValue() here, because if
   // BitWidth > 64 and any upper bits are known, we'll end up returning the
@@ -2113,13 +2097,29 @@ static unsigned computeNumSignBitsVectorConstant(const Value *V,
   return MinSignBits;
 }
 
+static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
+                                       const Query &Q);
+
+static unsigned ComputeNumSignBits(const Value *V, unsigned Depth,
+                                   const Query &Q) {
+  unsigned Result = ComputeNumSignBitsImpl(V, Depth, Q);
+  assert(Result > 0 && "At least one sign bit needs to be present!");
+  return Result;
+}
+
 /// Return the number of times the sign bit of the register is replicated into
 /// the other bits. We know that at least 1 bit is always equal to the sign bit
 /// (itself), but other cases can give us information. For example, immediately
 /// after an "ashr X, 2", we know that the top 3 bits are all equal to each
 /// other, so we return 3. For vectors, return the number of sign bits for the
 /// vector element with the mininum number of known sign bits.
-unsigned ComputeNumSignBits(const Value *V, unsigned Depth, const Query &Q) {
+static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
+                                       const Query &Q) {
+
+  // We return the minimum number of sign bits that are guaranteed to be present
+  // in V, so for undef we have to conservatively return 1.  We don't have the
+  // same behavior for poison though -- that's a FIXME today.
+
   unsigned TyBits = Q.DL.getTypeSizeInBits(V->getType()->getScalarType());
   unsigned Tmp, Tmp2;
   unsigned FirstAnswer = 1;
@@ -2195,7 +2195,10 @@ unsigned ComputeNumSignBits(const Value *V, unsigned Depth, const Query &Q) {
     // ashr X, C   -> adds C sign bits.  Vectors too.
     const APInt *ShAmt;
     if (match(U->getOperand(1), m_APInt(ShAmt))) {
-      Tmp += ShAmt->getZExtValue();
+      unsigned ShAmtLimited = ShAmt->getZExtValue();
+      if (ShAmtLimited >= TyBits)
+        break;  // Bad shift.
+      Tmp += ShAmtLimited;
       if (Tmp > TyBits) Tmp = TyBits;
     }
     return Tmp;
@@ -3761,6 +3764,8 @@ bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
   if (isa<ResumeInst>(I))
     return false;
   if (isa<ReturnInst>(I))
+    return false;
+  if (isa<UnreachableInst>(I))
     return false;
 
   // Calls can throw, or contain an infinite loop, or kill the process.

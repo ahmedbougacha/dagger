@@ -13,9 +13,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/DebugInfo/MSF/IMSFFile.h"
 #include "llvm/DebugInfo/MSF/MSFCommon.h"
-#include "llvm/DebugInfo/MSF/StreamArray.h"
-#include "llvm/DebugInfo/MSF/StreamInterface.h"
 #include "llvm/Support/Allocator.h"
+#include "llvm/Support/BinaryStreamRef.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MathExtras.h"
@@ -23,6 +22,8 @@
 #include <memory>
 
 namespace llvm {
+
+class BinaryStream;
 
 namespace msf {
 class MappedBlockStream;
@@ -42,7 +43,7 @@ class PDBFile : public msf::IMSFFile {
   friend PDBFileBuilder;
 
 public:
-  PDBFile(StringRef Path, std::unique_ptr<msf::ReadableStream> PdbFileBuffer,
+  PDBFile(StringRef Path, std::unique_ptr<BinaryStream> PdbFileBuffer,
           BumpPtrAllocator &Allocator);
   ~PDBFile() override;
 
@@ -80,7 +81,7 @@ public:
   }
 
   const msf::MSFLayout &getMsfLayout() const { return ContainerLayout; }
-  const msf::ReadableStream &getMsfBuffer() const { return *Buffer; }
+  BinaryStreamRef getMsfBuffer() const { return *Buffer; }
 
   ArrayRef<support::ulittle32_t> getDirectoryBlockArray() const;
 
@@ -110,13 +111,13 @@ public:
 private:
   Expected<std::unique_ptr<msf::MappedBlockStream>>
   safelyCreateIndexedStream(const msf::MSFLayout &Layout,
-                            const msf::ReadableStream &MsfData,
+                            BinaryStreamRef MsfData,
                             uint32_t StreamIndex) const;
 
   std::string FilePath;
   BumpPtrAllocator &Allocator;
 
-  std::unique_ptr<msf::ReadableStream> Buffer;
+  std::unique_ptr<BinaryStream> Buffer;
 
   std::vector<uint32_t> FpmPages;
   msf::MSFLayout ContainerLayout;

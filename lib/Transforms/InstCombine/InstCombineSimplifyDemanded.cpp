@@ -483,7 +483,7 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
     KnownOne = KnownOne.zext(BitWidth);
     assert(!(KnownZero & KnownOne) && "Bits known to be one AND zero?");
     // The top bits are known to be zero.
-    KnownZero |= APInt::getHighBitsSet(BitWidth, BitWidth - SrcBitWidth);
+    KnownZero.setBitsFrom(SrcBitWidth);
     break;
   }
   case Instruction::SExt: {
@@ -493,7 +493,7 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
     APInt InputDemandedBits = DemandedMask &
                               APInt::getLowBitsSet(BitWidth, SrcBitWidth);
 
-    APInt NewBits(APInt::getHighBitsSet(BitWidth, BitWidth - SrcBitWidth));
+    APInt NewBits(APInt::getBitsSetFrom(BitWidth, SrcBitWidth));
     // If any of the sign extended bits are demanded, we know that the sign
     // bit is demanded.
     if ((NewBits & DemandedMask) != 0)
@@ -572,9 +572,9 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       // If the shift is NUW/NSW, then it does demand the high bits.
       ShlOperator *IOp = cast<ShlOperator>(I);
       if (IOp->hasNoSignedWrap())
-        DemandedMaskIn |= APInt::getHighBitsSet(BitWidth, ShiftAmt+1);
+        DemandedMaskIn.setHighBits(ShiftAmt+1);
       else if (IOp->hasNoUnsignedWrap())
-        DemandedMaskIn |= APInt::getHighBitsSet(BitWidth, ShiftAmt);
+        DemandedMaskIn.setHighBits(ShiftAmt);
 
       if (SimplifyDemandedBits(I->getOperandUse(0), DemandedMaskIn, KnownZero,
                                KnownOne, Depth + 1))
@@ -584,7 +584,7 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       KnownOne  <<= ShiftAmt;
       // low bits known zero.
       if (ShiftAmt)
-        KnownZero |= APInt::getLowBitsSet(BitWidth, ShiftAmt);
+        KnownZero.setLowBits(ShiftAmt);
     }
     break;
   case Instruction::LShr:
@@ -598,7 +598,7 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       // If the shift is exact, then it does demand the low bits (and knows that
       // they are zero).
       if (cast<LShrOperator>(I)->isExact())
-        DemandedMaskIn |= APInt::getLowBitsSet(BitWidth, ShiftAmt);
+        DemandedMaskIn.setLowBits(ShiftAmt);
 
       if (SimplifyDemandedBits(I->getOperandUse(0), DemandedMaskIn, KnownZero,
                                KnownOne, Depth + 1))
@@ -606,11 +606,8 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       assert(!(KnownZero & KnownOne) && "Bits known to be one AND zero?");
       KnownZero = APIntOps::lshr(KnownZero, ShiftAmt);
       KnownOne  = APIntOps::lshr(KnownOne, ShiftAmt);
-      if (ShiftAmt) {
-        // Compute the new bits that are at the top now.
-        APInt HighBits(APInt::getHighBitsSet(BitWidth, ShiftAmt));
-        KnownZero |= HighBits;  // high bits known zero.
-      }
+      if (ShiftAmt)
+        KnownZero.setHighBits(ShiftAmt);  // high bits known zero.
     }
     break;
   case Instruction::AShr:
@@ -643,7 +640,7 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       // If the shift is exact, then it does demand the low bits (and knows that
       // they are zero).
       if (cast<AShrOperator>(I)->isExact())
-        DemandedMaskIn |= APInt::getLowBitsSet(BitWidth, ShiftAmt);
+        DemandedMaskIn.setLowBits(ShiftAmt);
 
       if (SimplifyDemandedBits(I->getOperandUse(0), DemandedMaskIn, KnownZero,
                                KnownOne, Depth + 1))
@@ -716,7 +713,7 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
                        CxtI);
       // If it's known zero, our sign bit is also zero.
       if (LHSKnownZero.isNegative())
-        KnownZero.setBit(KnownZero.getBitWidth() - 1);
+        KnownZero.setSignBit();
     }
     break;
   case Instruction::URem: {
@@ -729,8 +726,6 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       return I;
 
     unsigned Leaders = KnownZero2.countLeadingOnes();
-    Leaders = std::max(Leaders,
-                       KnownZero2.countLeadingOnes());
     KnownZero = APInt::getHighBitsSet(BitWidth, Leaders) & DemandedMask;
     break;
   }
@@ -795,11 +790,11 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
           return ConstantInt::getNullValue(VTy);
 
         // We know that the upper bits are set to zero.
-        KnownZero = APInt::getHighBitsSet(BitWidth, BitWidth - ArgWidth);
+        KnownZero.setBitsFrom(ArgWidth);
         return nullptr;
       }
       case Intrinsic::x86_sse42_crc32_64_64:
-        KnownZero = APInt::getHighBitsSet(64, 32);
+        KnownZero.setBitsFrom(32);
         return nullptr;
       }
     }
@@ -852,7 +847,7 @@ Value *InstCombiner::SimplifyShrShlDemandedBits(Instruction *Shr,
   unsigned ShrAmt = ShrOp1.getZExtValue();
 
   KnownOne.clearAllBits();
-  KnownZero = APInt::getBitsSet(KnownZero.getBitWidth(), 0, ShlAmt-1);
+  KnownZero.setLowBits(ShlAmt - 1);
   KnownZero &= DemandedMask;
 
   APInt BitMask1(APInt::getAllOnesValue(BitWidth));
@@ -1559,8 +1554,52 @@ Value *InstCombiner::SimplifyDemandedVectorElts(Value *V, APInt DemandedElts,
     case Intrinsic::x86_sse4a_extrqi:
     case Intrinsic::x86_sse4a_insertq:
     case Intrinsic::x86_sse4a_insertqi:
-      UndefElts |= APInt::getHighBitsSet(VWidth, VWidth / 2);
+      UndefElts.setHighBits(VWidth / 2);
       break;
+    case Intrinsic::amdgcn_buffer_load:
+    case Intrinsic::amdgcn_buffer_load_format: {
+      if (VWidth == 1 || !APIntOps::isMask(DemandedElts))
+        return nullptr;
+
+      // TODO: Handle 3 vectors when supported in code gen.
+      unsigned NewNumElts = PowerOf2Ceil(DemandedElts.countTrailingOnes());
+      if (NewNumElts == VWidth)
+        return nullptr;
+
+      Module *M = II->getParent()->getParent()->getParent();
+      Type *EltTy = V->getType()->getVectorElementType();
+
+      Type *NewTy = (NewNumElts == 1) ? EltTy :
+        VectorType::get(EltTy, NewNumElts);
+
+      Function *NewIntrin = Intrinsic::getDeclaration(M, II->getIntrinsicID(),
+                                                      NewTy);
+
+      SmallVector<Value *, 5> Args;
+      for (unsigned I = 0, E = II->getNumArgOperands(); I != E; ++I)
+        Args.push_back(II->getArgOperand(I));
+
+      IRBuilderBase::InsertPointGuard Guard(*Builder);
+      Builder->SetInsertPoint(II);
+
+      CallInst *NewCall = Builder->CreateCall(NewIntrin, Args);
+      NewCall->takeName(II);
+      NewCall->copyMetadata(*II);
+      if (NewNumElts == 1) {
+        return Builder->CreateInsertElement(UndefValue::get(V->getType()),
+                                            NewCall, static_cast<uint64_t>(0));
+      }
+
+      SmallVector<uint32_t, 8> EltMask;
+      for (unsigned I = 0; I < VWidth; ++I)
+        EltMask.push_back(I);
+
+      Value *Shuffle = Builder->CreateShuffleVector(
+        NewCall, UndefValue::get(NewTy), EltMask);
+
+      MadeChange = true;
+      return Shuffle;
+    }
     }
     break;
   }

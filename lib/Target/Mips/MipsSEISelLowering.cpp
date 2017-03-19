@@ -1123,7 +1123,8 @@ MipsSETargetLowering::PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const {
   case ISD::MUL:
     return performMULCombine(N, DAG, DCI, this);
   case ISD::SHL:
-    return performSHLCombine(N, DAG, DCI, Subtarget);
+    Val = performSHLCombine(N, DAG, DCI, Subtarget);
+    break;
   case ISD::SRA:
     return performSRACombine(N, DAG, DCI, Subtarget);
   case ISD::SRL:
@@ -2529,11 +2530,10 @@ SDValue MipsSETargetLowering::lowerBUILD_VECTOR(SDValue Op,
         SplatBitSize != 64)
       return SDValue();
 
-    // If the value fits into a simm10 then we can use ldi.[bhwd]
-    // However, if it isn't an integer type we will have to bitcast from an
-    // integer type first. Also, if there are any undefs, we must lower them
-    // to defined values first.
-    if (ResTy.isInteger() && !HasAnyUndefs && SplatValue.isSignedIntN(10))
+    // If the value isn't an integer type we will have to bitcast
+    // from an integer type first. Also, if there are any undefs, we must
+    // lower them to defined values first.
+    if (ResTy.isInteger() && !HasAnyUndefs)
       return Op;
 
     EVT ViaVecTy;
