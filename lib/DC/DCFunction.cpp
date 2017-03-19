@@ -82,7 +82,7 @@ DCFunction::DCFunction(DCModule &DCM, const MCFunction &MCF)
   if (EnableRegSetDiff) {
     Type *RegSetTy = getTranslator().getRegSetDesc().RegSetType;
     Value *SavedRegSet = EntryBuilder.CreateAlloca(RegSetTy);
-    Value *RegSetArg = &getFunction()->getArgumentList().front();
+    Value *RegSetArg = &*getFunction()->arg_begin();
 
     // First, save the previous regset in the entry block.
     EntryBuilder.CreateStore(EntryBuilder.CreateLoad(RegSetArg), SavedRegSet);
@@ -132,7 +132,7 @@ void DCFunction::createExternalTailCallBB(uint64_t Addr) {
   IRBuilder<> TCBuilder(TCBB);
 
   // Now do the call to that function.
-  Value *RegSetArg = &getFunction()->getArgumentList().front();
+  Value *RegSetArg = &*getFunction()->arg_begin();
   auto *CI = TCBuilder.CreateCall(DCM.getOrCreateFunction(Addr), {RegSetArg});
   addCallForRegSetSaveRestore(CI);
 
@@ -234,7 +234,7 @@ AllocaInst *DCFunction::getOrCreateRegAlloca(unsigned RegNo) {
   } else {
     // Else, it should be in the regset, load it from there.
     // Get the regset pointer argument.
-    Value *RegSetArg = &TheFunction.getArgumentList().front();
+    Value *RegSetArg = &*TheFunction.arg_begin();
 
     // Get the offset of our largest super-register into the regset.
     int OffsetInRegSet = RSD.RegOffsetsInSet[RegNo];

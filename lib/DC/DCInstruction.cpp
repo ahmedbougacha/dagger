@@ -194,7 +194,7 @@ void DCInstruction::insertCall(Value *CallTarget) {
   DCB.saveAllLiveRegs();
 
   // Now do the call to the resolved target.
-  Value *RegSetArg = &getFunction()->getArgumentList().front();
+  Value *RegSetArg = &*getFunction()->arg_begin();
   auto *CI = Builder.CreateCall(CallTarget, {RegSetArg});
   getParentFunction().addCallForRegSetSaveRestore(CI);
 
