@@ -237,6 +237,12 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
     const unsigned DoShift = getImmOp(MIOperandNo + 1);
     return Builder.getInt64(Signed + (DoShift << 1));
   }
+  case AArch64::OpTypes::fpimm16:
+  case AArch64::OpTypes::fpimm32:
+  case AArch64::OpTypes::fpimm64: {
+    float FPV = AArch64_AM::getFPImmFloat(getImmOp(MIOperandNo));
+    return ConstantFP::get(getResultTy(0), FPV);
+  }
   default:
     errs() << "Unknown AArch64 operand type found in semantics: "
            << utostr(OperandType) << "\n";
