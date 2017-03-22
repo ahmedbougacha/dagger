@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 paddq	2(%r14,%r15,2), %mm4
 
 ## MMX_PADDQirr
@@ -15,7 +14,6 @@ paddq	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 paddq	%mm6, %mm4
 
 ## PADDQrm

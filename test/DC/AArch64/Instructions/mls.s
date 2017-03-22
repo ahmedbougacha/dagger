@@ -55,7 +55,6 @@ mls	v16.2s, v18.2s, v19.2s
 ; CHECK-NEXT: [[V5:%.+]] = bitcast <16 x i8> [[Q19_0]] to i128
 ; CHECK-NEXT: [[V6:%.+]] = bitcast i128 [[V5]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mls	v16.2s, v18.2s, v19.s[0]
 
 ;; MLSv4i16
@@ -93,7 +92,6 @@ mls	v16.4h, v18.4h, v19.4h
 ; CHECK-NEXT: [[V5:%.+]] = bitcast <16 x i8> [[Q11_0]] to i128
 ; CHECK-NEXT: [[V6:%.+]] = bitcast i128 [[V5]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mls	v16.4h, v18.4h, v11.h[0]
 
 ;; MLSv4i32
@@ -131,7 +129,6 @@ mls	v16.4s, v18.4s, v19.4s
 ; CHECK-NEXT: [[V5:%.+]] = bitcast <16 x i8> [[Q19_0]] to i128
 ; CHECK-NEXT: [[V6:%.+]] = bitcast i128 [[V5]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mls	v16.4s, v18.4s, v19.s[0]
 
 ;; MLSv8i16
@@ -169,7 +166,6 @@ mls	v16.8h, v18.8h, v19.8h
 ; CHECK-NEXT: [[V5:%.+]] = bitcast <16 x i8> [[Q11_0]] to i128
 ; CHECK-NEXT: [[V6:%.+]] = bitcast i128 [[V5]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mls	v16.8h, v18.8h, v11.h[0]
 
 ;; MLSv8i8

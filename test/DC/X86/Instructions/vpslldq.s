@@ -9,7 +9,6 @@
 # CHECK-NEXT: [[V1:%.+]] = bitcast <8 x float> [[YMM9_0]] to i256
 # CHECK-NEXT: [[V2:%.+]] = bitcast i256 [[V1]] to <32 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpslldq	$2, %ymm9, %ymm8
 
 ## VPSLLDQri
@@ -21,7 +20,6 @@ vpslldq	$2, %ymm9, %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpslldq	$2, %xmm9, %xmm8
 
 retq

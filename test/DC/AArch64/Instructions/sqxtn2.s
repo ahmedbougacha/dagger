@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqxtn2	v16.16b, v18.8h
 
 ;; SQXTNv4i32
@@ -15,7 +14,6 @@ sqxtn2	v16.16b, v18.8h
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqxtn2	v16.4s, v18.2d
 
 ;; SQXTNv8i16
@@ -24,7 +22,6 @@ sqxtn2	v16.4s, v18.2d
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqxtn2	v16.8h, v18.4s
 
 ret

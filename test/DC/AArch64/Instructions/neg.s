@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 neg	v16.16b, v17.16b
 
 ;; NEGv1i64
@@ -15,7 +14,6 @@ neg	v16.16b, v17.16b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 neg	d16, d17
 
 ;; NEGv2i32
@@ -24,7 +22,6 @@ neg	d16, d17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 neg	v16.2s, v17.2s
 
 ;; NEGv2i64
@@ -33,7 +30,6 @@ neg	v16.2s, v17.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 neg	v16.2d, v17.2d
 
 ;; NEGv4i16
@@ -42,7 +38,6 @@ neg	v16.2d, v17.2d
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 neg	v16.4h, v17.4h
 
 ;; NEGv4i32
@@ -51,7 +46,6 @@ neg	v16.4h, v17.4h
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 neg	v16.4s, v17.4s
 
 ;; NEGv8i16
@@ -60,7 +54,6 @@ neg	v16.4s, v17.4s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 neg	v16.8h, v17.8h
 
 ;; NEGv8i8
@@ -69,7 +62,6 @@ neg	v16.8h, v17.8h
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 neg	v16.8b, v17.8b
 
 ret

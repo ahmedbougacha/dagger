@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sadalp	v16.8h, v18.16b
 
 ;; SADALPv2i32_v1i64
@@ -15,7 +14,6 @@ sadalp	v16.8h, v18.16b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sadalp	v16.1d, v18.2s
 
 ;; SADALPv4i16_v2i32
@@ -24,7 +22,6 @@ sadalp	v16.1d, v18.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sadalp	v16.2s, v18.4h
 
 ;; SADALPv4i32_v2i64
@@ -33,7 +30,6 @@ sadalp	v16.2s, v18.4h
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sadalp	v16.2d, v18.4s
 
 ;; SADALPv8i16_v4i32
@@ -42,7 +38,6 @@ sadalp	v16.2d, v18.4s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sadalp	v16.4s, v18.8h
 
 ;; SADALPv8i8_v4i16
@@ -51,7 +46,6 @@ sadalp	v16.4s, v18.8h
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sadalp	v16.4h, v18.8b
 
 ret

@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtas	w16, d17
 
 ;; FCVTASUWSr
@@ -15,7 +14,6 @@ fcvtas	w16, d17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtas	w16, s17
 
 ;; FCVTASUXDr
@@ -24,7 +22,6 @@ fcvtas	w16, s17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtas	x16, d17
 
 ;; FCVTASUXSr
@@ -33,7 +30,6 @@ fcvtas	x16, d17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtas	x16, s17
 
 ;; FCVTASv1i32
@@ -42,7 +38,6 @@ fcvtas	x16, s17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtas	s16, s17
 
 ;; FCVTASv1i64
@@ -51,7 +46,6 @@ fcvtas	s16, s17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtas	d16, d17
 
 ;; FCVTASv2f32
@@ -60,7 +54,6 @@ fcvtas	d16, d17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtas	v16.2s, v17.2s
 
 ;; FCVTASv2f64
@@ -69,7 +62,6 @@ fcvtas	v16.2s, v17.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtas	v16.2d, v17.2d
 
 ;; FCVTASv4f32
@@ -78,7 +70,6 @@ fcvtas	v16.2d, v17.2d
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtas	v16.4s, v17.4s
 
 ret

@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vmovntdqa	2(%rbx,%r14,2), %ymm8
 
 ## VMOVNTDQArm
@@ -15,7 +14,6 @@ vmovntdqa	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vmovntdqa	2(%rbx,%r14,2), %xmm8
 
 retq

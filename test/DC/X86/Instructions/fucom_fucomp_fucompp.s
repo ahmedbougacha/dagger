@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fucompi	%st(4)
 
 ## UCOM_FPPr
@@ -15,7 +14,6 @@ fucompi	%st(4)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fucompp
 
 ## UCOM_FPr
@@ -24,7 +22,6 @@ fucompp
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fucomp	%st(4)
 
 ## UCOM_Fr
@@ -33,7 +30,6 @@ fucomp	%st(4)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fucom	%st(4)
 
 retq

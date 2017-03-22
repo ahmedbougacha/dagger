@@ -170,7 +170,6 @@ vpcmov	%ymm11, %ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x8f; .byte 0x48; .byte 0xb4; .byte 0xa2; .byte 0xc3; .byte 0xa0
 
 ## VPCMOVrrr_REV:	vpcmov	%xmm11, %xmm10, %xmm9, %xmm8
@@ -179,7 +178,6 @@ vpcmov	%ymm11, %ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x8f; .byte 0x48; .byte 0xb0; .byte 0xa2; .byte 0xc3; .byte 0xa0
 
 retq

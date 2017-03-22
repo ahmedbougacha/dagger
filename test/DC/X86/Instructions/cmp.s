@@ -1781,7 +1781,6 @@ cmpb	%spl, %bpl
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <2 x double>*
 # CHECK-NEXT: [[V7:%.+]] = load <2 x double>, <2 x double>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmplepd	2(%r14,%r15,2), %xmm8
 
 ## CMPPDrmi_alt
@@ -1800,7 +1799,6 @@ cmplepd	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <2 x double>*
 # CHECK-NEXT: [[V7:%.+]] = load <2 x double>, <2 x double>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmppd	$2, 2(%r14,%r15,2), %xmm8
 
 ## CMPPDrri
@@ -1815,7 +1813,6 @@ cmppd	$2, 2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x double>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmplepd	%xmm10, %xmm8
 
 ## CMPPDrri_alt
@@ -1830,7 +1827,6 @@ cmplepd	%xmm10, %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x double>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmppd	$2, %xmm10, %xmm8
 
 ## CMPPSrmi
@@ -1849,7 +1845,6 @@ cmppd	$2, %xmm10, %xmm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <4 x float>*
 # CHECK-NEXT: [[V7:%.+]] = load <4 x float>, <4 x float>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmpleps	2(%r14,%r15,2), %xmm8
 
 ## CMPPSrmi_alt
@@ -1868,7 +1863,6 @@ cmpleps	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <4 x float>*
 # CHECK-NEXT: [[V7:%.+]] = load <4 x float>, <4 x float>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmpps	$2, 2(%r14,%r15,2), %xmm8
 
 ## CMPPSrri
@@ -1883,7 +1877,6 @@ cmpps	$2, 2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmpleps	%xmm10, %xmm8
 
 ## CMPPSrri_alt
@@ -1898,7 +1891,6 @@ cmpleps	%xmm10, %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmpps	$2, %xmm10, %xmm8
 
 ## CMPSDrm

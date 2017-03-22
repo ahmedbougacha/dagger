@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smov	w16, v17.h[0]
 
 ;; SMOVvi16to64
@@ -15,7 +14,6 @@ smov	w16, v17.h[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smov	x16, v17.h[0]
 
 ;; SMOVvi32to64
@@ -24,7 +22,6 @@ smov	x16, v17.h[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smov	x16, v17.s[0]
 
 ;; SMOVvi8to32
@@ -33,7 +30,6 @@ smov	x16, v17.s[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smov	w16, v17.b[0]
 
 ;; SMOVvi8to64
@@ -42,7 +38,6 @@ smov	w16, v17.b[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smov	x16, v17.b[0]
 
 ret

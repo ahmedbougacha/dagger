@@ -8,7 +8,6 @@
 ; CHECK-NEXT: [[W17_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W17")
 ; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 extr	w16, w17, w18, #0
 
 ;; EXTRXrri
@@ -19,7 +18,6 @@ extr	w16, w17, w18, #0
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: [[X18_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X18")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 extr	x16, x17, x18, #0
 
 ret

@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmle	s16, s17, #0.0
 
 ;; FCMLEv1i64rz
@@ -15,7 +14,6 @@ fcmle	s16, s17, #0.0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmle	d16, d17, #0.0
 
 ;; FCMLEv2i32rz
@@ -27,7 +25,6 @@ fcmle	d16, d17, #0.0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <2 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmle	v16.2s, v17.2s, #0.0
 
 ;; FCMLEv2i64rz
@@ -39,7 +36,6 @@ fcmle	v16.2s, v17.2s, #0.0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x double>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmle	v16.2d, v17.2d, #0.0
 
 ;; FCMLEv4i32rz
@@ -51,7 +47,6 @@ fcmle	v16.2d, v17.2d, #0.0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmle	v16.4s, v17.4s, #0.0
 
 ret

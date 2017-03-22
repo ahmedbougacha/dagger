@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 invlpg	2(%r11,%rbx,2)
 
 ## INVLPGA64
@@ -15,7 +14,6 @@ invlpg	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 invlpga	%ecx, %rax
 
 retq

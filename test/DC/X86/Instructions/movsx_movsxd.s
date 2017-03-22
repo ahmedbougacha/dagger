@@ -22,7 +22,6 @@ movsbw	2(%rbx,%r14,2), %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 movsbw	%spl, %r8w
 
 ## MOVSX32rm16

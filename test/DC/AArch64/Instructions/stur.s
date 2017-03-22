@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 stur		b16, [x17]
 
 ;; STURDi
@@ -19,7 +18,6 @@ stur		b16, [x17]
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to double
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 stur		d16, [x17]
 
 ;; STURHi
@@ -32,7 +30,6 @@ stur		d16, [x17]
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i16 [[V1]] to half
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 stur		h16, [x17]
 
 ;; STURQi
@@ -45,7 +42,6 @@ stur		h16, [x17]
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to fp128
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 stur		q16, [x17]
 
 ;; STURSi
@@ -58,7 +54,6 @@ stur		q16, [x17]
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i32 [[V1]] to float
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 stur		s16, [x17]
 
 ;; STURWi
@@ -69,7 +64,6 @@ stur		s16, [x17]
 ; CHECK-NEXT: [[W16_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W16")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 stur		w16, [x17]
 
 ;; STURXi
@@ -80,7 +74,6 @@ stur		w16, [x17]
 ; CHECK-NEXT: [[X16_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X16")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 stur		x16, [x17]
 
 ret

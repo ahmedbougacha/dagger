@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 11
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x62; .byte 0x31; .byte 0xff; .byte 0x08; .byte 0x2d; .byte 0x9c; .byte 0x73; .byte 0x02; .byte 0x00; .byte 0x00; .byte 0x00
 
 ## VCVTSD2SI64rm
@@ -15,7 +14,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvtsd2si	2(%rbx,%r14,2), %r11
 
 ## VCVTSD2SI64rr
@@ -24,7 +22,6 @@ vcvtsd2si	2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvtsd2si	%xmm9, %r11
 
 ## VCVTSD2SIZrm:	vcvtsd2si	2(%rbx,%r14,2), %r8d
@@ -33,7 +30,6 @@ vcvtsd2si	%xmm9, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 11
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x62; .byte 0x31; .byte 0x7f; .byte 0x08; .byte 0x2d; .byte 0x84; .byte 0x73; .byte 0x02; .byte 0x00; .byte 0x00; .byte 0x00
 
 ## VCVTSD2SIrm
@@ -42,7 +38,6 @@ vcvtsd2si	%xmm9, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvtsd2si	2(%rbx,%r14,2), %r8d
 
 ## VCVTSD2SIrr
@@ -51,7 +46,6 @@ vcvtsd2si	2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvtsd2si	%xmm9, %r8d
 
 retq

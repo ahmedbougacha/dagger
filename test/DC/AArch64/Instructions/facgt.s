@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 facgt	s16, s17, s18
 
 ;; FACGT64
@@ -15,7 +14,6 @@ facgt	s16, s17, s18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 facgt	d16, d17, d18
 
 ;; FACGTv2f32
@@ -24,7 +22,6 @@ facgt	d16, d17, d18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 facgt	v16.2s, v17.2s, v18.2s
 
 ;; FACGTv2f64
@@ -33,7 +30,6 @@ facgt	v16.2s, v17.2s, v18.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 facgt	v16.2d, v17.2d, v18.2d
 
 ;; FACGTv4f32
@@ -42,7 +38,6 @@ facgt	v16.2d, v17.2d, v18.2d
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 facgt	v16.4s, v17.4s, v18.4s
 
 ret

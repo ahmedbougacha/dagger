@@ -54,7 +54,6 @@ fcvtzu	x16, s17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtzu	s16, s17
 
 ;; FCVTZUv1i64
@@ -63,7 +62,6 @@ fcvtzu	s16, s17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcvtzu	d16, d17
 
 ;; FCVTZUv2f32

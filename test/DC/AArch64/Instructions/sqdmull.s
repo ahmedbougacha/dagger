@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmull	s16, h17, h18
 
 ;; SQDMULLi32
@@ -15,7 +14,6 @@ sqdmull	s16, h17, h18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmull	d16, s17, s18
 
 ;; SQDMULLv1i32_indexed
@@ -24,7 +22,6 @@ sqdmull	d16, s17, s18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmull	s16, h17, v10.h[0]
 
 ;; SQDMULLv1i64_indexed
@@ -33,7 +30,6 @@ sqdmull	s16, h17, v10.h[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmull	d16, s17, v18.s[0]
 
 ;; SQDMULLv2i32_indexed
@@ -42,7 +38,6 @@ sqdmull	d16, s17, v18.s[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmull	v16.2d, v17.2s, v18.s[0]
 
 ;; SQDMULLv2i32_v2i64
@@ -51,7 +46,6 @@ sqdmull	v16.2d, v17.2s, v18.s[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmull	v16.2d, v17.2s, v18.2s
 
 ;; SQDMULLv4i16_indexed
@@ -60,7 +54,6 @@ sqdmull	v16.2d, v17.2s, v18.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmull	v16.4s, v17.4h, v10.h[0]
 
 ;; SQDMULLv4i16_v4i32
@@ -69,7 +62,6 @@ sqdmull	v16.4s, v17.4h, v10.h[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmull	v16.4s, v17.4h, v18.4h
 
 ret

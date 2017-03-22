@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmaxnmp	v16.2s, v17.2s, v18.2s
 
 ;; FMAXNMPv2f64
@@ -15,7 +14,6 @@ fmaxnmp	v16.2s, v17.2s, v18.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmaxnmp	v16.2d, v17.2d, v18.2d
 
 ;; FMAXNMPv2i32p
@@ -24,7 +22,6 @@ fmaxnmp	v16.2d, v17.2d, v18.2d
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmaxnmp	s16, v17.2s
 
 ;; FMAXNMPv2i64p
@@ -33,7 +30,6 @@ fmaxnmp	s16, v17.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmaxnmp	d16, v17.2d
 
 ;; FMAXNMPv4f32
@@ -42,7 +38,6 @@ fmaxnmp	d16, v17.2d
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmaxnmp	v16.4s, v17.4s, v18.4s
 
 ret

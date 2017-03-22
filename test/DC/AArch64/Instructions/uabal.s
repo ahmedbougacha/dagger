@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 uabal	v16.2d, v18.2s, v19.2s
 
 ;; UABALv4i16_v4i32
@@ -15,7 +14,6 @@ uabal	v16.2d, v18.2s, v19.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 uabal	v16.4s, v18.4h, v19.4h
 
 ;; UABALv8i8_v8i16
@@ -24,7 +22,6 @@ uabal	v16.4s, v18.4h, v19.4h
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 uabal	v16.8h, v18.8b, v19.8b
 
 ret

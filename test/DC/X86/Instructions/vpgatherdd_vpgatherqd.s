@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpgatherdd	%ymm9, 2(%r15,%ymm13,2), %ymm8
 
 ## VPGATHERDDrm
@@ -15,7 +14,6 @@ vpgatherdd	%ymm9, 2(%r15,%ymm13,2), %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpgatherdd	%xmm9, 2(%r15,%xmm13,2), %xmm8
 
 ## VPGATHERQDYrm
@@ -24,7 +22,6 @@ vpgatherdd	%xmm9, 2(%r15,%xmm13,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpgatherqd	%xmm9, 2(%r15,%ymm13,2), %xmm8
 
 ## VPGATHERQDrm
@@ -33,7 +30,6 @@ vpgatherqd	%xmm9, 2(%r15,%ymm13,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpgatherqd	%xmm9, 2(%r15,%xmm13,2), %xmm8
 
 retq

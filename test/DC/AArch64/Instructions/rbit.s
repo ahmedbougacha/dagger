@@ -26,7 +26,6 @@ rbit	x16, x17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rbit	v16.16b, v17.16b
 
 ;; RBITv8i8
@@ -35,7 +34,6 @@ rbit	v16.16b, v17.16b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rbit	v16.8b, v17.8b
 
 ret

@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 1
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 insb	%dx, %es:(%r11)
 
 ## INSERTQ
@@ -15,7 +14,6 @@ insb	%dx, %es:(%r11)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 insertq	%xmm10, %xmm8
 
 ## INSERTQI
@@ -30,7 +28,6 @@ insertq	%xmm10, %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x i64>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 insertq	$2, $2, %xmm10, %xmm8
 
 ## INSL
@@ -39,7 +36,6 @@ insertq	$2, $2, %xmm10, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 1
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 insl	%dx, %es:(%r11)
 
 ## INSW
@@ -48,7 +44,6 @@ insl	%dx, %es:(%r11)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 insw	%dx, %es:(%r11)
 
 retq

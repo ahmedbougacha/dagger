@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 bextrl	%r12d, 2(%rbx,%r14,2), %r8d
 
 ## BEXTR32rr
@@ -15,7 +14,6 @@ bextrl	%r12d, 2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 bextrl	%r10d, %r9d, %r8d
 
 ## BEXTR64rm
@@ -24,7 +22,6 @@ bextrl	%r10d, %r9d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 bextrq	%rbp, 2(%rbx,%r14,2), %r11
 
 ## BEXTR64rr
@@ -33,7 +30,6 @@ bextrq	%rbp, 2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 bextrq	%r14, %rbx, %r11
 
 ## BEXTRI32mi
@@ -42,7 +38,6 @@ bextrq	%r14, %rbx, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 11
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 bextr	$2, 2(%rbx,%r14,2), %r8d
 
 ## BEXTRI32ri
@@ -51,7 +46,6 @@ bextr	$2, 2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 9
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 bextr	$2, %r9d, %r8d
 
 ## BEXTRI64mi
@@ -60,7 +54,6 @@ bextr	$2, %r9d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 11
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 bextr	$2, 2(%rbx,%r14,2), %r11
 
 ## BEXTRI64ri
@@ -69,7 +62,6 @@ bextr	$2, 2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 9
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 bextr	$2, %rbx, %r11
 
 retq

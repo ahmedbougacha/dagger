@@ -13,7 +13,6 @@
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to double*
 # CHECK-NEXT: [[V5:%.+]] = load double, double* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 movddup	2(%rbx,%r14,2), %xmm8
 
 ## MOVDDUPrr
@@ -25,7 +24,6 @@ movddup	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x double>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 movddup	%xmm9, %xmm8
 
 retq

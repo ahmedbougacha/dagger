@@ -16,7 +16,6 @@
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <8 x float>*
 # CHECK-NEXT: [[V7:%.+]] = load <8 x float>, <8 x float>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vperm2f128	$2, 2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VPERM2F128rr
@@ -31,7 +30,6 @@ vperm2f128	$2, 2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <8 x float> [[YMM10_0]] to i256
 # CHECK-NEXT: [[V4:%.+]] = bitcast i256 [[V3]] to <8 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vperm2f128	$2, %ymm10, %ymm9, %ymm8
 
 retq

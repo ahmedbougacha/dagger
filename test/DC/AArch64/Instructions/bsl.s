@@ -16,7 +16,6 @@
 ; CHECK-NEXT: [[V6:%.+]] = bitcast <16 x i8> [[Q16_1]] to i128
 ; CHECK-NEXT: [[V7:%.+]] = bitcast i128 [[V6]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bsl	v16.16b, v18.16b, v19.16b
 
 ;; BSLv8i8
@@ -35,7 +34,6 @@ bsl	v16.16b, v18.16b, v19.16b
 ; CHECK-NEXT: [[V6:%.+]] = bitcast double [[D16_1]] to i64
 ; CHECK-NEXT: [[V7:%.+]] = bitcast i64 [[V6]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bsl	v16.8b, v18.8b, v19.8b
 
 ret

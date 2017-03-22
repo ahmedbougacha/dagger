@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 blcic	2(%rbx,%r14,2), %r8d
 
 ## BLCIC32rr
@@ -15,7 +14,6 @@ blcic	2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 blcic	%r9d, %r8d
 
 ## BLCIC64rm
@@ -24,7 +22,6 @@ blcic	%r9d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 blcic	2(%rbx,%r14,2), %r11
 
 ## BLCIC64rr
@@ -33,7 +30,6 @@ blcic	2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 blcic	%rbx, %r11
 
 retq

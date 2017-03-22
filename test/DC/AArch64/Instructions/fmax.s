@@ -12,7 +12,6 @@
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to double
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmax	d16, d17, d18
 
 ;; FMAXSrr
@@ -27,7 +26,6 @@ fmax	d16, d17, d18
 ; CHECK-NEXT: [[V3:%.+]] = bitcast float [[S18_0]] to i32
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i32 [[V3]] to float
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmax	s16, s17, s18
 
 ;; FMAXv2f32
@@ -42,7 +40,6 @@ fmax	s16, s17, s18
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <2 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmax	v16.2s, v17.2s, v18.2s
 
 ;; FMAXv2f64
@@ -57,7 +54,6 @@ fmax	v16.2s, v17.2s, v18.2s
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x double>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmax	v16.2d, v17.2d, v18.2d
 
 ;; FMAXv4f32
@@ -72,7 +68,6 @@ fmax	v16.2d, v17.2d, v18.2d
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmax	v16.4s, v17.4s, v18.4s
 
 ret

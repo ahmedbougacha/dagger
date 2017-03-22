@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vsqrtss	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VSQRTSSr
@@ -15,7 +14,6 @@ vsqrtss	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vsqrtss	%xmm10, %xmm9, %xmm8
 
 retq

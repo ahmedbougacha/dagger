@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 1
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 scasb	%es:(%rdi), %al
 
 ## SCASL
@@ -15,7 +14,6 @@ scasb	%es:(%rdi), %al
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 1
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 scasl	%es:(%rdi), %eax
 
 ## SCASQ
@@ -24,7 +22,6 @@ scasl	%es:(%rdi), %eax
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 scasq	%es:(%rdi), %rax
 
 ## SCASW
@@ -33,7 +30,6 @@ scasq	%es:(%rdi), %rax
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 scasw	%es:(%rdi), %ax
 
 retq

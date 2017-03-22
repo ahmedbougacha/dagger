@@ -68,7 +68,6 @@ orr	v16.16b, v17.16b, v18.16b
 ; CHECK-NEXT: [[V2:%.+]] = trunc i128 [[V1]] to i64
 ; CHECK-NEXT: [[V3:%.+]] = bitcast i64 [[V2]] to <2 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 orr	v16.2s, #0
 
 ;; ORRv4i16
@@ -81,7 +80,6 @@ orr	v16.2s, #0
 ; CHECK-NEXT: [[V2:%.+]] = trunc i128 [[V1]] to i64
 ; CHECK-NEXT: [[V3:%.+]] = bitcast i64 [[V2]] to <4 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 orr	v16.4h, #0
 
 ;; ORRv4i32
@@ -93,7 +91,6 @@ orr	v16.4h, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q16_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 orr	v16.4s, #0
 
 ;; ORRv8i16
@@ -105,7 +102,6 @@ orr	v16.4s, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q16_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 orr	v16.8h, #0
 
 ;; ORRv8i8

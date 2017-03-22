@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cvtpi2pd	2(%rbx,%r14,2), %xmm8
 
 ## MMX_CVTPI2PDirr
@@ -15,7 +14,6 @@ cvtpi2pd	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cvtpi2pd	%mm5, %xmm8
 
 retq

@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	b16, b17, #0
 
 ;; SQSHLd
@@ -17,7 +16,6 @@ sqshl	b16, b17, #0
 ; CHECK-NEXT: [[D17_0:%.+]] = call double @llvm.dc.getreg.f64(metadata !"D17")
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	d16, d17, #0
 
 ;; SQSHLh
@@ -26,7 +24,6 @@ sqshl	d16, d17, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	h16, h17, #0
 
 ;; SQSHLs
@@ -37,7 +34,6 @@ sqshl	h16, h17, #0
 ; CHECK-NEXT: [[S17_0:%.+]] = call float @llvm.dc.getreg.f32(metadata !"S17")
 ; CHECK-NEXT: [[V1:%.+]] = bitcast float [[S17_0]] to i32
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	s16, s17, #0
 
 ;; SQSHLv16i8
@@ -46,7 +42,6 @@ sqshl	s16, s17, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.16b, v17.16b, v18.16b
 
 ;; SQSHLv16i8_shift
@@ -58,7 +53,6 @@ sqshl	v16.16b, v17.16b, v18.16b
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.16b, v17.16b, #0
 
 ;; SQSHLv1i16
@@ -67,7 +61,6 @@ sqshl	v16.16b, v17.16b, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	h16, h17, h18
 
 ;; SQSHLv1i32
@@ -76,7 +69,6 @@ sqshl	h16, h17, h18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	s16, s17, s18
 
 ;; SQSHLv1i64
@@ -85,7 +77,6 @@ sqshl	s16, s17, s18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	d16, d17, d18
 
 ;; SQSHLv1i8
@@ -94,7 +85,6 @@ sqshl	d16, d17, d18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	b16, b17, b18
 
 ;; SQSHLv2i32
@@ -103,7 +93,6 @@ sqshl	b16, b17, b18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.2s, v17.2s, v18.2s
 
 ;; SQSHLv2i32_shift
@@ -115,7 +104,6 @@ sqshl	v16.2s, v17.2s, v18.2s
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <2 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.2s, v17.2s, #0
 
 ;; SQSHLv2i64
@@ -124,7 +112,6 @@ sqshl	v16.2s, v17.2s, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.2d, v17.2d, v18.2d
 
 ;; SQSHLv2i64_shift
@@ -136,7 +123,6 @@ sqshl	v16.2d, v17.2d, v18.2d
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x i64>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.2d, v17.2d, #0
 
 ;; SQSHLv4i16
@@ -145,7 +131,6 @@ sqshl	v16.2d, v17.2d, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.4h, v17.4h, v18.4h
 
 ;; SQSHLv4i16_shift
@@ -157,7 +142,6 @@ sqshl	v16.4h, v17.4h, v18.4h
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <4 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.4h, v17.4h, #0
 
 ;; SQSHLv4i32
@@ -166,7 +150,6 @@ sqshl	v16.4h, v17.4h, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.4s, v17.4s, v18.4s
 
 ;; SQSHLv4i32_shift
@@ -178,7 +161,6 @@ sqshl	v16.4s, v17.4s, v18.4s
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.4s, v17.4s, #0
 
 ;; SQSHLv8i16
@@ -187,7 +169,6 @@ sqshl	v16.4s, v17.4s, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.8h, v17.8h, v18.8h
 
 ;; SQSHLv8i16_shift
@@ -199,7 +180,6 @@ sqshl	v16.8h, v17.8h, v18.8h
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.8h, v17.8h, #0
 
 ;; SQSHLv8i8
@@ -208,7 +188,6 @@ sqshl	v16.8h, v17.8h, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.8b, v17.8b, v18.8b
 
 ;; SQSHLv8i8_shift
@@ -220,7 +199,6 @@ sqshl	v16.8b, v17.8b, v18.8b
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqshl	v16.8b, v17.8b, #0
 
 ret

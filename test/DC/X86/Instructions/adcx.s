@@ -15,7 +15,6 @@
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcxl	2(%r14,%r15,2), %r8d
 
 ## ADCX32rr
@@ -27,7 +26,6 @@ adcxl	2(%r14,%r15,2), %r8d
 # CHECK-NEXT: [[R10D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R10D")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcxl	%r10d, %r8d
 
 ## ADCX64rm
@@ -45,7 +43,6 @@ adcxl	%r10d, %r8d
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcxq	2(%r14,%r15,2), %r11
 
 ## ADCX64rr
@@ -57,7 +54,6 @@ adcxq	2(%r14,%r15,2), %r11
 # CHECK-NEXT: [[R14_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R14")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcxq	%r14, %r11
 
 retq

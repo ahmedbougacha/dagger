@@ -9,7 +9,6 @@
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D16_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to double
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmp	d16, #0.0
 
 ;; FCMPDrr
@@ -24,7 +23,6 @@ fcmp	d16, #0.0
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to double
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmp	d16, d17
 
 ;; FCMPSri
@@ -36,7 +34,6 @@ fcmp	d16, d17
 ; CHECK-NEXT: [[V1:%.+]] = bitcast float [[S16_0]] to i32
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i32 [[V1]] to float
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmp	s16, #0.0
 
 ;; FCMPSrr
@@ -51,7 +48,6 @@ fcmp	s16, #0.0
 ; CHECK-NEXT: [[V3:%.+]] = bitcast float [[S17_0]] to i32
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i32 [[V3]] to float
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmp	s16, s17
 
 ret

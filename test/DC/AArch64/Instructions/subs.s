@@ -7,7 +7,6 @@
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[W17_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 subs	w16, w17, #0
 
 ;; SUBSWrs
@@ -18,7 +17,6 @@ subs	w16, w17, #0
 ; CHECK-NEXT: [[W17_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W17")
 ; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 subs		w16, w17, w18
 
 ;; SUBSWrx
@@ -31,7 +29,6 @@ subs		w16, w17, w18
 ; CHECK-NEXT: [[V1:%.+]] = trunc i32 [[W18_0]] to i8
 ; CHECK-NEXT: [[V2:%.+]] = zext i8 [[V1]] to i32
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 subs	w16, w17, w18, uxtb
 
 ;; SUBSXri
@@ -41,7 +38,6 @@ subs	w16, w17, w18, uxtb
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 subs	x16, x17, #0
 
 ;; SUBSXrs
@@ -52,7 +48,6 @@ subs	x16, x17, #0
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: [[X18_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X18")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 subs		x16, x17, x18
 
 ;; SUBSXrx
@@ -66,7 +61,6 @@ subs		x16, x17, x18
 ; CHECK-NEXT: [[V2:%.+]] = zext i8 [[V1]] to i32
 ; CHECK-NEXT: [[V3:%.+]] = zext i32 [[V2]] to i64
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 subs	x16, x17, w18, uxtb
 
 ret

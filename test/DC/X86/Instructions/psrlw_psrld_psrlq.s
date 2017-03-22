@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrld	$2, %mm4
 
 ## MMX_PSRLDrm
@@ -15,7 +14,6 @@ psrld	$2, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrld	2(%r14,%r15,2), %mm4
 
 ## MMX_PSRLDrr
@@ -24,7 +22,6 @@ psrld	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrld	%mm6, %mm4
 
 ## MMX_PSRLQri
@@ -33,7 +30,6 @@ psrld	%mm6, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlq	$2, %mm4
 
 ## MMX_PSRLQrm
@@ -42,7 +38,6 @@ psrlq	$2, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlq	2(%r14,%r15,2), %mm4
 
 ## MMX_PSRLQrr
@@ -51,7 +46,6 @@ psrlq	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlq	%mm6, %mm4
 
 ## MMX_PSRLWri
@@ -60,7 +54,6 @@ psrlq	%mm6, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlw	$2, %mm4
 
 ## MMX_PSRLWrm
@@ -69,7 +62,6 @@ psrlw	$2, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlw	2(%r14,%r15,2), %mm4
 
 ## MMX_PSRLWrr
@@ -78,7 +70,6 @@ psrlw	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlw	%mm6, %mm4
 
 ## PSRLDri
@@ -90,7 +81,6 @@ psrlw	%mm6, %mm4
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM8_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrld	$2, %xmm8
 
 ## PSRLDrm
@@ -110,7 +100,6 @@ psrld	$2, %xmm8
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: [[V8:%.+]] = bitcast <2 x i64> [[V7]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrld	2(%r14,%r15,2), %xmm8
 
 ## PSRLDrr
@@ -125,7 +114,6 @@ psrld	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrld	%xmm10, %xmm8
 
 ## PSRLQri
@@ -137,7 +125,6 @@ psrld	%xmm10, %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM8_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x i64>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlq	$2, %xmm8
 
 ## PSRLQrm
@@ -156,7 +143,6 @@ psrlq	$2, %xmm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <2 x i64>*
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlq	2(%r14,%r15,2), %xmm8
 
 ## PSRLQrr
@@ -171,7 +157,6 @@ psrlq	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x i64>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlq	%xmm10, %xmm8
 
 ## PSRLWri
@@ -183,7 +168,6 @@ psrlq	%xmm10, %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM8_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlw	$2, %xmm8
 
 ## PSRLWrm
@@ -203,7 +187,6 @@ psrlw	$2, %xmm8
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: [[V8:%.+]] = bitcast <2 x i64> [[V7]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlw	2(%r14,%r15,2), %xmm8
 
 ## PSRLWrr
@@ -218,7 +201,6 @@ psrlw	2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psrlw	%xmm10, %xmm8
 
 retq

@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 inw	$2, %ax
 
 ## IN16rr
@@ -15,7 +14,6 @@ inw	$2, %ax
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 inw	%dx, %ax
 
 ## IN32ri
@@ -24,7 +22,6 @@ inw	%dx, %ax
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 inl	$2, %eax
 
 ## IN32rr
@@ -33,7 +30,6 @@ inl	$2, %eax
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 1
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 inl	%dx, %eax
 
 ## IN8ri
@@ -42,7 +38,6 @@ inl	%dx, %eax
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 inb	$2, %al
 
 ## IN8rr
@@ -51,7 +46,6 @@ inb	$2, %al
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 1
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 inb	%dx, %al
 
 ## INVEPT64
@@ -60,7 +54,6 @@ inb	%dx, %al
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 invept	2(%rbx,%r14,2), %r11
 
 ## INVVPID64
@@ -69,7 +62,6 @@ invept	2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 invvpid	2(%rbx,%r14,2), %r11
 
 retq

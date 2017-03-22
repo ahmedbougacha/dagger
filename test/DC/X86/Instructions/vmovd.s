@@ -13,7 +13,6 @@
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i32*
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vmovd	2(%rbx,%r14,2), %xmm8
 
 ## VMOVDI2PDIrr
@@ -23,7 +22,6 @@ vmovd	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[R9D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R9D")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vmovd	%r9d, %xmm8
 
 ## VMOVPDI2DImr

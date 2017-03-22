@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.16b, v17.16b, v18.16b, v19.16b }, [x17]
 
 ;; ST4Fourv16b_POST
@@ -15,7 +14,6 @@ st4	{ v16.16b, v17.16b, v18.16b, v19.16b }, [x17]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.16b, v18.16b, v19.16b, v20.16b }, [x16], x19
 
 ;; ST4Fourv2d
@@ -24,7 +22,6 @@ st4	{ v17.16b, v18.16b, v19.16b, v20.16b }, [x16], x19
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.2d, v17.2d, v18.2d, v19.2d }, [x17]
 
 ;; ST4Fourv2d_POST
@@ -33,7 +30,6 @@ st4	{ v16.2d, v17.2d, v18.2d, v19.2d }, [x17]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.2d, v18.2d, v19.2d, v20.2d }, [x16], x19
 
 ;; ST4Fourv2s
@@ -42,7 +38,6 @@ st4	{ v17.2d, v18.2d, v19.2d, v20.2d }, [x16], x19
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.2s, v17.2s, v18.2s, v19.2s }, [x17]
 
 ;; ST4Fourv2s_POST
@@ -51,7 +46,6 @@ st4	{ v16.2s, v17.2s, v18.2s, v19.2s }, [x17]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.2s, v18.2s, v19.2s, v20.2s }, [x16], x19
 
 ;; ST4Fourv4h
@@ -60,7 +54,6 @@ st4	{ v17.2s, v18.2s, v19.2s, v20.2s }, [x16], x19
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.4h, v17.4h, v18.4h, v19.4h }, [x17]
 
 ;; ST4Fourv4h_POST
@@ -69,7 +62,6 @@ st4	{ v16.4h, v17.4h, v18.4h, v19.4h }, [x17]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.4h, v18.4h, v19.4h, v20.4h }, [x16], x19
 
 ;; ST4Fourv4s
@@ -78,7 +70,6 @@ st4	{ v17.4h, v18.4h, v19.4h, v20.4h }, [x16], x19
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.4s, v17.4s, v18.4s, v19.4s }, [x17]
 
 ;; ST4Fourv4s_POST
@@ -87,7 +78,6 @@ st4	{ v16.4s, v17.4s, v18.4s, v19.4s }, [x17]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.4s, v18.4s, v19.4s, v20.4s }, [x16], x19
 
 ;; ST4Fourv8b
@@ -96,7 +86,6 @@ st4	{ v17.4s, v18.4s, v19.4s, v20.4s }, [x16], x19
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.8b, v17.8b, v18.8b, v19.8b }, [x17]
 
 ;; ST4Fourv8b_POST
@@ -105,7 +94,6 @@ st4	{ v16.8b, v17.8b, v18.8b, v19.8b }, [x17]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.8b, v18.8b, v19.8b, v20.8b }, [x16], x19
 
 ;; ST4Fourv8h
@@ -114,7 +102,6 @@ st4	{ v17.8b, v18.8b, v19.8b, v20.8b }, [x16], x19
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.8h, v17.8h, v18.8h, v19.8h }, [x17]
 
 ;; ST4Fourv8h_POST
@@ -123,7 +110,6 @@ st4	{ v16.8h, v17.8h, v18.8h, v19.8h }, [x17]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.8h, v18.8h, v19.8h, v20.8h }, [x16], x19
 
 ;; ST4i16
@@ -132,7 +118,6 @@ st4	{ v17.8h, v18.8h, v19.8h, v20.8h }, [x16], x19
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.h, v17.h, v18.h, v19.h }[0], [x18]
 
 ;; ST4i16_POST
@@ -141,7 +126,6 @@ st4	{ v16.h, v17.h, v18.h, v19.h }[0], [x18]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.h, v18.h, v19.h, v20.h }[0], [x16], x20
 
 ;; ST4i32
@@ -150,7 +134,6 @@ st4	{ v17.h, v18.h, v19.h, v20.h }[0], [x16], x20
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.s, v17.s, v18.s, v19.s }[0], [x18]
 
 ;; ST4i32_POST
@@ -159,7 +142,6 @@ st4	{ v16.s, v17.s, v18.s, v19.s }[0], [x18]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.s, v18.s, v19.s, v20.s }[0], [x16], x20
 
 ;; ST4i64
@@ -168,7 +150,6 @@ st4	{ v17.s, v18.s, v19.s, v20.s }[0], [x16], x20
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.d, v17.d, v18.d, v19.d }[0], [x18]
 
 ;; ST4i64_POST
@@ -177,7 +158,6 @@ st4	{ v16.d, v17.d, v18.d, v19.d }[0], [x18]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.d, v18.d, v19.d, v20.d }[0], [x16], x20
 
 ;; ST4i8
@@ -186,7 +166,6 @@ st4	{ v17.d, v18.d, v19.d, v20.d }[0], [x16], x20
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v16.b, v17.b, v18.b, v19.b }[0], [x18]
 
 ;; ST4i8_POST
@@ -195,7 +174,6 @@ st4	{ v16.b, v17.b, v18.b, v19.b }[0], [x18]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 st4	{ v17.b, v18.b, v19.b, v20.b }[0], [x16], x20
 
 ret

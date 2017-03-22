@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cvtsd2si	2(%rbx,%r14,2), %r11
 
 ## CVTSD2SI64rr
@@ -15,7 +14,6 @@ cvtsd2si	2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cvtsd2si	%xmm9, %r11
 
 ## CVTSD2SIrm
@@ -24,7 +22,6 @@ cvtsd2si	%xmm9, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cvtsd2si	2(%rbx,%r14,2), %r8d
 
 ## CVTSD2SIrr
@@ -33,7 +30,6 @@ cvtsd2si	2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cvtsd2si	%xmm9, %r8d
 
 retq

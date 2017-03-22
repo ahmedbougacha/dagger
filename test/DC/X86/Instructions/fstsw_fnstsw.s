@@ -7,7 +7,6 @@
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[FPSW_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"FPSW")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fnstsw	%ax
 
 ## FNSTSWm
@@ -16,7 +15,6 @@ fnstsw	%ax
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fnstsw	2(%r11,%rbx,2)
 
 retq

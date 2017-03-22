@@ -9,7 +9,6 @@
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM13_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpextrw	$2, %xmm13, 2(%r11,%rbx,2)
 
 ## VPEXTRWri
@@ -21,7 +20,6 @@ vpextrw	$2, %xmm13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpextrw	$2, %xmm9, %r8d
 
 ## VPEXTRWrr_REV:	vpextrw	$2, %xmm9, %r8d
@@ -30,7 +28,6 @@ vpextrw	$2, %xmm9, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x43; .byte 0x79; .byte 0x15; .byte 0xc8; .byte 0x02
 
 retq

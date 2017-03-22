@@ -10,7 +10,6 @@
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <2 x i32>
 ; CHECK-NEXT: [[V3:%.+]] = sext <2 x i32> [[V2]] to <2 x i64>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sshll	v16.2d, v17.2s, #0
 
 ;; SSHLLv4i16_shift
@@ -23,7 +22,6 @@ sshll	v16.2d, v17.2s, #0
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <4 x i16>
 ; CHECK-NEXT: [[V3:%.+]] = sext <4 x i16> [[V2]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sshll	v16.4s, v17.4h, #0
 
 ;; SSHLLv8i8_shift
@@ -36,7 +34,6 @@ sshll	v16.4s, v17.4h, #0
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <8 x i8>
 ; CHECK-NEXT: [[V3:%.+]] = sext <8 x i8> [[V2]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sshll	v16.8h, v17.8b, #0
 
 ret

@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 sbbw	$305419896, %ax
 
 ## SBB16mi
@@ -161,7 +160,6 @@ sbbw	%r10w, %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x66; .byte 0x45; .byte 0x1b; .byte 0xc2
 
 ## SBB32i32
@@ -170,7 +168,6 @@ sbbw	%r10w, %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 sbbl	$305419896, %eax
 
 ## SBB32mi
@@ -325,7 +322,6 @@ sbbl	%r10d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x45; .byte 0x1b; .byte 0xc2
 
 ## SBB64i32
@@ -334,7 +330,6 @@ sbbl	%r10d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 sbbq	$305419896, %rax
 
 ## SBB64mi32
@@ -489,7 +484,6 @@ sbbq	%r14, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x4d; .byte 0x1b; .byte 0xde
 
 ## SBB8i8
@@ -498,7 +492,6 @@ sbbq	%r14, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 sbbb	$2, %al
 
 ## SBB8mi
@@ -613,7 +606,6 @@ sbbb	%r8b, %bpl
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x41; .byte 0x1a; .byte 0xe8
 
 retq

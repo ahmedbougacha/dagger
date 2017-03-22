@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psubb	2(%r14,%r15,2), %mm4
 
 ## MMX_PSUBBirr
@@ -15,7 +14,6 @@ psubb	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psubb	%mm6, %mm4
 
 ## MMX_PSUBDirm
@@ -24,7 +22,6 @@ psubb	%mm6, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psubd	2(%r14,%r15,2), %mm4
 
 ## MMX_PSUBDirr
@@ -33,7 +30,6 @@ psubd	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psubd	%mm6, %mm4
 
 ## MMX_PSUBWirm
@@ -42,7 +38,6 @@ psubd	%mm6, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psubw	2(%r14,%r15,2), %mm4
 
 ## MMX_PSUBWirr
@@ -51,7 +46,6 @@ psubw	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 psubw	%mm6, %mm4
 
 ## PSUBBrm

@@ -36,7 +36,6 @@ bic		x16, x17, x18
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bic	v16.16b, v17.16b, v18.16b
 
 ;; BICv2i32
@@ -49,7 +48,6 @@ bic	v16.16b, v17.16b, v18.16b
 ; CHECK-NEXT: [[V2:%.+]] = trunc i128 [[V1]] to i64
 ; CHECK-NEXT: [[V3:%.+]] = bitcast i64 [[V2]] to <2 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bic	v16.2s, #0
 
 ;; BICv4i16
@@ -62,7 +60,6 @@ bic	v16.2s, #0
 ; CHECK-NEXT: [[V2:%.+]] = trunc i128 [[V1]] to i64
 ; CHECK-NEXT: [[V3:%.+]] = bitcast i64 [[V2]] to <4 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bic	v16.4h, #0
 
 ;; BICv4i32
@@ -74,7 +71,6 @@ bic	v16.4h, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q16_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bic	v16.4s, #0
 
 ;; BICv8i16
@@ -86,7 +82,6 @@ bic	v16.4s, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q16_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bic	v16.8h, #0
 
 ;; BICv8i8
@@ -101,7 +96,6 @@ bic	v16.8h, #0
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bic	v16.8b, v17.8b, v18.8b
 
 ret

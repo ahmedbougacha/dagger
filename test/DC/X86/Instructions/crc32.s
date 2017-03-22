@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 9
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32w	2(%r14,%r15,2), %r8d
 
 ## CRC32r32m32
@@ -15,7 +14,6 @@ crc32w	2(%r14,%r15,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32l	2(%r14,%r15,2), %r8d
 
 ## CRC32r32m8
@@ -24,7 +22,6 @@ crc32l	2(%r14,%r15,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32b	2(%r14,%r15,2), %r8d
 
 ## CRC32r32r16
@@ -33,7 +30,6 @@ crc32b	2(%r14,%r15,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32w	%r10w, %r8d
 
 ## CRC32r32r32
@@ -42,7 +38,6 @@ crc32w	%r10w, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32l	%r10d, %r8d
 
 ## CRC32r32r8
@@ -51,7 +46,6 @@ crc32l	%r10d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32b	%r8b, %r8d
 
 ## CRC32r64m64
@@ -60,7 +54,6 @@ crc32b	%r8b, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32q	2(%r14,%r15,2), %r11
 
 ## CRC32r64m8
@@ -69,7 +62,6 @@ crc32q	2(%r14,%r15,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32b	2(%r14,%r15,2), %r11
 
 ## CRC32r64r64
@@ -78,7 +70,6 @@ crc32b	2(%r14,%r15,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32q	%r14, %r11
 
 ## CRC32r64r8
@@ -87,7 +78,6 @@ crc32q	%r14, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 crc32b	%r8b, %r11
 
 retq

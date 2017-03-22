@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 phaddw	2(%r14,%r15,2), %mm4
 
 ## MMX_PHADDWrr64
@@ -15,7 +14,6 @@ phaddw	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 phaddw	%mm6, %mm4
 
 ## MMX_PHADDrm64
@@ -24,7 +22,6 @@ phaddw	%mm6, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 phaddd	2(%r14,%r15,2), %mm4
 
 ## MMX_PHADDrr64
@@ -33,7 +30,6 @@ phaddd	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 phaddd	%mm6, %mm4
 
 ## PHADDDrm

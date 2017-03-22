@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 comiss	2(%rbx,%r14,2), %xmm8
 
 ## COMISSrr
@@ -15,7 +14,6 @@ comiss	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 comiss	%xmm9, %xmm8
 
 retq

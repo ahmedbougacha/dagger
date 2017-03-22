@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpblendvb	%ymm15, 2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VPBLENDVBYrr
@@ -15,7 +14,6 @@ vpblendvb	%ymm15, 2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpblendvb	%ymm11, %ymm10, %ymm9, %ymm8
 
 ## VPBLENDVBrm
@@ -24,7 +22,6 @@ vpblendvb	%ymm11, %ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpblendvb	%xmm15, 2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VPBLENDVBrr
@@ -33,7 +30,6 @@ vpblendvb	%xmm15, 2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpblendvb	%xmm11, %xmm10, %xmm9, %xmm8
 
 retq

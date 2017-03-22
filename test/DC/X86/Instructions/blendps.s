@@ -16,7 +16,6 @@
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <4 x float>*
 # CHECK-NEXT: [[V7:%.+]] = load <4 x float>, <4 x float>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 blendps	$2, 2(%r14,%r15,2), %xmm8
 
 ## BLENDPSrri
@@ -31,7 +30,6 @@ blendps	$2, 2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 blendps	$2, %xmm10, %xmm8
 
 retq

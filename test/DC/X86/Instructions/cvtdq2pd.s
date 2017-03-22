@@ -12,7 +12,6 @@
 # CHECK-NEXT: [[V3:%.+]] = add i64 [[RBX_0]], [[V2]]
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i64*
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cvtdq2pd	2(%rbx,%r14,2), %xmm8
 
 ## CVTDQ2PDrr

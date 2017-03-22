@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vroundpd	$2, 2(%rbx,%r14,2), %xmm8
 
 ## VROUNDPDr
@@ -15,7 +14,6 @@ vroundpd	$2, 2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vroundpd	$2, %xmm9, %xmm8
 
 ## VROUNDYPDm
@@ -24,7 +22,6 @@ vroundpd	$2, %xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vroundpd	$2, 2(%rbx,%r14,2), %ymm8
 
 ## VROUNDYPDr
@@ -33,7 +30,6 @@ vroundpd	$2, 2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vroundpd	$2, %ymm9, %ymm8
 
 retq

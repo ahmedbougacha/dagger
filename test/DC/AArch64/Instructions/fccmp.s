@@ -12,7 +12,6 @@
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to double
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fccmp	d16, d17, #0, eq
 
 ;; FCCMPSrr
@@ -27,7 +26,6 @@ fccmp	d16, d17, #0, eq
 ; CHECK-NEXT: [[V3:%.+]] = bitcast float [[S17_0]] to i32
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i32 [[V3]] to float
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fccmp	s16, s17, #0, eq
 
 ret

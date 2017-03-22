@@ -13,7 +13,6 @@
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i16*
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 popcntw	2(%rbx,%r14,2), %r8w
 
 ## POPCNT16rr
@@ -23,7 +22,6 @@ popcntw	2(%rbx,%r14,2), %r8w
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[R9W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R9W")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 popcntw	%r9w, %r8w
 
 ## POPCNT32rm
@@ -39,7 +37,6 @@ popcntw	%r9w, %r8w
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i32*
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 popcntl	2(%rbx,%r14,2), %r8d
 
 ## POPCNT32rr
@@ -49,7 +46,6 @@ popcntl	2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[R9D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R9D")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 popcntl	%r9d, %r8d
 
 ## POPCNT64rm
@@ -65,7 +61,6 @@ popcntl	%r9d, %r8d
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i64*
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 popcntq	2(%rbx,%r14,2), %r11
 
 ## POPCNT64rr
@@ -75,7 +70,6 @@ popcntq	2(%rbx,%r14,2), %r11
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[RBX_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"RBX")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 popcntq	%rbx, %r11
 
 retq

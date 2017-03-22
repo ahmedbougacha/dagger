@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 lfsw	2(%rbx,%r14,2), %r8w
 
 ## LFS32rm
@@ -15,7 +14,6 @@ lfsw	2(%rbx,%r14,2), %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 lfsl	2(%rbx,%r14,2), %r8d
 
 ## LFS64rm
@@ -24,7 +22,6 @@ lfsl	2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 lfsq	2(%rbx,%r14,2), %r11
 
 ## LGS16rm
@@ -33,7 +30,6 @@ lfsq	2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 lgsw	2(%rbx,%r14,2), %r8w
 
 ## LGS32rm
@@ -42,7 +38,6 @@ lgsw	2(%rbx,%r14,2), %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 lgsl	2(%rbx,%r14,2), %r8d
 
 ## LGS64rm
@@ -51,7 +46,6 @@ lgsl	2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 lgsq	2(%rbx,%r14,2), %r11
 
 ## LSS16rm
@@ -60,7 +54,6 @@ lgsq	2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 lssw	2(%rbx,%r14,2), %r8w
 
 ## LSS32rm
@@ -69,7 +62,6 @@ lssw	2(%rbx,%r14,2), %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 lssl	2(%rbx,%r14,2), %r8d
 
 ## LSS64rm
@@ -78,7 +70,6 @@ lssl	2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 lssq	2(%rbx,%r14,2), %r11
 
 retq

@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 punpcklbw	2(%r14,%r15,2), %mm4
 
 ## MMX_PUNPCKLBWirr
@@ -15,7 +14,6 @@ punpcklbw	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 punpcklbw	%mm6, %mm4
 
 ## MMX_PUNPCKLDQirm
@@ -24,7 +22,6 @@ punpcklbw	%mm6, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 punpckldq	2(%r14,%r15,2), %mm4
 
 ## MMX_PUNPCKLDQirr
@@ -33,7 +30,6 @@ punpckldq	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 punpckldq	%mm6, %mm4
 
 ## MMX_PUNPCKLWDirm
@@ -42,7 +38,6 @@ punpckldq	%mm6, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 punpcklwd	2(%r14,%r15,2), %mm4
 
 ## MMX_PUNPCKLWDirr
@@ -51,7 +46,6 @@ punpcklwd	2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 punpcklwd	%mm6, %mm4
 
 ## PUNPCKLBWrm

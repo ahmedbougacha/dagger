@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 str	b17, [x16], #0
 
 ;; STRBpre
@@ -15,7 +14,6 @@ str	b17, [x16], #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 str	b17, [x16, #0]!
 
 ;; STRBroW
@@ -24,7 +22,6 @@ str	b17, [x16, #0]!
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 str	b16, [x17, w18, uxtw]
 
 ;; STRBroX
@@ -33,7 +30,6 @@ str	b16, [x17, w18, uxtw]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 str		b16, [x17, x18]
 
 ;; STRBui
@@ -42,7 +38,6 @@ str		b16, [x17, x18]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 str		b16, [x17]
 
 ;; STRDpost
@@ -245,7 +240,6 @@ str	q17, [x16, #0]!
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 str	q16, [x17, w18, uxtw]
 
 ;; STRQroX
@@ -259,7 +253,6 @@ str	q16, [x17, w18, uxtw]
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: [[X18_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X18")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 str		q16, [x17, x18]
 
 ;; STRQui

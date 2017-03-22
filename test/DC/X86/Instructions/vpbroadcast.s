@@ -13,7 +13,6 @@
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i8*
 # CHECK-NEXT: [[V5:%.+]] = load i8, i8* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastb	2(%rbx,%r14,2), %ymm8
 
 ## VPBROADCASTBYrr
@@ -25,7 +24,6 @@ vpbroadcastb	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastb	%xmm9, %ymm8
 
 ## VPBROADCASTBrm
@@ -41,7 +39,6 @@ vpbroadcastb	%xmm9, %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i8*
 # CHECK-NEXT: [[V5:%.+]] = load i8, i8* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastb	2(%rbx,%r14,2), %xmm8
 
 ## VPBROADCASTBrr
@@ -53,7 +50,6 @@ vpbroadcastb	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastb	%xmm9, %xmm8
 
 ## VPBROADCASTDYrm
@@ -69,7 +65,6 @@ vpbroadcastb	%xmm9, %xmm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i32*
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastd	2(%rbx,%r14,2), %ymm8
 
 ## VPBROADCASTDYrr
@@ -81,7 +76,6 @@ vpbroadcastd	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastd	%xmm9, %ymm8
 
 ## VPBROADCASTDrm
@@ -97,7 +91,6 @@ vpbroadcastd	%xmm9, %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i32*
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastd	2(%rbx,%r14,2), %xmm8
 
 ## VPBROADCASTDrr
@@ -109,7 +102,6 @@ vpbroadcastd	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastd	%xmm9, %xmm8
 
 ## VPBROADCASTQYrm
@@ -125,7 +117,6 @@ vpbroadcastd	%xmm9, %xmm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i64*
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastq	2(%rbx,%r14,2), %ymm8
 
 ## VPBROADCASTQYrr
@@ -137,7 +128,6 @@ vpbroadcastq	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x i64>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastq	%xmm9, %ymm8
 
 ## VPBROADCASTQrm
@@ -153,7 +143,6 @@ vpbroadcastq	%xmm9, %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i64*
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastq	2(%rbx,%r14,2), %xmm8
 
 ## VPBROADCASTQrr
@@ -165,7 +154,6 @@ vpbroadcastq	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x i64>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastq	%xmm9, %xmm8
 
 ## VPBROADCASTWYrm
@@ -181,7 +169,6 @@ vpbroadcastq	%xmm9, %xmm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i16*
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastw	2(%rbx,%r14,2), %ymm8
 
 ## VPBROADCASTWYrr
@@ -193,7 +180,6 @@ vpbroadcastw	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastw	%xmm9, %ymm8
 
 ## VPBROADCASTWrm
@@ -209,7 +195,6 @@ vpbroadcastw	%xmm9, %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i16*
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastw	2(%rbx,%r14,2), %xmm8
 
 ## VPBROADCASTWrr
@@ -221,7 +206,6 @@ vpbroadcastw	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpbroadcastw	%xmm9, %xmm8
 
 retq

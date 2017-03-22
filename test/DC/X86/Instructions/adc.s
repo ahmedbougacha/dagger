@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcw	$305419896, %ax
 
 ## ADC16mi
@@ -23,7 +22,6 @@ adcw	$305419896, %ax
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcw	$305419896, 2(%r11,%rbx,2)
 
 ## ADC16mi8
@@ -40,7 +38,6 @@ adcw	$305419896, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcw	$2, 2(%r11,%rbx,2)
 
 ## ADC16mr
@@ -58,7 +55,6 @@ adcw	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R15W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R15W")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcw	%r15w, 2(%r11,%rbx,2)
 
 ## ADC16ri
@@ -69,7 +65,6 @@ adcw	%r15w, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R8W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R8W")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcw	$305419896, %r8w
 
 ## ADC16ri8
@@ -80,7 +75,6 @@ adcw	$305419896, %r8w
 # CHECK-NEXT: [[R8W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R8W")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcw	$2, %r8w
 
 ## ADC16rm
@@ -98,7 +92,6 @@ adcw	$2, %r8w
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcw	2(%r14,%r15,2), %r8w
 
 ## ADC16rr
@@ -110,7 +103,6 @@ adcw	2(%r14,%r15,2), %r8w
 # CHECK-NEXT: [[R10W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R10W")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcw	%r10w, %r8w
 
 ## ADC16rr_REV:	adcw	%r10w, %r8w
@@ -119,7 +111,6 @@ adcw	%r10w, %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x66; .byte 0x45; .byte 0x13; .byte 0xc2
 
 ## ADC32i32
@@ -128,7 +119,6 @@ adcw	%r10w, %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcl	$305419896, %eax
 
 ## ADC32mi
@@ -145,7 +135,6 @@ adcl	$305419896, %eax
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcl	$305419896, 2(%r11,%rbx,2)
 
 ## ADC32mi8
@@ -162,7 +151,6 @@ adcl	$305419896, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcl	$2, 2(%r11,%rbx,2)
 
 ## ADC32mr
@@ -180,7 +168,6 @@ adcl	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R15D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R15D")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcl	%r15d, 2(%r11,%rbx,2)
 
 ## ADC32ri
@@ -191,7 +178,6 @@ adcl	%r15d, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R8D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R8D")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcl	$305419896, %r8d
 
 ## ADC32ri8
@@ -202,7 +188,6 @@ adcl	$305419896, %r8d
 # CHECK-NEXT: [[R8D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R8D")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcl	$2, %r8d
 
 ## ADC32rm
@@ -220,7 +205,6 @@ adcl	$2, %r8d
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcl	2(%r14,%r15,2), %r8d
 
 ## ADC32rr
@@ -232,7 +216,6 @@ adcl	2(%r14,%r15,2), %r8d
 # CHECK-NEXT: [[R10D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R10D")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcl	%r10d, %r8d
 
 ## ADC32rr_REV:	adcl	%r10d, %r8d
@@ -241,7 +224,6 @@ adcl	%r10d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x45; .byte 0x13; .byte 0xc2
 
 ## ADC64i32
@@ -250,7 +232,6 @@ adcl	%r10d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcq	$305419896, %rax
 
 ## ADC64mi32
@@ -267,7 +248,6 @@ adcq	$305419896, %rax
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcq	$305419896, 2(%r11,%rbx,2)
 
 ## ADC64mi8
@@ -284,7 +264,6 @@ adcq	$305419896, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcq	$2, 2(%r11,%rbx,2)
 
 ## ADC64mr
@@ -302,7 +281,6 @@ adcq	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R13_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R13")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcq	%r13, 2(%r11,%rbx,2)
 
 ## ADC64ri32
@@ -313,7 +291,6 @@ adcq	%r13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R11_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R11")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcq	$305419896, %r11
 
 ## ADC64ri8
@@ -324,7 +301,6 @@ adcq	$305419896, %r11
 # CHECK-NEXT: [[R11_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R11")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcq	$2, %r11
 
 ## ADC64rm
@@ -342,7 +318,6 @@ adcq	$2, %r11
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcq	2(%r14,%r15,2), %r11
 
 ## ADC64rr
@@ -354,7 +329,6 @@ adcq	2(%r14,%r15,2), %r11
 # CHECK-NEXT: [[R14_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R14")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcq	%r14, %r11
 
 ## ADC64rr_REV:	adcq	%r14, %r11
@@ -363,7 +337,6 @@ adcq	%r14, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x4d; .byte 0x13; .byte 0xde
 
 ## ADC8i8
@@ -372,7 +345,6 @@ adcq	%r14, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcb	$2, %al
 
 ## ADC8mi
@@ -389,7 +361,6 @@ adcb	$2, %al
 # CHECK-NEXT: [[V5:%.+]] = load i8, i8* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcb	$2, 2(%r11,%rbx,2)
 
 ## ADC8mr
@@ -407,7 +378,6 @@ adcb	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R11B_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"R11B")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcb	%r11b, 2(%r11,%rbx,2)
 
 ## ADC8ri
@@ -418,7 +388,6 @@ adcb	%r11b, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[BPL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"BPL")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcb	$2, %bpl
 
 ## ADC8rm
@@ -436,7 +405,6 @@ adcb	$2, %bpl
 # CHECK-NEXT: [[V5:%.+]] = load i8, i8* [[V4]], align 1
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcb	2(%r14,%r15,2), %bpl
 
 ## ADC8rr
@@ -448,7 +416,6 @@ adcb	2(%r14,%r15,2), %bpl
 # CHECK-NEXT: [[R8B_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"R8B")
 # CHECK-NEXT: [[EFLAGS_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"EFLAGS")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 adcb	%r8b, %bpl
 
 ## ADC8rr_REV:	adcb	%r8b, %bpl
@@ -457,7 +424,6 @@ adcb	%r8b, %bpl
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x41; .byte 0x12; .byte 0xe8
 
 retq

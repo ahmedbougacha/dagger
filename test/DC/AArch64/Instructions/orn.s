@@ -36,7 +36,6 @@ orn		x16, x17, x18
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 orn	v16.16b, v17.16b, v18.16b
 
 ;; ORNv8i8
@@ -51,7 +50,6 @@ orn	v16.16b, v17.16b, v18.16b
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 orn	v16.8b, v17.8b, v18.8b
 
 ret

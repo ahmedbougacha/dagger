@@ -15,7 +15,6 @@
 ; CHECK-NEXT: [[V5:%.+]] = bitcast <16 x i8> [[Q19_0]] to i128
 ; CHECK-NEXT: [[V6:%.+]] = bitcast i128 [[V5]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bit	v16.16b, v18.16b, v19.16b
 
 ;; BITv8i8
@@ -33,7 +32,6 @@ bit	v16.16b, v18.16b, v19.16b
 ; CHECK-NEXT: [[V5:%.+]] = bitcast double [[D19_0]] to i64
 ; CHECK-NEXT: [[V6:%.+]] = bitcast i64 [[V5]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 bit	v16.8b, v18.8b, v19.8b
 
 ret

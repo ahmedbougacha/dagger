@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fdivrs	2(%r11,%rbx,2)
 
 ## DIVR_F64m
@@ -15,7 +14,6 @@ fdivrs	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fdivrl	2(%r11,%rbx,2)
 
 ## DIVR_FI16m
@@ -24,7 +22,6 @@ fdivrl	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fidivrs	2(%r11,%rbx,2)
 
 ## DIVR_FI32m
@@ -33,7 +30,6 @@ fidivrs	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fidivrl	2(%r11,%rbx,2)
 
 ## DIVR_FPrST0
@@ -42,7 +38,6 @@ fidivrl	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fdivp	%st(4)
 
 ## DIVR_FST0r
@@ -51,7 +46,6 @@ fdivp	%st(4)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fdivr	%st(4)
 
 ## DIVR_FrST0
@@ -60,7 +54,6 @@ fdivr	%st(4)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fdiv	%st(0), %st(4)
 
 retq

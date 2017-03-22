@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 uqshrn	b16, h17, #2
 
 ;; UQSHRNh
@@ -15,7 +14,6 @@ uqshrn	b16, h17, #2
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 uqshrn	h16, s17, #2
 
 ;; UQSHRNs
@@ -24,7 +22,6 @@ uqshrn	h16, s17, #2
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 uqshrn	s16, d17, #2
 
 ;; UQSHRNv2i32_shift
@@ -33,7 +30,6 @@ uqshrn	s16, d17, #2
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 uqshrn	v16.2s, v17.2d, #2
 
 ;; UQSHRNv4i16_shift
@@ -42,7 +38,6 @@ uqshrn	v16.2s, v17.2d, #2
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 uqshrn	v16.4h, v17.4s, #2
 
 ;; UQSHRNv8i8_shift
@@ -51,7 +46,6 @@ uqshrn	v16.4h, v17.4s, #2
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 uqshrn	v16.8b, v17.8h, #2
 
 ret

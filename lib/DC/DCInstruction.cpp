@@ -106,7 +106,6 @@ bool DCInstruction::translate() {
            << ": " << TheMCInst.Inst << "\n";
     Builder.CreateCall(
         Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
-    Builder.CreateUnreachable();
     Success = true;
   }
 

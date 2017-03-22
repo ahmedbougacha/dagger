@@ -7,7 +7,6 @@
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[AH_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"AH")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 sahf
 
 retq

@@ -12,7 +12,6 @@
 # CHECK-NEXT: [[V3:%.+]] = add i64 [[R11_0]], [[V2]]
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i8*
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 prefetch	2(%r11,%rbx,2)
 
 retq

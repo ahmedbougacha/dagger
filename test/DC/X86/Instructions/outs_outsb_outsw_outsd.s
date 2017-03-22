@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 1
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 outsb	(%r11), %dx
 
 ## OUTSL
@@ -15,7 +14,6 @@ outsb	(%r11), %dx
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 1
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 outsl	(%r11), %dx
 
 ## OUTSW
@@ -24,7 +22,6 @@ outsl	(%r11), %dx
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 outsw	(%r11), %dx
 
 retq

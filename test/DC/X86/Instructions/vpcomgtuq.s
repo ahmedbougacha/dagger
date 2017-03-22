@@ -16,7 +16,6 @@
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <2 x i64>*
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpcomgtuq	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VPCOMUQmi_alt
@@ -35,7 +34,6 @@ vpcomgtuq	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <2 x i64>*
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpcomuq	$2, 2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VPCOMUQri
@@ -50,7 +48,6 @@ vpcomuq	$2, 2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x i64>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpcomgtuq	%xmm10, %xmm9, %xmm8
 
 ## VPCOMUQri_alt
@@ -65,7 +62,6 @@ vpcomgtuq	%xmm10, %xmm9, %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x i64>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpcomuq	$2, %xmm10, %xmm9, %xmm8
 
 retq

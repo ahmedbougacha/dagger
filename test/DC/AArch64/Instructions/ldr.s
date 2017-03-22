@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	b17, [x16], #0
 
 ;; LDRBpre
@@ -15,7 +14,6 @@ ldr	b17, [x16], #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	b17, [x16, #0]!
 
 ;; LDRBroW
@@ -24,7 +22,6 @@ ldr	b17, [x16, #0]!
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	b16, [x17, w18, uxtw]
 
 ;; LDRBroX
@@ -33,7 +30,6 @@ ldr	b16, [x17, w18, uxtw]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr		b16, [x17, x18]
 
 ;; LDRBui
@@ -42,7 +38,6 @@ ldr		b16, [x17, x18]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr		b16, [x17]
 
 ;; LDRDl
@@ -63,7 +58,6 @@ ldr	d16, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	d17, [x16], #0
 
 ;; LDRDpre
@@ -72,7 +66,6 @@ ldr	d17, [x16], #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	d17, [x16, #0]!
 
 ;; LDRDroW
@@ -123,7 +116,6 @@ ldr		d16, [x17]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	h17, [x16], #0
 
 ;; LDRHpre
@@ -132,7 +124,6 @@ ldr	h17, [x16], #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	h17, [x16, #0]!
 
 ;; LDRHroW
@@ -195,7 +186,6 @@ ldr	q16, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	q17, [x16], #0
 
 ;; LDRQpre
@@ -204,7 +194,6 @@ ldr	q17, [x16], #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	q17, [x16, #0]!
 
 ;; LDRQroW
@@ -215,7 +204,6 @@ ldr	q17, [x16, #0]!
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	q16, [x17, w18, uxtw]
 
 ;; LDRQroX
@@ -226,7 +214,6 @@ ldr	q16, [x17, w18, uxtw]
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: [[X18_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X18")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr		q16, [x17, x18]
 
 ;; LDRQui
@@ -260,7 +247,6 @@ ldr	s16, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	s17, [x16], #0
 
 ;; LDRSpre
@@ -269,7 +255,6 @@ ldr	s17, [x16], #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	s17, [x16, #0]!
 
 ;; LDRSroW
@@ -331,7 +316,6 @@ ldr	w16, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	w17, [x16], #0
 
 ;; LDRWpre
@@ -340,7 +324,6 @@ ldr	w17, [x16], #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	w17, [x16, #0]!
 
 ;; LDRWroW
@@ -399,7 +382,6 @@ ldr	x16, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	x17, [x16], #0
 
 ;; LDRXpre
@@ -408,7 +390,6 @@ ldr	x17, [x16], #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ldr	x17, [x16, #0]!
 
 ;; LDRXroW

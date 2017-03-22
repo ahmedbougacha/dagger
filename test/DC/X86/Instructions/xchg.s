@@ -24,7 +24,6 @@ xchgw	%r8w, %ax
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i16*
 # CHECK-NEXT: [[R8W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R8W")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 xchgw	%r8w, 2(%r14,%r15,2)
 
 ## XCHG16rr
@@ -73,7 +72,6 @@ xchgl	%r8d, %eax
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i32*
 # CHECK-NEXT: [[R8D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R8D")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 xchgl	%r8d, 2(%r14,%r15,2)
 
 ## XCHG32rr
@@ -111,7 +109,6 @@ xchgq	%r11, %rax
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i64*
 # CHECK-NEXT: [[R11_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R11")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 xchgq	%r11, 2(%r14,%r15,2)
 
 ## XCHG64rr
@@ -138,7 +135,6 @@ xchgq	%r11, %r14
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i8*
 # CHECK-NEXT: [[BPL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"BPL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 xchgb	%bpl, 2(%r14,%r15,2)
 
 ## XCHG8rr

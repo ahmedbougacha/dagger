@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclw	2(%r11,%rbx,2)
 
 ## RCL16mCL
@@ -15,7 +14,6 @@ rclw	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclw	%cl, 2(%r11,%rbx,2)
 
 ## RCL16mi
@@ -24,7 +22,6 @@ rclw	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclw	$2, 2(%r11,%rbx,2)
 
 ## RCL16r1
@@ -33,7 +30,6 @@ rclw	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclw	%r8w
 
 ## RCL16rCL
@@ -42,7 +38,6 @@ rclw	%r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclw	%cl, %r8w
 
 ## RCL16ri
@@ -51,7 +46,6 @@ rclw	%cl, %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclw	$2, %r8w
 
 ## RCL32m1
@@ -60,7 +54,6 @@ rclw	$2, %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcll	2(%r11,%rbx,2)
 
 ## RCL32mCL
@@ -69,7 +62,6 @@ rcll	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcll	%cl, 2(%r11,%rbx,2)
 
 ## RCL32mi
@@ -78,7 +70,6 @@ rcll	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcll	$2, 2(%r11,%rbx,2)
 
 ## RCL32r1
@@ -87,7 +78,6 @@ rcll	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcll	%r8d
 
 ## RCL32rCL
@@ -96,7 +86,6 @@ rcll	%r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcll	%cl, %r8d
 
 ## RCL32ri
@@ -105,7 +94,6 @@ rcll	%cl, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcll	$2, %r8d
 
 ## RCL64m1
@@ -114,7 +102,6 @@ rcll	$2, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclq	2(%r11,%rbx,2)
 
 ## RCL64mCL
@@ -123,7 +110,6 @@ rclq	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclq	%cl, 2(%r11,%rbx,2)
 
 ## RCL64mi
@@ -132,7 +118,6 @@ rclq	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclq	$2, 2(%r11,%rbx,2)
 
 ## RCL64r1
@@ -141,7 +126,6 @@ rclq	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclq	%r11
 
 ## RCL64rCL
@@ -150,7 +134,6 @@ rclq	%r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclq	%cl, %r11
 
 ## RCL64ri
@@ -159,7 +142,6 @@ rclq	%cl, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclq	$2, %r11
 
 ## RCL8m1
@@ -168,7 +150,6 @@ rclq	$2, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclb	2(%r11,%rbx,2)
 
 ## RCL8mCL
@@ -177,7 +158,6 @@ rclb	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclb	%cl, 2(%r11,%rbx,2)
 
 ## RCL8mi
@@ -186,7 +166,6 @@ rclb	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclb	$2, 2(%r11,%rbx,2)
 
 ## RCL8r1
@@ -195,7 +174,6 @@ rclb	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclb	%bpl
 
 ## RCL8rCL
@@ -204,7 +182,6 @@ rclb	%bpl
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclb	%cl, %bpl
 
 ## RCL8ri
@@ -213,7 +190,6 @@ rclb	%cl, %bpl
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rclb	$2, %bpl
 
 ## RCR16m1
@@ -222,7 +198,6 @@ rclb	$2, %bpl
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrw	2(%r11,%rbx,2)
 
 ## RCR16mCL
@@ -231,7 +206,6 @@ rcrw	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrw	%cl, 2(%r11,%rbx,2)
 
 ## RCR16mi
@@ -240,7 +214,6 @@ rcrw	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrw	$2, 2(%r11,%rbx,2)
 
 ## RCR16r1
@@ -249,7 +222,6 @@ rcrw	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrw	%r8w
 
 ## RCR16rCL
@@ -258,7 +230,6 @@ rcrw	%r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrw	%cl, %r8w
 
 ## RCR16ri
@@ -267,7 +238,6 @@ rcrw	%cl, %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrw	$2, %r8w
 
 ## RCR32m1
@@ -276,7 +246,6 @@ rcrw	$2, %r8w
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrl	2(%r11,%rbx,2)
 
 ## RCR32mCL
@@ -285,7 +254,6 @@ rcrl	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrl	%cl, 2(%r11,%rbx,2)
 
 ## RCR32mi
@@ -294,7 +262,6 @@ rcrl	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrl	$2, 2(%r11,%rbx,2)
 
 ## RCR32r1
@@ -303,7 +270,6 @@ rcrl	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrl	%r8d
 
 ## RCR32rCL
@@ -312,7 +278,6 @@ rcrl	%r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrl	%cl, %r8d
 
 ## RCR32ri
@@ -321,7 +286,6 @@ rcrl	%cl, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrl	$2, %r8d
 
 ## RCR64m1
@@ -330,7 +294,6 @@ rcrl	$2, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrq	2(%r11,%rbx,2)
 
 ## RCR64mCL
@@ -339,7 +302,6 @@ rcrq	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrq	%cl, 2(%r11,%rbx,2)
 
 ## RCR64mi
@@ -348,7 +310,6 @@ rcrq	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrq	$2, 2(%r11,%rbx,2)
 
 ## RCR64r1
@@ -357,7 +318,6 @@ rcrq	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrq	%r11
 
 ## RCR64rCL
@@ -366,7 +326,6 @@ rcrq	%r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrq	%cl, %r11
 
 ## RCR64ri
@@ -375,7 +334,6 @@ rcrq	%cl, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrq	$2, %r11
 
 ## RCR8m1
@@ -384,7 +342,6 @@ rcrq	$2, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrb	2(%r11,%rbx,2)
 
 ## RCR8mCL
@@ -393,7 +350,6 @@ rcrb	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrb	%cl, 2(%r11,%rbx,2)
 
 ## RCR8mi
@@ -402,7 +358,6 @@ rcrb	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrb	$2, 2(%r11,%rbx,2)
 
 ## RCR8r1
@@ -411,7 +366,6 @@ rcrb	$2, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrb	%bpl
 
 ## RCR8rCL
@@ -420,7 +374,6 @@ rcrb	%bpl
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 3
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrb	%cl, %bpl
 
 ## RCR8ri
@@ -429,7 +382,6 @@ rcrb	%cl, %bpl
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcrb	$2, %bpl
 
 ## ROL16m1
@@ -901,7 +853,6 @@ rorw	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorw	%cl, 2(%r11,%rbx,2)
 
 ## ROR16mi
@@ -917,7 +868,6 @@ rorw	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i16*
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorw	$2, 2(%r11,%rbx,2)
 
 ## ROR16r1
@@ -943,7 +893,6 @@ rorw	%r8w
 # CHECK-NEXT: [[R8W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R8W")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorw	%cl, %r8w
 
 ## ROR16ri
@@ -953,7 +902,6 @@ rorw	%cl, %r8w
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[R8W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R8W")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorw	$2, %r8w
 
 ## ROR32m1
@@ -991,7 +939,6 @@ rorl	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorl	%cl, 2(%r11,%rbx,2)
 
 ## ROR32mi
@@ -1007,7 +954,6 @@ rorl	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i32*
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorl	$2, 2(%r11,%rbx,2)
 
 ## ROR32r1
@@ -1033,7 +979,6 @@ rorl	%r8d
 # CHECK-NEXT: [[R8D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R8D")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorl	%cl, %r8d
 
 ## ROR32ri
@@ -1043,7 +988,6 @@ rorl	%cl, %r8d
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[R8D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R8D")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorl	$2, %r8d
 
 ## ROR64m1
@@ -1081,7 +1025,6 @@ rorq	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorq	%cl, 2(%r11,%rbx,2)
 
 ## ROR64mi
@@ -1097,7 +1040,6 @@ rorq	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i64*
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorq	$2, 2(%r11,%rbx,2)
 
 ## ROR64r1
@@ -1123,7 +1065,6 @@ rorq	%r11
 # CHECK-NEXT: [[R11_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R11")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorq	%cl, %r11
 
 ## ROR64ri
@@ -1133,7 +1074,6 @@ rorq	%cl, %r11
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[R11_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R11")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorq	$2, %r11
 
 ## ROR8m1
@@ -1170,7 +1110,6 @@ rorb	2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i8, i8* [[V4]], align 1
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorb	%cl, 2(%r11,%rbx,2)
 
 ## ROR8mi
@@ -1186,7 +1125,6 @@ rorb	%cl, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i8*
 # CHECK-NEXT: [[V5:%.+]] = load i8, i8* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorb	$2, 2(%r11,%rbx,2)
 
 ## ROR8r1
@@ -1211,7 +1149,6 @@ rorb	%bpl
 # CHECK-NEXT: [[BPL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"BPL")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorb	%cl, %bpl
 
 ## ROR8ri
@@ -1221,7 +1158,6 @@ rorb	%cl, %bpl
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[BPL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"BPL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rorb	$2, %bpl
 
 retq

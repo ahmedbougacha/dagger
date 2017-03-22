@@ -9,7 +9,6 @@
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ushll2	v16.8h, v17.16b, #0
 
 ;; USHLLv4i32_shift
@@ -21,7 +20,6 @@ ushll2	v16.8h, v17.16b, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ushll2	v16.2d, v17.4s, #0
 
 ;; USHLLv8i16_shift
@@ -33,7 +31,6 @@ ushll2	v16.2d, v17.4s, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ushll2	v16.4s, v17.8h, #0
 
 ret

@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 tbx	v16.16b, { v18.16b, v19.16b, v20.16b, v21.16b }, v19.16b
 
 ;; TBXv16i8One
@@ -15,7 +14,6 @@ tbx	v16.16b, { v18.16b, v19.16b, v20.16b, v21.16b }, v19.16b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 tbx	v16.16b, { v18.16b }, v19.16b
 
 ;; TBXv16i8Three
@@ -24,7 +22,6 @@ tbx	v16.16b, { v18.16b }, v19.16b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 tbx	v16.16b, { v18.16b, v19.16b, v20.16b }, v19.16b
 
 ;; TBXv16i8Two
@@ -33,7 +30,6 @@ tbx	v16.16b, { v18.16b, v19.16b, v20.16b }, v19.16b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 tbx	v16.16b, { v18.16b, v19.16b }, v19.16b
 
 ;; TBXv8i8Four
@@ -42,7 +38,6 @@ tbx	v16.16b, { v18.16b, v19.16b }, v19.16b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 tbx	v16.8b, { v18.16b, v19.16b, v20.16b, v21.16b }, v19.8b
 
 ;; TBXv8i8One
@@ -51,7 +46,6 @@ tbx	v16.8b, { v18.16b, v19.16b, v20.16b, v21.16b }, v19.8b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 tbx	v16.8b, { v18.16b }, v19.8b
 
 ;; TBXv8i8Three
@@ -60,7 +54,6 @@ tbx	v16.8b, { v18.16b }, v19.8b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 tbx	v16.8b, { v18.16b, v19.16b, v20.16b }, v19.8b
 
 ;; TBXv8i8Two
@@ -69,7 +62,6 @@ tbx	v16.8b, { v18.16b, v19.16b, v20.16b }, v19.8b
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 tbx	v16.8b, { v18.16b, v19.16b }, v19.8b
 
 ret

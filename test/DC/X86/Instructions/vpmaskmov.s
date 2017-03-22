@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpmaskmovd	%ymm14, %ymm13, 2(%r11,%rbx,2)
 
 ## VPMASKMOVDYrm
@@ -15,7 +14,6 @@ vpmaskmovd	%ymm14, %ymm13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpmaskmovd	2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VPMASKMOVDmr
@@ -24,7 +22,6 @@ vpmaskmovd	2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpmaskmovd	%xmm14, %xmm13, 2(%r11,%rbx,2)
 
 ## VPMASKMOVDrm
@@ -33,7 +30,6 @@ vpmaskmovd	%xmm14, %xmm13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpmaskmovd	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VPMASKMOVQYmr
@@ -42,7 +38,6 @@ vpmaskmovd	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpmaskmovq	%ymm14, %ymm13, 2(%r11,%rbx,2)
 
 ## VPMASKMOVQYrm
@@ -51,7 +46,6 @@ vpmaskmovq	%ymm14, %ymm13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpmaskmovq	2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VPMASKMOVQmr
@@ -60,7 +54,6 @@ vpmaskmovq	2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpmaskmovq	%xmm14, %xmm13, 2(%r11,%rbx,2)
 
 ## VPMASKMOVQrm
@@ -69,7 +62,6 @@ vpmaskmovq	%xmm14, %xmm13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpmaskmovq	2(%r14,%r15,2), %xmm9, %xmm8
 
 retq

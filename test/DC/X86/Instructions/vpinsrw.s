@@ -15,7 +15,6 @@
 # CHECK-NEXT: [[V5:%.+]] = add i64 [[R14_0]], [[V4]]
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to i16*
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpinsrw	$2, 2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VPINSRWrri
@@ -28,7 +27,6 @@ vpinsrw	$2, 2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: [[R10D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R10D")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpinsrw	$2, %r10d, %xmm9, %xmm8
 
 retq

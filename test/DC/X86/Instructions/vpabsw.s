@@ -14,7 +14,6 @@
 # CHECK-NEXT: [[V5:%.+]] = load <4 x i64>, <4 x i64>* [[V4]], align 1
 # CHECK-NEXT: [[V6:%.+]] = bitcast <4 x i64> [[V5]] to <16 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpabsw	2(%rbx,%r14,2), %ymm8
 
 ## VPABSWYrr
@@ -26,7 +25,6 @@ vpabsw	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <8 x float> [[YMM9_0]] to i256
 # CHECK-NEXT: [[V2:%.+]] = bitcast i256 [[V1]] to <16 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpabsw	%ymm9, %ymm8
 
 ## VPABSWrm
@@ -43,7 +41,6 @@ vpabsw	%ymm9, %ymm8
 # CHECK-NEXT: [[V5:%.+]] = load <2 x i64>, <2 x i64>* [[V4]], align 1
 # CHECK-NEXT: [[V6:%.+]] = bitcast <2 x i64> [[V5]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpabsw	2(%rbx,%r14,2), %xmm8
 
 ## VPABSWrr
@@ -55,7 +52,6 @@ vpabsw	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpabsw	%xmm9, %xmm8
 
 retq

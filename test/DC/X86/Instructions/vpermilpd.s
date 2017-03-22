@@ -13,7 +13,6 @@
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to <4 x double>*
 # CHECK-NEXT: [[V5:%.+]] = load <4 x double>, <4 x double>* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermilpd	$2, 2(%rbx,%r14,2), %ymm8
 
 ## VPERMILPDYri
@@ -25,7 +24,6 @@ vpermilpd	$2, 2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <8 x float> [[YMM9_0]] to i256
 # CHECK-NEXT: [[V2:%.+]] = bitcast i256 [[V1]] to <4 x double>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermilpd	$2, %ymm9, %ymm8
 
 ## VPERMILPDYrm
@@ -44,7 +42,6 @@ vpermilpd	$2, %ymm9, %ymm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <4 x i64>*
 # CHECK-NEXT: [[V7:%.+]] = load <4 x i64>, <4 x i64>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermilpd	2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VPERMILPDYrr
@@ -59,7 +56,6 @@ vpermilpd	2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <8 x float> [[YMM10_0]] to i256
 # CHECK-NEXT: [[V4:%.+]] = bitcast i256 [[V3]] to <4 x i64>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermilpd	%ymm10, %ymm9, %ymm8
 
 ## VPERMILPDmi
@@ -75,7 +71,6 @@ vpermilpd	%ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to <2 x double>*
 # CHECK-NEXT: [[V5:%.+]] = load <2 x double>, <2 x double>* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermilpd	$2, 2(%rbx,%r14,2), %xmm8
 
 ## VPERMILPDri
@@ -87,7 +82,6 @@ vpermilpd	$2, 2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x double>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermilpd	$2, %xmm9, %xmm8
 
 ## VPERMILPDrm
@@ -106,7 +100,6 @@ vpermilpd	$2, %xmm9, %xmm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <2 x i64>*
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermilpd	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VPERMILPDrr
@@ -121,7 +114,6 @@ vpermilpd	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x i64>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermilpd	%xmm10, %xmm9, %xmm8
 
 retq

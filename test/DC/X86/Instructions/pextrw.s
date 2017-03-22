@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pextrw	$2, %mm5, %r8d
 
 ## PEXTRWmr
@@ -18,7 +17,6 @@ pextrw	$2, %mm5, %r8d
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM13_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pextrw	$2, %xmm13, 2(%r11,%rbx,2)
 
 ## PEXTRWri
@@ -30,7 +28,6 @@ pextrw	$2, %xmm13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pextrw	$2, %xmm9, %r8d
 
 ## PEXTRWrr_REV:	pextrw	$2, %xmm9, %r8d
@@ -39,7 +36,6 @@ pextrw	$2, %xmm9, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x66; .byte 0x45; .byte 0x0f; .byte 0x3a; .byte 0x15; .byte 0xc8; .byte 0x02
 
 retq

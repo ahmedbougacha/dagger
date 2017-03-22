@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mov	h16, v17.h[0]
 
 ;; CPYi32
@@ -15,7 +14,6 @@ mov	h16, v17.h[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mov	s16, v17.s[0]
 
 ;; CPYi64
@@ -24,7 +22,6 @@ mov	s16, v17.s[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mov	d16, v17.d[0]
 
 ;; CPYi8
@@ -33,7 +30,6 @@ mov	d16, v17.d[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mov	b16, v17.b[0]
 
 ;; MOVNWi
@@ -85,7 +81,6 @@ mov	x16, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mov		w16, v17.s[0]
 
 ;; UMOVvi64
@@ -97,7 +92,6 @@ mov		w16, v17.s[0]
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x i64>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mov		x16, v17.d[0]
 
 ret

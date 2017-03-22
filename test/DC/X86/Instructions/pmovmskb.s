@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovmskb	%mm5, %r8d
 
 ## PMOVMSKBrr
@@ -18,7 +17,6 @@ pmovmskb	%mm5, %r8d
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovmskb	%xmm9, %r8d
 
 retq

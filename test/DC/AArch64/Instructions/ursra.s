@@ -10,7 +10,6 @@
 ; CHECK-NEXT: [[D18_0:%.+]] = call double @llvm.dc.getreg.f64(metadata !"D18")
 ; CHECK-NEXT: [[V2:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ursra	d16, d18, #2
 
 ;; URSRAv16i8_shift
@@ -25,7 +24,6 @@ ursra	d16, d18, #2
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ursra	v16.16b, v18.16b, #2
 
 ;; URSRAv2i32_shift
@@ -40,7 +38,6 @@ ursra	v16.16b, v18.16b, #2
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <2 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ursra	v16.2s, v18.2s, #2
 
 ;; URSRAv2i64_shift
@@ -55,7 +52,6 @@ ursra	v16.2s, v18.2s, #2
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x i64>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ursra	v16.2d, v18.2d, #2
 
 ;; URSRAv4i16_shift
@@ -70,7 +66,6 @@ ursra	v16.2d, v18.2d, #2
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <4 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ursra	v16.4h, v18.4h, #2
 
 ;; URSRAv4i32_shift
@@ -85,7 +80,6 @@ ursra	v16.4h, v18.4h, #2
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ursra	v16.4s, v18.4s, #2
 
 ;; URSRAv8i16_shift
@@ -100,7 +94,6 @@ ursra	v16.4s, v18.4s, #2
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ursra	v16.8h, v18.8h, #2
 
 ;; URSRAv8i8_shift
@@ -115,7 +108,6 @@ ursra	v16.8h, v18.8h, #2
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 ursra	v16.8b, v18.8b, #2
 
 ret

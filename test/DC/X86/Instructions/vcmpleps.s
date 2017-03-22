@@ -16,7 +16,6 @@
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <8 x float>*
 # CHECK-NEXT: [[V7:%.+]] = load <8 x float>, <8 x float>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpleps	2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VCMPPSYrmi_alt
@@ -35,7 +34,6 @@ vcmpleps	2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <8 x float>*
 # CHECK-NEXT: [[V7:%.+]] = load <8 x float>, <8 x float>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpps	$2, 2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VCMPPSYrri
@@ -50,7 +48,6 @@ vcmpps	$2, 2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <8 x float> [[YMM10_0]] to i256
 # CHECK-NEXT: [[V4:%.+]] = bitcast i256 [[V3]] to <8 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpleps	%ymm10, %ymm9, %ymm8
 
 ## VCMPPSYrri_alt
@@ -65,7 +62,6 @@ vcmpleps	%ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <8 x float> [[YMM10_0]] to i256
 # CHECK-NEXT: [[V4:%.+]] = bitcast i256 [[V3]] to <8 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpps	$2, %ymm10, %ymm9, %ymm8
 
 ## VCMPPSrmi
@@ -84,7 +80,6 @@ vcmpps	$2, %ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <4 x float>*
 # CHECK-NEXT: [[V7:%.+]] = load <4 x float>, <4 x float>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpleps	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VCMPPSrmi_alt
@@ -103,7 +98,6 @@ vcmpleps	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to <4 x float>*
 # CHECK-NEXT: [[V7:%.+]] = load <4 x float>, <4 x float>* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpps	$2, 2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VCMPPSrri
@@ -118,7 +112,6 @@ vcmpps	$2, 2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpleps	%xmm10, %xmm9, %xmm8
 
 ## VCMPPSrri_alt
@@ -133,7 +126,6 @@ vcmpleps	%xmm10, %xmm9, %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpps	$2, %xmm10, %xmm9, %xmm8
 
 retq
