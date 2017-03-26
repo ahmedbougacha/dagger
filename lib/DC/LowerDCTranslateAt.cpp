@@ -33,8 +33,11 @@ static bool lowerDCTranslateAt(Module &M, Value *DynTranslateAtCallback) {
   if (DynTranslateAtCallback->getType() != TranslateAtInt->getType())
     report_fatal_error("Invalid translate.at callback type");
 
-  for (auto &U : TranslateAtInt->uses()) {
-    auto *CI = dyn_cast<CallInst>(U.getUser());
+  for (auto UI = TranslateAtInt->user_begin(), UE = TranslateAtInt->user_end();
+       UI != UE; ) {
+    auto *CI = dyn_cast<CallInst>(*UI);
+    // We're going to change this use; advance the iterator.
+    ++UI;
 
     // If the intrinsic isn't used by a call, ignore it.
     if (!CI)
