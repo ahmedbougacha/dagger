@@ -12,7 +12,9 @@
 # CHECK-NEXT: [[V3:%.+]] = add i64 [[RBX_0]], [[V2]]
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to <4 x float>*
 # CHECK-NEXT: [[V5:%.+]] = load <4 x float>, <4 x float>* [[V4]], align 1
-# CHECK-NEXT: call void @llvm.trap()
+# CHECK-NEXT: [[V6:%.+]] = shufflevector <4 x float> [[V5]], <4 x float> undef, <4 x i32> <i32 0, i32 0, i32 2, i32 2>
+# CHECK-NEXT: [[V7:%.+]] = bitcast <4 x float> [[V6]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V7]], metadata !"XMM8")
 movsldup	2(%rbx,%r14,2), %xmm8
 
 ## MOVSLDUPrr
@@ -23,7 +25,9 @@ movsldup	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[XMM9_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM9")
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
-# CHECK-NEXT: call void @llvm.trap()
+# CHECK-NEXT: [[V3:%.+]] = shufflevector <4 x float> [[V2]], <4 x float> undef, <4 x i32> <i32 0, i32 0, i32 2, i32 2>
+# CHECK-NEXT: [[V4:%.+]] = bitcast <4 x float> [[V3]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V4]], metadata !"XMM8")
 movsldup	%xmm9, %xmm8
 
 retq

@@ -563,6 +563,29 @@ bool X86DCInstruction::translateTargetOpcode(unsigned Opcode) {
         Builder.CreateSelect(Builder.CreateFCmp(Pred, Src0, Src1), Src1, Src0));
     break;
   }
+  case X86ISD::MOVSLDUP:
+  case X86ISD::MOVSHDUP:
+  case X86ISD::MOVDDUP: {
+    Value *Src = getOperand(0);
+    auto *VecTy = cast<VectorType>(getResultTy(0));
+    auto *SrcTy = cast<VectorType>(Src->getType());
+    assert(VecTy->getVectorElementType() == SrcTy->getVectorElementType() &&
+           "MOV*DUP shuffle result and source element types are different!");
+    SmallVector<int, 8> Mask;
+    switch (Opcode) {
+    case X86ISD::MOVSLDUP:
+      DecodeMOVSLDUPMask(getSimpleVTForType(VecTy), Mask);
+      break;
+    case X86ISD::MOVSHDUP:
+      DecodeMOVSHDUPMask(getSimpleVTForType(VecTy), Mask);
+      break;
+    case X86ISD::MOVDDUP:
+      DecodeMOVDDUPMask(getSimpleVTForType(VecTy), Mask);
+      break;
+    }
+    translateShuffle(Mask, Src, UndefValue::get(SrcTy));
+    break;
+  }
   case X86ISD::MOVLHPD:
   case X86ISD::MOVLPS:
   case X86ISD::MOVLPD:

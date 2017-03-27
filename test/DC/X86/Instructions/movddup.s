@@ -23,7 +23,9 @@ movddup	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[XMM9_0:%.+]] = call <4 x float> @llvm.dc.getreg.v4f32(metadata !"XMM9")
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x double>
-# CHECK-NEXT: call void @llvm.trap()
+# CHECK-NEXT: [[V3:%.+]] = shufflevector <2 x double> [[V2]], <2 x double> undef, <2 x i32> zeroinitializer
+# CHECK-NEXT: [[V4:%.+]] = bitcast <2 x double> [[V3]] to i128
+# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V4]], metadata !"XMM8")
 movddup	%xmm9, %xmm8
 
 retq
