@@ -27,6 +27,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
@@ -215,6 +216,45 @@ const Loop* llvm::addClonedBlockToLoopInfo(BasicBlock *OriginalBB,
   }
 }
 
+/// The function chooses which type of unroll (epilog or prolog) is more
+/// profitabale.
+/// Epilog unroll is more profitable when there is PHI that starts from
+/// constant.  In this case epilog will leave PHI start from constant,
+/// but prolog will convert it to non-constant.
+///
+/// loop:
+///   PN = PHI [I, Latch], [CI, PreHeader]
+///   I = foo(PN)
+///   ...
+///
+/// Epilog unroll case.
+/// loop:
+///   PN = PHI [I2, Latch], [CI, PreHeader]
+///   I1 = foo(PN)
+///   I2 = foo(I1)
+///   ...
+/// Prolog unroll case.
+///   NewPN = PHI [PrologI, Prolog], [CI, PreHeader]
+/// loop:
+///   PN = PHI [I2, Latch], [NewPN, PreHeader]
+///   I1 = foo(PN)
+///   I2 = foo(I1)
+///   ...
+///
+static bool isEpilogProfitable(Loop *L) {
+  BasicBlock *PreHeader = L->getLoopPreheader();
+  BasicBlock *Header = L->getHeader();
+  assert(PreHeader && Header);
+  for (Instruction &BBI : *Header) {
+    PHINode *PN = dyn_cast<PHINode>(&BBI);
+    if (!PN)
+      break;
+    if (isa<ConstantInt>(PN->getIncomingValueForBlock(PreHeader)))
+      return true;
+  }
+  return false;
+}
+
 /// Unroll the given loop by Count. The loop must be in LCSSA form. Returns true
 /// if unrolling was successful, or false if the loop was unmodified. Unrolling
 /// can only fail when the loop's latch block is not terminated by a conditional
@@ -358,15 +398,19 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
                "convergent operation.");
       });
 
+  bool EpilogProfitability =
+      UnrollRuntimeEpilog.getNumOccurrences() ? UnrollRuntimeEpilog
+                                              : isEpilogProfitable(L);
+
   if (RuntimeTripCount && TripMultiple % Count != 0 &&
       !UnrollRuntimeLoopRemainder(L, Count, AllowExpensiveTripCount,
-                                  UnrollRuntimeEpilog, LI, SE, DT, 
+                                  EpilogProfitability, LI, SE, DT,
                                   PreserveLCSSA)) {
     if (Force)
       RuntimeTripCount = false;
     else {
       DEBUG(
-          dbgs() << "Wont unroll; prolog and epilog code could not be inserted "
+          dbgs() << "Wont unroll; remainder loop could not be generated"
                     "when assuming runtime trip count\n");
       return false;
     }
@@ -461,6 +505,12 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
   SmallSetVector<Loop *, 4> LoopsToSimplify;
   for (Loop *SubLoop : *L)
     LoopsToSimplify.insert(SubLoop);
+
+  if (Header->getParent()->isDebugInfoForProfiling())
+    for (BasicBlock *BB : L->getBlocks())
+      for (Instruction &I : *BB)
+        if (const DILocation *DIL = I.getDebugLoc())
+          I.setDebugLoc(DIL->cloneWithDuplicationFactor(Count));
 
   for (unsigned It = 1; It != Count; ++It) {
     std::vector<BasicBlock*> NewBlocks;

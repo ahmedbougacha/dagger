@@ -13,7 +13,6 @@
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <16 x i8>
 ; CHECK-NEXT: [[V5:%.+]] = and <16 x i8> [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmtst	v16.16b, v17.16b, v18.16b
 
 ;; CMTSTv1i64
@@ -29,7 +28,6 @@ cmtst	v16.16b, v17.16b, v18.16b
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <1 x i64>
 ; CHECK-NEXT: [[V5:%.+]] = and <1 x i64> [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmtst	d16, d17, d18
 
 ;; CMTSTv2i32
@@ -45,7 +43,6 @@ cmtst	d16, d17, d18
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <2 x i32>
 ; CHECK-NEXT: [[V5:%.+]] = and <2 x i32> [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmtst	v16.2s, v17.2s, v18.2s
 
 ;; CMTSTv2i64
@@ -61,7 +58,6 @@ cmtst	v16.2s, v17.2s, v18.2s
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x i64>
 ; CHECK-NEXT: [[V5:%.+]] = and <2 x i64> [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmtst	v16.2d, v17.2d, v18.2d
 
 ;; CMTSTv4i16
@@ -77,7 +73,6 @@ cmtst	v16.2d, v17.2d, v18.2d
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <4 x i16>
 ; CHECK-NEXT: [[V5:%.+]] = and <4 x i16> [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmtst	v16.4h, v17.4h, v18.4h
 
 ;; CMTSTv4i32
@@ -93,7 +88,6 @@ cmtst	v16.4h, v17.4h, v18.4h
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x i32>
 ; CHECK-NEXT: [[V5:%.+]] = and <4 x i32> [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmtst	v16.4s, v17.4s, v18.4s
 
 ;; CMTSTv8i16
@@ -109,7 +103,6 @@ cmtst	v16.4s, v17.4s, v18.4s
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <8 x i16>
 ; CHECK-NEXT: [[V5:%.+]] = and <8 x i16> [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmtst	v16.8h, v17.8h, v18.8h
 
 ;; CMTSTv8i8
@@ -125,7 +118,6 @@ cmtst	v16.8h, v17.8h, v18.8h
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <8 x i8>
 ; CHECK-NEXT: [[V5:%.+]] = and <8 x i8> [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmtst	v16.8b, v17.8b, v18.8b
 
 ret

@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pinsrw	$2, 2(%r14,%r15,2), %mm4
 
 ## MMX_PINSRWirri
@@ -15,7 +14,6 @@ pinsrw	$2, 2(%r14,%r15,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pinsrw	$2, %r10d, %mm4
 
 ## PINSRWrmi
@@ -33,7 +31,6 @@ pinsrw	$2, %r10d, %mm4
 # CHECK-NEXT: [[V5:%.+]] = add i64 [[R14_0]], [[V4]]
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to i16*
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pinsrw	$2, 2(%r14,%r15,2), %xmm8
 
 ## PINSRWrri
@@ -46,7 +43,6 @@ pinsrw	$2, 2(%r14,%r15,2), %xmm8
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: [[R10D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R10D")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pinsrw	$2, %r10d, %xmm8
 
 retq

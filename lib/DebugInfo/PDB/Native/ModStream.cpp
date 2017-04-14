@@ -10,12 +10,12 @@
 #include "llvm/DebugInfo/PDB/Native/ModStream.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
-#include "llvm/DebugInfo/MSF/StreamReader.h"
-#include "llvm/DebugInfo/MSF/StreamRef.h"
 #include "llvm/DebugInfo/PDB/Native/ModInfo.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
+#include "llvm/Support/BinaryStreamReader.h"
+#include "llvm/Support/BinaryStreamRef.h"
 #include "llvm/Support/Error.h"
 #include <algorithm>
 #include <cstdint>
@@ -31,7 +31,7 @@ ModStream::ModStream(const ModInfo &Module,
 ModStream::~ModStream() = default;
 
 Error ModStream::reload() {
-  StreamReader Reader(*Stream);
+  BinaryStreamReader Reader(*Stream);
 
   uint32_t SymbolSize = Mod.getSymbolDebugInfoByteSize();
   uint32_t C11Size = Mod.getLineInfoByteSize();
@@ -41,7 +41,7 @@ Error ModStream::reload() {
     return make_error<RawError>(raw_error_code::corrupt_file,
                                 "Module has both C11 and C13 line info");
 
-  ReadableStreamRef S;
+  BinaryStreamRef S;
 
   if (auto EC = Reader.readInteger(Signature))
     return EC;
@@ -53,7 +53,7 @@ Error ModStream::reload() {
   if (auto EC = Reader.readStreamRef(C13LinesSubstream, C13Size))
     return EC;
 
-  StreamReader LineReader(C13LinesSubstream);
+  BinaryStreamReader LineReader(C13LinesSubstream);
   if (auto EC = LineReader.readArray(LineInfo, LineReader.bytesRemaining()))
     return EC;
 

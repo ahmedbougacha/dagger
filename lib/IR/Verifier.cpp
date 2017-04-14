@@ -277,6 +277,9 @@ class Verifier : public InstVisitor<Verifier>, VerifierSupport {
   /// already.
   bool SawFrameEscape;
 
+  /// Whether the current function has a DISubprogram attached to it.
+  bool HasDebugInfo = false;
+
   /// Stores the count of how many objects were passed to llvm.localescape for a
   /// given function and the largest index passed to llvm.localrecover.
   DenseMap<Function *, std::pair<unsigned, unsigned>> FrameEscapeInfo;
@@ -296,6 +299,9 @@ class Verifier : public InstVisitor<Verifier>, VerifierSupport {
   // twice, if they have multiple operands. In particular for very large
   // constant expressions, we can arrive at a particular user many times.
   SmallPtrSet<const Value *, 32> GlobalValueVisited;
+
+  // Keeps track of duplicate function argument debug info.
+  SmallVector<const DILocalVariable *, 16> DebugFnArgs;
 
   TBAAVerifier TBAAVerifyHelper;
 
@@ -342,6 +348,7 @@ public:
     visit(const_cast<Function &>(F));
     verifySiblingFuncletUnwinds();
     InstsInThisBlock.clear();
+    DebugFnArgs.clear();
     LandingPadResultTy = nullptr;
     SawFrameEscape = false;
     SiblingFuncletInfo.clear();
@@ -498,6 +505,7 @@ private:
   void verifySiblingFuncletUnwinds();
 
   void verifyFragmentExpression(const DbgInfoIntrinsic &I);
+  void verifyFnArgs(const DbgInfoIntrinsic &I);
 
   /// Module-level debug info verification...
   void verifyCompileUnits();
@@ -653,7 +661,8 @@ void Verifier::visitGlobalVariable(const GlobalVariable &GV) {
     if (auto *GVE = dyn_cast<DIGlobalVariableExpression>(MD))
       visitDIGlobalVariableExpression(*GVE);
     else
-      AssertDI(false, "!dbg attachment of global variable must be a DIGlobalVariableExpression");
+      AssertDI(false, "!dbg attachment of global variable must be a "
+                      "DIGlobalVariableExpression");
   }
 
   if (!GV.hasInitializer()) {
@@ -901,6 +910,13 @@ void Verifier::visitDIDerivedType(const DIDerivedType &N) {
   AssertDI(isScope(N.getRawScope()), "invalid scope", &N, N.getRawScope());
   AssertDI(isType(N.getRawBaseType()), "invalid base type", &N,
            N.getRawBaseType());
+
+  if (N.getDWARFAddressSpace()) {
+    AssertDI(N.getTag() == dwarf::DW_TAG_pointer_type ||
+                 N.getTag() == dwarf::DW_TAG_reference_type,
+             "DWARF address space only applies to pointer or reference types",
+             &N);
+  }
 }
 
 static bool hasConflictingReferenceFlags(unsigned Flags) {
@@ -1025,6 +1041,8 @@ void Verifier::visitDISubprogram(const DISubprogram &N) {
   AssertDI(isScope(N.getRawScope()), "invalid scope", &N, N.getRawScope());
   if (auto *F = N.getRawFile())
     AssertDI(isa<DIFile>(F), "invalid file", &N, F);
+  else
+    AssertDI(N.getLine() == 0, "line specified with no file", &N, N.getLine());
   if (auto *T = N.getRawType())
     AssertDI(isa<DISubroutineType>(T), "invalid subroutine type", &N, T);
   AssertDI(isType(N.getRawContainingType()), "invalid containing type", &N,
@@ -1650,8 +1668,8 @@ void Verifier::verifyFunctionMetadata(
   for (const auto &Pair : MDs) {
     if (Pair.first == LLVMContext::MD_prof) {
       MDNode *MD = Pair.second;
-      Assert(MD->getNumOperands() == 2,
-             "!prof annotations should have exactly 2 operands", MD);
+      Assert(MD->getNumOperands() >= 2,
+             "!prof annotations should have no less than 2 operands", MD);
 
       // Check first operand.
       Assert(MD->getOperand(0) != nullptr, "first operand should not be null",
@@ -2114,10 +2132,9 @@ void Verifier::visitFunction(const Function &F) {
          "Function is marked as dllimport, but not external.", &F);
 
   auto *N = F.getSubprogram();
-  if (!N)
+  HasDebugInfo = (N != nullptr);
+  if (!HasDebugInfo)
     return;
-
-  visitDISubprogram(*N);
 
   // Check that all !dbg attachments lead to back to N (or, at least, another
   // subprogram that describes the same function).
@@ -2727,9 +2744,9 @@ void Verifier::verifyCallSite(CallSite CS) {
   // do so causes assertion failures when the inliner sets up inline scope info.
   if (I->getFunction()->getSubprogram() && CS.getCalledFunction() &&
       CS.getCalledFunction()->getSubprogram())
-    Assert(I->getDebugLoc(), "inlinable function call in a function with debug "
-                             "info must have a !dbg location",
-           I);
+    AssertDI(I->getDebugLoc(), "inlinable function call in a function with "
+                               "debug info must have a !dbg location",
+             I);
 
   visitInstruction(*I);
 }
@@ -4348,6 +4365,8 @@ void Verifier::visitDbgIntrinsic(StringRef Kind, DbgIntrinsicTy &DII) {
                                " variable and !dbg attachment",
            &DII, BB, F, Var, Var->getScope()->getSubprogram(), Loc,
            Loc->getScope()->getSubprogram());
+
+  verifyFnArgs(DII);
 }
 
 static uint64_t getVariableSize(const DILocalVariable &V) {
@@ -4416,15 +4435,49 @@ void Verifier::verifyFragmentExpression(const DbgInfoIntrinsic &I) {
   AssertDI(FragSize != VarSize, "fragment covers entire variable", &I, V, E);
 }
 
+void Verifier::verifyFnArgs(const DbgInfoIntrinsic &I) {
+  // This function does not take the scope of noninlined function arguments into
+  // account. Don't run it if current function is nodebug, because it may
+  // contain inlined debug intrinsics.
+  if (!HasDebugInfo)
+    return;
+
+  DILocalVariable *Var;
+  if (auto *DV = dyn_cast<DbgValueInst>(&I)) {
+    // For performance reasons only check non-inlined ones.
+    if (DV->getDebugLoc()->getInlinedAt())
+      return;
+    Var = DV->getVariable();
+  } else {
+    auto *DD = cast<DbgDeclareInst>(&I);
+    if (DD->getDebugLoc()->getInlinedAt())
+      return;
+    Var = DD->getVariable();
+  }
+  AssertDI(Var, "dbg intrinsic without variable");
+
+  unsigned ArgNo = Var->getArg();
+  if (!ArgNo)
+    return;
+
+  // Verify there are no duplicate function argument debug info entries.
+  // These will cause hard-to-debug assertions in the DWARF backend.
+  if (DebugFnArgs.size() < ArgNo)
+    DebugFnArgs.resize(ArgNo, nullptr);
+
+  auto *Prev = DebugFnArgs[ArgNo - 1];
+  DebugFnArgs[ArgNo - 1] = Var;
+  AssertDI(!Prev || (Prev == Var), "conflicting debug info for argument", &I,
+           Prev, Var);
+}
+
 void Verifier::verifyCompileUnits() {
   auto *CUs = M.getNamedMetadata("llvm.dbg.cu");
   SmallPtrSet<const Metadata *, 2> Listed;
   if (CUs)
     Listed.insert(CUs->op_begin(), CUs->op_end());
-  AssertDI(
-      all_of(CUVisited,
-             [&Listed](const Metadata *CU) { return Listed.count(CU); }),
-      "All DICompileUnits must be listed in llvm.dbg.cu");
+  for (auto *CU : CUVisited)
+    AssertDI(Listed.count(CU), "DICompileUnit not listed in llvm.dbg.cu", CU);
   CUVisited.clear();
 }
 

@@ -61,6 +61,7 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/GCOVProfiler.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
+#include "llvm/Transforms/IPO/ArgumentPromotion.h"
 #include "llvm/Transforms/IPO/ConstantMerge.h"
 #include "llvm/Transforms/IPO/CrossDSOCFI.h"
 #include "llvm/Transforms/IPO/DeadArgumentElimination.h"
@@ -136,6 +137,7 @@
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 #include "llvm/Transforms/Utils/MemorySSA.h"
 #include "llvm/Transforms/Utils/NameAnonGlobals.h"
+#include "llvm/Transforms/Utils/PredicateInfo.h"
 #include "llvm/Transforms/Utils/SimplifyInstructions.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Vectorize/LoopVectorize.h"
@@ -144,6 +146,9 @@
 #include <type_traits>
 
 using namespace llvm;
+
+static cl::opt<unsigned> MaxDevirtIterations("pm-max-devirt-iterations",
+                                             cl::ReallyHidden, cl::init(4));
 
 static Regex DefaultAliasRegex("^(default|lto-pre-link|lto)<(O[0123sz])>$");
 
@@ -329,8 +334,11 @@ PassBuilder::buildFunctionSimplificationPipeline(OptimizationLevel Level,
   LPM2.addPass(IndVarSimplifyPass());
   LPM2.addPass(LoopIdiomRecognizePass());
   LPM2.addPass(LoopDeletionPass());
-  LPM2.addPass(LoopUnrollPass::createFull());
+  LPM2.addPass(LoopUnrollPass::createFull(Level));
 
+  // We provide the opt remark emitter pass for LICM to use. We only need to do
+  // this once as it is immutable.
+  FPM.addPass(RequireAnalysisPass<OptimizationRemarkEmitterAnalysis, Function>());
   FPM.addPass(createFunctionToLoopPassAdaptor(std::move(LPM1)));
   FPM.addPass(SimplifyCFGPass());
   FPM.addPass(InstCombinePass());
@@ -374,6 +382,56 @@ PassBuilder::buildFunctionSimplificationPipeline(OptimizationLevel Level,
   FPM.addPass(InstCombinePass());
 
   return FPM;
+}
+
+static void addPGOInstrPasses(ModulePassManager &MPM, bool DebugLogging,
+                              PassBuilder::OptimizationLevel Level,
+                              bool RunProfileGen, std::string ProfileGenFile,
+                              std::string ProfileUseFile) {
+  // Generally running simplification passes and the inliner with an high
+  // threshold results in smaller executables, but there may be cases where
+  // the size grows, so let's be conservative here and skip this simplification
+  // at -Os/Oz.
+  if (!isOptimizingForSize(Level)) {
+    InlineParams IP;
+
+    // In the old pass manager, this is a cl::opt. Should still this be one?
+    IP.DefaultThreshold = 75;
+
+    // FIXME: The hint threshold has the same value used by the regular inliner.
+    // This should probably be lowered after performance testing.
+    // FIXME: this comment is cargo culted from the old pass manager, revisit).
+    IP.HintThreshold = 325;
+
+    CGSCCPassManager CGPipeline(DebugLogging);
+
+    CGPipeline.addPass(InlinerPass(IP));
+
+    FunctionPassManager FPM;
+    FPM.addPass(SROA());
+    FPM.addPass(EarlyCSEPass());    // Catch trivial redundancies.
+    FPM.addPass(SimplifyCFGPass()); // Merge & remove basic blocks.
+    FPM.addPass(InstCombinePass()); // Combine silly sequences.
+
+    // FIXME: Here the old pass manager inserts peephole extensions.
+    // Add them when they're supported.
+    CGPipeline.addPass(createCGSCCToFunctionPassAdaptor(std::move(FPM)));
+
+    MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(std::move(CGPipeline)));
+  }
+
+  if (RunProfileGen) {
+    MPM.addPass(PGOInstrumentationGen());
+
+    // Add the profile lowering pass.
+    InstrProfOptions Options;
+    if (!ProfileGenFile.empty())
+      Options.InstrProfileOutput = ProfileGenFile;
+    MPM.addPass(InstrProfiling(Options));
+  }
+
+  if (!ProfileUseFile.empty())
+    MPM.addPass(PGOInstrumentationUse(ProfileUseFile));
 }
 
 ModulePassManager
@@ -426,10 +484,20 @@ PassBuilder::buildPerModuleDefaultPipeline(OptimizationLevel Level,
   GlobalCleanupPM.addPass(SimplifyCFGPass());
   MPM.addPass(createModuleToFunctionPassAdaptor(std::move(GlobalCleanupPM)));
 
-  // FIXME: Enable this when cross-IR-unit analysis invalidation is working.
-#if 0
-  MPM.addPass(RequireAnalysisPass<GlobalsAA>());
-#endif
+  // Add all the requested passes for PGO Instrumentation, if requested.
+  if (PGOOpt) {
+    assert(PGOOpt->RunProfileGen || PGOOpt->SamplePGO ||
+           !PGOOpt->ProfileUseFile.empty());
+    addPGOInstrPasses(MPM, DebugLogging, Level, PGOOpt->RunProfileGen,
+                      PGOOpt->ProfileGenFile, PGOOpt->ProfileUseFile);
+  }
+
+  // Indirect call promotion that promotes intra-module targes only.
+  MPM.addPass(PGOIndirectCallPromotion(false, PGOOpt && PGOOpt->SamplePGO));
+
+  // Require the GlobalsAA analysis for the module so we can query it within
+  // the CGSCC pipeline.
+  MPM.addPass(RequireAnalysisPass<GlobalsAA, Module>());
 
   // Now begin the main postorder CGSCC pipeline.
   // FIXME: The current CGSCC pipeline has its origins in the legacy pass
@@ -451,13 +519,24 @@ PassBuilder::buildPerModuleDefaultPipeline(OptimizationLevel Level,
   // Now deduce any function attributes based in the current code.
   MainCGPipeline.addPass(PostOrderFunctionAttrsPass());
 
+  // When at O3 add argument promotion to the pass pipeline.
+  // FIXME: It isn't at all clear why this should be limited to O3.
+  if (Level == O3)
+    MainCGPipeline.addPass(ArgumentPromotionPass());
+
   // Lastly, add the core function simplification pipeline nested inside the
   // CGSCC walk.
   MainCGPipeline.addPass(createCGSCCToFunctionPassAdaptor(
       buildFunctionSimplificationPipeline(Level, DebugLogging)));
 
+  // We wrap the CGSCC pipeline in a devirtualization repeater. This will try
+  // to detect when we devirtualize indirect calls and iterate the SCC passes
+  // in that case to try and catch knock-on inlining or function attrs
+  // opportunities. Then we add it to the module pipeline by walking the SCCs
+  // in postorder (or bottom-up).
   MPM.addPass(
-      createModuleToPostOrderCGSCCPassAdaptor(std::move(MainCGPipeline)));
+      createModuleToPostOrderCGSCCPassAdaptor(createDevirtSCCRepeatedPass(
+          std::move(MainCGPipeline), MaxDevirtIterations, DebugLogging)));
 
   // This ends the canonicalization and simplification phase of the pipeline.
   // At this point, we expect to have canonical and simple IR which we begin
@@ -472,17 +551,14 @@ PassBuilder::buildPerModuleDefaultPipeline(OptimizationLevel Level,
   // FIXME: Is this really an optimization rather than a canonicalization?
   MPM.addPass(ReversePostOrderFunctionAttrsPass());
 
-  // Recompute GloblasAA here prior to function passes. This is particularly
+  // Re-require GloblasAA here prior to function passes. This is particularly
   // useful as the above will have inlined, DCE'ed, and function-attr
   // propagated everything. We should at this point have a reasonably minimal
   // and richly annotated call graph. By computing aliasing and mod/ref
   // information for all local globals here, the late loop passes and notably
   // the vectorizer will be able to use them to help recognize vectorizable
   // memory operations.
-  // FIXME: Enable this once analysis invalidation is fully supported.
-#if 0
-  MPM.addPass(Require<GlobalsAA>());
-#endif
+  MPM.addPass(RequireAnalysisPass<GlobalsAA, Module>());
 
   FunctionPassManager OptimizePM(DebugLogging);
   OptimizePM.addPass(Float2IntPass());
@@ -530,8 +606,9 @@ PassBuilder::buildPerModuleDefaultPipeline(OptimizationLevel Level,
   // FIXME: It would be really good to use a loop-integrated instruction
   // combiner for cleanup here so that the unrolling and LICM can be pipelined
   // across the loop nests.
-  OptimizePM.addPass(createFunctionToLoopPassAdaptor(LoopUnrollPass::create()));
+  OptimizePM.addPass(createFunctionToLoopPassAdaptor(LoopUnrollPass::create(Level)));
   OptimizePM.addPass(InstCombinePass());
+  OptimizePM.addPass(RequireAnalysisPass<OptimizationRemarkEmitterAnalysis, Function>());
   OptimizePM.addPass(createFunctionToLoopPassAdaptor(LICMPass()));
 
   // Now that we've vectorized and unrolled loops, we may have more refined
@@ -589,7 +666,8 @@ ModulePassManager PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
     // left by the earlier promotion pass that promotes intra-module targets.
     // This two-step promotion is to save the compile time. For LTO, it should
     // produce the same result as if we only do promotion here.
-    MPM.addPass(PGOIndirectCallPromotion(true /* InLTO */));
+    MPM.addPass(PGOIndirectCallPromotion(true /* InLTO */,
+                                         PGOOpt && PGOOpt->SamplePGO));
 
     // Propagate constants at call sites into the functions they call.  This
     // opens opportunities for globalopt (and inlining) by substituting function
@@ -717,8 +795,8 @@ ModulePassManager PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
   // CFI is disabled.
   // Enable once we add support for the summary in the new PM.
 #if 0
-  MPM.addPass(LowerTypeTestsPass(Summary ? LowerTypeTestsSummaryAction::Export :
-                                           LowerTypeTestsSummaryAction::None,
+  MPM.addPass(LowerTypeTestsPass(Summary ? PassSummaryAction::Export :
+                                           PassSummaryAction::None,
                                 Summary));
 #endif
 
@@ -755,12 +833,8 @@ AAManager PassBuilder::buildDefaultAAPipeline() {
   // Add support for querying global aliasing information when available.
   // Because the `AAManager` is a function analysis and `GlobalsAA` is a module
   // analysis, all that the `AAManager` can do is query for any *cached*
-  // results from `GlobalsAA` through a readonly proxy..
-#if 0
-  // FIXME: Enable once the invalidation logic supports this. Currently, the
-  // `AAManager` will hold stale references to the module analyses.
+  // results from `GlobalsAA` through a readonly proxy.
   AA.registerModuleAnalysis<GlobalsAA>();
-#endif
 
   return AA;
 }

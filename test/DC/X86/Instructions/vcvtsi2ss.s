@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvtsi2ssq	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VCVTSI2SS64rr
@@ -15,7 +14,6 @@ vcvtsi2ssq	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvtsi2ssq	%r14, %xmm9, %xmm8
 
 ## VCVTSI2SSrm
@@ -24,7 +22,6 @@ vcvtsi2ssq	%r14, %xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvtsi2ssl	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VCVTSI2SSrr
@@ -33,7 +30,6 @@ vcvtsi2ssl	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvtsi2ssl	%r10d, %xmm9, %xmm8
 
 retq

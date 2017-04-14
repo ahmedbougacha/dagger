@@ -13,7 +13,6 @@
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to float*
 # CHECK-NEXT: [[V5:%.+]] = load float, float* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcpss	2(%rbx,%r14,2), %xmm8
 
 ## RCPSSr
@@ -26,7 +25,6 @@ rcpss	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V2:%.+]] = trunc i128 [[V1]] to i32
 # CHECK-NEXT: [[V3:%.+]] = bitcast i32 [[V2]] to float
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 rcpss	%xmm9, %xmm8
 
 retq

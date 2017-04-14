@@ -9,7 +9,6 @@
 ; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
 ; CHECK-NEXT: [[NZCV_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"NZCV")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 adc	w16, w17, w18
 
 ;; ADCXr
@@ -21,7 +20,6 @@ adc	w16, w17, w18
 ; CHECK-NEXT: [[X18_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X18")
 ; CHECK-NEXT: [[NZCV_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"NZCV")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 adc	x16, x17, x18
 
 ret

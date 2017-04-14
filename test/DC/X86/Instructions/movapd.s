@@ -51,7 +51,6 @@ movapd	%xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x66; .byte 0x45; .byte 0x0f; .byte 0x29; .byte 0xc8
 
 retq

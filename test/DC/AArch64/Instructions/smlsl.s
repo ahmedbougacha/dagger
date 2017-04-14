@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smlsl	v16.2d, v18.2s, v19.s[0]
 
 ;; SMLSLv2i32_v2i64
@@ -15,7 +14,6 @@ smlsl	v16.2d, v18.2s, v19.s[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smlsl	v16.2d, v18.2s, v19.2s
 
 ;; SMLSLv4i16_indexed
@@ -24,7 +22,6 @@ smlsl	v16.2d, v18.2s, v19.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smlsl	v16.4s, v18.4h, v11.h[0]
 
 ;; SMLSLv4i16_v4i32
@@ -33,7 +30,6 @@ smlsl	v16.4s, v18.4h, v11.h[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smlsl	v16.4s, v18.4h, v19.4h
 
 ;; SMLSLv8i8_v8i16
@@ -42,7 +38,6 @@ smlsl	v16.4s, v18.4h, v19.4h
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 smlsl	v16.8h, v18.8b, v19.8b
 
 ret

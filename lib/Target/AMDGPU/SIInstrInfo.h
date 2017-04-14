@@ -69,6 +69,9 @@ private:
                             MachineInstr &Inst) const;
   void splitScalar64BitBFE(SmallVectorImpl<MachineInstr *> &Worklist,
                            MachineInstr &Inst) const;
+  void movePackToVALU(SmallVectorImpl<MachineInstr *> &Worklist,
+                      MachineRegisterInfo &MRI,
+                      MachineInstr &Inst) const;
 
   void addUsersToMoveToVALUWorklist(
     unsigned Reg, MachineRegisterInfo &MRI,
@@ -440,6 +443,22 @@ public:
     return get(Opcode).TSFlags & SIInstrFlags::DPP;
   }
 
+  static bool isVOP3P(const MachineInstr &MI) {
+    return MI.getDesc().TSFlags & SIInstrFlags::VOP3P;
+  }
+
+  bool isVOP3P(uint16_t Opcode) const {
+    return get(Opcode).TSFlags & SIInstrFlags::VOP3P;
+  }
+
+  static bool isVINTRP(const MachineInstr &MI) {
+    return MI.getDesc().TSFlags & SIInstrFlags::VINTRP;
+  }
+
+  bool isVINTRP(uint16_t Opcode) const {
+    return get(Opcode).TSFlags & SIInstrFlags::VINTRP;
+  }
+
   static bool isScalarUnit(const MachineInstr &MI) {
     return MI.getDesc().TSFlags & (SIInstrFlags::SALU | SIInstrFlags::SMRD);
   }
@@ -474,34 +493,20 @@ public:
     return get(Opcode).TSFlags & SIInstrFlags::FIXED_SIZE;
   }
 
+  static bool hasFPClamp(const MachineInstr &MI) {
+    return MI.getDesc().TSFlags & SIInstrFlags::HasFPClamp;
+  }
+
+  bool hasFPClamp(uint16_t Opcode) const {
+    return get(Opcode).TSFlags & SIInstrFlags::HasFPClamp;
+  }
+
   bool isVGPRCopy(const MachineInstr &MI) const {
     assert(MI.isCopy());
     unsigned Dest = MI.getOperand(0).getReg();
     const MachineFunction &MF = *MI.getParent()->getParent();
     const MachineRegisterInfo &MRI = MF.getRegInfo();
     return !RI.isSGPRReg(MRI, Dest);
-  }
-
-  static int operandBitWidth(uint8_t OperandType) {
-    switch (OperandType) {
-    case AMDGPU::OPERAND_REG_IMM_INT32:
-    case AMDGPU::OPERAND_REG_IMM_FP32:
-    case AMDGPU::OPERAND_REG_INLINE_C_INT32:
-    case AMDGPU::OPERAND_REG_INLINE_C_FP32:
-      return 32;
-    case AMDGPU::OPERAND_REG_IMM_INT64:
-    case AMDGPU::OPERAND_REG_IMM_FP64:
-    case AMDGPU::OPERAND_REG_INLINE_C_INT64:
-    case AMDGPU::OPERAND_REG_INLINE_C_FP64:
-      return 64;
-    case AMDGPU::OPERAND_REG_INLINE_C_INT16:
-    case AMDGPU::OPERAND_REG_INLINE_C_FP16:
-    case AMDGPU::OPERAND_REG_IMM_INT16:
-    case AMDGPU::OPERAND_REG_IMM_FP16:
-      return 16;
-    default:
-      llvm_unreachable("unexpected operand type");
-    }
   }
 
   bool isInlineConstant(const APInt &Imm) const;
@@ -591,6 +596,7 @@ public:
 
   bool hasModifiersSet(const MachineInstr &MI,
                        unsigned OpName) const;
+  bool hasAnyModifiersSet(const MachineInstr &MI) const;
 
   bool verifyInstruction(const MachineInstr &MI,
                          StringRef &ErrInfo) const override;

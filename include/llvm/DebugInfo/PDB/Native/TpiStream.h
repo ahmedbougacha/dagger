@@ -11,11 +11,11 @@
 #define LLVM_DEBUGINFO_PDB_RAW_PDBTPISTREAM_H
 
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
-#include "llvm/DebugInfo/MSF/StreamArray.h"
 #include "llvm/DebugInfo/PDB/Native/HashTable.h"
 #include "llvm/DebugInfo/PDB/Native/RawConstants.h"
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 #include "llvm/DebugInfo/PDB/PDBTypes.h"
+#include "llvm/Support/BinaryStreamArray.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Support/Error.h"
@@ -46,11 +46,11 @@ public:
 
   uint32_t getHashKeySize() const;
   uint32_t NumHashBuckets() const;
-  msf::FixedStreamArray<support::ulittle32_t> getHashValues() const;
-  msf::FixedStreamArray<TypeIndexOffset> getTypeIndexOffsets() const;
+  FixedStreamArray<support::ulittle32_t> getHashValues() const;
+  FixedStreamArray<TypeIndexOffset> getTypeIndexOffsets() const;
   HashTable &getHashAdjusters();
 
-  iterator_range<codeview::CVTypeArray::Iterator> types(bool *HadError) const;
+  codeview::CVTypeRange types(bool *HadError) const;
 
   Error commit();
 
@@ -62,9 +62,9 @@ private:
 
   codeview::CVTypeArray TypeRecords;
 
-  std::unique_ptr<msf::ReadableStream> HashStream;
-  msf::FixedStreamArray<support::ulittle32_t> HashValues;
-  msf::FixedStreamArray<TypeIndexOffset> TypeIndexOffsets;
+  std::unique_ptr<BinaryStream> HashStream;
+  FixedStreamArray<support::ulittle32_t> HashValues;
+  FixedStreamArray<TypeIndexOffset> TypeIndexOffsets;
   HashTable HashAdjusters;
 
   const TpiStreamHeader *Header;

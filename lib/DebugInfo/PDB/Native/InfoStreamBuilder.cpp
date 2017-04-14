@@ -11,12 +11,12 @@
 
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
-#include "llvm/DebugInfo/MSF/StreamWriter.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/NamedStreamMap.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFileBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
+#include "llvm/Support/BinaryStreamWriter.h"
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -36,18 +36,23 @@ void InfoStreamBuilder::setAge(uint32_t A) { Age = A; }
 
 void InfoStreamBuilder::setGuid(PDB_UniqueId G) { Guid = G; }
 
+void InfoStreamBuilder::addFeature(PdbRaw_FeatureSig Sig) {
+  Features.push_back(Sig);
+}
+
 Error InfoStreamBuilder::finalizeMsfLayout() {
-  uint32_t Length = sizeof(InfoStreamHeader) + NamedStreams.finalize();
+  uint32_t Length = sizeof(InfoStreamHeader) + NamedStreams.finalize() +
+                    (Features.size() + 1) * sizeof(uint32_t);
   if (auto EC = Msf.setStreamSize(StreamPDB, Length))
     return EC;
   return Error::success();
 }
 
 Error InfoStreamBuilder::commit(const msf::MSFLayout &Layout,
-                                const msf::WritableStream &Buffer) const {
+                                WritableBinaryStreamRef Buffer) const {
   auto InfoS =
       WritableMappedBlockStream::createIndexedStream(Layout, Buffer, StreamPDB);
-  StreamWriter Writer(*InfoS);
+  BinaryStreamWriter Writer(*InfoS);
 
   InfoStreamHeader H;
   H.Age = Age;
@@ -57,5 +62,13 @@ Error InfoStreamBuilder::commit(const msf::MSFLayout &Layout,
   if (auto EC = Writer.writeObject(H))
     return EC;
 
-  return NamedStreams.commit(Writer);
+  if (auto EC = NamedStreams.commit(Writer))
+    return EC;
+  if (auto EC = Writer.writeInteger(0))
+    return EC;
+  for (auto E : Features) {
+    if (auto EC = Writer.writeEnum(E))
+      return EC;
+  }
+  return Error::success();
 }

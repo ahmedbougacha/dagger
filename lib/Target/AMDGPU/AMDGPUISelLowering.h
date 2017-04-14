@@ -70,6 +70,7 @@ protected:
   bool shouldCombineMemoryType(EVT VT) const;
   SDValue performLoadCombine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performStoreCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performClampCombine(SDNode *N, DAGCombinerInfo &DCI) const;
 
   SDValue splitBinaryBitConstantOpImpl(DAGCombinerInfo &DCI, const SDLoc &SL,
                                        unsigned Opc, SDValue LHS,
@@ -234,11 +235,21 @@ enum NodeType : unsigned {
   UMUL,        // 32bit unsigned multiplication
   BRANCH_COND,
   // End AMDIL ISD Opcodes
+
+  // Masked control flow nodes.
+  IF,
+  ELSE,
+  LOOP,
+
   ENDPGM,
   RETURN,
   DWORDADDR,
   FRACT,
+
+  /// CLAMP value between 0.0 and 1.0. NaN clamped to 0, following clamp output
+  /// modifier behavior with dx10_enable.
   CLAMP,
+
   // This is SETCC with the full mask result which is used for a compare with a
   // result bit per item in the wavefront.
   SETCC,
@@ -266,6 +277,9 @@ enum NodeType : unsigned {
   DIV_SCALE,
   DIV_FMAS,
   DIV_FIXUP,
+  // For emitting ISD::FMAD when f32 denormals are enabled because mac/mad is
+  // treated as an illegal operation.
+  FMAD_FTZ,
   TRIG_PREOP, // 1 ULP max error for f64
 
   // RCP, RSQ - For f32, 1 ULP max error, no denormal handling.
@@ -313,6 +327,15 @@ enum NodeType : unsigned {
   CVT_F32_UBYTE1,
   CVT_F32_UBYTE2,
   CVT_F32_UBYTE3,
+
+  // Convert two float 32 numbers into a single register holding two packed f16
+  // with round to zero.
+  CVT_PKRTZ_F16_F32,
+
+  // Same as the standard node, except the high bits of the resulting integer
+  // are known 0.
+  FP_TO_FP16,
+
   /// This node is for VLIW targets and it is used to represent a vector
   /// that is stored in consecutive registers with the same channel.
   /// For example:

@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmls	s16, s18, v19.s[0]
 
 ;; FMLSv1i64_indexed
@@ -15,7 +14,6 @@ fmls	s16, s18, v19.s[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmls	d16, d18, v19.d[0]
 
 ;; FMLSv2f32
@@ -30,7 +28,6 @@ fmls	d16, d18, v19.d[0]
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D19_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <2 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmls	v16.2s, v18.2s, v19.2s
 
 ;; FMLSv2f64
@@ -45,7 +42,6 @@ fmls	v16.2s, v18.2s, v19.2s
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q19_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x double>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmls	v16.2d, v18.2d, v19.2d
 
 ;; FMLSv2i32_indexed
@@ -54,7 +50,6 @@ fmls	v16.2d, v18.2d, v19.2d
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmls	v16.2s, v18.2s, v19.s[0]
 
 ;; FMLSv2i64_indexed
@@ -63,7 +58,6 @@ fmls	v16.2s, v18.2s, v19.s[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmls	v16.2d, v18.2d, v19.d[0]
 
 ;; FMLSv4f32
@@ -78,7 +72,6 @@ fmls	v16.2d, v18.2d, v19.d[0]
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q19_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmls	v16.4s, v18.4s, v19.4s
 
 ;; FMLSv4i32_indexed
@@ -87,7 +80,6 @@ fmls	v16.4s, v18.4s, v19.4s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fmls	v16.4s, v18.4s, v19.s[0]
 
 ret

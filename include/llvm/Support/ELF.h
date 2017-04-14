@@ -556,6 +556,7 @@ enum {
   EF_HEXAGON_MACH_V5 = 0x00000004,  // Hexagon V5
   EF_HEXAGON_MACH_V55 = 0x00000005, // Hexagon V55
   EF_HEXAGON_MACH_V60 = 0x00000060, // Hexagon V60
+  EF_HEXAGON_MACH_V62 = 0x00000062, // Hexagon V62
 
   // Highest ISA version flags
   EF_HEXAGON_ISA_MACH = 0x00000000, // Same as specified in bits[11:0]
@@ -566,6 +567,7 @@ enum {
   EF_HEXAGON_ISA_V5 = 0x00000040,   // Hexagon V5 ISA
   EF_HEXAGON_ISA_V55 = 0x00000050,  // Hexagon V55 ISA
   EF_HEXAGON_ISA_V60 = 0x00000060,  // Hexagon V60 ISA
+  EF_HEXAGON_ISA_V62 = 0x00000062,  // Hexagon V62 ISA
 };
 
 // Hexagon-specific section indexes for common small data
@@ -703,6 +705,7 @@ enum : unsigned {
 
   SHT_MIPS_REGINFO = 0x70000006,  // Register usage information
   SHT_MIPS_OPTIONS = 0x7000000d,  // General options
+  SHT_MIPS_DWARF = 0x7000001e,    // DWARF debugging section.
   SHT_MIPS_ABIFLAGS = 0x7000002a, // ABI information.
 
   SHT_HIPROC = 0x7fffffff, // Highest processor arch-specific type.
@@ -1311,6 +1314,19 @@ enum {
 enum { VER_NEED_NONE = 0, VER_NEED_CURRENT = 1 };
 
 // SHT_NOTE section types
+enum {
+  NT_FREEBSD_THRMISC = 7,
+  NT_FREEBSD_PROCSTAT_PROC = 8,
+  NT_FREEBSD_PROCSTAT_FILES = 9,
+  NT_FREEBSD_PROCSTAT_VMMAP = 10,
+  NT_FREEBSD_PROCSTAT_GROUPS = 11,
+  NT_FREEBSD_PROCSTAT_UMASK = 12,
+  NT_FREEBSD_PROCSTAT_RLIMIT = 13,
+  NT_FREEBSD_PROCSTAT_OSREL = 14,
+  NT_FREEBSD_PROCSTAT_PSSTRINGS = 15,
+  NT_FREEBSD_PROCSTAT_AUXV = 16,
+};
+
 enum {
   NT_GNU_ABI_TAG = 1,
   NT_GNU_HWCAP = 2,

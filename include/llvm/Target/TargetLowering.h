@@ -25,13 +25,14 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/DAGCombine.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/RuntimeLibcalls.h"
+#include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Attributes.h"
@@ -162,6 +163,35 @@ public:
     OnlyLegalOrCustom, // Only expand when the resulting instructions are legal
                        // or custom.
   };
+
+  class ArgListEntry {
+  public:
+    Value *Val = nullptr;
+    SDValue Node = SDValue();
+    Type *Ty = nullptr;
+    bool IsSExt : 1;
+    bool IsZExt : 1;
+    bool IsInReg : 1;
+    bool IsSRet : 1;
+    bool IsNest : 1;
+    bool IsByVal : 1;
+    bool IsInAlloca : 1;
+    bool IsReturned : 1;
+    bool IsSwiftSelf : 1;
+    bool IsSwiftError : 1;
+    uint16_t Alignment = 0;
+
+    ArgListEntry()
+        : IsSExt(false), IsZExt(false), IsInReg(false), IsSRet(false),
+          IsNest(false), IsByVal(false), IsInAlloca(false), IsReturned(false),
+          IsSwiftSelf(false), IsSwiftError(false) {}
+
+    void setAttributes(ImmutableCallSite *CS, unsigned AttrIdx);
+  };
+  typedef std::vector<ArgListEntry> ArgListTy;
+
+  virtual void markLibCallAttributes(MachineFunction *MF, unsigned CC,
+                                     ArgListTy &Args) const {};
 
   static ISD::NodeType getExtendForContent(BooleanContent Content) {
     switch (Content) {
@@ -363,6 +393,9 @@ public:
     return false;
   }
 
+  /// Returns if it's reasonable to merge stores to MemVT size.
+  virtual bool canMergeStoresTo(EVT MemVT) const { return true; }
+
   /// \brief Return true if it is cheap to speculate a call to intrinsic cttz.
   virtual bool isCheapToSpeculateCttz() const {
     return false;
@@ -395,16 +428,15 @@ public:
   /// \brief Return if the target supports combining a
   /// chain like:
   /// \code
-  ///   %andResult = and %val1, #imm-with-one-bit-set;
+  ///   %andResult = and %val1, #mask
   ///   %icmpResult = icmp %andResult, 0
-  ///   br i1 %icmpResult, label %dest1, label %dest2
   /// \endcode
   /// into a single machine instruction of a form like:
   /// \code
-  ///   brOnBitSet %register, #bitNumber, dest
+  ///   cc = test %register, #mask
   /// \endcode
-  bool isMaskAndBranchFoldingLegal() const {
-    return MaskAndBranchFoldingIsLegal;
+  virtual bool isMaskAndCmp0FoldingBeneficial(const Instruction &AndI) const {
+    return false;
   }
 
   /// Return true if the target should transform:
@@ -987,6 +1019,11 @@ public:
     return GatherAllAliasesMaxDepth;
   }
 
+  /// Returns the size of the platform's va_list object.
+  virtual unsigned getVaListSizeInBits(const DataLayout &DL) const {
+    return getPointerTy(DL).getSizeInBits();
+  }
+
   /// \brief Get maximum # of store operations permitted for llvm.memset
   ///
   /// This function returns the maximum number of store operations permitted
@@ -1384,6 +1421,13 @@ public:
       Action != TypeSplitVector;
   }
 
+  /// Return true if a select of constants (select Cond, C1, C2) should be
+  /// transformed into simple math ops with the condition value. For example:
+  /// select Cond, C1, C1-1 --> add (zext Cond), C1-1
+  virtual bool convertSelectOfConstantsToMath() const {
+    return false;
+  }
+
   //===--------------------------------------------------------------------===//
   // TargetLowering Configuration Methods - These methods should be invoked by
   // the derived class constructor to configure this object for the target.
@@ -1643,10 +1687,9 @@ public:
   /// possible to be done in the address mode for that operand. This hook lets
   /// targets also pass back when this should be done on intrinsics which
   /// load/store.
-  virtual bool GetAddrModeArguments(IntrinsicInst * /*I*/,
+  virtual bool getAddrModeArguments(IntrinsicInst * /*I*/,
                                     SmallVectorImpl<Value*> &/*Ops*/,
-                                    Type *&/*AccessTy*/,
-                                    unsigned AddrSpace = 0) const {
+                                    Type *&/*AccessTy*/) const {
     return false;
   }
 
@@ -2198,10 +2241,6 @@ protected:
   /// the branch is usually predicted right.
   bool PredictableSelectIsExpensive;
 
-  /// MaskAndBranchFoldingIsLegal - Indicates if the target supports folding
-  /// a mask of a single bit, a compare, and a branch into a single instruction.
-  bool MaskAndBranchFoldingIsLegal;
-
   /// \see enableExtLdPromotion.
   bool EnableExtLdPromotion;
 
@@ -2358,17 +2397,21 @@ public:
   /// expression and return a mask of KnownOne and KnownZero bits for the
   /// expression (used to simplify the caller).  The KnownZero/One bits may only
   /// be accurate for those bits in the DemandedMask.
-  /// \p AssumeSingleUse When this paramater is true, this function will
+  /// \p AssumeSingleUse When this parameter is true, this function will
   ///    attempt to simplify \p Op even if there are multiple uses.
   ///    Callers are responsible for correctly updating the DAG based on the
   ///    results of this function, because simply replacing replacing TLO.Old
-  ///    with TLO.New will be incorrect when this paramater is true and TLO.Old
+  ///    with TLO.New will be incorrect when this parameter is true and TLO.Old
   ///    has multiple uses.
   bool SimplifyDemandedBits(SDValue Op, const APInt &DemandedMask,
                             APInt &KnownZero, APInt &KnownOne,
                             TargetLoweringOpt &TLO,
                             unsigned Depth = 0,
                             bool AssumeSingleUse = false) const;
+
+  /// Helper wrapper around SimplifyDemandedBits
+  bool SimplifyDemandedBits(SDValue Op, APInt &DemandedMask,
+                            DAGCombinerInfo &DCI) const;
 
   /// Determine which of the bits specified in Mask are known to be either zero
   /// or one and return them in the KnownZero/KnownOne bitsets.
@@ -2537,30 +2580,6 @@ public:
     llvm_unreachable("Not Implemented");
   }
 
-  struct ArgListEntry {
-    SDValue Node;
-    Type* Ty;
-    bool isSExt     : 1;
-    bool isZExt     : 1;
-    bool isInReg    : 1;
-    bool isSRet     : 1;
-    bool isNest     : 1;
-    bool isByVal    : 1;
-    bool isInAlloca : 1;
-    bool isReturned : 1;
-    bool isSwiftSelf : 1;
-    bool isSwiftError : 1;
-    uint16_t Alignment;
-
-    ArgListEntry() : isSExt(false), isZExt(false), isInReg(false),
-      isSRet(false), isNest(false), isByVal(false), isInAlloca(false),
-      isReturned(false), isSwiftSelf(false), isSwiftError(false),
-      Alignment(0) {}
-
-    void setAttributes(ImmutableCallSite *CS, unsigned AttrIdx);
-  };
-  typedef std::vector<ArgListEntry> ArgListTy;
-
   /// This structure contains all information that is necessary for lowering
   /// calls. It is passed to TLI::LowerCallTo when the SelectionDAG builder
   /// needs to lower a call, and targets will see this struct in their LowerCall
@@ -2607,6 +2626,20 @@ public:
 
     CallLoweringInfo &setChain(SDValue InChain) {
       Chain = InChain;
+      return *this;
+    }
+
+    // setCallee with target/module-specific attributes
+    CallLoweringInfo &setLibCallee(CallingConv::ID CC, Type *ResultType,
+                                   SDValue Target, ArgListTy &&ArgsList) {
+      RetTy = ResultType;
+      Callee = Target;
+      CallConv = CC;
+      NumFixedArgs = Args.size();
+      Args = std::move(ArgsList);
+
+      DAG.getTargetLoweringInfo().markLibCallAttributes(
+          &(DAG.getMachineFunction()), CC, Args);
       return *this;
     }
 

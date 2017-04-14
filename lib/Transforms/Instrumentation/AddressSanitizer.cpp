@@ -80,6 +80,7 @@ static const uint64_t kMIPS64_ShadowOffset64 = 1ULL << 37;
 static const uint64_t kAArch64_ShadowOffset64 = 1ULL << 36;
 static const uint64_t kFreeBSD_ShadowOffset32 = 1ULL << 30;
 static const uint64_t kFreeBSD_ShadowOffset64 = 1ULL << 46;
+static const uint64_t kPS4CPU_ShadowOffset64 = 1ULL << 40;
 static const uint64_t kWindowsShadowOffset32 = 3ULL << 28;
 // The shadow memory space is dynamically allocated.
 static const uint64_t kWindowsShadowOffset64 = kDynamicShadowSentinel;
@@ -100,6 +101,10 @@ static const char *const kAsanRegisterImageGlobalsName =
   "__asan_register_image_globals";
 static const char *const kAsanUnregisterImageGlobalsName =
   "__asan_unregister_image_globals";
+static const char *const kAsanRegisterElfGlobalsName =
+  "__asan_register_elf_globals";
+static const char *const kAsanUnregisterElfGlobalsName =
+  "__asan_unregister_elf_globals";
 static const char *const kAsanPoisonGlobalsName = "__asan_before_dynamic_init";
 static const char *const kAsanUnpoisonGlobalsName = "__asan_after_dynamic_init";
 static const char *const kAsanInitName = "__asan_init";
@@ -119,8 +124,11 @@ static const char *const kAsanPoisonStackMemoryName =
     "__asan_poison_stack_memory";
 static const char *const kAsanUnpoisonStackMemoryName =
     "__asan_unpoison_stack_memory";
+
+// ASan version script has __asan_* wildcard. Triple underscore prevents a
+// linker (gold) warning about attempting to export a local symbol.
 static const char *const kAsanGlobalsRegisteredFlagName =
-    "__asan_globals_registered";
+    "___asan_globals_registered";
 
 static const char *const kAsanOptionDetectUseAfterReturn =
     "__asan_option_detect_stack_use_after_return";
@@ -380,6 +388,7 @@ static ShadowMapping getShadowMapping(Triple &TargetTriple, int LongSize,
   bool IsAndroid = TargetTriple.isAndroid();
   bool IsIOS = TargetTriple.isiOS() || TargetTriple.isWatchOS();
   bool IsFreeBSD = TargetTriple.isOSFreeBSD();
+  bool IsPS4CPU = TargetTriple.isPS4CPU();
   bool IsLinux = TargetTriple.isOSLinux();
   bool IsPPC64 = TargetTriple.getArch() == llvm::Triple::ppc64 ||
                  TargetTriple.getArch() == llvm::Triple::ppc64le;
@@ -392,6 +401,7 @@ static ShadowMapping getShadowMapping(Triple &TargetTriple, int LongSize,
                   TargetTriple.getArch() == llvm::Triple::mips64el;
   bool IsAArch64 = TargetTriple.getArch() == llvm::Triple::aarch64;
   bool IsWindows = TargetTriple.isOSWindows();
+  bool IsFuchsia = TargetTriple.isOSFuchsia();
 
   ShadowMapping Mapping;
 
@@ -412,12 +422,18 @@ static ShadowMapping getShadowMapping(Triple &TargetTriple, int LongSize,
     else
       Mapping.Offset = kDefaultShadowOffset32;
   } else {  // LongSize == 64
-    if (IsPPC64)
+    // Fuchsia is always PIE, which means that the beginning of the address
+    // space is always available.
+    if (IsFuchsia)
+      Mapping.Offset = 0;
+    else if (IsPPC64)
       Mapping.Offset = kPPC64_ShadowOffset64;
     else if (IsSystemZ)
       Mapping.Offset = kSystemZ_ShadowOffset64;
     else if (IsFreeBSD)
       Mapping.Offset = kFreeBSD_ShadowOffset64;
+    else if (IsPS4CPU)
+      Mapping.Offset = kPS4CPU_ShadowOffset64;
     else if (IsLinux && IsX86_64) {
       if (IsKasan)
         Mapping.Offset = kLinuxKasan_ShadowOffset64;
@@ -456,9 +472,9 @@ static ShadowMapping getShadowMapping(Triple &TargetTriple, int LongSize,
   // offset is not necessary 1/8-th of the address space.  On SystemZ,
   // we could OR the constant in a single instruction, but it's more
   // efficient to load it once and use indexed addressing.
-  Mapping.OrShadowOffset = !IsAArch64 && !IsPPC64 && !IsSystemZ
-                           && !(Mapping.Offset & (Mapping.Offset - 1))
-                           && Mapping.Offset != kDynamicShadowSentinel;
+  Mapping.OrShadowOffset = !IsAArch64 && !IsPPC64 && !IsSystemZ && !IsPS4CPU &&
+                           !(Mapping.Offset & (Mapping.Offset - 1)) &&
+                           Mapping.Offset != kDynamicShadowSentinel;
 
   return Mapping;
 }
@@ -603,6 +619,10 @@ private:
   void InstrumentGlobalsCOFF(IRBuilder<> &IRB, Module &M,
                              ArrayRef<GlobalVariable *> ExtendedGlobals,
                              ArrayRef<Constant *> MetadataInitializers);
+  void InstrumentGlobalsELF(IRBuilder<> &IRB, Module &M,
+                            ArrayRef<GlobalVariable *> ExtendedGlobals,
+                            ArrayRef<Constant *> MetadataInitializers,
+                            const std::string &UniqueModuleId);
   void InstrumentGlobalsMachO(IRBuilder<> &IRB, Module &M,
                               ArrayRef<GlobalVariable *> ExtendedGlobals,
                               ArrayRef<Constant *> MetadataInitializers);
@@ -613,7 +633,8 @@ private:
 
   GlobalVariable *CreateMetadataGlobal(Module &M, Constant *Initializer,
                                        StringRef OriginalName);
-  void SetComdatForGlobalMetadata(GlobalVariable *G, GlobalVariable *Metadata);
+  void SetComdatForGlobalMetadata(GlobalVariable *G, GlobalVariable *Metadata,
+                                  StringRef InternalSuffix);
   IRBuilder<> CreateAsanModuleDtor(Module &M);
 
   bool ShouldInstrumentGlobal(GlobalVariable *G);
@@ -638,6 +659,8 @@ private:
   Function *AsanUnregisterGlobals;
   Function *AsanRegisterImageGlobals;
   Function *AsanUnregisterImageGlobals;
+  Function *AsanRegisterElfGlobals;
+  Function *AsanUnregisterElfGlobals;
 };
 
 // Stack poisoning does not play well with exception handling.
@@ -1013,7 +1036,9 @@ bool AddressSanitizer::isInterestingAlloca(const AllocaInst &AI) {
        (!ClSkipPromotableAllocas || !isAllocaPromotable(&AI)) &&
        // inalloca allocas are not treated as static, and we don't want
        // dynamic alloca instrumentation for them as well.
-       !AI.isUsedWithInAlloca());
+       !AI.isUsedWithInAlloca() &&
+       // swifterror allocas are register promoted by ISel
+       !AI.isSwiftError());
 
   ProcessedAllocas[&AI] = IsInteresting;
   return IsInteresting;
@@ -1088,11 +1113,18 @@ Value *AddressSanitizer::isInterestingMemoryAccess(Instruction *I,
     }
   }
 
-  // Do not instrument acesses from different address spaces; we cannot deal
-  // with them.
   if (PtrOperand) {
+    // Do not instrument acesses from different address spaces; we cannot deal
+    // with them.
     Type *PtrTy = cast<PointerType>(PtrOperand->getType()->getScalarType());
     if (PtrTy->getPointerAddressSpace() != 0)
+      return nullptr;
+
+    // Ignore swifterror addresses.
+    // swifterror memory addresses are mem2reg promoted by instruction
+    // selection. As such they cannot have regular uses like an instrumentation
+    // function and it makes no sense to track them as memory.
+    if (PtrOperand->isSwiftError())
       return nullptr;
   }
 
@@ -1578,12 +1610,22 @@ void AddressSanitizerModule::initializeCallbacks(Module &M) {
       checkSanitizerInterfaceFunction(M.getOrInsertFunction(
           kAsanUnregisterImageGlobalsName, IRB.getVoidTy(), IntptrTy, nullptr));
   AsanUnregisterImageGlobals->setLinkage(Function::ExternalLinkage);
+
+  AsanRegisterElfGlobals = checkSanitizerInterfaceFunction(
+      M.getOrInsertFunction(kAsanRegisterElfGlobalsName, IRB.getVoidTy(),
+                            IntptrTy, IntptrTy, IntptrTy, nullptr));
+  AsanRegisterElfGlobals->setLinkage(Function::ExternalLinkage);
+
+  AsanUnregisterElfGlobals = checkSanitizerInterfaceFunction(
+      M.getOrInsertFunction(kAsanUnregisterElfGlobalsName, IRB.getVoidTy(),
+                            IntptrTy, IntptrTy, IntptrTy, nullptr));
+  AsanUnregisterElfGlobals->setLinkage(Function::ExternalLinkage);
 }
 
 // Put the metadata and the instrumented global in the same group. This ensures
 // that the metadata is discarded if the instrumented global is discarded.
 void AddressSanitizerModule::SetComdatForGlobalMetadata(
-    GlobalVariable *G, GlobalVariable *Metadata) {
+    GlobalVariable *G, GlobalVariable *Metadata, StringRef InternalSuffix) {
   Module &M = *G->getParent();
   Comdat *C = G->getComdat();
   if (!C) {
@@ -1593,7 +1635,15 @@ void AddressSanitizerModule::SetComdatForGlobalMetadata(
       assert(G->hasLocalLinkage());
       G->setName(Twine(kAsanGenPrefix) + "_anon_global");
     }
-    C = M.getOrInsertComdat(G->getName());
+
+    if (!InternalSuffix.empty() && G->hasLocalLinkage()) {
+      std::string Name = G->getName();
+      Name += InternalSuffix;
+      C = M.getOrInsertComdat(Name);
+    } else {
+      C = M.getOrInsertComdat(G->getName());
+    }
+
     // Make this IMAGE_COMDAT_SELECT_NODUPLICATES on COFF.
     if (TargetTriple.isOSBinFormatCOFF())
       C->setSelectionKind(Comdat::NoDuplicates);
@@ -1648,8 +1698,67 @@ void AddressSanitizerModule::InstrumentGlobalsCOFF(
            "global metadata will not be padded appropriately");
     Metadata->setAlignment(SizeOfGlobalStruct);
 
-    SetComdatForGlobalMetadata(G, Metadata);
+    SetComdatForGlobalMetadata(G, Metadata, "");
   }
+}
+
+void AddressSanitizerModule::InstrumentGlobalsELF(
+    IRBuilder<> &IRB, Module &M, ArrayRef<GlobalVariable *> ExtendedGlobals,
+    ArrayRef<Constant *> MetadataInitializers,
+    const std::string &UniqueModuleId) {
+  assert(ExtendedGlobals.size() == MetadataInitializers.size());
+
+  SmallVector<GlobalValue *, 16> MetadataGlobals(ExtendedGlobals.size());
+  for (size_t i = 0; i < ExtendedGlobals.size(); i++) {
+    GlobalVariable *G = ExtendedGlobals[i];
+    GlobalVariable *Metadata =
+        CreateMetadataGlobal(M, MetadataInitializers[i], G->getName());
+    MDNode *MD = MDNode::get(M.getContext(), ValueAsMetadata::get(G));
+    Metadata->setMetadata(LLVMContext::MD_associated, MD);
+    MetadataGlobals[i] = Metadata;
+
+    SetComdatForGlobalMetadata(G, Metadata, UniqueModuleId);
+  }
+
+  // Update llvm.compiler.used, adding the new metadata globals. This is
+  // needed so that during LTO these variables stay alive.
+  if (!MetadataGlobals.empty())
+    appendToCompilerUsed(M, MetadataGlobals);
+
+  // RegisteredFlag serves two purposes. First, we can pass it to dladdr()
+  // to look up the loaded image that contains it. Second, we can store in it
+  // whether registration has already occurred, to prevent duplicate
+  // registration.
+  //
+  // Common linkage ensures that there is only one global per shared library.
+  GlobalVariable *RegisteredFlag = new GlobalVariable(
+      M, IntptrTy, false, GlobalVariable::CommonLinkage,
+      ConstantInt::get(IntptrTy, 0), kAsanGlobalsRegisteredFlagName);
+  RegisteredFlag->setVisibility(GlobalVariable::HiddenVisibility);
+
+  // Create start and stop symbols.
+  GlobalVariable *StartELFMetadata = new GlobalVariable(
+      M, IntptrTy, false, GlobalVariable::ExternalWeakLinkage, nullptr,
+      "__start_" + getGlobalMetadataSection());
+  StartELFMetadata->setVisibility(GlobalVariable::HiddenVisibility);
+  GlobalVariable *StopELFMetadata = new GlobalVariable(
+      M, IntptrTy, false, GlobalVariable::ExternalWeakLinkage, nullptr,
+      "__stop_" + getGlobalMetadataSection());
+  StopELFMetadata->setVisibility(GlobalVariable::HiddenVisibility);
+
+  // Create a call to register the globals with the runtime.
+  IRB.CreateCall(AsanRegisterElfGlobals,
+                 {IRB.CreatePointerCast(RegisteredFlag, IntptrTy),
+                  IRB.CreatePointerCast(StartELFMetadata, IntptrTy),
+                  IRB.CreatePointerCast(StopELFMetadata, IntptrTy)});
+
+  // We also need to unregister globals at the end, e.g., when a shared library
+  // gets closed.
+  IRBuilder<> IRB_Dtor = CreateAsanModuleDtor(M);
+  IRB_Dtor.CreateCall(AsanUnregisterElfGlobals,
+                      {IRB.CreatePointerCast(RegisteredFlag, IntptrTy),
+                       IRB.CreatePointerCast(StartELFMetadata, IntptrTy),
+                       IRB.CreatePointerCast(StopELFMetadata, IntptrTy)});
 }
 
 void AddressSanitizerModule::InstrumentGlobalsMachO(
@@ -1894,7 +2003,12 @@ bool AddressSanitizerModule::InstrumentGlobals(IRBuilder<> &IRB, Module &M) {
     Initializers[i] = Initializer;
   }
 
-  if (TargetTriple.isOSBinFormatCOFF()) {
+  std::string ELFUniqueModuleId =
+      TargetTriple.isOSBinFormatELF() ? getUniqueModuleId(&M) : "";
+
+  if (!ELFUniqueModuleId.empty()) {
+    InstrumentGlobalsELF(IRB, M, NewGlobals, Initializers, ELFUniqueModuleId);
+  } else if (TargetTriple.isOSBinFormatCOFF()) {
     InstrumentGlobalsCOFF(IRB, M, NewGlobals, Initializers);
   } else if (ShouldUseMachOGlobalsSection()) {
     InstrumentGlobalsMachO(IRB, M, NewGlobals, Initializers);

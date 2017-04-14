@@ -13,7 +13,6 @@
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to double
 ; CHECK-NEXT: [[V5:%.+]] = fmul double [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fnmul	d16, d17, d18
 
 ;; FNMULSrr
@@ -29,7 +28,6 @@ fnmul	d16, d17, d18
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i32 [[V3]] to float
 ; CHECK-NEXT: [[V5:%.+]] = fmul float [[V2]], [[V4]]
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fnmul	s16, s17, s18
 
 ret

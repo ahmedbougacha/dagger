@@ -402,11 +402,8 @@ class Instruction {
                             // If so, make sure to override
                             // TargetInstrInfo::getInsertSubregLikeInputs.
 
-  // Side effect flags - When set, the flags have these meanings:
-  //
-  //  hasSideEffects - The instruction has side effects that are not
-  //    captured by any operands of the instruction or other flags.
-  //
+  // Does the instruction have side effects that are not captured by any
+  // operands of the instruction or other flags?
   bit hasSideEffects = ?;
 
   // Is this instruction a "real" instruction (with a distinct machine
@@ -951,11 +948,12 @@ def LOCAL_ESCAPE : Instruction {
   let hasSideEffects = 0;
   let hasCtrlDep = 1;
 }
-def FAULTING_LOAD_OP : Instruction {
+def FAULTING_OP : Instruction {
   let OutOperandList = (outs unknown:$dst);
   let InOperandList = (ins variable_ops);
   let usesCustomInserter = 1;
   let mayLoad = 1;
+  let mayStore = 1;
   let isTerminator = 1;
   let isBranch = 1;
 }
@@ -1354,6 +1352,11 @@ include "llvm/Target/TargetSelectionDAG.td"
 // Pull in the common support for Global ISel register bank info generation.
 //
 include "llvm/Target/GlobalISel/RegisterBank.td"
+
+//===----------------------------------------------------------------------===//
+// Pull in the common support for DAG isel generation.
+//
+include "llvm/Target/GlobalISel/Target.td"
 
 //===----------------------------------------------------------------------===//
 // Pull in the common support for the Global ISel DAG-based selector generation.

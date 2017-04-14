@@ -128,7 +128,7 @@ public:
   /// to an LLVM basic block.
   const BasicBlock *getBasicBlock() const { return BB; }
 
-  /// Return the name of the corresponding LLVM basic block, or "(null)".
+  /// Return the name of the corresponding LLVM basic block, or an empty string.
   StringRef getName() const;
 
   /// Return a formatted string to identify this block and its parent function.
@@ -663,6 +663,10 @@ public:
   DebugLoc findDebugLoc(iterator MBBI) {
     return findDebugLoc(MBBI.getInstrIterator());
   }
+
+  /// Find and return the merged DebugLoc of the branch instructions of the
+  /// block. Return UnknownLoc if there is none.
+  DebugLoc findBranchDebugLoc();
 
   /// Possible outcome of a register liveness query to computeRegisterLiveness()
   enum LivenessQueryResult {

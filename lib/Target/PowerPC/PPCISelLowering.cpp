@@ -2647,10 +2647,9 @@ SDValue PPCTargetLowering::LowerINIT_TRAMPOLINE(SDValue Op,
 
   // Lower to a call to __trampoline_setup(Trmp, TrampSize, FPtr, ctx_reg)
   TargetLowering::CallLoweringInfo CLI(DAG);
-  CLI.setDebugLoc(dl).setChain(Chain)
-    .setCallee(CallingConv::C, Type::getVoidTy(*DAG.getContext()),
-               DAG.getExternalSymbol("__trampoline_setup", PtrVT),
-               std::move(Args));
+  CLI.setDebugLoc(dl).setChain(Chain).setLibCallee(
+      CallingConv::C, Type::getVoidTy(*DAG.getContext()),
+      DAG.getExternalSymbol("__trampoline_setup", PtrVT), std::move(Args));
 
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
   return CallResult.second;
@@ -4111,7 +4110,7 @@ needStackSlotPassParameters(const PPCSubtarget &Subtarget,
 
 static bool
 hasSameArgumentList(const Function *CallerFn, ImmutableCallSite *CS) {
-  if (CS->arg_size() != CallerFn->getArgumentList().size())
+  if (CS->arg_size() != CallerFn->arg_size())
     return false;
 
   ImmutableCallSite::arg_iterator CalleeArgIter = CS->arg_begin();
@@ -5147,9 +5146,29 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
   };
 
   const unsigned NumGPRs = array_lengthof(GPR);
-  const unsigned NumFPRs = 13;
+  const unsigned NumFPRs = useSoftFloat() ? 0 : 13;
   const unsigned NumVRs  = array_lengthof(VR);
   const unsigned NumQFPRs = NumFPRs;
+
+  // On ELFv2, we can avoid allocating the parameter area if all the arguments 
+  // can be passed to the callee in registers.
+  // For the fast calling convention, there is another check below.
+  // Note: We should keep consistent with LowerFormalArguments_64SVR4()
+  bool HasParameterArea = !isELFv2ABI || isVarArg || CallConv == CallingConv::Fast;
+  if (!HasParameterArea) {
+    unsigned ParamAreaSize = NumGPRs * PtrByteSize;
+    unsigned AvailableFPRs = NumFPRs;
+    unsigned AvailableVRs = NumVRs;
+    unsigned NumBytesTmp = NumBytes;
+    for (unsigned i = 0; i != NumOps; ++i) {
+      if (Outs[i].Flags.isNest()) continue;
+      if (CalculateStackSlotUsed(Outs[i].VT, Outs[i].ArgVT, Outs[i].Flags,
+                                PtrByteSize, LinkageSize, ParamAreaSize,
+                                NumBytesTmp, AvailableFPRs, AvailableVRs,
+                                Subtarget.hasQPX()))
+        HasParameterArea = true;
+    }
+  }
 
   // When using the fast calling convention, we don't provide backing for
   // arguments that will be in registers.
@@ -5218,13 +5237,18 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
 
   unsigned NumBytesActuallyUsed = NumBytes;
 
-  // The prolog code of the callee may store up to 8 GPR argument registers to
+  // In the old ELFv1 ABI, 
+  // the prolog code of the callee may store up to 8 GPR argument registers to
   // the stack, allowing va_start to index over them in memory if its varargs.
   // Because we cannot tell if this is needed on the caller side, we have to
   // conservatively assume that it is needed.  As such, make sure we have at
   // least enough stack space for the caller to store the 8 GPRs.
-  // FIXME: On ELFv2, it may be unnecessary to allocate the parameter area.
-  NumBytes = std::max(NumBytes, LinkageSize + 8 * PtrByteSize);
+  // In the ELFv2 ABI, we allocate the parameter area iff a callee 
+  // really requires memory operands, e.g. a vararg function.
+  if (HasParameterArea)
+    NumBytes = std::max(NumBytes, LinkageSize + 8 * PtrByteSize);
+  else 
+    NumBytes = LinkageSize;
 
   // Tail call needs the stack to be aligned.
   if (getTargetMachine().Options.GuaranteedTailCallOpt &&
@@ -5443,6 +5467,8 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
         if (CallConv == CallingConv::Fast)
           ComputePtrOff();
 
+        assert(HasParameterArea && 
+               "Parameter area must exist to pass an argument in memory.");
         LowerMemOpCallTo(DAG, MF, Chain, Arg, PtrOff, SPDiff, ArgOffset,
                          true, isTailCall, false, MemOpChains,
                          TailCallArguments, dl);
@@ -5528,6 +5554,8 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
           PtrOff = DAG.getNode(ISD::ADD, dl, PtrVT, PtrOff, ConstFour);
         }
 
+        assert(HasParameterArea && 
+               "Parameter area must exist to pass an argument in memory.");
         LowerMemOpCallTo(DAG, MF, Chain, Arg, PtrOff, SPDiff, ArgOffset,
                          true, isTailCall, false, MemOpChains,
                          TailCallArguments, dl);
@@ -5562,6 +5590,8 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
       // GPRs when within range.  For now, we always put the value in both
       // locations (or even all three).
       if (isVarArg) {
+        assert(HasParameterArea && 
+               "Parameter area must exist if we have a varargs call.");
         // We could elide this store in the case where the object fits
         // entirely in R registers.  Maybe later.
         SDValue Store =
@@ -5594,6 +5624,8 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
         if (CallConv == CallingConv::Fast)
           ComputePtrOff();
 
+        assert(HasParameterArea && 
+               "Parameter area must exist to pass an argument in memory.");
         LowerMemOpCallTo(DAG, MF, Chain, Arg, PtrOff, SPDiff, ArgOffset,
                          true, isTailCall, true, MemOpChains,
                          TailCallArguments, dl);
@@ -5614,6 +5646,8 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
     case MVT::v4i1: {
       bool IsF32 = Arg.getValueType().getSimpleVT().SimpleTy == MVT::v4f32;
       if (isVarArg) {
+        assert(HasParameterArea && 
+               "Parameter area must exist if we have a varargs call.");
         // We could elide this store in the case where the object fits
         // entirely in R registers.  Maybe later.
         SDValue Store =
@@ -5646,6 +5680,8 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
         if (CallConv == CallingConv::Fast)
           ComputePtrOff();
 
+        assert(HasParameterArea && 
+               "Parameter area must exist to pass an argument in memory.");
         LowerMemOpCallTo(DAG, MF, Chain, Arg, PtrOff, SPDiff, ArgOffset,
                          true, isTailCall, true, MemOpChains,
                          TailCallArguments, dl);
@@ -5660,7 +5696,8 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
     }
   }
 
-  assert(NumBytesActuallyUsed == ArgOffset);
+  assert((!HasParameterArea || NumBytesActuallyUsed == ArgOffset) &&
+         "mismatch in size of parameter area");
   (void)NumBytesActuallyUsed;
 
   if (!MemOpChains.empty())
@@ -11353,9 +11390,20 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       if (BSwapOp.getValueType() == MVT::i16)
         BSwapOp = DAG.getNode(ISD::ANY_EXTEND, dl, MVT::i32, BSwapOp);
 
+      // If the type of BSWAP operand is wider than stored memory width
+      // it need to be shifted to the right side before STBRX.
+      EVT mVT = cast<StoreSDNode>(N)->getMemoryVT();
+      if (Op1VT.bitsGT(mVT)) {
+        int Shift = Op1VT.getSizeInBits() - mVT.getSizeInBits();
+        BSwapOp = DAG.getNode(ISD::SRL, dl, Op1VT, BSwapOp,
+                              DAG.getConstant(Shift, dl, MVT::i32));
+        // Need to truncate if this is a bswap of i64 stored as i32/i16.
+        if (Op1VT == MVT::i64)
+          BSwapOp = DAG.getNode(ISD::TRUNCATE, dl, MVT::i32, BSwapOp);
+      }
+
       SDValue Ops[] = {
-        N->getOperand(0), BSwapOp, N->getOperand(2),
-        DAG.getValueType(N->getOperand(1).getValueType())
+        N->getOperand(0), BSwapOp, N->getOperand(2), DAG.getValueType(mVT)
       };
       return
         DAG.getMemIntrinsicNode(PPCISD::STBRX, dl, DAG.getVTList(MVT::Other),

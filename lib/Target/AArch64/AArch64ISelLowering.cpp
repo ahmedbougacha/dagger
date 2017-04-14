@@ -555,8 +555,6 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
 
   setSchedulingPreference(Sched::Hybrid);
 
-  // Enable TBZ/TBNZ
-  MaskAndBranchFoldingIsLegal = true;
   EnableExtLdPromotion = true;
 
   // Set required alignment.
@@ -2114,8 +2112,8 @@ SDValue AArch64TargetLowering::LowerFSINCOS(SDValue Op,
 
   Entry.Node = Arg;
   Entry.Ty = ArgTy;
-  Entry.isSExt = false;
-  Entry.isZExt = false;
+  Entry.IsSExt = false;
+  Entry.IsZExt = false;
   Args.push_back(Entry);
 
   const char *LibcallName =
@@ -2125,8 +2123,9 @@ SDValue AArch64TargetLowering::LowerFSINCOS(SDValue Op,
 
   StructType *RetTy = StructType::get(ArgTy, ArgTy, nullptr);
   TargetLowering::CallLoweringInfo CLI(DAG);
-  CLI.setDebugLoc(dl).setChain(DAG.getEntryNode())
-    .setCallee(CallingConv::Fast, RetTy, Callee, std::move(Args));
+  CLI.setDebugLoc(dl)
+      .setChain(DAG.getEntryNode())
+      .setLibCallee(CallingConv::Fast, RetTy, Callee, std::move(Args));
 
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
   return CallResult.first;
@@ -3156,7 +3155,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     }
 
     if (VA.isRegLoc()) {
-      if (realArgIdx == 0 && Flags.isReturned() && Outs[0].VT == MVT::i64) {
+      if (realArgIdx == 0 && Flags.isReturned() && !Flags.isSwiftSelf() &&
+          Outs[0].VT == MVT::i64) {
         assert(VA.getLocVT() == MVT::i64 &&
                "unexpected calling convention register assignment");
         assert(!Ins.empty() && Ins[0].VT == MVT::i64 &&
@@ -7249,6 +7249,13 @@ bool AArch64TargetLowering::hasPairedLoad(EVT LoadedType,
   return NumBits == 32 || NumBits == 64;
 }
 
+/// A helper function for determining the number of interleaved accesses we
+/// will generate when lowering accesses of the given type.
+static unsigned getNumInterleavedAccesses(VectorType *VecTy,
+                                          const DataLayout &DL) {
+  return (DL.getTypeSizeInBits(VecTy) + 127) / 128;
+}
+
 /// \brief Lower an interleaved load into a ldN intrinsic.
 ///
 /// E.g. Lower an interleaved load (Factor = 2):
@@ -7274,9 +7281,13 @@ bool AArch64TargetLowering::lowerInterleavedLoad(
   VectorType *VecTy = Shuffles[0]->getType();
   unsigned VecSize = DL.getTypeSizeInBits(VecTy);
 
-  // Skip if we do not have NEON and skip illegal vector types.
-  if (!Subtarget->hasNEON() || (VecSize != 64 && VecSize != 128))
+  // Skip if we do not have NEON and skip illegal vector types. We can
+  // "legalize" wide vector types into multiple interleaved accesses as long as
+  // the vector types are divisible by 128.
+  if (!Subtarget->hasNEON() || (VecSize != 64 && VecSize % 128 != 0))
     return false;
+
+  unsigned NumLoads = getNumInterleavedAccesses(VecTy, DL);
 
   // A pointer vector can not be the return type of the ldN intrinsics. Need to
   // load integer vectors first and then convert to pointer vectors.
@@ -7284,6 +7295,25 @@ bool AArch64TargetLowering::lowerInterleavedLoad(
   if (EltTy->isPointerTy())
     VecTy =
         VectorType::get(DL.getIntPtrType(EltTy), VecTy->getVectorNumElements());
+
+  IRBuilder<> Builder(LI);
+
+  // The base address of the load.
+  Value *BaseAddr = LI->getPointerOperand();
+
+  if (NumLoads > 1) {
+    // If we're going to generate more than one load, reset the sub-vector type
+    // to something legal.
+    VecTy = VectorType::get(VecTy->getVectorElementType(),
+                            VecTy->getVectorNumElements() / NumLoads);
+
+    // We will compute the pointer operand of each load from the original base
+    // address using GEPs. Cast the base address to a pointer to the scalar
+    // element type.
+    BaseAddr = Builder.CreateBitCast(
+        BaseAddr, VecTy->getVectorElementType()->getPointerTo(
+                      LI->getPointerAddressSpace()));
+  }
 
   Type *PtrTy = VecTy->getPointerTo(LI->getPointerAddressSpace());
   Type *Tys[2] = {VecTy, PtrTy};
@@ -7293,24 +7323,46 @@ bool AArch64TargetLowering::lowerInterleavedLoad(
   Function *LdNFunc =
       Intrinsic::getDeclaration(LI->getModule(), LoadInts[Factor - 2], Tys);
 
-  IRBuilder<> Builder(LI);
-  Value *Ptr = Builder.CreateBitCast(LI->getPointerOperand(), PtrTy);
+  // Holds sub-vectors extracted from the load intrinsic return values. The
+  // sub-vectors are associated with the shufflevector instructions they will
+  // replace.
+  DenseMap<ShuffleVectorInst *, SmallVector<Value *, 4>> SubVecs;
 
-  CallInst *LdN = Builder.CreateCall(LdNFunc, Ptr, "ldN");
+  for (unsigned LoadCount = 0; LoadCount < NumLoads; ++LoadCount) {
 
-  // Replace uses of each shufflevector with the corresponding vector loaded
-  // by ldN.
-  for (unsigned i = 0; i < Shuffles.size(); i++) {
-    ShuffleVectorInst *SVI = Shuffles[i];
-    unsigned Index = Indices[i];
+    // If we're generating more than one load, compute the base address of
+    // subsequent loads as an offset from the previous.
+    if (LoadCount > 0)
+      BaseAddr = Builder.CreateConstGEP1_32(
+          BaseAddr, VecTy->getVectorNumElements() * Factor);
 
-    Value *SubVec = Builder.CreateExtractValue(LdN, Index);
+    CallInst *LdN = Builder.CreateCall(
+        LdNFunc, Builder.CreateBitCast(BaseAddr, PtrTy), "ldN");
 
-    // Convert the integer vector to pointer vector if the element is pointer.
-    if (EltTy->isPointerTy())
-      SubVec = Builder.CreateIntToPtr(SubVec, SVI->getType());
+    // Extract and store the sub-vectors returned by the load intrinsic.
+    for (unsigned i = 0; i < Shuffles.size(); i++) {
+      ShuffleVectorInst *SVI = Shuffles[i];
+      unsigned Index = Indices[i];
 
-    SVI->replaceAllUsesWith(SubVec);
+      Value *SubVec = Builder.CreateExtractValue(LdN, Index);
+
+      // Convert the integer vector to pointer vector if the element is pointer.
+      if (EltTy->isPointerTy())
+        SubVec = Builder.CreateIntToPtr(SubVec, SVI->getType());
+
+      SubVecs[SVI].push_back(SubVec);
+    }
+  }
+
+  // Replace uses of the shufflevector instructions with the sub-vectors
+  // returned by the load intrinsic. If a shufflevector instruction is
+  // associated with more than one sub-vector, those sub-vectors will be
+  // concatenated into a single wide vector.
+  for (ShuffleVectorInst *SVI : Shuffles) {
+    auto &SubVec = SubVecs[SVI];
+    auto *WideVec =
+        SubVec.size() > 1 ? concatenateVectors(Builder, SubVec) : SubVec[0];
+    SVI->replaceAllUsesWith(WideVec);
   }
 
   return true;
@@ -7359,9 +7411,13 @@ bool AArch64TargetLowering::lowerInterleavedStore(StoreInst *SI,
   const DataLayout &DL = SI->getModule()->getDataLayout();
   unsigned SubVecSize = DL.getTypeSizeInBits(SubVecTy);
 
-  // Skip if we do not have NEON and skip illegal vector types.
-  if (!Subtarget->hasNEON() || (SubVecSize != 64 && SubVecSize != 128))
+  // Skip if we do not have NEON and skip illegal vector types. We can
+  // "legalize" wide vector types into multiple interleaved accesses as long as
+  // the vector types are divisible by 128.
+  if (!Subtarget->hasNEON() || (SubVecSize != 64 && SubVecSize % 128 != 0))
     return false;
+
+  unsigned NumStores = getNumInterleavedAccesses(SubVecTy, DL);
 
   Value *Op0 = SVI->getOperand(0);
   Value *Op1 = SVI->getOperand(1);
@@ -7382,6 +7438,25 @@ bool AArch64TargetLowering::lowerInterleavedStore(StoreInst *SI,
     SubVecTy = VectorType::get(IntTy, LaneLen);
   }
 
+  // The base address of the store.
+  Value *BaseAddr = SI->getPointerOperand();
+
+  if (NumStores > 1) {
+    // If we're going to generate more than one store, reset the lane length
+    // and sub-vector type to something legal.
+    LaneLen /= NumStores;
+    SubVecTy = VectorType::get(SubVecTy->getVectorElementType(), LaneLen);
+
+    // We will compute the pointer operand of each store from the original base
+    // address using GEPs. Cast the base address to a pointer to the scalar
+    // element type.
+    BaseAddr = Builder.CreateBitCast(
+        BaseAddr, SubVecTy->getVectorElementType()->getPointerTo(
+                      SI->getPointerAddressSpace()));
+  }
+
+  auto Mask = SVI->getShuffleMask();
+
   Type *PtrTy = SubVecTy->getPointerTo(SI->getPointerAddressSpace());
   Type *Tys[2] = {SubVecTy, PtrTy};
   static const Intrinsic::ID StoreInts[3] = {Intrinsic::aarch64_neon_st2,
@@ -7390,34 +7465,43 @@ bool AArch64TargetLowering::lowerInterleavedStore(StoreInst *SI,
   Function *StNFunc =
       Intrinsic::getDeclaration(SI->getModule(), StoreInts[Factor - 2], Tys);
 
-  SmallVector<Value *, 5> Ops;
+  for (unsigned StoreCount = 0; StoreCount < NumStores; ++StoreCount) {
 
-  // Split the shufflevector operands into sub vectors for the new stN call.
-  auto Mask = SVI->getShuffleMask();
-  for (unsigned i = 0; i < Factor; i++) {
-    if (Mask[i] >= 0) {
-      Ops.push_back(Builder.CreateShuffleVector(
-          Op0, Op1, createSequentialMask(Builder, Mask[i], LaneLen, 0)));
-    } else {
-      unsigned StartMask = 0;
-      for (unsigned j = 1; j < LaneLen; j++) {
-        if (Mask[j*Factor + i] >= 0) {
-          StartMask = Mask[j*Factor + i] - j;
-          break;
+    SmallVector<Value *, 5> Ops;
+
+    // Split the shufflevector operands into sub vectors for the new stN call.
+    for (unsigned i = 0; i < Factor; i++) {
+      unsigned IdxI = StoreCount * LaneLen * Factor + i;
+      if (Mask[IdxI] >= 0) {
+        Ops.push_back(Builder.CreateShuffleVector(
+            Op0, Op1, createSequentialMask(Builder, Mask[IdxI], LaneLen, 0)));
+      } else {
+        unsigned StartMask = 0;
+        for (unsigned j = 1; j < LaneLen; j++) {
+          unsigned IdxJ = StoreCount * LaneLen * Factor + j;
+          if (Mask[IdxJ * Factor + IdxI] >= 0) {
+            StartMask = Mask[IdxJ * Factor + IdxI] - IdxJ;
+            break;
+          }
         }
+        // Note: Filling undef gaps with random elements is ok, since
+        // those elements were being written anyway (with undefs).
+        // In the case of all undefs we're defaulting to using elems from 0
+        // Note: StartMask cannot be negative, it's checked in
+        // isReInterleaveMask
+        Ops.push_back(Builder.CreateShuffleVector(
+            Op0, Op1, createSequentialMask(Builder, StartMask, LaneLen, 0)));
       }
-      // Note: If all elements in a chunk are undefs, StartMask=0!
-      // Note: Filling undef gaps with random elements is ok, since
-      // those elements were being written anyway (with undefs).
-      // In the case of all undefs we're defaulting to using elems from 0
-      // Note: StartMask cannot be negative, it's checked in isReInterleaveMask
-      Ops.push_back(Builder.CreateShuffleVector(
-          Op0, Op1, createSequentialMask(Builder, StartMask, LaneLen, 0)));
     }
-  }
 
-  Ops.push_back(Builder.CreateBitCast(SI->getPointerOperand(), PtrTy));
-  Builder.CreateCall(StNFunc, Ops);
+    // If we generating more than one store, we compute the base address of
+    // subsequent stores as an offset from the previous.
+    if (StoreCount > 0)
+      BaseAddr = Builder.CreateConstGEP1_32(BaseAddr, LaneLen * Factor);
+
+    Ops.push_back(Builder.CreateBitCast(BaseAddr, PtrTy));
+    Builder.CreateCall(StNFunc, Ops);
+  }
   return true;
 }
 
@@ -8923,8 +9007,9 @@ static SDValue splitStoreSplat(SelectionDAG &DAG, StoreSDNode &St,
   // instructions (stp).
   SDLoc DL(&St);
   SDValue BasePtr = St.getBasePtr();
+  const MachinePointerInfo &PtrInfo = St.getPointerInfo();
   SDValue NewST1 =
-      DAG.getStore(St.getChain(), DL, SplatVal, BasePtr, St.getPointerInfo(),
+      DAG.getStore(St.getChain(), DL, SplatVal, BasePtr, PtrInfo,
                    OrigAlignment, St.getMemOperand()->getFlags());
 
   unsigned Offset = EltOffset;
@@ -8933,7 +9018,7 @@ static SDValue splitStoreSplat(SelectionDAG &DAG, StoreSDNode &St,
     SDValue OffsetPtr = DAG.getNode(ISD::ADD, DL, MVT::i64, BasePtr,
                                     DAG.getConstant(Offset, DL, MVT::i64));
     NewST1 = DAG.getStore(NewST1.getValue(0), DL, SplatVal, OffsetPtr,
-                          St.getPointerInfo(), Alignment,
+                          PtrInfo.getWithOffset(Offset), Alignment,
                           St.getMemOperand()->getFlags());
     Offset += EltOffset;
   }
@@ -9254,7 +9339,7 @@ static SDValue performSTORECombine(SDNode *N,
   return SDValue();
 }
 
-  /// This function handles the log2-shuffle pattern produced by the
+/// This function handles the log2-shuffle pattern produced by the
 /// LoopVectorizer for the across vector reduction. It consists of
 /// log2(NumVectorElements) steps and, in each step, 2^(s) elements
 /// are reduced, where s is an induction variable from 0 to
@@ -10470,9 +10555,9 @@ void AArch64TargetLowering::ReplaceNodeResults(
 }
 
 bool AArch64TargetLowering::useLoadStackGuardNode() const {
-  if (!Subtarget->isTargetAndroid())
-    return true;
-  return TargetLowering::useLoadStackGuardNode();
+  if (Subtarget->isTargetAndroid() || Subtarget->isTargetFuchsia())
+    return TargetLowering::useLoadStackGuardNode();
+  return true;
 }
 
 unsigned AArch64TargetLowering::combineRepeatedFPDivisors() const {
@@ -10610,36 +10695,56 @@ bool AArch64TargetLowering::shouldNormalizeToSelectSequence(LLVMContext &,
   return false;
 }
 
-Value *AArch64TargetLowering::getIRStackGuard(IRBuilder<> &IRB) const {
-  if (!Subtarget->isTargetAndroid())
-    return TargetLowering::getIRStackGuard(IRB);
-
-  // Android provides a fixed TLS slot for the stack cookie. See the definition
-  // of TLS_SLOT_STACK_GUARD in
-  // https://android.googlesource.com/platform/bionic/+/master/libc/private/bionic_tls.h
-  const unsigned TlsOffset = 0x28;
+static Value *UseTlsOffset(IRBuilder<> &IRB, unsigned Offset) {
   Module *M = IRB.GetInsertBlock()->getParent()->getParent();
   Function *ThreadPointerFunc =
       Intrinsic::getDeclaration(M, Intrinsic::thread_pointer);
   return IRB.CreatePointerCast(
-      IRB.CreateConstGEP1_32(IRB.CreateCall(ThreadPointerFunc), TlsOffset),
+      IRB.CreateConstGEP1_32(IRB.CreateCall(ThreadPointerFunc), Offset),
       Type::getInt8PtrTy(IRB.getContext())->getPointerTo(0));
 }
 
-Value *AArch64TargetLowering::getSafeStackPointerLocation(IRBuilder<> &IRB) const {
-  if (!Subtarget->isTargetAndroid())
-    return TargetLowering::getSafeStackPointerLocation(IRB);
+Value *AArch64TargetLowering::getIRStackGuard(IRBuilder<> &IRB) const {
+  // Android provides a fixed TLS slot for the stack cookie. See the definition
+  // of TLS_SLOT_STACK_GUARD in
+  // https://android.googlesource.com/platform/bionic/+/master/libc/private/bionic_tls.h
+  if (Subtarget->isTargetAndroid())
+    return UseTlsOffset(IRB, 0x28);
 
+  // Fuchsia is similar.
+  // <magenta/tls.h> defines MX_TLS_STACK_GUARD_OFFSET with this value.
+  if (Subtarget->isTargetFuchsia())
+    return UseTlsOffset(IRB, -0x10);
+
+  return TargetLowering::getIRStackGuard(IRB);
+}
+
+Value *AArch64TargetLowering::getSafeStackPointerLocation(IRBuilder<> &IRB) const {
   // Android provides a fixed TLS slot for the SafeStack pointer. See the
   // definition of TLS_SLOT_SAFESTACK in
   // https://android.googlesource.com/platform/bionic/+/master/libc/private/bionic_tls.h
-  const unsigned TlsOffset = 0x48;
-  Module *M = IRB.GetInsertBlock()->getParent()->getParent();
-  Function *ThreadPointerFunc =
-      Intrinsic::getDeclaration(M, Intrinsic::thread_pointer);
-  return IRB.CreatePointerCast(
-      IRB.CreateConstGEP1_32(IRB.CreateCall(ThreadPointerFunc), TlsOffset),
-      Type::getInt8PtrTy(IRB.getContext())->getPointerTo(0));
+  if (Subtarget->isTargetAndroid())
+    return UseTlsOffset(IRB, 0x48);
+
+  // Fuchsia is similar.
+  // <magenta/tls.h> defines MX_TLS_UNSAFE_SP_OFFSET with this value.
+  if (Subtarget->isTargetFuchsia())
+    return UseTlsOffset(IRB, -0x8);
+
+  return TargetLowering::getSafeStackPointerLocation(IRB);
+}
+
+bool AArch64TargetLowering::isMaskAndCmp0FoldingBeneficial(
+    const Instruction &AndI) const {
+  // Only sink 'and' mask to cmp use block if it is masking a single bit, since
+  // this is likely to be fold the and/cmp/br into a single tbz instruction.  It
+  // may be beneficial to sink in other cases, but we would have to check that
+  // the cmp would not get folded into the br to form a cbz for these to be
+  // beneficial.
+  ConstantInt* Mask = dyn_cast<ConstantInt>(AndI.getOperand(1));
+  if (!Mask)
+    return false;
+  return Mask->getUniqueInteger().isPowerOf2();
 }
 
 void AArch64TargetLowering::initializeSplitCSR(MachineBasicBlock *Entry) const {
@@ -10700,4 +10805,12 @@ bool AArch64TargetLowering::isIntDivCheap(EVT VT, AttributeSet Attr) const {
   bool OptSize =
       Attr.hasAttribute(AttributeSet::FunctionIndex, Attribute::MinSize);
   return OptSize && !VT.isVector();
+}
+
+unsigned
+AArch64TargetLowering::getVaListSizeInBits(const DataLayout &DL) const {
+  if (Subtarget->isTargetDarwin())
+    return getPointerTy(DL).getSizeInBits();
+
+  return 3 * getPointerTy(DL).getSizeInBits() + 2 * 32;
 }

@@ -9,7 +9,6 @@
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmle	v16.16b, v17.16b, #0
 
 ;; CMLEv1i64rz
@@ -18,7 +17,6 @@ cmle	v16.16b, v17.16b, #0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmle	d16, d17, #0
 
 ;; CMLEv2i32rz
@@ -30,7 +28,6 @@ cmle	d16, d17, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <2 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmle	v16.2s, v17.2s, #0
 
 ;; CMLEv2i64rz
@@ -42,7 +39,6 @@ cmle	v16.2s, v17.2s, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x i64>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmle	v16.2d, v17.2d, #0
 
 ;; CMLEv4i16rz
@@ -54,7 +50,6 @@ cmle	v16.2d, v17.2d, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <4 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmle	v16.4h, v17.4h, #0
 
 ;; CMLEv4i32rz
@@ -66,7 +61,6 @@ cmle	v16.4h, v17.4h, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmle	v16.4s, v17.4s, #0
 
 ;; CMLEv8i16rz
@@ -78,7 +72,6 @@ cmle	v16.4s, v17.4s, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmle	v16.8h, v17.8h, #0
 
 ;; CMLEv8i8rz
@@ -90,7 +83,6 @@ cmle	v16.8h, v17.8h, #0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 cmle	v16.8b, v17.8b, #0
 
 ret

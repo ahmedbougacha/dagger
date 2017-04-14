@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vaddsubpd	2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VADDSUBPDYrr
@@ -15,7 +14,6 @@ vaddsubpd	2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vaddsubpd	%ymm10, %ymm9, %ymm8
 
 ## VADDSUBPDrm
@@ -24,7 +22,6 @@ vaddsubpd	%ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vaddsubpd	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VADDSUBPDrr
@@ -33,7 +30,6 @@ vaddsubpd	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vaddsubpd	%xmm10, %xmm9, %xmm8
 
 retq

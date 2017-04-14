@@ -38,7 +38,6 @@ movhpd	%xmm13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V6:%.+]] = inttoptr i64 [[V5]] to double*
 # CHECK-NEXT: [[V7:%.+]] = load double, double* [[V6]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 movhpd	2(%r14,%r15,2), %xmm8
 
 retq

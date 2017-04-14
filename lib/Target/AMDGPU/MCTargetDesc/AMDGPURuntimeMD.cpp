@@ -16,6 +16,7 @@
 #include "AMDGPU.h"
 #include "AMDGPURuntimeMetadata.h"
 #include "MCTargetDesc/AMDGPURuntimeMD.h"
+#include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -37,6 +38,7 @@
 #include <vector>
 
 using namespace llvm;
+using namespace llvm::AMDGPU::IsaInfo;
 using namespace ::AMDGPU::RuntimeMD;
 
 static cl::opt<bool>
@@ -87,7 +89,27 @@ template <> struct MappingTraits<Kernel::Metadata> {
         INVALID_KERNEL_INDEX);
     YamlIO.mapOptional(KeyName::NoPartialWorkGroups, K.NoPartialWorkGroups,
         uint8_t(0));
-    YamlIO.mapRequired(KeyName::Args, K.Args);
+    YamlIO.mapOptional(KeyName::Args, K.Args);
+  }
+  static const bool flow = true;
+};
+
+template <> struct MappingTraits<IsaInfo::Metadata> {
+  static void mapping(IO &YamlIO, IsaInfo::Metadata &I) {
+    YamlIO.mapRequired(KeyName::IsaInfoWavefrontSize, I.WavefrontSize);
+    YamlIO.mapRequired(KeyName::IsaInfoLocalMemorySize, I.LocalMemorySize);
+    YamlIO.mapRequired(KeyName::IsaInfoEUsPerCU, I.EUsPerCU);
+    YamlIO.mapRequired(KeyName::IsaInfoMaxWavesPerEU, I.MaxWavesPerEU);
+    YamlIO.mapRequired(KeyName::IsaInfoMaxFlatWorkGroupSize,
+        I.MaxFlatWorkGroupSize);
+    YamlIO.mapRequired(KeyName::IsaInfoSGPRAllocGranule, I.SGPRAllocGranule);
+    YamlIO.mapRequired(KeyName::IsaInfoTotalNumSGPRs, I.TotalNumSGPRs);
+    YamlIO.mapRequired(KeyName::IsaInfoAddressableNumSGPRs,
+        I.AddressableNumSGPRs);
+    YamlIO.mapRequired(KeyName::IsaInfoVGPRAllocGranule, I.VGPRAllocGranule);
+    YamlIO.mapRequired(KeyName::IsaInfoTotalNumVGPRs, I.TotalNumVGPRs);
+    YamlIO.mapRequired(KeyName::IsaInfoAddressableNumVGPRs,
+        I.AddressableNumVGPRs);
   }
   static const bool flow = true;
 };
@@ -95,6 +117,7 @@ template <> struct MappingTraits<Kernel::Metadata> {
 template <> struct MappingTraits<Program::Metadata> {
   static void mapping(IO &YamlIO, Program::Metadata &Prog) {
     YamlIO.mapRequired(KeyName::MDVersion, Prog.MDVersionSeq);
+    YamlIO.mapOptional(KeyName::IsaInfo, Prog.IsaInfo);
     YamlIO.mapOptional(KeyName::PrintfInfo, Prog.PrintfInfo);
     YamlIO.mapOptional(KeyName::Kernels, Prog.Kernels);
   }
@@ -353,6 +376,20 @@ static Kernel::Metadata getRuntimeMDForKernel(const Function &F) {
   return Kernel;
 }
 
+static void getIsaInfo(const FeatureBitset &Features, IsaInfo::Metadata &IIM) {
+  IIM.WavefrontSize = getWavefrontSize(Features);
+  IIM.LocalMemorySize = getLocalMemorySize(Features);
+  IIM.EUsPerCU = getEUsPerCU(Features);
+  IIM.MaxWavesPerEU = getMaxWavesPerEU(Features);
+  IIM.MaxFlatWorkGroupSize = getMaxFlatWorkGroupSize(Features);
+  IIM.SGPRAllocGranule = getSGPRAllocGranule(Features);
+  IIM.TotalNumSGPRs = getTotalNumSGPRs(Features);
+  IIM.AddressableNumSGPRs = getAddressableNumSGPRs(Features);
+  IIM.VGPRAllocGranule = getVGPRAllocGranule(Features);
+  IIM.TotalNumVGPRs = getTotalNumVGPRs(Features);
+  IIM.AddressableNumVGPRs = getAddressableNumVGPRs(Features);
+}
+
 Program::Metadata::Metadata(const std::string &YAML) {
   yaml::Input Input(YAML);
   Input >> *this;
@@ -383,10 +420,13 @@ static void checkRuntimeMDYAMLString(const std::string &YAML) {
   }
 }
 
-std::string llvm::getRuntimeMDYAMLString(Module &M) {
+std::string llvm::getRuntimeMDYAMLString(const FeatureBitset &Features,
+                                         const Module &M) {
   Program::Metadata Prog;
   Prog.MDVersionSeq.push_back(MDVersion);
   Prog.MDVersionSeq.push_back(MDRevision);
+
+  getIsaInfo(Features, Prog.IsaInfo);
 
   // Set PrintfInfo.
   if (auto MD = M.getNamedMetadata("llvm.printf.fmts")) {
@@ -414,4 +454,17 @@ std::string llvm::getRuntimeMDYAMLString(Module &M) {
     checkRuntimeMDYAMLString(YAML);
 
   return YAML;
+}
+
+ErrorOr<std::string> llvm::getRuntimeMDYAMLString(const FeatureBitset &Features,
+                                                  StringRef YAML) {
+  Program::Metadata Prog;
+  yaml::Input Input(YAML);
+  Input >> Prog;
+
+  getIsaInfo(Features, Prog.IsaInfo);
+
+  if (Input.error())
+    return Input.error();
+  return Prog.toYAML();
 }

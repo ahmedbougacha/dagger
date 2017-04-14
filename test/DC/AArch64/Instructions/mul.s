@@ -44,7 +44,6 @@ mul	v16.2s, v17.2s, v18.2s
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mul	v16.2s, v17.2s, v18.s[0]
 
 ;; MULv4i16
@@ -75,7 +74,6 @@ mul	v16.4h, v17.4h, v18.4h
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q10_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mul	v16.4h, v17.4h, v10.h[0]
 
 ;; MULv4i32
@@ -106,7 +104,6 @@ mul	v16.4s, v17.4s, v18.4s
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mul	v16.4s, v17.4s, v18.s[0]
 
 ;; MULv8i16
@@ -137,7 +134,6 @@ mul	v16.8h, v17.8h, v18.8h
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q10_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 mul	v16.8h, v17.8h, v10.h[0]
 
 ;; MULv8i8

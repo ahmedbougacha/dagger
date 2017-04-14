@@ -19,7 +19,6 @@
 # CHECK-NEXT: [[V8:%.+]] = bitcast <4 x float> [[XMM15_0]] to i128
 # CHECK-NEXT: [[V9:%.+]] = bitcast i128 [[V8]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermil2ps	$2, %xmm15, 2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VPERMIL2PSmrY
@@ -41,7 +40,6 @@ vpermil2ps	$2, %xmm15, 2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V8:%.+]] = bitcast <8 x float> [[YMM15_0]] to i256
 # CHECK-NEXT: [[V9:%.+]] = bitcast i256 [[V8]] to <8 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermil2ps	$2, %ymm15, 2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VPERMIL2PSrm
@@ -64,7 +62,6 @@ vpermil2ps	$2, %ymm15, 2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V9:%.+]] = load <2 x i64>, <2 x i64>* [[V8]], align 1
 # CHECK-NEXT: [[V10:%.+]] = bitcast <2 x i64> [[V9]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermil2ps	$2, 2(%r15,%r12,2), %xmm10, %xmm9, %xmm8
 
 ## VPERMIL2PSrmY
@@ -87,7 +84,6 @@ vpermil2ps	$2, 2(%r15,%r12,2), %xmm10, %xmm9, %xmm8
 # CHECK-NEXT: [[V9:%.+]] = load <4 x i64>, <4 x i64>* [[V8]], align 1
 # CHECK-NEXT: [[V10:%.+]] = bitcast <4 x i64> [[V9]] to <8 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermil2ps	$2, 2(%r15,%r12,2), %ymm10, %ymm9, %ymm8
 
 ## VPERMIL2PSrr
@@ -105,7 +101,6 @@ vpermil2ps	$2, 2(%r15,%r12,2), %ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V5:%.+]] = bitcast <4 x float> [[XMM11_0]] to i128
 # CHECK-NEXT: [[V6:%.+]] = bitcast i128 [[V5]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermil2ps	$2, %xmm11, %xmm10, %xmm9, %xmm8
 
 ## VPERMIL2PSrrY
@@ -123,7 +118,6 @@ vpermil2ps	$2, %xmm11, %xmm10, %xmm9, %xmm8
 # CHECK-NEXT: [[V5:%.+]] = bitcast <8 x float> [[YMM11_0]] to i256
 # CHECK-NEXT: [[V6:%.+]] = bitcast i256 [[V5]] to <8 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpermil2ps	$2, %ymm11, %ymm10, %ymm9, %ymm8
 
 ## VPERMIL2PSrrY_REV:	vpermil2ps	$2, %ymm11, %ymm10, %ymm9, %ymm8
@@ -132,7 +126,6 @@ vpermil2ps	$2, %ymm11, %ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x43; .byte 0xb5; .byte 0x48; .byte 0xc3; .byte 0xa2
 
 ## VPERMIL2PSrr_REV:	vpermil2ps	$2, %xmm11, %xmm10, %xmm9, %xmm8
@@ -141,7 +134,6 @@ vpermil2ps	$2, %ymm11, %ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x43; .byte 0xb1; .byte 0x48; .byte 0xc3; .byte 0xa2
 
 retq

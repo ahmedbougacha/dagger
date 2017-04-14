@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsb	2(%rbx,%r14,2), %mm4
 
 ## MMX_PABSBrr64
@@ -15,7 +14,6 @@ pabsb	2(%rbx,%r14,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsb	%mm5, %mm4
 
 ## MMX_PABSDrm64
@@ -24,7 +22,6 @@ pabsb	%mm5, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsd	2(%rbx,%r14,2), %mm4
 
 ## MMX_PABSDrr64
@@ -33,7 +30,6 @@ pabsd	2(%rbx,%r14,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsd	%mm5, %mm4
 
 ## MMX_PABSWrm64
@@ -42,7 +38,6 @@ pabsd	%mm5, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsw	2(%rbx,%r14,2), %mm4
 
 ## MMX_PABSWrr64
@@ -51,7 +46,6 @@ pabsw	2(%rbx,%r14,2), %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsw	%mm5, %mm4
 
 ## PABSBrm
@@ -68,7 +62,6 @@ pabsw	%mm5, %mm4
 # CHECK-NEXT: [[V5:%.+]] = load <2 x i64>, <2 x i64>* [[V4]], align 1
 # CHECK-NEXT: [[V6:%.+]] = bitcast <2 x i64> [[V5]] to <16 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsb	2(%rbx,%r14,2), %xmm8
 
 ## PABSBrr
@@ -80,7 +73,6 @@ pabsb	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsb	%xmm9, %xmm8
 
 ## PABSDrm
@@ -97,7 +89,6 @@ pabsb	%xmm9, %xmm8
 # CHECK-NEXT: [[V5:%.+]] = load <2 x i64>, <2 x i64>* [[V4]], align 1
 # CHECK-NEXT: [[V6:%.+]] = bitcast <2 x i64> [[V5]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsd	2(%rbx,%r14,2), %xmm8
 
 ## PABSDrr
@@ -109,7 +100,6 @@ pabsd	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsd	%xmm9, %xmm8
 
 ## PABSWrm
@@ -126,7 +116,6 @@ pabsd	%xmm9, %xmm8
 # CHECK-NEXT: [[V5:%.+]] = load <2 x i64>, <2 x i64>* [[V4]], align 1
 # CHECK-NEXT: [[V6:%.+]] = bitcast <2 x i64> [[V5]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsw	2(%rbx,%r14,2), %xmm8
 
 ## PABSWrr
@@ -138,7 +127,6 @@ pabsw	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pabsw	%xmm9, %xmm8
 
 retq

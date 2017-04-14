@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pdepl	2(%r14,%r15,2), %r9d, %r8d
 
 ## PDEP32rr
@@ -15,7 +14,6 @@ pdepl	2(%r14,%r15,2), %r9d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pdepl	%r10d, %r9d, %r8d
 
 ## PDEP64rm
@@ -24,7 +22,6 @@ pdepl	%r10d, %r9d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pdepq	2(%r14,%r15,2), %rbx, %r11
 
 ## PDEP64rr
@@ -33,7 +30,6 @@ pdepq	2(%r14,%r15,2), %rbx, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pdepq	%r14, %rbx, %r11
 
 retq

@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxbd	2(%rbx,%r14,2), %xmm8
 
 ## PMOVSXBDrr
@@ -15,7 +14,6 @@ pmovsxbd	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxbd	%xmm9, %xmm8
 
 ## PMOVSXBQrm
@@ -24,7 +22,6 @@ pmovsxbd	%xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxbq	2(%rbx,%r14,2), %xmm8
 
 ## PMOVSXBQrr
@@ -33,7 +30,6 @@ pmovsxbq	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxbq	%xmm9, %xmm8
 
 ## PMOVSXBWrm
@@ -42,7 +38,6 @@ pmovsxbq	%xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxbw	2(%rbx,%r14,2), %xmm8
 
 ## PMOVSXBWrr
@@ -51,7 +46,6 @@ pmovsxbw	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxbw	%xmm9, %xmm8
 
 ## PMOVSXDQrm
@@ -60,7 +54,6 @@ pmovsxbw	%xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxdq	2(%rbx,%r14,2), %xmm8
 
 ## PMOVSXDQrr
@@ -69,7 +62,6 @@ pmovsxdq	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxdq	%xmm9, %xmm8
 
 ## PMOVSXWDrm
@@ -78,7 +70,6 @@ pmovsxdq	%xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxwd	2(%rbx,%r14,2), %xmm8
 
 ## PMOVSXWDrr
@@ -87,7 +78,6 @@ pmovsxwd	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxwd	%xmm9, %xmm8
 
 ## PMOVSXWQrm
@@ -96,7 +86,6 @@ pmovsxwd	%xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 8
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxwq	2(%rbx,%r14,2), %xmm8
 
 ## PMOVSXWQrr
@@ -105,7 +94,6 @@ pmovsxwq	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 pmovsxwq	%xmm9, %xmm8
 
 retq

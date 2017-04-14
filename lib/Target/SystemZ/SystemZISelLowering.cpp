@@ -194,6 +194,9 @@ SystemZTargetLowering::SystemZTargetLowering(const TargetMachine &TM,
       setOperationAction(ISD::UMUL_LOHI, VT, Custom);
 
       // Only z196 and above have native support for conversions to unsigned.
+      // On z10, promoting to i64 doesn't generate an inexact condition for
+      // values that are outside the i32 range but in the i64 range, so use
+      // the default expansion.
       if (!Subtarget.hasFPExtension())
         setOperationAction(ISD::FP_TO_UINT, VT, Expand);
     }
@@ -4734,7 +4737,7 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
 // Return true if VT is a vector whose elements are a whole number of bytes
 // in width.
 static bool canTreatAsByteVector(EVT VT) {
-  return VT.isVector() && VT.getScalarSizeInBits() % 8 == 0;
+  return VT.isVector() && VT.getScalarSizeInBits() % 8 == 0 && VT.isSimple();
 }
 
 // Try to simplify an EXTRACT_VECTOR_ELT from a vector of type VecVT

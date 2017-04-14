@@ -12,7 +12,6 @@
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 umax	v16.16b, v17.16b, v18.16b
 
 ;; UMAXv2i32
@@ -27,7 +26,6 @@ umax	v16.16b, v17.16b, v18.16b
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <2 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 umax	v16.2s, v17.2s, v18.2s
 
 ;; UMAXv4i16
@@ -42,7 +40,6 @@ umax	v16.2s, v17.2s, v18.2s
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <4 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 umax	v16.4h, v17.4h, v18.4h
 
 ;; UMAXv4i32
@@ -57,7 +54,6 @@ umax	v16.4h, v17.4h, v18.4h
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 umax	v16.4s, v17.4s, v18.4s
 
 ;; UMAXv8i16
@@ -72,7 +68,6 @@ umax	v16.4s, v17.4s, v18.4s
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 umax	v16.8h, v17.8h, v18.8h
 
 ;; UMAXv8i8
@@ -87,7 +82,6 @@ umax	v16.8h, v17.8h, v18.8h
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 umax	v16.8b, v17.8b, v18.8b
 
 ret

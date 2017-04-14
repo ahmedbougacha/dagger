@@ -9,7 +9,6 @@
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 saddl2	v16.8h, v17.16b, v18.16b
 
 ;; SADDLv4i32_v2i64
@@ -21,7 +20,6 @@ saddl2	v16.8h, v17.16b, v18.16b
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 saddl2	v16.2d, v17.4s, v18.4s
 
 ;; SADDLv8i16_v4i32
@@ -33,7 +31,6 @@ saddl2	v16.2d, v17.4s, v18.4s
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 saddl2	v16.4s, v17.8h, v18.8h
 
 ret

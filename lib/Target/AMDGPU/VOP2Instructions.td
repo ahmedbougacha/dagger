@@ -40,7 +40,7 @@ class VOP2_MADKe <bits<6> op, VOPProfile P> : Enc64 {
 class VOP2_SDWAe <bits<6> op, VOPProfile P> : VOP_SDWAe <P> {
   bits<8> vdst;
   bits<8> src1;
-  
+
   let Inst{8-0}   = 0xf9; // sdwa
   let Inst{16-9}  = !if(P.HasSrc1, src1{7-0}, 0);
   let Inst{24-17} = !if(P.EmitDst, vdst{7-0}, 0);
@@ -93,6 +93,8 @@ class VOP2_Real <VOP2_Pseudo ps, int EncodingFamily> :
   let Constraints        = ps.Constraints;
   let DisableEncoding    = ps.DisableEncoding;
   let TSFlags            = ps.TSFlags;
+  let UseNamedOperandTable = ps.UseNamedOperandTable;
+  let Uses                 = ps.Uses;
 }
 
 class VOP2_SDWA_Pseudo <string OpName, VOPProfile P, list<dag> pattern=[]> :
@@ -133,7 +135,7 @@ multiclass VOP2bInst <string opName,
     let Uses = !if(useSGPRInput, [VCC, EXEC], [EXEC]), Defs = [VCC] in {
       def _e32 : VOP2_Pseudo <opName, P>,
                  Commutable_REV<revOp#"_e32", !eq(revOp, opName)>;
-      
+
       def _sdwa : VOP2_SDWA_Pseudo <opName, P>;
     }
 
@@ -182,7 +184,7 @@ def VOP_MADMK_F32 : VOP_MADMK <f32>;
 class VOP_MAC <ValueType vt> : VOPProfile <[vt, vt, vt, vt]> {
   let Ins32 = (ins Src0RC32:$src0, Src1RC32:$src1, VGPR_32:$src2);
   let Ins64 = getIns64<Src0RC64, Src1RC64, RegisterOperand<VGPR_32>, 3,
-                       HasModifiers, Src0Mod, Src1Mod, Src2Mod>.ret;
+                       HasModifiers, HasOMod, Src0Mod, Src1Mod, Src2Mod>.ret;
   let InsDPP = (ins Src0ModDPP:$src0_modifiers, Src0DPP:$src0,
                     Src1ModDPP:$src1_modifiers, Src1DPP:$src1,
                     VGPR_32:$src2, // stub argument
@@ -194,6 +196,7 @@ class VOP_MAC <ValueType vt> : VOPProfile <[vt, vt, vt, vt]> {
                      clampmod:$clamp, dst_sel:$dst_sel, dst_unused:$dst_unused,
                      src0_sel:$src0_sel, src1_sel:$src1_sel);
   let Asm32 = getAsm32<1, 2, vt>.ret;
+  let Asm64 = getAsm64<1, 2, HasModifiers, HasOMod, vt>.ret;
   let AsmDPP = getAsmDPP<1, 2, HasModifiers, vt>.ret;
   let AsmSDWA = getAsmSDWA<1, 2, HasModifiers, vt>.ret;
   let HasSrc2 = 0;
@@ -204,13 +207,13 @@ class VOP_MAC <ValueType vt> : VOPProfile <[vt, vt, vt, vt]> {
 def VOP_MAC_F16 : VOP_MAC <f16> {
   // FIXME: Move 'Asm64' definition to VOP_MAC, and use 'vt'. Currently it gives
   // 'not a string initializer' error.
-  let Asm64 = getAsm64<1, 2, HasModifiers, f16>.ret;
+  let Asm64 = getAsm64<1, 2, HasModifiers, HasOMod, f16>.ret;
 }
 
 def VOP_MAC_F32 : VOP_MAC <f32> {
   // FIXME: Move 'Asm64' definition to VOP_MAC, and use 'vt'. Currently it gives
   // 'not a string initializer' error.
-  let Asm64 = getAsm64<1, 2, HasModifiers, f32>.ret;
+  let Asm64 = getAsm64<1, 2, HasModifiers, HasOMod, f32>.ret;
 }
 
 // Write out to vcc or arbitrary SGPR.
@@ -354,7 +357,7 @@ defm V_LDEXP_F32 : VOP2Inst <"v_ldexp_f32", VOP_F32_F32_I32, AMDGPUldexp>;
 defm V_CVT_PKACCUM_U8_F32 : VOP2Inst <"v_cvt_pkaccum_u8_f32", VOP_I32_F32_I32>; // TODO: set "Uses = dst"
 defm V_CVT_PKNORM_I16_F32 : VOP2Inst <"v_cvt_pknorm_i16_f32", VOP_I32_F32_F32>;
 defm V_CVT_PKNORM_U16_F32 : VOP2Inst <"v_cvt_pknorm_u16_f32", VOP_I32_F32_F32>;
-defm V_CVT_PKRTZ_F16_F32 : VOP2Inst <"v_cvt_pkrtz_f16_f32", VOP_I32_F32_F32, int_SI_packf16>;
+defm V_CVT_PKRTZ_F16_F32 : VOP2Inst <"v_cvt_pkrtz_f16_f32", VOP_I32_F32_F32, AMDGPUpkrtz_f16_f32>;
 defm V_CVT_PK_U16_U32 : VOP2Inst <"v_cvt_pk_u16_u32", VOP_I32_I32_I32>;
 defm V_CVT_PK_I16_I32 : VOP2Inst <"v_cvt_pk_i16_i32", VOP_I32_I32_I32>;
 
@@ -654,7 +657,7 @@ multiclass Base_VOP2_Real_e32e64_vi <bits<6> op> :
   VOP2_Real_e64_vi<{0, 1, 0, 0, op{5-0}}>;
 
 } // End AssemblerPredicates = [isVI], DecoderNamespace = "VI"
- 
+
 multiclass VOP2_SDWA_Real <bits<6> op> {
   def _sdwa_vi :
     VOP_SDWA_Real <!cast<VOP2_SDWA_Pseudo>(NAME#"_sdwa")>,

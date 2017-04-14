@@ -388,7 +388,7 @@ def BFE_INT_eg : R600_3OP <0x5, "BFE_INT",
   VecALU
 >;
 
-def : BFEPattern <BFE_UINT_eg, MOV_IMM_I32>;
+defm : BFEPattern <BFE_UINT_eg, BFE_INT_eg, MOV_IMM_I32>;
 
 def BFI_INT_eg : R600_3OP <0x06, "BFI_INT",
   [(set i32:$dst, (AMDGPUbfi i32:$src0, i32:$src1, i32:$src2))],
@@ -438,7 +438,7 @@ defm CUBE_eg : CUBE_Common<0xC0>;
 def ADDC_UINT : R600_2OP_Helper <0x52, "ADDC_UINT", AMDGPUcarry>;
 def SUBB_UINT : R600_2OP_Helper <0x53, "SUBB_UINT", AMDGPUborrow>;
 
-def FLT32_TO_FLT16 : R600_1OP_Helper <0xA2, "FLT32_TO_FLT16", fp_to_f16, VecALU>;
+def FLT32_TO_FLT16 : R600_1OP_Helper <0xA2, "FLT32_TO_FLT16", AMDGPUfp_to_f16, VecALU>;
 def FLT16_TO_FLT32 : R600_1OP_Helper <0xA3, "FLT16_TO_FLT32", f16_to_fp, VecALU>;
 def BCNT_INT : R600_1OP_Helper <0xAA, "BCNT_INT", ctpop, VecALU>;
 def FFBH_UINT : R600_1OP_Helper <0xAB, "FFBH_UINT", AMDGPUffbh_u32, VecALU>;

@@ -47,9 +47,13 @@ FunctionPass *createSIDebuggerInsertNopsPass();
 FunctionPass *createSIInsertWaitsPass();
 FunctionPass *createAMDGPUCodeGenPreparePass(const GCNTargetMachine *TM = nullptr);
 
-ModulePass *createAMDGPUAnnotateKernelFeaturesPass();
+ModulePass *createAMDGPUAnnotateKernelFeaturesPass(const TargetMachine *TM = nullptr);
 void initializeAMDGPUAnnotateKernelFeaturesPass(PassRegistry &);
 extern char &AMDGPUAnnotateKernelFeaturesID;
+
+ModulePass *createAMDGPULowerIntrinsicsPass();
+void initializeAMDGPULowerIntrinsicsPass(PassRegistry &);
+extern char &AMDGPULowerIntrinsicsID;
 
 void initializeSIFoldOperandsPass(PassRegistry &);
 extern char &SIFoldOperandsID;
@@ -114,6 +118,9 @@ extern char &SIDebuggerInsertNopsID;
 
 void initializeSIInsertWaitsPass(PassRegistry&);
 extern char &SIInsertWaitsID;
+
+ImmutablePass *createAMDGPUAAWrapperPass();
+void initializeAMDGPUAAWrapperPassPass(PassRegistry&);
 
 Target &getTheAMDGPUTarget();
 Target &getTheGCNTarget();

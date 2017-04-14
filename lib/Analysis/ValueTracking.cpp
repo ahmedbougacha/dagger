@@ -20,6 +20,7 @@
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/Loads.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/OptimizationDiagnosticInfo.h"
 #include "llvm/Analysis/VectorUtils.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/ConstantRange.h"
@@ -76,6 +77,9 @@ struct Query {
   AssumptionCache *AC;
   const Instruction *CxtI;
   const DominatorTree *DT;
+  // Unlike the other analyses, this may be a nullptr because not all clients
+  // provide it currently.
+  OptimizationRemarkEmitter *ORE;
 
   /// Set of assumptions that should be excluded from further queries.
   /// This is because of the potential for mutual recursion to cause
@@ -90,11 +94,12 @@ struct Query {
   unsigned NumExcluded;
 
   Query(const DataLayout &DL, AssumptionCache *AC, const Instruction *CxtI,
-        const DominatorTree *DT)
-      : DL(DL), AC(AC), CxtI(CxtI), DT(DT), NumExcluded(0) {}
+        const DominatorTree *DT, OptimizationRemarkEmitter *ORE = nullptr)
+      : DL(DL), AC(AC), CxtI(CxtI), DT(DT), ORE(ORE), NumExcluded(0) {}
 
   Query(const Query &Q, const Value *NewExcl)
-      : DL(Q.DL), AC(Q.AC), CxtI(Q.CxtI), DT(Q.DT), NumExcluded(Q.NumExcluded) {
+      : DL(Q.DL), AC(Q.AC), CxtI(Q.CxtI), DT(Q.DT), ORE(Q.ORE),
+        NumExcluded(Q.NumExcluded) {
     Excluded = Q.Excluded;
     Excluded[NumExcluded++] = NewExcl;
     assert(NumExcluded <= Excluded.size());
@@ -131,9 +136,10 @@ static void computeKnownBits(const Value *V, APInt &KnownZero, APInt &KnownOne,
 void llvm::computeKnownBits(const Value *V, APInt &KnownZero, APInt &KnownOne,
                             const DataLayout &DL, unsigned Depth,
                             AssumptionCache *AC, const Instruction *CxtI,
-                            const DominatorTree *DT) {
+                            const DominatorTree *DT,
+                            OptimizationRemarkEmitter *ORE) {
   ::computeKnownBits(V, KnownZero, KnownOne, Depth,
-                     Query(DL, AC, safeCxtI(V, CxtI), DT));
+                     Query(DL, AC, safeCxtI(V, CxtI), DT, ORE));
 }
 
 bool llvm::haveNoCommonBitsSet(const Value *LHS, const Value *RHS,
@@ -249,30 +255,6 @@ static void computeKnownBitsAddSub(bool Add, const Value *Op0, const Value *Op1,
                                    APInt &KnownZero, APInt &KnownOne,
                                    APInt &KnownZero2, APInt &KnownOne2,
                                    unsigned Depth, const Query &Q) {
-  if (!Add) {
-    if (const ConstantInt *CLHS = dyn_cast<ConstantInt>(Op0)) {
-      // We know that the top bits of C-X are clear if X contains less bits
-      // than C (i.e. no wrap-around can happen).  For example, 20-X is
-      // positive if we can prove that X is >= 0 and < 16.
-      if (!CLHS->getValue().isNegative()) {
-        unsigned BitWidth = KnownZero.getBitWidth();
-        unsigned NLZ = (CLHS->getValue()+1).countLeadingZeros();
-        // NLZ can't be BitWidth with no sign bit
-        APInt MaskV = APInt::getHighBitsSet(BitWidth, NLZ+1);
-        computeKnownBits(Op1, KnownZero2, KnownOne2, Depth + 1, Q);
-
-        // If all of the MaskV bits are known to be zero, then we know the
-        // output top bits are zero, because we now know that the output is
-        // from [0-C].
-        if ((KnownZero2 & MaskV) == MaskV) {
-          unsigned NLZ2 = CLHS->getValue().countLeadingZeros();
-          // Top bits known zero.
-          KnownZero = APInt::getHighBitsSet(BitWidth, NLZ2);
-        }
-      }
-    }
-  }
-
   unsigned BitWidth = KnownZero.getBitWidth();
 
   // If an initial sequence of bits in the result is not needed, the
@@ -315,11 +297,11 @@ static void computeKnownBitsAddSub(bool Add, const Value *Op0, const Value *Op1,
       // Adding two non-negative numbers, or subtracting a negative number from
       // a non-negative one, can't wrap into negative.
       if (LHSKnownZero.isNegative() && KnownZero2.isNegative())
-        KnownZero |= APInt::getSignBit(BitWidth);
+        KnownZero.setSignBit();
       // Adding two negative numbers, or subtracting a non-negative number from
       // a negative one, can't wrap into non-negative.
       else if (LHSKnownOne.isNegative() && KnownOne2.isNegative())
-        KnownOne |= APInt::getSignBit(BitWidth);
+        KnownOne.setSignBit();
     }
   }
 }
@@ -726,7 +708,7 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
 
       if (RHSKnownZero.isNegative()) {
         // We know that the sign bit is zero.
-        KnownZero |= APInt::getSignBit(BitWidth);
+        KnownZero.setSignBit();
       }
     // assume(v >_s c) where c is at least -1.
     } else if (match(Arg, m_ICmp(Pred, m_V, m_Value(A))) &&
@@ -737,7 +719,7 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
 
       if (RHSKnownOne.isAllOnesValue() || RHSKnownZero.isNegative()) {
         // We know that the sign bit is zero.
-        KnownZero |= APInt::getSignBit(BitWidth);
+        KnownZero.setSignBit();
       }
     // assume(v <=_s c) where c is negative
     } else if (match(Arg, m_ICmp(Pred, m_V, m_Value(A))) &&
@@ -748,7 +730,7 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
 
       if (RHSKnownOne.isNegative()) {
         // We know that the sign bit is one.
-        KnownOne |= APInt::getSignBit(BitWidth);
+        KnownOne.setSignBit();
       }
     // assume(v <_s c) where c is non-positive
     } else if (match(Arg, m_ICmp(Pred, m_V, m_Value(A))) &&
@@ -759,7 +741,7 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
 
       if (RHSKnownZero.isAllOnesValue() || RHSKnownOne.isNegative()) {
         // We know that the sign bit is one.
-        KnownOne |= APInt::getSignBit(BitWidth);
+        KnownOne.setSignBit();
       }
     // assume(v <=_u c)
     } else if (match(Arg, m_ICmp(Pred, m_V, m_Value(A))) &&
@@ -790,16 +772,21 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
   }
 
   // If assumptions conflict with each other or previous known bits, then we
-  // have a logical fallacy. This should only happen when a program has
-  // undefined behavior. We can't assert/crash, so clear out the known bits and
-  // hope for the best.
-
-  // FIXME: Publish a warning/remark that we have encountered UB or the compiler
-  // is broken.
-
+  // have a logical fallacy. It's possible that the assumption is not reachable,
+  // so this isn't a real bug. On the other hand, the program may have undefined
+  // behavior, or we might have a bug in the compiler. We can't assert/crash, so
+  // clear out the known bits, try to warn the user, and hope for the best.
   if ((KnownZero & KnownOne) != 0) {
     KnownZero.clearAllBits();
     KnownOne.clearAllBits();
+
+    if (Q.ORE) {
+      auto *CxtI = const_cast<Instruction *>(Q.CxtI);
+      OptimizationRemarkAnalysis ORA("value-tracking", "BadAssumption", CxtI);
+      Q.ORE->emit(ORA << "Detected conflicting code assumptions. Program may "
+                         "have undefined behavior, or compiler may have "
+                         "internal error.");
+    }
   }
 }
 
@@ -836,6 +823,14 @@ static void computeKnownBitsFromShiftOperator(
   }
 
   computeKnownBits(I->getOperand(1), KnownZero, KnownOne, Depth + 1, Q);
+
+  // If the shift amount could be greater than or equal to the bit-width of the LHS, the
+  // value could be undef, so we don't know anything about it.
+  if ((~KnownZero).uge(BitWidth)) {
+    KnownZero.clearAllBits();
+    KnownOne.clearAllBits();
+    return;
+  }
 
   // Note: We cannot use KnownZero.getLimitedValue() here, because if
   // BitWidth > 64 and any upper bits are known, we'll end up returning the
@@ -1813,10 +1808,12 @@ static bool rangeMetadataExcludesValue(const MDNode* Ranges, const APInt& Value)
   return true;
 }
 
-/// Return true if the given value is known to be non-zero when defined.
-/// For vectors return true if every element is known to be non-zero when
-/// defined. Supports values with integer or pointer type and vectors of
-/// integers.
+/// Return true if the given value is known to be non-zero when defined. For
+/// vectors, return true if every element is known to be non-zero when
+/// defined. For pointers, if the context instruction and dominator tree are
+/// specified, perform context-sensitive analysis and return true if the
+/// pointer couldn't possibly be null at the specified instruction.
+/// Supports values with integer or pointer type and vectors of integers.
 bool isKnownNonZero(const Value *V, unsigned Depth, const Query &Q) {
   if (auto *C = dyn_cast<Constant>(V)) {
     if (C->isNullValue())
@@ -1859,7 +1856,7 @@ bool isKnownNonZero(const Value *V, unsigned Depth, const Query &Q) {
 
   // Check for pointer simplifications.
   if (V->getType()->isPointerTy()) {
-    if (isKnownNonNull(V))
+    if (isKnownNonNullAt(V, Q.CxtI, Q.DT))
       return true;
     if (const GEPOperator *GEP = dyn_cast<GEPOperator>(V))
       if (isGEPKnownNonNull(GEP, Depth, Q))
@@ -2100,13 +2097,29 @@ static unsigned computeNumSignBitsVectorConstant(const Value *V,
   return MinSignBits;
 }
 
+static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
+                                       const Query &Q);
+
+static unsigned ComputeNumSignBits(const Value *V, unsigned Depth,
+                                   const Query &Q) {
+  unsigned Result = ComputeNumSignBitsImpl(V, Depth, Q);
+  assert(Result > 0 && "At least one sign bit needs to be present!");
+  return Result;
+}
+
 /// Return the number of times the sign bit of the register is replicated into
 /// the other bits. We know that at least 1 bit is always equal to the sign bit
 /// (itself), but other cases can give us information. For example, immediately
 /// after an "ashr X, 2", we know that the top 3 bits are all equal to each
 /// other, so we return 3. For vectors, return the number of sign bits for the
 /// vector element with the mininum number of known sign bits.
-unsigned ComputeNumSignBits(const Value *V, unsigned Depth, const Query &Q) {
+static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
+                                       const Query &Q) {
+
+  // We return the minimum number of sign bits that are guaranteed to be present
+  // in V, so for undef we have to conservatively return 1.  We don't have the
+  // same behavior for poison though -- that's a FIXME today.
+
   unsigned TyBits = Q.DL.getTypeSizeInBits(V->getType()->getScalarType());
   unsigned Tmp, Tmp2;
   unsigned FirstAnswer = 1;
@@ -2182,7 +2195,10 @@ unsigned ComputeNumSignBits(const Value *V, unsigned Depth, const Query &Q) {
     // ashr X, C   -> adds C sign bits.  Vectors too.
     const APInt *ShAmt;
     if (match(U->getOperand(1), m_APInt(ShAmt))) {
-      Tmp += ShAmt->getZExtValue();
+      unsigned ShAmtLimited = ShAmt->getZExtValue();
+      if (ShAmtLimited >= TyBits)
+        break;  // Bad shift.
+      Tmp += ShAmtLimited;
       if (Tmp > TyBits) Tmp = TyBits;
     }
     return Tmp;
@@ -3462,6 +3478,16 @@ static bool isKnownNonNullFromDominatingCondition(const Value *V,
     if (NumUsesExplored >= DomConditionsMaxUses)
       break;
     NumUsesExplored++;
+
+    // If the value is used as an argument to a call or invoke, then argument
+    // attributes may provide an answer about null-ness.
+    if (auto CS = ImmutableCallSite(U))
+      if (auto *CalledFunc = CS.getCalledFunction())
+        for (const Argument &Arg : CalledFunc->args())
+          if (CS.getArgOperand(Arg.getArgNo()) == V &&
+              Arg.hasNonNullAttr() && DT->dominates(CS.getInstruction(), CtxI))
+            return true;
+
     // Consider only compare instructions uniquely controlling a branch
     CmpInst::Predicate Pred;
     if (!match(const_cast<User *>(U),
@@ -3739,6 +3765,8 @@ bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
     return false;
   if (isa<ReturnInst>(I))
     return false;
+  if (isa<UnreachableInst>(I))
+    return false;
 
   // Calls can throw, or contain an infinite loop, or kill the process.
   if (auto CS = ImmutableCallSite(I)) {
@@ -3787,79 +3815,33 @@ bool llvm::isGuaranteedToExecuteForEveryIteration(const Instruction *I,
 
 bool llvm::propagatesFullPoison(const Instruction *I) {
   switch (I->getOpcode()) {
-    case Instruction::Add:
-    case Instruction::Sub:
-    case Instruction::Xor:
-    case Instruction::Trunc:
-    case Instruction::BitCast:
-    case Instruction::AddrSpaceCast:
-      // These operations all propagate poison unconditionally. Note that poison
-      // is not any particular value, so xor or subtraction of poison with
-      // itself still yields poison, not zero.
-      return true;
+  case Instruction::Add:
+  case Instruction::Sub:
+  case Instruction::Xor:
+  case Instruction::Trunc:
+  case Instruction::BitCast:
+  case Instruction::AddrSpaceCast:
+  case Instruction::Mul:
+  case Instruction::Shl:
+  case Instruction::GetElementPtr:
+    // These operations all propagate poison unconditionally. Note that poison
+    // is not any particular value, so xor or subtraction of poison with
+    // itself still yields poison, not zero.
+    return true;
 
-    case Instruction::AShr:
-    case Instruction::SExt:
-      // For these operations, one bit of the input is replicated across
-      // multiple output bits. A replicated poison bit is still poison.
-      return true;
+  case Instruction::AShr:
+  case Instruction::SExt:
+    // For these operations, one bit of the input is replicated across
+    // multiple output bits. A replicated poison bit is still poison.
+    return true;
 
-    case Instruction::Shl: {
-      // Left shift *by* a poison value is poison. The number of
-      // positions to shift is unsigned, so no negative values are
-      // possible there. Left shift by zero places preserves poison. So
-      // it only remains to consider left shift of poison by a positive
-      // number of places.
-      //
-      // A left shift by a positive number of places leaves the lowest order bit
-      // non-poisoned. However, if such a shift has a no-wrap flag, then we can
-      // make the poison operand violate that flag, yielding a fresh full-poison
-      // value.
-      auto *OBO = cast<OverflowingBinaryOperator>(I);
-      return OBO->hasNoUnsignedWrap() || OBO->hasNoSignedWrap();
-    }
+  case Instruction::ICmp:
+    // Comparing poison with any value yields poison.  This is why, for
+    // instance, x s< (x +nsw 1) can be folded to true.
+    return true;
 
-    case Instruction::Mul: {
-      // A multiplication by zero yields a non-poison zero result, so we need to
-      // rule out zero as an operand. Conservatively, multiplication by a
-      // non-zero constant is not multiplication by zero.
-      //
-      // Multiplication by a non-zero constant can leave some bits
-      // non-poisoned. For example, a multiplication by 2 leaves the lowest
-      // order bit unpoisoned. So we need to consider that.
-      //
-      // Multiplication by 1 preserves poison. If the multiplication has a
-      // no-wrap flag, then we can make the poison operand violate that flag
-      // when multiplied by any integer other than 0 and 1.
-      auto *OBO = cast<OverflowingBinaryOperator>(I);
-      if (OBO->hasNoUnsignedWrap() || OBO->hasNoSignedWrap()) {
-        for (Value *V : OBO->operands()) {
-          if (auto *CI = dyn_cast<ConstantInt>(V)) {
-            // A ConstantInt cannot yield poison, so we can assume that it is
-            // the other operand that is poison.
-            return !CI->isZero();
-          }
-        }
-      }
-      return false;
-    }
-
-    case Instruction::ICmp:
-      // Comparing poison with any value yields poison.  This is why, for
-      // instance, x s< (x +nsw 1) can be folded to true.
-      return true;
-
-    case Instruction::GetElementPtr:
-      // A GEP implicitly represents a sequence of additions, subtractions,
-      // truncations, sign extensions and multiplications. The multiplications
-      // are by the non-zero sizes of some set of types, so we do not have to be
-      // concerned with multiplication by zero. If the GEP is in-bounds, then
-      // these operations are implicitly no-signed-wrap so poison is propagated
-      // by the arguments above for Add, Sub, Trunc, SExt and Mul.
-      return cast<GEPOperator>(I)->isInBounds();
-
-    default:
-      return false;
+  default:
+    return false;
   }
 }
 

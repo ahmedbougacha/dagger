@@ -25,17 +25,15 @@
 #ifndef LLVM_LIB_DEBUGINFO_PDB_RAW_GSI_H
 #define LLVM_LIB_DEBUGINFO_PDB_RAW_GSI_H
 
-#include "llvm/DebugInfo/MSF/StreamArray.h"
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
+#include "llvm/Support/BinaryStreamArray.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 
 namespace llvm {
 
-namespace msf {
-class StreamReader;
-}
+class BinaryStreamReader;
 
 namespace pdb {
 
@@ -56,14 +54,14 @@ struct GSIHashHeader {
   support::ulittle32_t NumBuckets;
 };
 
-Error readGSIHashBuckets(
-    msf::FixedStreamArray<support::ulittle32_t> &HashBuckets,
-    const GSIHashHeader *HashHdr, msf::StreamReader &Reader);
-Error readGSIHashHeader(const GSIHashHeader *&HashHdr,
-                        msf::StreamReader &Reader);
-Error readGSIHashRecords(msf::FixedStreamArray<PSHashRecord> &HashRecords,
+Error readGSIHashBuckets(FixedStreamArray<support::ulittle32_t> &HashBuckets,
                          const GSIHashHeader *HashHdr,
-                         msf::StreamReader &Reader);
+                         BinaryStreamReader &Reader);
+Error readGSIHashHeader(const GSIHashHeader *&HashHdr,
+                        BinaryStreamReader &Reader);
+Error readGSIHashRecords(FixedStreamArray<PSHashRecord> &HashRecords,
+                         const GSIHashHeader *HashHdr,
+                         BinaryStreamReader &Reader);
 }
 }
 

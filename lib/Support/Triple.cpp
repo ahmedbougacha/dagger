@@ -551,6 +551,8 @@ static Triple::SubArchType parseSubArch(StringRef SubArchName) {
   case ARM::AK_ARMV7A:
   case ARM::AK_ARMV7R:
     return Triple::ARMSubArch_v7;
+  case ARM::AK_ARMV7VE:
+    return Triple::ARMSubArch_v7ve;
   case ARM::AK_ARMV7K:
     return Triple::ARMSubArch_v7k;
   case ARM::AK_ARMV7M:
@@ -1513,6 +1515,7 @@ StringRef Triple::getARMCPUForArch(StringRef MArch) const {
       return "strongarm";
     }
   case llvm::Triple::NaCl:
+  case llvm::Triple::OpenBSD:
     return "cortex-a8";
   default:
     switch (getEnvironment()) {

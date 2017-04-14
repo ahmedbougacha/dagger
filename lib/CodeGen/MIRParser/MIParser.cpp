@@ -176,6 +176,7 @@ public:
   bool parseIntrinsicOperand(MachineOperand &Dest);
   bool parsePredicateOperand(MachineOperand &Dest);
   bool parseTargetIndexOperand(MachineOperand &Dest);
+  bool parseCustomRegisterMaskOperand(MachineOperand &Dest);
   bool parseLiveoutRegisterMaskOperand(MachineOperand &Dest);
   bool parseMachineOperand(MachineOperand &Dest,
                            Optional<unsigned> &TiedDefIdx);
@@ -188,6 +189,7 @@ public:
   bool parseMemoryOperandFlag(MachineMemOperand::Flags &Flags);
   bool parseMemoryPseudoSourceValue(const PseudoSourceValue *&PSV);
   bool parseMachinePointerInfo(MachinePointerInfo &Dest);
+  bool parseOptionalAtomicOrdering(AtomicOrdering &Order);
   bool parseMachineMemoryOperand(MachineMemOperand *&Dest);
 
 private:
@@ -1669,6 +1671,35 @@ bool MIParser::parseTargetIndexOperand(MachineOperand &Dest) {
   return false;
 }
 
+bool MIParser::parseCustomRegisterMaskOperand(MachineOperand &Dest) {
+  assert(Token.stringValue() == "CustomRegMask" && "Expected a custom RegMask");
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+  assert(TRI && "Expected target register info");
+  lex();
+  if (expectAndConsume(MIToken::lparen))
+    return true;
+
+  uint32_t *Mask = MF.allocateRegisterMask(TRI->getNumRegs());
+  while (true) {
+    if (Token.isNot(MIToken::NamedRegister))
+      return error("expected a named register");
+    unsigned Reg;
+    if (parseNamedRegister(Reg))
+      return true;
+    lex();
+    Mask[Reg / 32] |= 1U << (Reg % 32);
+    // TODO: Report an error if the same register is used more than once.
+    if (Token.isNot(MIToken::comma))
+      break;
+    lex();
+  }
+
+  if (expectAndConsume(MIToken::rparen))
+    return true;
+  Dest = MachineOperand::CreateRegMask(Mask);
+  return false;
+}
+
 bool MIParser::parseLiveoutRegisterMaskOperand(MachineOperand &Dest) {
   assert(Token.is(MIToken::kw_liveout));
   const auto *TRI = MF.getSubtarget().getRegisterInfo();
@@ -1766,8 +1797,8 @@ bool MIParser::parseMachineOperand(MachineOperand &Dest,
       Dest = MachineOperand::CreateRegMask(RegMask);
       lex();
       break;
-    }
-    LLVM_FALLTHROUGH;
+    } else
+      return parseCustomRegisterMaskOperand(Dest);
   default:
     // FIXME: Parse the MCSymbol machine operand.
     return error("expected a machine operand");
@@ -2040,6 +2071,28 @@ bool MIParser::parseMachinePointerInfo(MachinePointerInfo &Dest) {
   return false;
 }
 
+bool MIParser::parseOptionalAtomicOrdering(AtomicOrdering &Order) {
+  Order = AtomicOrdering::NotAtomic;
+  if (Token.isNot(MIToken::Identifier))
+    return false;
+
+  Order = StringSwitch<AtomicOrdering>(Token.stringValue())
+              .Case("unordered", AtomicOrdering::Unordered)
+              .Case("monotonic", AtomicOrdering::Monotonic)
+              .Case("acquire", AtomicOrdering::Acquire)
+              .Case("release", AtomicOrdering::Release)
+              .Case("acq_rel", AtomicOrdering::AcquireRelease)
+              .Case("seq_cst", AtomicOrdering::SequentiallyConsistent)
+              .Default(AtomicOrdering::NotAtomic);
+
+  if (Order != AtomicOrdering::NotAtomic) {
+    lex();
+    return false;
+  }
+
+  return error("expected an atomic scope, ordering or a size integer literal");
+}
+
 bool MIParser::parseMachineMemoryOperand(MachineMemOperand *&Dest) {
   if (expectAndConsume(MIToken::lparen))
     return true;
@@ -2056,6 +2109,21 @@ bool MIParser::parseMachineMemoryOperand(MachineMemOperand *&Dest) {
   else
     Flags |= MachineMemOperand::MOStore;
   lex();
+
+  // Optional "singlethread" scope.
+  SynchronizationScope Scope = SynchronizationScope::CrossThread;
+  if (Token.is(MIToken::Identifier) && Token.stringValue() == "singlethread") {
+    Scope = SynchronizationScope::SingleThread;
+    lex();
+  }
+
+  // Up to two atomic orderings (cmpxchg provides guarantees on failure).
+  AtomicOrdering Order, FailureOrder;
+  if (parseOptionalAtomicOrdering(Order))
+    return true;
+
+  if (parseOptionalAtomicOrdering(FailureOrder))
+    return true;
 
   if (Token.isNot(MIToken::IntegerLiteral))
     return error("expected the size integer literal after memory operation");
@@ -2111,8 +2179,8 @@ bool MIParser::parseMachineMemoryOperand(MachineMemOperand *&Dest) {
   }
   if (expectAndConsume(MIToken::rparen))
     return true;
-  Dest =
-      MF.getMachineMemOperand(Ptr, Flags, Size, BaseAlignment, AAInfo, Range);
+  Dest = MF.getMachineMemOperand(Ptr, Flags, Size, BaseAlignment, AAInfo, Range,
+                                 Scope, Order, FailureOrder);
   return false;
 }
 

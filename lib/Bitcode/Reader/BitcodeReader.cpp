@@ -4846,8 +4846,17 @@ Error ModuleSummaryIndexBitcodeReader::parseEntireSummary(
   // Keep around the last seen summary to be used when we see an optional
   // "OriginalName" attachement.
   GlobalValueSummary *LastSeenSummary = nullptr;
+  GlobalValue::GUID LastSeenGUID = 0;
   bool Combined = false;
+
+  // We can expect to see any number of type ID information records before
+  // each function summary records; these variables store the information
+  // collected so far so that it can be used to create the summary object.
   std::vector<GlobalValue::GUID> PendingTypeTests;
+  std::vector<FunctionSummary::VFuncId> PendingTypeTestAssumeVCalls,
+      PendingTypeCheckedLoadVCalls;
+  std::vector<FunctionSummary::ConstVCall> PendingTypeTestAssumeConstVCalls,
+      PendingTypeCheckedLoadConstVCalls;
 
   while (true) {
     BitstreamEntry Entry = Stream.advanceSkippingSubblocks();
@@ -4914,8 +4923,15 @@ Error ModuleSummaryIndexBitcodeReader::parseEntireSummary(
           IsOldProfileFormat, HasProfile);
       auto FS = llvm::make_unique<FunctionSummary>(
           Flags, InstCount, std::move(Refs), std::move(Calls),
-          std::move(PendingTypeTests));
+          std::move(PendingTypeTests), std::move(PendingTypeTestAssumeVCalls),
+          std::move(PendingTypeCheckedLoadVCalls),
+          std::move(PendingTypeTestAssumeConstVCalls),
+          std::move(PendingTypeCheckedLoadConstVCalls));
       PendingTypeTests.clear();
+      PendingTypeTestAssumeVCalls.clear();
+      PendingTypeCheckedLoadVCalls.clear();
+      PendingTypeTestAssumeConstVCalls.clear();
+      PendingTypeCheckedLoadConstVCalls.clear();
       auto GUID = getGUIDFromValueId(ValueID);
       FS->setModulePath(TheIndex.addModulePath(ModulePath, 0)->first());
       FS->setOriginalName(GUID.second);
@@ -4989,9 +5005,17 @@ Error ModuleSummaryIndexBitcodeReader::parseEntireSummary(
       GlobalValue::GUID GUID = getGUIDFromValueId(ValueID).first;
       auto FS = llvm::make_unique<FunctionSummary>(
           Flags, InstCount, std::move(Refs), std::move(Edges),
-          std::move(PendingTypeTests));
+          std::move(PendingTypeTests), std::move(PendingTypeTestAssumeVCalls),
+          std::move(PendingTypeCheckedLoadVCalls),
+          std::move(PendingTypeTestAssumeConstVCalls),
+          std::move(PendingTypeCheckedLoadConstVCalls));
       PendingTypeTests.clear();
+      PendingTypeTestAssumeVCalls.clear();
+      PendingTypeCheckedLoadVCalls.clear();
+      PendingTypeTestAssumeConstVCalls.clear();
+      PendingTypeCheckedLoadConstVCalls.clear();
       LastSeenSummary = FS.get();
+      LastSeenGUID = GUID;
       FS->setModulePath(ModuleIdMap[ModuleId]);
       TheIndex.addGlobalValueSummary(GUID, std::move(FS));
       Combined = true;
@@ -5018,6 +5042,7 @@ Error ModuleSummaryIndexBitcodeReader::parseEntireSummary(
       AS->setAliasee(AliaseeInModule);
 
       GlobalValue::GUID GUID = getGUIDFromValueId(ValueID).first;
+      LastSeenGUID = GUID;
       TheIndex.addGlobalValueSummary(GUID, std::move(AS));
       Combined = true;
       break;
@@ -5034,6 +5059,7 @@ Error ModuleSummaryIndexBitcodeReader::parseEntireSummary(
       LastSeenSummary = FS.get();
       FS->setModulePath(ModuleIdMap[ModuleId]);
       GlobalValue::GUID GUID = getGUIDFromValueId(ValueID).first;
+      LastSeenGUID = GUID;
       TheIndex.addGlobalValueSummary(GUID, std::move(FS));
       Combined = true;
       break;
@@ -5044,14 +5070,38 @@ Error ModuleSummaryIndexBitcodeReader::parseEntireSummary(
       if (!LastSeenSummary)
         return error("Name attachment that does not follow a combined record");
       LastSeenSummary->setOriginalName(OriginalName);
+      TheIndex.addOriginalName(LastSeenGUID, OriginalName);
       // Reset the LastSeenSummary
       LastSeenSummary = nullptr;
+      LastSeenGUID = 0;
       break;
     }
     case bitc::FS_TYPE_TESTS: {
       assert(PendingTypeTests.empty());
       PendingTypeTests.insert(PendingTypeTests.end(), Record.begin(),
                               Record.end());
+      break;
+    }
+    case bitc::FS_TYPE_TEST_ASSUME_VCALLS: {
+      assert(PendingTypeTestAssumeVCalls.empty());
+      for (unsigned I = 0; I != Record.size(); I += 2)
+        PendingTypeTestAssumeVCalls.push_back({Record[I], Record[I+1]});
+      break;
+    }
+    case bitc::FS_TYPE_CHECKED_LOAD_VCALLS: {
+      assert(PendingTypeCheckedLoadVCalls.empty());
+      for (unsigned I = 0; I != Record.size(); I += 2)
+        PendingTypeCheckedLoadVCalls.push_back({Record[I], Record[I+1]});
+      break;
+    }
+    case bitc::FS_TYPE_TEST_ASSUME_CONST_VCALL: {
+      PendingTypeTestAssumeConstVCalls.push_back(
+          {{Record[0], Record[1]}, {Record.begin() + 2, Record.end()}});
+      break;
+    }
+    case bitc::FS_TYPE_CHECKED_LOAD_CONST_VCALL: {
+      PendingTypeCheckedLoadConstVCalls.push_back(
+          {{Record[0], Record[1]}, {Record.begin() + 2, Record.end()}});
       break;
     }
     }

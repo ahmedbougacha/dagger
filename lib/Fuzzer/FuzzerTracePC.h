@@ -47,8 +47,8 @@ struct TableOfRecentCompares {
 
 class TracePC {
  public:
+  static const size_t kNumPCs = 1 << 21;
 
-  void HandleTrace(uint32_t *guard, uintptr_t PC);
   void HandleInit(uint32_t *start, uint32_t *stop);
   void HandleCallerCallee(uintptr_t Caller, uintptr_t Callee);
   template <class T> void HandleCmp(uintptr_t PC, T Arg1, T Arg2);
@@ -56,11 +56,11 @@ class TracePC {
   void SetUseCounters(bool UC) { UseCounters = UC; }
   void SetUseValueProfile(bool VP) { UseValueProfile = VP; }
   void SetPrintNewPCs(bool P) { DoPrintNewPCs = P; }
-  template <class Callback> size_t CollectFeatures(Callback CB);
+  template <class Callback> size_t CollectFeatures(Callback CB) const;
 
   void ResetMaps() {
     ValueProfileMap.Reset();
-    memset(Counters, 0, GetNumPCs());
+    memset(Counters(), 0, GetNumPCs());
   }
 
   void UpdateFeatureSet(size_t CurrentElementIdx, size_t CurrentElementSize);
@@ -74,8 +74,6 @@ class TracePC {
   void AddValueForMemcmp(void *caller_pc, const void *s1, const void *s2,
                          size_t n, bool StopAtZero);
 
-  bool UsingTracePcGuard() const {return NumModules; }
-
   TableOfRecentCompares<uint32_t, 32> TORC4;
   TableOfRecentCompares<uint64_t, 32> TORC8;
   TableOfRecentCompares<Word, 32> TORCW;
@@ -85,7 +83,7 @@ class TracePC {
   size_t GetNumPCs() const { return Min(kNumPCs, NumGuards + 1); }
   uintptr_t GetPC(size_t Idx) {
     assert(Idx < GetNumPCs());
-    return PCs[Idx];
+    return PCs()[Idx];
   }
 
 private:
@@ -101,9 +99,8 @@ private:
   size_t NumModules;  // linker-initialized.
   size_t NumGuards;  // linker-initialized.
 
-  static const size_t kNumPCs = 1 << 21;
-  alignas(8) uint8_t Counters[kNumPCs];
-  uintptr_t PCs[kNumPCs];
+  uint8_t *Counters() const;
+  uintptr_t *PCs() const;
 
   std::set<uintptr_t> *PrintedPCs;
 
@@ -111,10 +108,10 @@ private:
 };
 
 template <class Callback>
-size_t TracePC::CollectFeatures(Callback CB) {
-  if (!UsingTracePcGuard()) return 0;
+size_t TracePC::CollectFeatures(Callback CB) const {
   size_t Res = 0;
   const size_t Step = 8;
+  uint8_t *Counters = this->Counters();
   assert(reinterpret_cast<uintptr_t>(Counters) % Step == 0);
   size_t N = GetNumPCs();
   N = (N + Step - 1) & ~(Step - 1);  // Round up.
@@ -124,7 +121,6 @@ size_t TracePC::CollectFeatures(Callback CB) {
     for (size_t i = Idx; i < Idx + Step; i++) {
       uint8_t Counter = (Bundle >> ((i - Idx) * 8)) & 0xff;
       if (!Counter) continue;
-      Counters[i] = 0;
       unsigned Bit = 0;
       /**/ if (Counter >= 128) Bit = 7;
       else if (Counter >= 32) Bit = 6;

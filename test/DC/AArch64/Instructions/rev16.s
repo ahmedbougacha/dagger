@@ -8,7 +8,6 @@
 ; CHECK-NEXT: [[W17_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W17")
 ; CHECK-NEXT: [[V1:%.+]] = call i32 @llvm.bswap.i32(i32 [[W17_0]])
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rev16	w16, w17
 
 ;; REV16Xr
@@ -17,7 +16,6 @@ rev16	w16, w17
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rev16	x16, x17
 
 ;; REV16v16i8
@@ -29,7 +27,6 @@ rev16	x16, x17
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rev16	v16.16b, v17.16b
 
 ;; REV16v8i8
@@ -41,7 +38,6 @@ rev16	v16.16b, v17.16b
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rev16	v16.8b, v17.8b
 
 ret

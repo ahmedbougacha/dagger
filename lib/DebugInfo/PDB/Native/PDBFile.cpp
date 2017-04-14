@@ -12,9 +12,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/DebugInfo/MSF/MSFCommon.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
-#include "llvm/DebugInfo/MSF/StreamArray.h"
-#include "llvm/DebugInfo/MSF/StreamInterface.h"
-#include "llvm/DebugInfo/MSF/StreamReader.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/GlobalsStream.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
@@ -23,8 +20,12 @@
 #include "llvm/DebugInfo/PDB/Native/StringTable.h"
 #include "llvm/DebugInfo/PDB/Native/SymbolStream.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
+#include "llvm/Support/BinaryStream.h"
+#include "llvm/Support/BinaryStreamArray.h"
+#include "llvm/Support/BinaryStreamReader.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/Path.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -38,11 +39,17 @@ namespace {
 typedef FixedStreamArray<support::ulittle32_t> ulittle_array;
 } // end anonymous namespace
 
-PDBFile::PDBFile(std::unique_ptr<ReadableStream> PdbFileBuffer,
+PDBFile::PDBFile(StringRef Path, std::unique_ptr<BinaryStream> PdbFileBuffer,
                  BumpPtrAllocator &Allocator)
-    : Allocator(Allocator), Buffer(std::move(PdbFileBuffer)) {}
+    : FilePath(Path), Allocator(Allocator), Buffer(std::move(PdbFileBuffer)) {}
 
 PDBFile::~PDBFile() = default;
+
+StringRef PDBFile::getFilePath() const { return FilePath; }
+
+StringRef PDBFile::getFileDirectory() const {
+  return sys::path::parent_path(FilePath);
+}
 
 uint32_t PDBFile::getBlockSize() const { return ContainerLayout.SB->BlockSize; }
 
@@ -106,7 +113,7 @@ Error PDBFile::setBlockData(uint32_t BlockIndex, uint32_t Offset,
 }
 
 Error PDBFile::parseFileHeaders() {
-  StreamReader Reader(*Buffer);
+  BinaryStreamReader Reader(*Buffer);
 
   // Initialize SB.
   const msf::SuperBlock *SB = nullptr;
@@ -140,7 +147,7 @@ Error PDBFile::parseFileHeaders() {
   // See the function fpmPn() for more information:
   // https://github.com/Microsoft/microsoft-pdb/blob/master/PDB/msf/msf.cpp#L489
   auto FpmStream = MappedBlockStream::createFpmStream(ContainerLayout, *Buffer);
-  StreamReader FpmReader(*FpmStream);
+  BinaryStreamReader FpmReader(*FpmStream);
   ArrayRef<uint8_t> FpmBytes;
   if (auto EC = FpmReader.readBytes(FpmBytes,
                                     msf::getFullFpmByteSize(ContainerLayout)))
@@ -178,7 +185,7 @@ Error PDBFile::parseStreamData() {
   // subclass of IPDBStreamData which only accesses the fields that have already
   // been parsed, we can avoid this and reuse MappedBlockStream.
   auto DS = MappedBlockStream::createDirectoryStream(ContainerLayout, *Buffer);
-  StreamReader Reader(*DS);
+  BinaryStreamReader Reader(*DS);
   if (auto EC = Reader.readInteger(NumStreams))
     return EC;
 
@@ -343,7 +350,7 @@ Expected<StringTable &> PDBFile::getStringTable() {
     if (!NS)
       return NS.takeError();
 
-    StreamReader Reader(**NS);
+    BinaryStreamReader Reader(**NS);
     auto N = llvm::make_unique<StringTable>();
     if (auto EC = N->load(Reader))
       return std::move(EC);
@@ -389,14 +396,13 @@ bool PDBFile::hasStringTable() {
   return IS->getNamedStreamIndex("/names") < getNumStreams();
 }
 
-/// Wrapper around MappedBlockStream::createIndexedStream()
-/// that checks if a stream with that index actually exists.
-/// If it does not, the return value will have an MSFError with
-/// code msf_error_code::no_stream. Else, the return value will
-/// contain the stream returned by createIndexedStream().
+/// Wrapper around MappedBlockStream::createIndexedStream() that checks if a
+/// stream with that index actually exists.  If it does not, the return value
+/// will have an MSFError with code msf_error_code::no_stream.  Else, the return
+/// value will contain the stream returned by createIndexedStream().
 Expected<std::unique_ptr<MappedBlockStream>>
 PDBFile::safelyCreateIndexedStream(const MSFLayout &Layout,
-                                   const ReadableStream &MsfData,
+                                   BinaryStreamRef MsfData,
                                    uint32_t StreamIndex) const {
   if (StreamIndex >= getNumStreams())
     return make_error<RawError>(raw_error_code::no_stream);

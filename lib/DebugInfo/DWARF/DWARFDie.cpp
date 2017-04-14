@@ -1,4 +1,4 @@
-//===-- DWARFDie.cpp ------------------------------------------------------===//
+//===- DWARFDie.cpp -------------------------------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,25 +7,33 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/DebugInfo/DWARF/DWARFDie.h"
 #include "SyntaxHighlighting.h"
-#include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
+#include "llvm/ADT/None.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/DebugInfo/DWARF/DWARFAbbreviationDeclaration.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
-#include "llvm/DebugInfo/DWARF/DWARFDebugAbbrev.h"
-#include "llvm/DebugInfo/DWARF/DWARFDebugInfoEntry.h"
+#include "llvm/DebugInfo/DWARF/DWARFDebugRangeList.h"
+#include "llvm/DebugInfo/DWARF/DWARFDie.h"
 #include "llvm/DebugInfo/DWARF/DWARFFormValue.h"
-#include "llvm/Support/DataTypes.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/DebugInfo/DWARF/DWARFUnit.h"
+#include "llvm/Support/DataExtractor.h"
 #include "llvm/Support/Dwarf.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <cassert>
+#include <cinttypes>
+#include <cstdint>
+#include <string>
+#include <utility>
 
 using namespace llvm;
 using namespace dwarf;
 using namespace syntax;
 
-namespace {
- static void dumpApplePropertyAttribute(raw_ostream &OS, uint64_t Val) {
+static void dumpApplePropertyAttribute(raw_ostream &OS, uint64_t Val) {
   OS << " (";
   do {
     uint64_t Shift = countTrailingZeros(Val);
@@ -122,8 +130,6 @@ static void dumpAttribute(raw_ostream &OS, const DWARFDie &Die,
   OS << ")\n";
 }
 
-} // end anonymous namespace
-
 bool DWARFDie::isSubprogramDIE() const {
   return getTag() == DW_TAG_subprogram;
 }
@@ -140,21 +146,6 @@ DWARFDie::find(dwarf::Attribute Attr) const {
   auto AbbrevDecl = getAbbreviationDeclarationPtr();
   if (AbbrevDecl)
     return AbbrevDecl->getAttributeValue(getOffset(), Attr, *U);
-  return None;
-}
-
-Optional<DWARFFormValue>
-DWARFDie::findRecursively(dwarf::Attribute Attr) const {
-  if (!isValid())
-    return None;
-  if (auto Value = find(Attr))
-    return Value;
-  if (auto Die = getAttributeValueAsReferencedDie(DW_AT_abstract_origin))
-    if (auto Value = Die.find(Attr))
-      return Value;
-  if (auto Die = getAttributeValueAsReferencedDie(DW_AT_specification))
-    if (auto Value = Die.find(Attr))
-      return Value;
   return None;
 }
 
@@ -176,14 +167,17 @@ Optional<DWARFFormValue>
 DWARFDie::findRecursively(ArrayRef<dwarf::Attribute> Attrs) const {
   if (!isValid())
     return None;
-  if (auto Value = find(Attrs))
+  auto Die = *this;
+  if (auto Value = Die.find(Attrs))
     return Value;
-  if (auto Die = getAttributeValueAsReferencedDie(DW_AT_abstract_origin))
-    if (auto Value = Die.find(Attrs))
-      return Value;
-  if (auto Die = getAttributeValueAsReferencedDie(DW_AT_specification))
-    if (auto Value = Die.find(Attrs))
-      return Value;
+  if (auto D = Die.getAttributeValueAsReferencedDie(DW_AT_abstract_origin))
+    Die = D;
+  if (auto Value = Die.find(Attrs))
+    return Value;
+  if (auto D = Die.getAttributeValueAsReferencedDie(DW_AT_specification))
+    Die = D;
+  if (auto Value = Die.find(Attrs))
+    return Value;
   return None;
 }
 
@@ -291,6 +285,10 @@ DWARFDie::getName(DINameKind Kind) const {
   return nullptr;
 }
 
+uint64_t DWARFDie::getDeclLine() const {
+  return toUnsigned(findRecursively(DW_AT_decl_line), 0);
+}
+
 void DWARFDie::getCallerFrame(uint32_t &CallFile, uint32_t &CallLine,
                               uint32_t &CallColumn) const {
   CallFile = toUnsigned(find(DW_AT_call_file), 0);
@@ -325,6 +323,12 @@ void DWARFDie::dump(raw_ostream &OS, unsigned RecurseDepth,
         
         // Dump all data in the DIE for the attributes.
         for (const auto &AttrSpec : AbbrevDecl->attributes()) {
+          if (AttrSpec.Form == DW_FORM_implicit_const) {
+            // We are dumping .debug_info section ,
+            // implicit_const attribute values are not really stored here,
+            // but in .debug_abbrev section. So we just skip such attrs.
+            continue;
+          }
           dumpAttribute(OS, *this, &offset, AttrSpec.Attr, AttrSpec.Form,
                         Indent);
         }
@@ -345,7 +349,6 @@ void DWARFDie::dump(raw_ostream &OS, unsigned RecurseDepth,
     }
   }
 }
-
 
 void DWARFDie::getInlinedChainForAddress(
     const uint64_t Address, SmallVectorImpl<DWARFDie> &InlinedChain) const {

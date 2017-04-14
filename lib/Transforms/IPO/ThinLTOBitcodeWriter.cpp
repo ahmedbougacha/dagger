@@ -15,60 +15,23 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/IPO.h"
+#include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/ModuleSummaryAnalysis.h"
 #include "llvm/Analysis/TypeMetadataUtils.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/ScopedPrinter.h"
+#include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 using namespace llvm;
 
 namespace {
-
-// Produce a unique identifier for this module by taking the MD5 sum of the
-// names of the module's strong external symbols. This identifier is
-// normally guaranteed to be unique, or the program would fail to link due to
-// multiply defined symbols.
-//
-// If the module has no strong external symbols (such a module may still have a
-// semantic effect if it performs global initialization), we cannot produce a
-// unique identifier for this module, so we return the empty string, which
-// causes the entire module to be written as a regular LTO module.
-std::string getModuleId(Module *M) {
-  MD5 Md5;
-  bool ExportsSymbols = false;
-  auto AddGlobal = [&](GlobalValue &GV) {
-    if (GV.isDeclaration() || GV.getName().startswith("llvm.") ||
-        !GV.hasExternalLinkage())
-      return;
-    ExportsSymbols = true;
-    Md5.update(GV.getName());
-    Md5.update(ArrayRef<uint8_t>{0});
-  };
-
-  for (auto &F : *M)
-    AddGlobal(F);
-  for (auto &GV : M->globals())
-    AddGlobal(GV);
-  for (auto &GA : M->aliases())
-    AddGlobal(GA);
-  for (auto &IF : M->ifuncs())
-    AddGlobal(IF);
-
-  if (!ExportsSymbols)
-    return "";
-
-  MD5::MD5Result R;
-  Md5.final(R);
-
-  SmallString<32> Str;
-  MD5::stringifyResult(R, Str);
-  return ("$" + Str).str();
-}
 
 // Promote each local-linkage entity defined by ExportM and used by ImportM by
 // changing visibility and appending the given ModuleId.
@@ -235,11 +198,22 @@ void filterModule(
   }
 }
 
+void forEachVirtualFunction(Constant *C, function_ref<void(Function *)> Fn) {
+  if (auto *F = dyn_cast<Function>(C))
+    return Fn(F);
+  if (isa<GlobalValue>(C))
+    return;
+  for (Value *Op : C->operands())
+    forEachVirtualFunction(cast<Constant>(Op), Fn);
+}
+
 // If it's possible to split M into regular and thin LTO parts, do so and write
 // a multi-module bitcode file with the two parts to OS. Otherwise, write only a
 // regular LTO bitcode file to OS.
-void splitAndWriteThinLTOBitcode(raw_ostream &OS, Module &M) {
-  std::string ModuleId = getModuleId(&M);
+void splitAndWriteThinLTOBitcode(
+    raw_ostream &OS, function_ref<AAResults &(Function &)> AARGetter,
+    Module &M) {
+  std::string ModuleId = getUniqueModuleId(&M);
   if (ModuleId.empty()) {
     // We couldn't generate a module ID for this module, just write it out as a
     // regular LTO module.
@@ -249,20 +223,71 @@ void splitAndWriteThinLTOBitcode(raw_ostream &OS, Module &M) {
 
   promoteTypeIds(M, ModuleId);
 
-  auto IsInMergedM = [&](const GlobalValue *GV) {
-    auto *GVar = dyn_cast<GlobalVariable>(GV->getBaseObject());
-    if (!GVar)
-      return false;
-
+  // Returns whether a global has attached type metadata. Such globals may
+  // participate in CFI or whole-program devirtualization, so they need to
+  // appear in the merged module instead of the thin LTO module.
+  auto HasTypeMetadata = [&](const GlobalObject *GO) {
     SmallVector<MDNode *, 1> MDs;
-    GVar->getMetadata(LLVMContext::MD_type, MDs);
+    GO->getMetadata(LLVMContext::MD_type, MDs);
     return !MDs.empty();
   };
 
-  ValueToValueMapTy VMap;
-  std::unique_ptr<Module> MergedM(CloneModule(&M, VMap, IsInMergedM));
+  // Collect the set of virtual functions that are eligible for virtual constant
+  // propagation. Each eligible function must not access memory, must return
+  // an integer of width <=64 bits, must take at least one argument, must not
+  // use its first argument (assumed to be "this") and all arguments other than
+  // the first one must be of <=64 bit integer type.
+  //
+  // Note that we test whether this copy of the function is readnone, rather
+  // than testing function attributes, which must hold for any copy of the
+  // function, even a less optimized version substituted at link time. This is
+  // sound because the virtual constant propagation optimizations effectively
+  // inline all implementations of the virtual function into each call site,
+  // rather than using function attributes to perform local optimization.
+  std::set<const Function *> EligibleVirtualFns;
+  for (GlobalVariable &GV : M.globals())
+    if (HasTypeMetadata(&GV))
+      forEachVirtualFunction(GV.getInitializer(), [&](Function *F) {
+        auto *RT = dyn_cast<IntegerType>(F->getReturnType());
+        if (!RT || RT->getBitWidth() > 64 || F->arg_empty() ||
+            !F->arg_begin()->use_empty())
+          return;
+        for (auto &Arg : make_range(std::next(F->arg_begin()), F->arg_end())) {
+          auto *ArgT = dyn_cast<IntegerType>(Arg.getType());
+          if (!ArgT || ArgT->getBitWidth() > 64)
+            return;
+        }
+        if (computeFunctionBodyMemoryAccess(*F, AARGetter(*F)) == MAK_ReadNone)
+          EligibleVirtualFns.insert(F);
+      });
 
-  filterModule(&M, [&](const GlobalValue *GV) { return !IsInMergedM(GV); });
+  ValueToValueMapTy VMap;
+  std::unique_ptr<Module> MergedM(
+      CloneModule(&M, VMap, [&](const GlobalValue *GV) -> bool {
+        if (auto *F = dyn_cast<Function>(GV))
+          return EligibleVirtualFns.count(F);
+        if (auto *GVar = dyn_cast_or_null<GlobalVariable>(GV->getBaseObject()))
+          return HasTypeMetadata(GVar);
+        return false;
+      }));
+  StripDebugInfo(*MergedM);
+
+  for (Function &F : *MergedM)
+    if (!F.isDeclaration()) {
+      // Reset the linkage of all functions eligible for virtual constant
+      // propagation. The canonical definitions live in the thin LTO module so
+      // that they can be imported.
+      F.setLinkage(GlobalValue::AvailableExternallyLinkage);
+      F.setComdat(nullptr);
+    }
+
+  // Remove all globals with type metadata, as well as aliases pointing to them,
+  // from the thin LTO module.
+  filterModule(&M, [&](const GlobalValue *GV) {
+    if (auto *GVar = dyn_cast_or_null<GlobalVariable>(GV->getBaseObject()))
+      return !HasTypeMetadata(GVar);
+    return true;
+  });
 
   promoteInternals(*MergedM, M, ModuleId);
   promoteInternals(M, *MergedM, ModuleId);
@@ -294,11 +319,12 @@ bool requiresSplit(Module &M) {
   return false;
 }
 
-void writeThinLTOBitcode(raw_ostream &OS, Module &M,
-                         const ModuleSummaryIndex *Index) {
+void writeThinLTOBitcode(raw_ostream &OS,
+                         function_ref<AAResults &(Function &)> AARGetter,
+                         Module &M, const ModuleSummaryIndex *Index) {
   // See if this module has any type metadata. If so, we need to split it.
   if (requiresSplit(M))
-    return splitAndWriteThinLTOBitcode(OS, M);
+    return splitAndWriteThinLTOBitcode(OS, AARGetter, M);
 
   // Otherwise we can just write it out as a regular module.
   WriteBitcodeToFile(&M, OS, /*ShouldPreserveUseListOrder=*/false, Index,
@@ -324,12 +350,14 @@ public:
   bool runOnModule(Module &M) override {
     const ModuleSummaryIndex *Index =
         &(getAnalysis<ModuleSummaryIndexWrapperPass>().getIndex());
-    writeThinLTOBitcode(OS, M, Index);
+    writeThinLTOBitcode(OS, LegacyAARGetter(*this), M, Index);
     return true;
   }
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesAll();
+    AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<ModuleSummaryIndexWrapperPass>();
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
   }
 };
 } // anonymous namespace
@@ -337,7 +365,9 @@ public:
 char WriteThinLTOBitcode::ID = 0;
 INITIALIZE_PASS_BEGIN(WriteThinLTOBitcode, "write-thinlto-bitcode",
                       "Write ThinLTO Bitcode", false, true)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(ModuleSummaryIndexWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(WriteThinLTOBitcode, "write-thinlto-bitcode",
                     "Write ThinLTO Bitcode", false, true)
 

@@ -42,12 +42,14 @@ void DCModule::initializeDebugInfo(StringRef OutputDirectory) {
   SmallString<128> DebugDirPath = OutputDirectory;
   if (auto EC = sys::fs::make_absolute(DebugDirPath)) {
     DEBUG(dbgs() << "Invalid debug info directory: " << EC.message() << "\n");
+    (void)EC;
     return;
   }
 
   if (auto EC = sys::fs::create_directory(DebugDirPath)) {
     DEBUG(dbgs() << "Failed to create debug info directory: " << EC.message()
                  << "\n");
+    (void)EC;
     return;
   }
 
@@ -57,8 +59,11 @@ void DCModule::initializeDebugInfo(StringRef OutputDirectory) {
   int DebugFD = -1;
   if (auto EC = sys::fs::createUniqueFile(DebugPathModel, DebugFD, DebugPath)) {
     DEBUG(dbgs() << "Failed to write debug info .s: " << EC.message() << "\n");
+    (void)EC;
     return;
   }
+
+  // Now that we can't fail for any reason, setup all the DI data structures.
 
   DebugStream.emplace(DebugFD, /*shouldClose=*/true);
   DEBUG(dbgs() << "Opened debug info .s: " << DebugPath << "\n");
@@ -124,7 +129,7 @@ Function *DCModule::createExternalWrapperFunction(uint64_t Addr, Value *ExtFn) {
     return Fn;
 
   BasicBlock *BB = BasicBlock::Create(getContext(), "", Fn);
-  Value *RegSet = &*Fn->getArgumentList().begin();
+  Value *RegSet = &*Fn->arg_begin();
   insertExternalWrapperAsm(BB, ExtFn, RegSet);
   ReturnInst::Create(getContext(), BB);
   return Fn;
@@ -161,7 +166,7 @@ Function *DCModule::getOrCreateMainFunction(Function *EntryFn) {
   Value *Idx[2] = {Builder.getInt32(0), Builder.getInt32(0)};
   Value *StackPtr = Builder.CreateInBoundsGEP(Stack, Idx);
 
-  Function::arg_iterator ArgI = MainFn->getArgumentList().begin();
+  Function::arg_iterator ArgI = MainFn->arg_begin();
   Value *ArgC = &*ArgI++;
   Value *ArgV = &*ArgI++;
 
@@ -188,7 +193,7 @@ Function *DCModule::getOrCreateInitRegSetFunction() {
   if (!InitFn->empty())
     return InitFn;
 
-  Function::arg_iterator ArgI = InitFn->getArgumentList().begin();
+  Function::arg_iterator ArgI = InitFn->arg_begin();
   Value *RegSet = &*ArgI++;
   Value *StackPtr = &*ArgI++;
   Value *StackSize = &*ArgI++;
@@ -214,7 +219,7 @@ Function *DCModule::getOrCreateFiniRegSetFunction() {
   if (!FiniFn->empty())
     return FiniFn;
 
-  Function::arg_iterator ArgI = FiniFn->getArgumentList().begin();
+  Function::arg_iterator ArgI = FiniFn->arg_begin();
   Value *RegSet = &*ArgI++;
 
   auto *BB = BasicBlock::Create(getContext(), "", FiniFn);
@@ -283,7 +288,7 @@ Function *DCModule::getOrCreateRegSetDiffFunction() {
   Builder.SetInsertPoint(BasicBlock::Create(getContext(), "", RSDiffFn));
 
   // Get the argument regset pointers.
-  Function::arg_iterator ArgI = RSDiffFn->getArgumentList().begin();
+  Function::arg_iterator ArgI = RSDiffFn->arg_begin();
   Value *FnAddr = &*ArgI++;
   Value *RS1 = &*ArgI++;
   Value *RS2 = &*ArgI++;

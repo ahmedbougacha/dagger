@@ -17,7 +17,6 @@
 # CHECK-NEXT: [[V7:%.+]] = load <4 x i64>, <4 x i64>* [[V6]], align 1
 # CHECK-NEXT: [[V8:%.+]] = bitcast <4 x i64> [[V7]] to <32 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpminsb	2(%r14,%r15,2), %ymm9, %ymm8
 
 ## VPMINSBYrr
@@ -32,7 +31,6 @@ vpminsb	2(%r14,%r15,2), %ymm9, %ymm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <8 x float> [[YMM10_0]] to i256
 # CHECK-NEXT: [[V4:%.+]] = bitcast i256 [[V3]] to <32 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpminsb	%ymm10, %ymm9, %ymm8
 
 ## VPMINSBrm
@@ -52,7 +50,6 @@ vpminsb	%ymm10, %ymm9, %ymm8
 # CHECK-NEXT: [[V7:%.+]] = load <2 x i64>, <2 x i64>* [[V6]], align 1
 # CHECK-NEXT: [[V8:%.+]] = bitcast <2 x i64> [[V7]] to <16 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpminsb	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VPMINSBrr
@@ -67,7 +64,6 @@ vpminsb	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V3:%.+]] = bitcast <4 x float> [[XMM10_0]] to i128
 # CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <16 x i8>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vpminsb	%xmm10, %xmm9, %xmm8
 
 retq

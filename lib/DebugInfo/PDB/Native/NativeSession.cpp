@@ -10,15 +10,16 @@
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/DebugInfo/MSF/ByteStream.h"
 #include "llvm/DebugInfo/PDB/GenericError.h"
 #include "llvm/DebugInfo/PDB/IPDBEnumChildren.h"
 #include "llvm/DebugInfo/PDB/IPDBSourceFile.h"
+#include "llvm/DebugInfo/PDB/Native/NativeRawSymbol.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolCompiland.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolExe.h"
 #include "llvm/Support/Allocator.h"
+#include "llvm/Support/BinaryByteStream.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -44,10 +45,11 @@ Error NativeSession::createFromPdb(StringRef Path,
     return make_error<GenericError>(generic_error_code::invalid_path);
 
   std::unique_ptr<MemoryBuffer> Buffer = std::move(*ErrorOrBuffer);
-  auto Stream = llvm::make_unique<MemoryBufferByteStream>(std::move(Buffer));
+  auto Stream = llvm::make_unique<MemoryBufferByteStream>(
+      std::move(Buffer), llvm::support::little);
 
   auto Allocator = llvm::make_unique<BumpPtrAllocator>();
-  auto File = llvm::make_unique<PDBFile>(std::move(Stream), *Allocator);
+  auto File = llvm::make_unique<PDBFile>(Path, std::move(Stream), *Allocator);
   if (auto EC = File->parseFileHeaders())
     return EC;
   if (auto EC = File->parseStreamData())
@@ -68,8 +70,12 @@ uint64_t NativeSession::getLoadAddress() const { return 0; }
 
 void NativeSession::setLoadAddress(uint64_t Address) {}
 
-std::unique_ptr<PDBSymbolExe> NativeSession::getGlobalScope() const {
-  return nullptr;
+std::unique_ptr<PDBSymbolExe> NativeSession::getGlobalScope() {
+  auto RawSymbol = llvm::make_unique<NativeRawSymbol>(*this);
+  auto PdbSymbol(PDBSymbol::create(*this, std::move(RawSymbol)));
+  std::unique_ptr<PDBSymbolExe> ExeSymbol(
+    static_cast<PDBSymbolExe *>(PdbSymbol.release()));
+  return ExeSymbol;
 }
 
 std::unique_ptr<PDBSymbol>

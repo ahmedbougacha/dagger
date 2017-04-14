@@ -39,7 +39,6 @@ vcvttpd2dqy	%ymm9, %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x double>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvttpd2dq	%xmm9, %xmm8
 
 retq

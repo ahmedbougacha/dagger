@@ -7,17 +7,29 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/MC/MCParser/MCAsmParserExtension.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/ADT/Twine.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCDirectives.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCParser/MCAsmLexer.h"
+#include "llvm/MC/MCParser/MCAsmParser.h"
+#include "llvm/MC/MCParser/MCAsmParserExtension.h"
+#include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCStreamer.h"
+#include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCSymbolELF.h"
+#include "llvm/MC/SectionKind.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ELF.h"
+#include "llvm/Support/MathExtras.h"
+#include "llvm/Support/SMLoc.h"
+#include <cassert>
+#include <cstdint>
+#include <utility>
+
 using namespace llvm;
 
 namespace {
@@ -145,10 +157,11 @@ private:
   bool maybeParseSectionType(StringRef &TypeName);
   bool parseMergeSize(int64_t &Size);
   bool parseGroup(StringRef &GroupName);
+  bool parseMetadataSym(MCSymbolELF *&Associated);
   bool maybeParseUniqueID(int64_t &UniqueID);
 };
 
-}
+} // end anonymous namespace
 
 /// ParseDirectiveSymbolAttribute
 ///  ::= { ".local", ".weak", ... } [ identifier ( , identifier )* ]
@@ -162,7 +175,7 @@ bool ELFAsmParser::ParseDirectiveSymbolAttribute(StringRef Directive, SMLoc) {
     .Default(MCSA_Invalid);
   assert(Attr != MCSA_Invalid && "unexpected symbol attribute directive!");
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
-    for (;;) {
+    while (true) {
       StringRef Name;
 
       if (getParser().parseIdentifier(Name))
@@ -234,8 +247,7 @@ bool ELFAsmParser::ParseSectionName(StringRef &SectionName) {
     return false;
   }
 
-  for (;;) {
-    
+  while (true) {
     SMLoc PrevLoc = getLexer().getLoc();
     if (getLexer().is(AsmToken::Comma) ||
       getLexer().is(AsmToken::EndOfStatement))
@@ -285,6 +297,9 @@ static unsigned parseSectionFlags(StringRef flagsStr, bool *UseLastGroup) {
       break;
     case 'w':
       flags |= ELF::SHF_WRITE;
+      break;
+    case 'm':
+      flags |= ELF::SHF_LINK_ORDER;
       break;
     case 'M':
       flags |= ELF::SHF_MERGE;
@@ -376,11 +391,18 @@ bool ELFAsmParser::maybeParseSectionType(StringRef &TypeName) {
     return false;
   Lex();
   if (L.isNot(AsmToken::At) && L.isNot(AsmToken::Percent) &&
-      L.isNot(AsmToken::String))
-    return TokError("expected '@<type>', '%<type>' or \"<type>\"");
+      L.isNot(AsmToken::String)) {
+    if (L.getAllowAtInIdentifier())
+      return TokError("expected '@<type>', '%<type>' or \"<type>\"");
+    else
+      return TokError("expected '%<type>' or \"<type>\"");
+  }
   if (!L.is(AsmToken::String))
     Lex();
-  if (getParser().parseIdentifier(TypeName))
+  if (L.is(AsmToken::Integer)) {
+    TypeName = getTok().getString();
+    Lex();
+  } else if (getParser().parseIdentifier(TypeName))
     return TokError("expected identifier in directive");
   return false;
 }
@@ -411,6 +433,20 @@ bool ELFAsmParser::parseGroup(StringRef &GroupName) {
     if (Linkage != "comdat")
       return TokError("Linkage must be 'comdat'");
   }
+  return false;
+}
+
+bool ELFAsmParser::parseMetadataSym(MCSymbolELF *&Associated) {
+  MCAsmLexer &L = getLexer();
+  if (L.isNot(AsmToken::Comma))
+    return TokError("expected metadata symbol");
+  Lex();
+  StringRef Name;
+  if (getParser().parseIdentifier(Name))
+    return true;
+  Associated = dyn_cast_or_null<MCSymbolELF>(getContext().lookupSymbol(Name));
+  if (!Associated || !Associated->isInSection())
+    return TokError("symbol is not in a section: " + Name);
   return false;
 }
 
@@ -449,6 +485,7 @@ bool ELFAsmParser::ParseSectionArguments(bool IsPush, SMLoc loc) {
   const MCExpr *Subsection = nullptr;
   bool UseLastGroup = false;
   StringRef UniqueStr;
+  MCSymbolELF *Associated = nullptr;
   int64_t UniqueID = ~0;
 
   // Set the defaults first.
@@ -511,6 +548,9 @@ bool ELFAsmParser::ParseSectionArguments(bool IsPush, SMLoc loc) {
     if (Group)
       if (parseGroup(GroupName))
         return true;
+    if (Flags & ELF::SHF_LINK_ORDER)
+      if (parseMetadataSym(Associated))
+        return true;
     if (maybeParseUniqueID(UniqueID))
       return true;
   }
@@ -546,7 +586,7 @@ EndStmt:
       Type = ELF::SHT_NOTE;
     else if (TypeName == "unwind")
       Type = ELF::SHT_X86_64_UNWIND;
-    else
+    else if (TypeName.getAsInteger(0, Type))
       return TokError("unknown section type");
   }
 
@@ -560,8 +600,9 @@ EndStmt:
       }
   }
 
-  MCSection *ELFSection = getContext().getELFSection(SectionName, Type, Flags,
-                                                     Size, GroupName, UniqueID);
+  MCSection *ELFSection =
+      getContext().getELFSection(SectionName, Type, Flags, Size, GroupName,
+                                 UniqueID, Associated);
   getStreamer().SwitchSection(ELFSection, Subsection);
 
   if (getContext().getGenDwarfForAssembly()) {
@@ -709,6 +750,7 @@ bool ELFAsmParser::ParseDirectiveSymver(StringRef, SMLoc) {
   const MCExpr *Value = MCSymbolRefExpr::create(Sym, getContext());
 
   getStreamer().EmitAssignment(Alias, Value);
+  getStreamer().emitELFSymverDirective(Alias, Sym);
   return false;
 }
 
@@ -784,4 +826,4 @@ MCAsmParserExtension *createELFAsmParser() {
   return new ELFAsmParser;
 }
 
-}
+} // end namespace llvm

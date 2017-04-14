@@ -36,6 +36,7 @@ enum : uint64_t {
 
  // TODO: Should this be spilt into VOP3 a and b?
   VOP3 = 1 << 10,
+  VOP3P = 1 << 12,
 
   VINTRP = 1 << 13,
   SDWA = 1 << 14,
@@ -65,8 +66,8 @@ enum : uint64_t {
   SOPK_ZEXT = UINT64_C(1) << 38,
   SCALAR_STORE = UINT64_C(1) << 39,
   FIXED_SIZE = UINT64_C(1) << 40,
-  VOPAsmPrefer32Bit = UINT64_C(1) << 41
-
+  VOPAsmPrefer32Bit = UINT64_C(1) << 41,
+  HasFPClamp = UINT64_C(1) << 42
 };
 
 // v_cmp_class_* etc. use a 10-bit mask for what operation is checked.
@@ -102,12 +103,14 @@ namespace AMDGPU {
     OPERAND_REG_INLINE_C_FP16,
     OPERAND_REG_INLINE_C_FP32,
     OPERAND_REG_INLINE_C_FP64,
+    OPERAND_REG_INLINE_C_V2FP16,
+    OPERAND_REG_INLINE_C_V2INT16,
 
     OPERAND_REG_IMM_FIRST = OPERAND_REG_IMM_INT32,
     OPERAND_REG_IMM_LAST = OPERAND_REG_IMM_FP16,
 
     OPERAND_REG_INLINE_C_FIRST = OPERAND_REG_INLINE_C_INT16,
-    OPERAND_REG_INLINE_C_LAST = OPERAND_REG_INLINE_C_FP64,
+    OPERAND_REG_INLINE_C_LAST = OPERAND_REG_INLINE_C_V2INT16,
 
     OPERAND_SRC_FIRST = OPERAND_REG_IMM_INT32,
     OPERAND_SRC_LAST = OPERAND_REG_INLINE_C_LAST,
@@ -125,9 +128,12 @@ namespace AMDGPU {
 // NEG and SEXT share same bit-mask because they can't be set simultaneously.
 namespace SISrcMods {
   enum {
-   NEG = 1 << 0,  // Floating-point negate modifier
-   ABS = 1 << 1,  // Floating-point absolute modifier
-   SEXT = 1 << 0  // Integer sign-extend modifier
+   NEG = 1 << 0,   // Floating-point negate modifier
+   ABS = 1 << 1,   // Floating-point absolute modifier
+   SEXT = 1 << 0,  // Integer sign-extend modifier
+   NEG_HI = ABS,   // Floating-point negate high packed component modifier.
+   OP_SEL_0 = 1 << 2,
+   OP_SEL_1 = 1 << 3
   };
 }
 
@@ -300,6 +306,9 @@ enum DstUnused {
 #define   S_00B84C_USER_SGPR(x)                                       (((x) & 0x1F) << 1)
 #define   G_00B84C_USER_SGPR(x)                                       (((x) >> 1) & 0x1F)
 #define   C_00B84C_USER_SGPR                                          0xFFFFFFC1
+#define   S_00B84C_TRAP_HANDLER(x)                                    (((x) & 0x1) << 6)
+#define   G_00B84C_TRAP_HANDLER(x)                                    (((x) >> 6) & 0x1)
+#define   C_00B84C_TRAP_HANDLER                                       0xFFFFFFBF
 #define   S_00B84C_TGID_X_EN(x)                                       (((x) & 0x1) << 7)
 #define   G_00B84C_TGID_X_EN(x)                                       (((x) >> 7) & 0x1)
 #define   C_00B84C_TGID_X_EN                                          0xFFFFFF7F
@@ -387,7 +396,6 @@ enum DstUnused {
 
 #define R_SPILLED_SGPRS         0x4
 #define R_SPILLED_VGPRS         0x8
-
 } // End namespace llvm
 
 #endif

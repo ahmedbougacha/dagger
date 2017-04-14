@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmlal	s16, h18, h19
 
 ;; SQDMLALi32
@@ -15,7 +14,6 @@ sqdmlal	s16, h18, h19
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmlal	d16, s18, s19
 
 ;; SQDMLALv1i32_indexed
@@ -24,7 +22,6 @@ sqdmlal	d16, s18, s19
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmlal	s16, h18, v11.h[0]
 
 ;; SQDMLALv1i64_indexed
@@ -33,7 +30,6 @@ sqdmlal	s16, h18, v11.h[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmlal	d16, s18, v19.s[0]
 
 ;; SQDMLALv2i32_indexed
@@ -42,7 +38,6 @@ sqdmlal	d16, s18, v19.s[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmlal	v16.2d, v18.2s, v19.s[0]
 
 ;; SQDMLALv2i32_v2i64
@@ -51,7 +46,6 @@ sqdmlal	v16.2d, v18.2s, v19.s[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmlal	v16.2d, v18.2s, v19.2s
 
 ;; SQDMLALv4i16_indexed
@@ -60,7 +54,6 @@ sqdmlal	v16.2d, v18.2s, v19.2s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmlal	v16.4s, v18.4h, v11.h[0]
 
 ;; SQDMLALv4i16_v4i32
@@ -69,7 +62,6 @@ sqdmlal	v16.4s, v18.4h, v11.h[0]
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 sqdmlal	v16.4s, v18.4h, v19.4h
 
 ret

@@ -7,7 +7,6 @@
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[W17_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 clz	w16, w17
 
 ;; CLZXr
@@ -17,7 +16,6 @@ clz	w16, w17
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 clz	x16, x17
 
 ;; CLZv16i8
@@ -29,7 +27,6 @@ clz	x16, x17
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 clz	v16.16b, v17.16b
 
 ;; CLZv2i32
@@ -41,7 +38,6 @@ clz	v16.16b, v17.16b
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <2 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 clz	v16.2s, v17.2s
 
 ;; CLZv4i16
@@ -53,7 +49,6 @@ clz	v16.2s, v17.2s
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <4 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 clz	v16.4h, v17.4h
 
 ;; CLZv4i32
@@ -65,7 +60,6 @@ clz	v16.4h, v17.4h
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x i32>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 clz	v16.4s, v17.4s
 
 ;; CLZv8i16
@@ -77,7 +71,6 @@ clz	v16.4s, v17.4s
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 clz	v16.8h, v17.8h
 
 ;; CLZv8i8
@@ -89,7 +82,6 @@ clz	v16.8h, v17.8h
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 clz	v16.8b, v17.8b
 
 ret

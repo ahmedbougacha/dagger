@@ -53,7 +53,6 @@ scvtf	s16, x17
 ; CHECK-NEXT: [[V1:%.+]] = bitcast float [[S17_0]] to i32
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i32 [[V1]] to float
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 scvtf	s16, s17
 
 ;; SCVTFv1i64
@@ -65,7 +64,6 @@ scvtf	s16, s17
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to double
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 scvtf	d16, d17
 
 ;; SCVTFv2f32

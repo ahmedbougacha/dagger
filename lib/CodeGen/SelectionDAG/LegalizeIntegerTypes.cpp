@@ -1089,6 +1089,10 @@ SDValue DAGTypeLegalizer::PromoteIntOp_SELECT(SDNode *N, unsigned OpNo) {
   SDValue Cond = N->getOperand(0);
   EVT OpTy = N->getOperand(1).getValueType();
 
+  if (N->getOpcode() == ISD::VSELECT)
+    if (SDValue Res = WidenVSELECTAndMask(N))
+      return Res;
+
   // Promote all the way up to the canonical SetCC type.
   EVT OpVT = N->getOpcode() == ISD::SELECT ? OpTy.getScalarType() : OpTy;
   Cond = PromoteTargetBoolean(Cond, OpVT);
@@ -2586,24 +2590,25 @@ void DAGTypeLegalizer::ExpandIntRes_XMULO(SDNode *N,
     Type *ArgTy = ArgVT.getTypeForEVT(*DAG.getContext());
     Entry.Node = Op;
     Entry.Ty = ArgTy;
-    Entry.isSExt = true;
-    Entry.isZExt = false;
+    Entry.IsSExt = true;
+    Entry.IsZExt = false;
     Args.push_back(Entry);
   }
 
   // Also pass the address of the overflow check.
   Entry.Node = Temp;
   Entry.Ty = PtrTy->getPointerTo();
-  Entry.isSExt = true;
-  Entry.isZExt = false;
+  Entry.IsSExt = true;
+  Entry.IsZExt = false;
   Args.push_back(Entry);
 
   SDValue Func = DAG.getExternalSymbol(TLI.getLibcallName(LC), PtrVT);
 
   TargetLowering::CallLoweringInfo CLI(DAG);
-  CLI.setDebugLoc(dl).setChain(Chain)
-    .setCallee(TLI.getLibcallCallingConv(LC), RetTy, Func, std::move(Args))
-    .setSExtResult();
+  CLI.setDebugLoc(dl)
+      .setChain(Chain)
+      .setLibCallee(TLI.getLibcallCallingConv(LC), RetTy, Func, std::move(Args))
+      .setSExtResult();
 
   std::pair<SDValue, SDValue> CallInfo = TLI.LowerCallTo(CLI);
 

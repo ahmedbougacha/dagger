@@ -42,13 +42,7 @@ vcvtdq2pd	%xmm9, %ymm8
 # CHECK-NEXT: [[V2:%.+]] = add i64 [[V1]], 2
 # CHECK-NEXT: [[V3:%.+]] = add i64 [[RBX_0]], [[V2]]
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i64*
-# CHECK-NEXT: [[V5:%.+]] = bitcast i64* [[V4]] to <2 x i64>*
-# CHECK-NEXT: [[V6:%.+]] = load <2 x i64>, <2 x i64>* [[V5]], align 1
-# CHECK-NEXT: [[V7:%.+]] = bitcast <2 x i64> [[V6]] to <4 x i32>
-# CHECK-NEXT: [[V8:%.+]] = shufflevector <4 x i32> [[V7]], <4 x i32> undef, <2 x i32> <i32 0, i32 1>
-# CHECK-NEXT: [[V9:%.+]] = sitofp <2 x i32> [[V8]] to <2 x double>
-# CHECK-NEXT: [[V10:%.+]] = bitcast <2 x double> [[V9]] to i128
-# CHECK-NEXT: call void @llvm.dc.setreg.i128(i128 [[V10]], metadata !"XMM8")
+# CHECK-NEXT: call void @llvm.trap()
 vcvtdq2pd	2(%rbx,%r14,2), %xmm8
 
 ## VCVTDQ2PDrr

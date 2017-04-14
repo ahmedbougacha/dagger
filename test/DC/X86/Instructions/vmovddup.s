@@ -13,7 +13,6 @@
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to <4 x double>*
 # CHECK-NEXT: [[V5:%.+]] = load <4 x double>, <4 x double>* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vmovddup	2(%rbx,%r14,2), %ymm8
 
 ## VMOVDDUPYrr
@@ -25,7 +24,6 @@ vmovddup	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <8 x float> [[YMM9_0]] to i256
 # CHECK-NEXT: [[V2:%.+]] = bitcast i256 [[V1]] to <4 x double>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vmovddup	%ymm9, %ymm8
 
 ## VMOVDDUPrm
@@ -41,7 +39,6 @@ vmovddup	%ymm9, %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to double*
 # CHECK-NEXT: [[V5:%.+]] = load double, double* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vmovddup	2(%rbx,%r14,2), %xmm8
 
 ## VMOVDDUPrr
@@ -53,7 +50,6 @@ vmovddup	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x double>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vmovddup	%xmm9, %xmm8
 
 retq

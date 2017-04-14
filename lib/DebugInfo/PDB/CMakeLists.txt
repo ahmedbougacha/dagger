@@ -38,11 +38,16 @@ add_pdb_impl_folder(Native
   Native/InfoStream.cpp
   Native/InfoStreamBuilder.cpp
   Native/ModInfo.cpp
+  Native/ModInfoBuilder.cpp
   Native/ModStream.cpp
+  Native/NativeCompilandSymbol.cpp
+  Native/NativeEnumModules.cpp
+  Native/NativeRawSymbol.cpp
   Native/NamedStreamMap.cpp
   Native/NativeSession.cpp
   Native/PDBFile.cpp
   Native/PDBFileBuilder.cpp
+  Native/PDBTypeServerHandler.cpp
   Native/PublicsStream.cpp
   Native/RawError.cpp
   Native/StringTable.cpp

@@ -6,67 +6,67 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-//
-// \file
-// \brief This file exposes an interface to building/using memory SSA to
-// walk memory instructions using a use/def graph.
-//
-// Memory SSA class builds an SSA form that links together memory access
-// instructions such as loads, stores, atomics, and calls. Additionally, it does
-// a trivial form of "heap versioning" Every time the memory state changes in
-// the program, we generate a new heap version. It generates MemoryDef/Uses/Phis
-// that are overlayed on top of the existing instructions.
-//
-// As a trivial example,
-// define i32 @main() #0 {
-// entry:
-//   %call = call noalias i8* @_Znwm(i64 4) #2
-//   %0 = bitcast i8* %call to i32*
-//   %call1 = call noalias i8* @_Znwm(i64 4) #2
-//   %1 = bitcast i8* %call1 to i32*
-//   store i32 5, i32* %0, align 4
-//   store i32 7, i32* %1, align 4
-//   %2 = load i32* %0, align 4
-//   %3 = load i32* %1, align 4
-//   %add = add nsw i32 %2, %3
-//   ret i32 %add
-// }
-//
-// Will become
-// define i32 @main() #0 {
-// entry:
-//   ; 1 = MemoryDef(0)
-//   %call = call noalias i8* @_Znwm(i64 4) #3
-//   %2 = bitcast i8* %call to i32*
-//   ; 2 = MemoryDef(1)
-//   %call1 = call noalias i8* @_Znwm(i64 4) #3
-//   %4 = bitcast i8* %call1 to i32*
-//   ; 3 = MemoryDef(2)
-//   store i32 5, i32* %2, align 4
-//   ; 4 = MemoryDef(3)
-//   store i32 7, i32* %4, align 4
-//   ; MemoryUse(3)
-//   %7 = load i32* %2, align 4
-//   ; MemoryUse(4)
-//   %8 = load i32* %4, align 4
-//   %add = add nsw i32 %7, %8
-//   ret i32 %add
-// }
-//
-// Given this form, all the stores that could ever effect the load at %8 can be
-// gotten by using the MemoryUse associated with it, and walking from use to def
-// until you hit the top of the function.
-//
-// Each def also has a list of users associated with it, so you can walk from
-// both def to users, and users to defs. Note that we disambiguate MemoryUses,
-// but not the RHS of MemoryDefs. You can see this above at %7, which would
-// otherwise be a MemoryUse(4). Being disambiguated means that for a given
-// store, all the MemoryUses on its use lists are may-aliases of that store (but
-// the MemoryDefs on its use list may not be).
-//
-// MemoryDefs are not disambiguated because it would require multiple reaching
-// definitions, which would require multiple phis, and multiple memoryaccesses
-// per instruction.
+///
+/// \file
+/// \brief This file exposes an interface to building/using memory SSA to
+/// walk memory instructions using a use/def graph.
+///
+/// Memory SSA class builds an SSA form that links together memory access
+/// instructions such as loads, stores, atomics, and calls. Additionally, it does
+/// a trivial form of "heap versioning" Every time the memory state changes in
+/// the program, we generate a new heap version. It generates MemoryDef/Uses/Phis
+/// that are overlayed on top of the existing instructions.
+///
+/// As a trivial example,
+/// define i32 @main() #0 {
+/// entry:
+///   %call = call noalias i8* @_Znwm(i64 4) #2
+///   %0 = bitcast i8* %call to i32*
+///   %call1 = call noalias i8* @_Znwm(i64 4) #2
+///   %1 = bitcast i8* %call1 to i32*
+///   store i32 5, i32* %0, align 4
+///   store i32 7, i32* %1, align 4
+///   %2 = load i32* %0, align 4
+///   %3 = load i32* %1, align 4
+///   %add = add nsw i32 %2, %3
+///   ret i32 %add
+/// }
+///
+/// Will become
+/// define i32 @main() #0 {
+/// entry:
+///   ; 1 = MemoryDef(0)
+///   %call = call noalias i8* @_Znwm(i64 4) #3
+///   %2 = bitcast i8* %call to i32*
+///   ; 2 = MemoryDef(1)
+///   %call1 = call noalias i8* @_Znwm(i64 4) #3
+///   %4 = bitcast i8* %call1 to i32*
+///   ; 3 = MemoryDef(2)
+///   store i32 5, i32* %2, align 4
+///   ; 4 = MemoryDef(3)
+///   store i32 7, i32* %4, align 4
+///   ; MemoryUse(3)
+///   %7 = load i32* %2, align 4
+///   ; MemoryUse(4)
+///   %8 = load i32* %4, align 4
+///   %add = add nsw i32 %7, %8
+///   ret i32 %add
+/// }
+///
+/// Given this form, all the stores that could ever effect the load at %8 can be
+/// gotten by using the MemoryUse associated with it, and walking from use to def
+/// until you hit the top of the function.
+///
+/// Each def also has a list of users associated with it, so you can walk from
+/// both def to users, and users to defs. Note that we disambiguate MemoryUses,
+/// but not the RHS of MemoryDefs. You can see this above at %7, which would
+/// otherwise be a MemoryUse(4). Being disambiguated means that for a given
+/// store, all the MemoryUses on its use lists are may-aliases of that store (but
+/// the MemoryDefs on its use list may not be).
+///
+/// MemoryDefs are not disambiguated because it would require multiple reaching
+/// definitions, which would require multiple phis, and multiple memoryaccesses
+/// per instruction.
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_TRANSFORMS_UTILS_MEMORYSSA_H
@@ -138,7 +138,6 @@ public:
 
   // Methods for support type inquiry through isa, cast, and
   // dyn_cast
-  static inline bool classof(const MemoryAccess *) { return true; }
   static inline bool classof(const Value *V) {
     unsigned ID = V->getValueID();
     return ID == MemoryUseVal || ID == MemoryPhiVal || ID == MemoryDefVal;
@@ -243,7 +242,6 @@ public:
   /// \brief Get the access that produces the memory state used by this Use.
   MemoryAccess *getDefiningAccess() const { return getOperand(0); }
 
-  static inline bool classof(const MemoryUseOrDef *) { return true; }
   static inline bool classof(const Value *MA) {
     return MA->getValueID() == MemoryUseVal || MA->getValueID() == MemoryDefVal;
   }
@@ -284,7 +282,6 @@ public:
   void *operator new(size_t s) { return User::operator new(s, 1); }
   void *operator new(size_t, unsigned) = delete;
 
-  static inline bool classof(const MemoryUse *) { return true; }
   static inline bool classof(const Value *MA) {
     return MA->getValueID() == MemoryUseVal;
   }
@@ -342,7 +339,6 @@ public:
   void *operator new(size_t s) { return User::operator new(s, 1); }
   void *operator new(size_t, unsigned) = delete;
 
-  static inline bool classof(const MemoryDef *) { return true; }
   static inline bool classof(const Value *MA) {
     return MA->getValueID() == MemoryDefVal;
   }
@@ -501,7 +497,6 @@ public:
     return getIncomingValue(Idx);
   }
 
-  static inline bool classof(const MemoryPhi *) { return true; }
   static inline bool classof(const Value *V) {
     return V->getValueID() == MemoryPhiVal;
   }
@@ -598,55 +593,6 @@ public:
     return getWritableBlockDefs(BB);
   }
 
-  /// \brief Create an empty MemoryPhi in MemorySSA for a given basic block.
-  /// Only one MemoryPhi for a block exists at a time, so this function will
-  /// assert if you try to create one where it already exists.
-  MemoryPhi *createMemoryPhi(BasicBlock *BB);
-
-  enum InsertionPlace { Beginning, End };
-
-  /// \brief Create a MemoryAccess in MemorySSA at a specified point in a block,
-  /// with a specified clobbering definition.
-  ///
-  /// Returns the new MemoryAccess.
-  /// This should be called when a memory instruction is created that is being
-  /// used to replace an existing memory instruction. It will *not* create PHI
-  /// nodes, or verify the clobbering definition. The insertion place is used
-  /// solely to determine where in the memoryssa access lists the instruction
-  /// will be placed. The caller is expected to keep ordering the same as
-  /// instructions.
-  /// It will return the new MemoryAccess.
-  /// Note: If a MemoryAccess already exists for I, this function will make it
-  /// inaccessible and it *must* have removeMemoryAccess called on it.
-  MemoryAccess *createMemoryAccessInBB(Instruction *I, MemoryAccess *Definition,
-                                       const BasicBlock *BB,
-                                       InsertionPlace Point);
-
-  /// \brief Create a MemoryAccess in MemorySSA before or after an existing
-  /// MemoryAccess.
-  ///
-  /// Returns the new MemoryAccess.
-  /// This should be called when a memory instruction is created that is being
-  /// used to replace an existing memory instruction. It will *not* create PHI
-  /// nodes, or verify the clobbering definition.
-  ///
-  /// Note: If a MemoryAccess already exists for I, this function will make it
-  /// inaccessible and it *must* have removeMemoryAccess called on it.
-  MemoryUseOrDef *createMemoryAccessBefore(Instruction *I,
-                                           MemoryAccess *Definition,
-                                           MemoryUseOrDef *InsertPt);
-  MemoryUseOrDef *createMemoryAccessAfter(Instruction *I,
-                                          MemoryAccess *Definition,
-                                          MemoryAccess *InsertPt);
-
-  /// \brief Remove a MemoryAccess from MemorySSA, including updating all
-  /// definitions and uses.
-  /// This should be called when a memory instruction that has a MemoryAccess
-  /// associated with it is erased from the program.  For example, if a store or
-  /// load is simply erased (not replaced), removeMemoryAccess should be called
-  /// on the MemoryAccess for that store/load.
-  void removeMemoryAccess(MemoryAccess *);
-
   /// \brief Given two memory accesses in the same basic block, determine
   /// whether MemoryAccess \p A dominates MemoryAccess \p B.
   bool locallyDominates(const MemoryAccess *A, const MemoryAccess *B) const;
@@ -662,6 +608,10 @@ public:
   /// \brief Verify that MemorySSA is self consistent (IE definitions dominate
   /// all uses, uses appear in the right places).  This is used by unit tests.
   void verifyMemorySSA() const;
+
+  /// Used in various insertion functions to specify whether we are talking
+  /// about the beginning or end of a block.
+  enum InsertionPlace { Beginning, End };
 
 protected:
   // Used by Memory SSA annotater, dumpers, and wrapper pass
@@ -685,11 +635,24 @@ protected:
     return It == PerBlockDefs.end() ? nullptr : It->second.get();
   }
 
-  // This is used by the updater to perform the internal memoryssa machinations
-  // for moves.  It does not always leave the IR in a correct state, and relies
-  // on the updater to fixup what it breaks, so it is not public.
+  // These is used by the updater to perform various internal MemorySSA
+  // machinsations.  They do not always leave the IR in a correct state, and
+  // relies on the updater to fixup what it breaks, so it is not public.
+
   void moveTo(MemoryUseOrDef *What, BasicBlock *BB, AccessList::iterator Where);
   void moveTo(MemoryUseOrDef *What, BasicBlock *BB, InsertionPlace Point);
+  // Rename the dominator tree branch rooted at BB.
+  void renamePass(BasicBlock *BB, MemoryAccess *IncomingVal,
+                  SmallPtrSetImpl<BasicBlock *> &Visited) {
+    renamePass(DT->getNode(BB), IncomingVal, Visited, true, true);
+  }
+  void removeFromLookups(MemoryAccess *);
+  void removeFromLists(MemoryAccess *, bool ShouldDelete = true);
+  void insertIntoListsForBlock(MemoryAccess *, const BasicBlock *,
+                               InsertionPlace);
+  void insertIntoListsBefore(MemoryAccess *, const BasicBlock *,
+                             AccessList::iterator);
+  MemoryUseOrDef *createDefinedAccess(Instruction *, MemoryAccess *);
 
 private:
   class CachingWalker;
@@ -708,24 +671,19 @@ private:
   void computeDomLevels(DenseMap<DomTreeNode *, unsigned> &DomLevels);
   void markUnreachableAsLiveOnEntry(BasicBlock *BB);
   bool dominatesUse(const MemoryAccess *, const MemoryAccess *) const;
+  MemoryPhi *createMemoryPhi(BasicBlock *BB);
   MemoryUseOrDef *createNewAccess(Instruction *);
-  MemoryUseOrDef *createDefinedAccess(Instruction *, MemoryAccess *);
   MemoryAccess *findDominatingDef(BasicBlock *, enum InsertionPlace);
-  void removeFromLookups(MemoryAccess *);
-  void removeFromLists(MemoryAccess *, bool ShouldDelete = true);
-
   void placePHINodes(const SmallPtrSetImpl<BasicBlock *> &,
                      const DenseMap<const BasicBlock *, unsigned int> &);
-  MemoryAccess *renameBlock(BasicBlock *, MemoryAccess *);
+  MemoryAccess *renameBlock(BasicBlock *, MemoryAccess *, bool);
+  void renameSuccessorPhis(BasicBlock *, MemoryAccess *, bool);
   void renamePass(DomTreeNode *, MemoryAccess *IncomingVal,
-                  SmallPtrSet<BasicBlock *, 16> &Visited);
+                  SmallPtrSetImpl<BasicBlock *> &Visited,
+                  bool SkipVisited = false, bool RenameAllUses = false);
   AccessList *getOrCreateAccessList(const BasicBlock *);
   DefsList *getOrCreateDefsList(const BasicBlock *);
   void renumberBlock(const BasicBlock *) const;
-  void insertIntoListsForBlock(MemoryAccess *, const BasicBlock *,
-                               InsertionPlace);
-  void insertIntoListsBefore(MemoryAccess *, const BasicBlock *,
-                             AccessList::iterator);
   AliasAnalysis *AA;
   DominatorTree *DT;
   Function &F;
@@ -751,6 +709,18 @@ private:
   // Memory SSA building info
   std::unique_ptr<CachingWalker> Walker;
   unsigned NextID;
+};
+
+
+// Internal MemorySSA utils, for use by MemorySSA classes and walkers
+class MemorySSAUtil
+{
+protected:
+  friend class MemorySSAWalker;
+  friend class GVNHoist;
+  // This function should not be used by new passes.
+  static bool defClobbersUseOrDef(MemoryDef *MD, const MemoryUseOrDef *MU,
+                                  AliasAnalysis &AA);
 };
 
 // This pass does eager building and then printing of MemorySSA. It is used by
@@ -1086,10 +1056,6 @@ inline upward_defs_iterator upward_defs_begin(const MemoryAccessPair &Pair) {
 }
 
 inline upward_defs_iterator upward_defs_end() { return upward_defs_iterator(); }
-
-// Return true when MD may alias MU, return false otherwise.
-bool defClobbersUseOrDef(MemoryDef *MD, const MemoryUseOrDef *MU,
-                         AliasAnalysis &AA);
 
 } // end namespace llvm
 

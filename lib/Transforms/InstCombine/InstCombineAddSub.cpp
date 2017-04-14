@@ -1044,9 +1044,16 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
 
   const APInt *Val;
   if (match(RHS, m_APInt(Val))) {
-    // X + (signbit) --> X ^ signbit
-    if (Val->isSignBit())
+    if (Val->isSignBit()) {
+      // If wrapping is not allowed, then the addition must set the sign bit:
+      // X + (signbit) --> X | signbit
+      if (I.hasNoSignedWrap() || I.hasNoUnsignedWrap())
+        return BinaryOperator::CreateOr(LHS, RHS);
+
+      // If wrapping is allowed, then the addition flips the sign bit of LHS:
+      // X + (signbit) --> X ^ signbit
       return BinaryOperator::CreateXor(LHS, RHS);
+    }
 
     // Is this add the last step in a convoluted sext?
     Value *X;
@@ -1062,23 +1069,15 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
         match(LHS, m_ZExt(m_NUWAdd(m_Value(X), m_APInt(C)))) &&
         Val->sge(-C->sext(Val->getBitWidth()))) {
       // (add (zext (add nuw X, C)), Val) -> (zext (add nuw X, C+Val))
-      return CastInst::Create(
-          Instruction::ZExt,
-          Builder->CreateNUWAdd(
-              X, Constant::getIntegerValue(X->getType(),
-                                           *C + Val->trunc(C->getBitWidth()))),
-          I.getType());
+      Constant *NewC =
+          ConstantInt::get(X->getType(), *C + Val->trunc(C->getBitWidth()));
+      return new ZExtInst(Builder->CreateNUWAdd(X, NewC), I.getType());
     }
   }
 
   // FIXME: Use the match above instead of dyn_cast to allow these transforms
   // for splat vectors.
   if (ConstantInt *CI = dyn_cast<ConstantInt>(RHS)) {
-    // See if SimplifyDemandedBits can simplify this.  This handles stuff like
-    // (X & 254)+1 -> (X&254)|1
-    if (SimplifyDemandedInstructionBits(I))
-      return &I;
-
     // zext(bool) + C -> bool ? C + 1 : C
     if (ZExtInst *ZI = dyn_cast<ZExtInst>(LHS))
       if (ZI->getSrcTy()->isIntegerTy(1))
@@ -1584,9 +1583,6 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
     Constant *C2;
     if (match(Op1, m_Add(m_Value(X), m_Constant(C2))))
       return BinaryOperator::CreateSub(ConstantExpr::getSub(C, C2), X);
-
-    if (SimplifyDemandedInstructionBits(I))
-      return &I;
 
     // Fold (sub 0, (zext bool to B)) --> (sext bool to B)
     if (C->isNullValue() && match(Op1, m_ZExt(m_Value(X))))

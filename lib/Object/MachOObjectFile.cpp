@@ -368,7 +368,7 @@ static Error parseSegmentLoadCommand(
                             CmdName + " extends past the end of the file");
     if (S.vmsize != 0 && S.filesize > S.vmsize)
       return malformedError("load command " + Twine(LoadCommandIndex) +
-                            " fileoff field in " + CmdName +
+                            " filesize field in " + CmdName +
                             " greater than vmsize field");
     IsPageZeroSegment |= StringRef("__PAGEZERO").equals(S.segname);
   } else
@@ -2272,6 +2272,10 @@ std::error_code MachOObjectFile::getLibraryShortNameByIndex(unsigned Index,
   return std::error_code();
 }
 
+uint32_t MachOObjectFile::getLibraryCount() const {
+  return Libraries.size();
+}
+
 section_iterator
 MachOObjectFile::getRelocationRelocatedSection(relocation_iterator Rel) const {
   DataRefImpl Sec;
@@ -2477,6 +2481,8 @@ Triple MachOObjectFile::getArchTriple(uint32_t CPUType, uint32_t CPUSubType,
   case MachO::CPU_TYPE_ARM64:
     switch (CPUSubType & ~MachO::CPU_SUBTYPE_MASK) {
     case MachO::CPU_SUBTYPE_ARM64_ALL:
+      if (McpuDefault)
+        *McpuDefault = "cyclone";
       if (ArchFlag)
         *ArchFlag = "arm64";
       return Triple("arm64-apple-darwin");
@@ -2923,8 +2929,9 @@ iterator_range<rebase_iterator> MachOObjectFile::rebaseTable() const {
   return rebaseTable(getDyldInfoRebaseOpcodes(), is64Bit());
 }
 
-MachOBindEntry::MachOBindEntry(ArrayRef<uint8_t> Bytes, bool is64Bit, Kind BK)
-    : Opcodes(Bytes), Ptr(Bytes.begin()), SegmentOffset(0), SegmentIndex(0),
+MachOBindEntry::MachOBindEntry(Error *E, const MachOObjectFile *O,
+                               ArrayRef<uint8_t> Bytes, bool is64Bit, Kind BK)
+    : E(E), O(O), Opcodes(Bytes), Ptr(Bytes.begin()), SegmentOffset(0), SegmentIndex(0),
       Ordinal(0), Flags(0), Addend(0), RemainingLoopCount(0), AdvanceAmount(0),
       BindType(0), PointerSize(is64Bit ? 8 : 4),
       TableKind(BK), Malformed(false), Done(false) {}
@@ -2941,6 +2948,7 @@ void MachOBindEntry::moveToEnd() {
 }
 
 void MachOBindEntry::moveNext() {
+  ErrorAsOutParameter ErrAsOutParam(E);
   // If in the middle of some loop, move to next binding in loop.
   SegmentOffset += AdvanceAmount;
   if (RemainingLoopCount) {
@@ -2954,6 +2962,7 @@ void MachOBindEntry::moveNext() {
   bool More = true;
   while (More && !Malformed) {
     // Parse next opcode and set up next loop.
+    const uint8_t *OpcodeStart = Ptr;
     uint8_t Byte = *Ptr++;
     uint8_t ImmValue = Byte & MachO::BIND_IMMEDIATE_MASK;
     uint8_t Opcode = Byte & MachO::BIND_OPCODE_MASK;
@@ -2980,6 +2989,14 @@ void MachOBindEntry::moveNext() {
       break;
     case MachO::BIND_OPCODE_SET_DYLIB_ORDINAL_IMM:
       Ordinal = ImmValue;
+      if (ImmValue > O->getLibraryCount()) {
+        *E = malformedError("for BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB bad "
+             "library ordinal: " + Twine((int)ImmValue) + " (max " +
+             Twine((int)O->getLibraryCount()) + ") for opcode at: 0x" +
+             utohexstr(OpcodeStart - Opcodes.begin()));
+        moveToEnd();
+        return;
+      }
       DEBUG_WITH_TYPE(
           "mach-o-bind",
           llvm::dbgs() << "BIND_OPCODE_SET_DYLIB_ORDINAL_IMM: "
@@ -3163,29 +3180,30 @@ bool MachOBindEntry::operator==(const MachOBindEntry &Other) const {
 }
 
 iterator_range<bind_iterator>
-MachOObjectFile::bindTable(ArrayRef<uint8_t> Opcodes, bool is64,
+MachOObjectFile::bindTable(Error &Err, const MachOObjectFile *O,
+                           ArrayRef<uint8_t> Opcodes, bool is64,
                            MachOBindEntry::Kind BKind) {
-  MachOBindEntry Start(Opcodes, is64, BKind);
+  MachOBindEntry Start(&Err, O, Opcodes, is64, BKind);
   Start.moveToFirst();
 
-  MachOBindEntry Finish(Opcodes, is64, BKind);
+  MachOBindEntry Finish(&Err, O, Opcodes, is64, BKind);
   Finish.moveToEnd();
 
   return make_range(bind_iterator(Start), bind_iterator(Finish));
 }
 
-iterator_range<bind_iterator> MachOObjectFile::bindTable() const {
-  return bindTable(getDyldInfoBindOpcodes(), is64Bit(),
+iterator_range<bind_iterator> MachOObjectFile::bindTable(Error &Err) const {
+  return bindTable(Err, this, getDyldInfoBindOpcodes(), is64Bit(),
                    MachOBindEntry::Kind::Regular);
 }
 
-iterator_range<bind_iterator> MachOObjectFile::lazyBindTable() const {
-  return bindTable(getDyldInfoLazyBindOpcodes(), is64Bit(),
+iterator_range<bind_iterator> MachOObjectFile::lazyBindTable(Error &Err) const {
+  return bindTable(Err, this, getDyldInfoLazyBindOpcodes(), is64Bit(),
                    MachOBindEntry::Kind::Lazy);
 }
 
-iterator_range<bind_iterator> MachOObjectFile::weakBindTable() const {
-  return bindTable(getDyldInfoWeakBindOpcodes(), is64Bit(),
+iterator_range<bind_iterator> MachOObjectFile::weakBindTable(Error &Err) const {
+  return bindTable(Err, this, getDyldInfoWeakBindOpcodes(), is64Bit(),
                    MachOBindEntry::Kind::Weak);
 }
 

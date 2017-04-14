@@ -133,6 +133,8 @@ let SchedModel = SwiftModel in {
   def : SchedAlias<WriteALUSsr, SwiftWriteALUSsr>;
   def : ReadAdvance<ReadALU, 0>;
   def : SchedAlias<ReadALUsr, SwiftReadAdvanceALUsr>;
+  def : SchedAlias<WriteLd, SwiftWriteP2ThreeCycle>;
+  def : SchedAlias<WriteST, SwiftWriteP2>;
 
 
   def SwiftChooseShiftKindP01OneOrTwoCycle : SchedWriteVariant<[
@@ -166,10 +168,10 @@ let SchedModel = SwiftModel in {
   def : InstRW<[SwiftWriteP01OneCycle2x_load],
         (instregex "MOV_ga_pcrel_ldr", "t2MOV_ga_pcrel_ldr")>;
 
-  def SwiftWriteP0TwoCyleTwoUops : WriteSequence<[SwiftWriteP0OneCycle], 2>;
+  def SwiftWriteP0TwoCycleTwoUops : WriteSequence<[SwiftWriteP0OneCycle], 2>;
 
   def SwiftPredP0OneOrTwoCycle : SchedWriteVariant<[
-    SchedVar<IsPredicatedPred, [ SwiftWriteP0TwoCyleTwoUops ]>,
+    SchedVar<IsPredicatedPred, [ SwiftWriteP0TwoCycleTwoUops ]>,
     SchedVar<NoSchedPred,     [ SwiftWriteP0OneCycle ]>
   ]>;
 
@@ -282,6 +284,18 @@ let SchedModel = SwiftModel in {
     let ResourceCycles = [2, 3];
   }
 
+  // Aliasing sub-target specific WriteRes to generic ones
+  def : SchedAlias<WriteMUL16, SwiftWriteP0FourCycle>;
+  def : SchedAlias<WriteMUL32, SwiftWriteP0FourCycle>;
+  def : SchedAlias<WriteMUL64Lo, SwiftP0P0P01FiveCycle>;
+  def : SchedAlias<WriteMUL64Hi, SwiftWrite5Cycle>;
+  def : SchedAlias<WriteMAC16, SwiftPredP0P01FourFiveCycle>;
+  def : SchedAlias<WriteMAC32, SwiftPredP0P01FourFiveCycle>;
+  def : SchedAlias<WriteMAC64Lo, SwiftWrite5Cycle>;
+  def : SchedAlias<WriteMAC64Hi, Swift2P03P01FiveCycle>;
+  def : ReadAdvance<ReadMUL, 0>;
+  def : SchedAlias<ReadMAC, SwiftReadAdvanceFourCyclesPred>;
+
   // 4.2.15 Integer Multiply Accumulate, Long
   // 4.2.16 Integer Multiply Accumulate, Dual
   // 4.2.17 Integer Multiply Accumulate Accumulate, Long
@@ -300,7 +314,7 @@ let SchedModel = SwiftModel in {
     let ResourceCycles = [1, 14];
   }
   // 4.2.18 Integer Divide
-  def : WriteRes<WriteDiv, [SwiftUnitDiv]>; // Workaround.
+  def : WriteRes<WriteDIV, [SwiftUnitDiv]>; // Workaround.
   def : InstRW <[SwiftDiv],
         (instregex "SDIV", "UDIV", "t2SDIV", "t2UDIV")>;
 
@@ -310,7 +324,7 @@ let SchedModel = SwiftModel in {
     let Latency = 3;
     let NumMicroOps = 2;
   }
-  def SwiftWriteP2P01FourCyle : SchedWriteRes<[SwiftUnitP2, SwiftUnitP01]> {
+  def SwiftWriteP2P01FourCycle : SchedWriteRes<[SwiftUnitP2, SwiftUnitP01]> {
     let Latency = 4;
     let NumMicroOps = 2;
   }
@@ -343,7 +357,7 @@ let SchedModel = SwiftModel in {
         "tLDR(r|i|spi|pci|pciASM)")>;
   def : InstRW<[SwiftWriteP2ThreeCycle],
         (instregex "LDRH$",  "PICLDR$", "PICLDR(H|B)$", "LDRcp$")>;
-  def : InstRW<[SwiftWriteP2P01FourCyle],
+  def : InstRW<[SwiftWriteP2P01FourCycle],
         (instregex "PICLDRS(H|B)$", "t2LDRS(H|B)(i|r|p|s)", "LDRS(H|B)$",
         "t2LDRpci_pic", "tLDRS(B|H)")>;
   def : InstRW<[SwiftWriteP2P01ThreeCycle,  SwiftWrBackOne],

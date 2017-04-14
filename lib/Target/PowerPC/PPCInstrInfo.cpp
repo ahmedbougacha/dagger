@@ -65,7 +65,9 @@ UseOldLatencyCalc("ppc-old-latency-calc", cl::Hidden,
 void PPCInstrInfo::anchor() {}
 
 PPCInstrInfo::PPCInstrInfo(PPCSubtarget &STI)
-    : PPCGenInstrInfo(PPC::ADJCALLSTACKDOWN, PPC::ADJCALLSTACKUP),
+    : PPCGenInstrInfo(PPC::ADJCALLSTACKDOWN, PPC::ADJCALLSTACKUP,
+                      /* CatchRetOpcode */ -1,
+                      STI.isPPC64() ? PPC::BLR8 : PPC::BLR),
       Subtarget(STI), RI(STI.getTargetMachine()) {}
 
 /// CreateTargetHazardRecognizer - Return the hazard recognizer to use for
@@ -1491,7 +1493,7 @@ bool PPCInstrInfo::DefinesPredicate(MachineInstr &MI,
   return Found;
 }
 
-bool PPCInstrInfo::isPredicable(MachineInstr &MI) const {
+bool PPCInstrInfo::isPredicable(const MachineInstr &MI) const {
   unsigned OpC = MI.getOpcode();
   switch (OpC) {
   default:

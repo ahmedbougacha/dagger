@@ -13,7 +13,6 @@
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to <8 x float>*
 # CHECK-NEXT: [[V5:%.+]] = load <8 x float>, <8 x float>* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vrsqrtps	2(%rbx,%r14,2), %ymm8
 
 ## VRSQRTPSYr
@@ -25,7 +24,6 @@ vrsqrtps	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <8 x float> [[YMM9_0]] to i256
 # CHECK-NEXT: [[V2:%.+]] = bitcast i256 [[V1]] to <8 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vrsqrtps	%ymm9, %ymm8
 
 ## VRSQRTPSm
@@ -41,7 +39,6 @@ vrsqrtps	%ymm9, %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to <4 x float>*
 # CHECK-NEXT: [[V5:%.+]] = load <4 x float>, <4 x float>* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vrsqrtps	2(%rbx,%r14,2), %xmm8
 
 ## VRSQRTPSr
@@ -53,7 +50,6 @@ vrsqrtps	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vrsqrtps	%xmm9, %xmm8
 
 retq

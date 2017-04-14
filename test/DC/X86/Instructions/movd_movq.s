@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x49; .byte 0x0f; .byte 0x7e; .byte 0x4c; .byte 0x5b; .byte 0x02
 
 ## MMX_MOVD64from64rr
@@ -28,7 +27,6 @@ movd	%mm5, %r11
 # CHECK-NEXT: [[MM5_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"MM5")
 # CHECK-NEXT: [[V1:%.+]] = bitcast i64 [[MM5_0]] to x86_mmx
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 movd	%mm5, %r8d
 
 ## MMX_MOVD64mr
@@ -37,7 +35,6 @@ movd	%mm5, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 movd	%mm1, 2(%r11,%rbx,2)
 
 ## MMX_MOVD64rm
@@ -53,7 +50,6 @@ movd	%mm1, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to i32*
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 movd	2(%rbx,%r14,2), %mm4
 
 ## MMX_MOVD64rr
@@ -63,7 +59,6 @@ movd	2(%rbx,%r14,2), %mm4
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: [[R9D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R9D")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 movd	%r9d, %mm4
 
 ## MMX_MOVD64to64rm:	movd	2(%rbx,%r14,2), %mm4
@@ -72,7 +67,6 @@ movd	%r9d, %mm4
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 6
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0x4a; .byte 0x0f; .byte 0x6e; .byte 0x64; .byte 0x73; .byte 0x02
 
 ## MMX_MOVD64to64rr

@@ -12,7 +12,6 @@
 ; CHECK-NEXT: [[V3:%.+]] = bitcast float [[S18_0]] to i32
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i32 [[V3]] to float
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	s16, s17, s18
 
 ;; FCMEQ64
@@ -27,7 +26,6 @@ fcmeq	s16, s17, s18
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to double
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	d16, d17, d18
 
 ;; FCMEQv1i32rz
@@ -36,7 +34,6 @@ fcmeq	d16, d17, d18
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	s16, s17, #0.0
 
 ;; FCMEQv1i64rz
@@ -45,7 +42,6 @@ fcmeq	s16, s17, #0.0
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	d16, d17, #0.0
 
 ;; FCMEQv2f32
@@ -60,7 +56,6 @@ fcmeq	d16, d17, #0.0
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to <2 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	v16.2s, v17.2s, v18.2s
 
 ;; FCMEQv2f64
@@ -75,7 +70,6 @@ fcmeq	v16.2s, v17.2s, v18.2s
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <2 x double>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	v16.2d, v17.2d, v18.2d
 
 ;; FCMEQv2i32rz
@@ -87,7 +81,6 @@ fcmeq	v16.2d, v17.2d, v18.2d
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <2 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	v16.2s, v17.2s, #0.0
 
 ;; FCMEQv2i64rz
@@ -99,7 +92,6 @@ fcmeq	v16.2s, v17.2s, #0.0
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x double>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	v16.2d, v17.2d, #0.0
 
 ;; FCMEQv4f32
@@ -114,7 +106,6 @@ fcmeq	v16.2d, v17.2d, #0.0
 ; CHECK-NEXT: [[V3:%.+]] = bitcast <16 x i8> [[Q18_0]] to i128
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i128 [[V3]] to <4 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	v16.4s, v17.4s, v18.4s
 
 ;; FCMEQv4i32rz
@@ -126,7 +117,6 @@ fcmeq	v16.4s, v17.4s, v18.4s
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcmeq	v16.4s, v17.4s, #0.0
 
 ret

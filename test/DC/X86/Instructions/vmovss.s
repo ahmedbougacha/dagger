@@ -52,7 +52,6 @@ vmovss	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V4:%.+]] = trunc i128 [[V3]] to i32
 # CHECK-NEXT: [[V5:%.+]] = bitcast i32 [[V4]] to float
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vmovss	%xmm10, %xmm9, %xmm8
 
 ## VMOVSSrr_REV:	vmovss	%xmm10, %xmm9, %xmm8
@@ -61,7 +60,6 @@ vmovss	%xmm10, %xmm9, %xmm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 .byte 0xc4; .byte 0x41; .byte 0x32; .byte 0x11; .byte 0xd0
 
 retq

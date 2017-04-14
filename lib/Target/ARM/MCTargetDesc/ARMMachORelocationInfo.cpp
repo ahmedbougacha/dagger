@@ -1,4 +1,4 @@
-//===-- ARMMachORelocationInfo.cpp ----------------------------------------===//
+//===- ARMMachORelocationInfo.cpp -----------------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,17 +7,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MCTargetDesc/ARMMCTargetDesc.h"
 #include "ARMMCExpr.h"
-#include "llvm-c/Disassembler.h"
+#include "MCTargetDesc/ARMMCTargetDesc.h"
 #include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCDisassembler/MCRelocationInfo.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm-c/Disassembler.h"
 
 using namespace llvm;
-using namespace object;
 
 namespace {
+
 class ARMMachORelocationInfo : public MCRelocationInfo {
 public:
   ARMMachORelocationInfo(MCContext &Ctx) : MCRelocationInfo(Ctx) {}
@@ -36,7 +36,8 @@ public:
     }
   }
 };
-} // End unnamed namespace
+
+} // end anonymous namespace
 
 /// createARMMachORelocationInfo - Construct an ARM Mach-O RelocationInfo.
 MCRelocationInfo *llvm::createARMMachORelocationInfo(MCContext &Ctx) {

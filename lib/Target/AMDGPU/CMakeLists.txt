@@ -36,6 +36,7 @@ endif()
 
 add_llvm_target(AMDGPUCodeGen
   AMDILCFGStructurizer.cpp
+  AMDGPUAliasAnalysis.cpp
   AMDGPUAlwaysInlinePass.cpp
   AMDGPUAnnotateKernelFeatures.cpp
   AMDGPUAnnotateUniformValues.cpp
@@ -45,6 +46,7 @@ add_llvm_target(AMDGPUCodeGen
   AMDGPUTargetObjectFile.cpp
   AMDGPUIntrinsicInfo.cpp
   AMDGPUISelDAGToDAG.cpp
+  AMDGPULowerIntrinsics.cpp
   AMDGPUMCInstLower.cpp
   AMDGPUMachineFunction.cpp
   AMDGPUUnifyMetadata.cpp

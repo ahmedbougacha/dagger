@@ -14,10 +14,13 @@
 
 #include "AArch64MacroFusion.h"
 #include "AArch64Subtarget.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Target/TargetInstrInfo.h"
 
 #define DEBUG_TYPE "misched"
+
+STATISTIC(NumFused, "Number of instr pairs fused");
 
 using namespace llvm;
 
@@ -34,10 +37,13 @@ static bool shouldScheduleAdjacent(const AArch64InstrInfo &TII,
                                    const AArch64Subtarget &ST,
                                    const MachineInstr *First,
                                    const MachineInstr *Second) {
-  unsigned FirstOpcode = First ?
-                         First->getOpcode() : AArch64::INSTRUCTION_LIST_END;
-  unsigned SecondOpcode = Second ?
-                          Second->getOpcode() : AArch64::INSTRUCTION_LIST_END;
+  assert((First || Second) && "At least one instr must be specified");
+  unsigned FirstOpcode =
+    First ? First->getOpcode()
+	  : static_cast<unsigned>(AArch64::INSTRUCTION_LIST_END);
+  unsigned SecondOpcode =
+    Second ? Second->getOpcode()
+           : static_cast<unsigned>(AArch64::INSTRUCTION_LIST_END);
 
   if (ST.hasArithmeticBccFusion())
     // Fuse CMN, CMP, TST followed by Bcc.
@@ -202,11 +208,20 @@ static bool scheduleAdjacentImpl(ScheduleDAGMI *DAG, SUnit *ASU,
       if (Dep.getSUnit() == ASU)
         Dep.setLatency(0);
 
-    DEBUG(dbgs() << "Macro fuse ";
-          Preds ? BSU->print(dbgs(), DAG) : ASU->print(dbgs(), DAG);
-          dbgs() << " - ";
-          Preds ? ASU->print(dbgs(), DAG) : BSU->print(dbgs(), DAG);
-          dbgs() << '\n');
+    ++NumFused;
+    DEBUG({ SUnit *LSU = Preds ? BSU : ASU;
+            SUnit *RSU = Preds ? ASU : BSU;
+            const MachineInstr *LMI = Preds ? BMI : AMI;
+            const MachineInstr *RMI = Preds ? AMI : BMI;
+
+            dbgs() << DAG->MF.getName() << "(): Macro fuse ";
+            LSU->print(dbgs(), DAG);
+            dbgs() << " - ";
+            RSU->print(dbgs(), DAG);
+            dbgs() << " / " <<
+                      TII->getName(LMI->getOpcode()) << " - " <<
+                      TII->getName(RMI->getOpcode()) << '\n';
+          });
 
     return true;
   }

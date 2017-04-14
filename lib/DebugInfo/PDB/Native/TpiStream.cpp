@@ -14,12 +14,13 @@
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
 #include "llvm/DebugInfo/CodeView/TypeVisitorCallbackPipeline.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
-#include "llvm/DebugInfo/MSF/StreamReader.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
+#include "llvm/DebugInfo/PDB/Native/PDBTypeServerHandler.h"
 #include "llvm/DebugInfo/PDB/Native/RawConstants.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 #include "llvm/DebugInfo/PDB/Native/TpiHashing.h"
+#include "llvm/Support/BinaryStreamReader.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include <algorithm>
@@ -53,7 +54,7 @@ Error TpiStream::verifyHashValues() {
 }
 
 Error TpiStream::reload() {
-  StreamReader Reader(*Stream);
+  BinaryStreamReader Reader(*Stream);
 
   if (Reader.bytesRemaining() < sizeof(TpiStreamHeader))
     return make_error<RawError>(raw_error_code::corrupt_file,
@@ -92,7 +93,7 @@ Error TpiStream::reload() {
 
     auto HS = MappedBlockStream::createIndexedStream(
         Pdb.getMsfLayout(), Pdb.getMsfBuffer(), Header->HashStreamIndex);
-    StreamReader HSR(*HS);
+    BinaryStreamReader HSR(*HS);
 
     uint32_t NumHashValues =
         Header->HashValueBuffer.Length / sizeof(ulittle32_t);
@@ -164,7 +165,7 @@ FixedStreamArray<TypeIndexOffset> TpiStream::getTypeIndexOffsets() const {
 
 HashTable &TpiStream::getHashAdjusters() { return HashAdjusters; }
 
-iterator_range<CVTypeArray::Iterator> TpiStream::types(bool *HadError) const {
+CVTypeRange TpiStream::types(bool *HadError) const {
   return make_range(TypeRecords.begin(HadError), TypeRecords.end());
 }
 

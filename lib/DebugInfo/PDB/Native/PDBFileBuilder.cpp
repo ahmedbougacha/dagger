@@ -12,8 +12,6 @@
 #include "llvm/ADT/BitVector.h"
 
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
-#include "llvm/DebugInfo/MSF/StreamInterface.h"
-#include "llvm/DebugInfo/MSF/StreamWriter.h"
 #include "llvm/DebugInfo/PDB/GenericError.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStreamBuilder.h"
@@ -23,6 +21,8 @@
 #include "llvm/DebugInfo/PDB/Native/StringTableBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStreamBuilder.h"
+#include "llvm/Support/BinaryStream.h"
+#include "llvm/Support/BinaryStreamWriter.h"
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -118,8 +118,9 @@ Error PDBFileBuilder::commit(StringRef Filename) {
   if (OutFileOrError.getError())
     return llvm::make_error<pdb::GenericError>(generic_error_code::invalid_path,
                                                Filename);
-  FileBufferByteStream Buffer(std::move(*OutFileOrError));
-  StreamWriter Writer(Buffer);
+  FileBufferByteStream Buffer(std::move(*OutFileOrError),
+                              llvm::support::little);
+  BinaryStreamWriter Writer(Buffer);
 
   if (auto EC = Writer.writeObject(*Layout.SB))
     return EC;
@@ -131,9 +132,8 @@ Error PDBFileBuilder::commit(StringRef Filename) {
 
   auto DirStream =
       WritableMappedBlockStream::createDirectoryStream(Layout, Buffer);
-  StreamWriter DW(*DirStream);
-  if (auto EC =
-          DW.writeInteger(static_cast<uint32_t>(Layout.StreamSizes.size())))
+  BinaryStreamWriter DW(*DirStream);
+  if (auto EC = DW.writeInteger<uint32_t>(Layout.StreamSizes.size()))
     return EC;
 
   if (auto EC = DW.writeArray(Layout.StreamSizes))
@@ -150,7 +150,7 @@ Error PDBFileBuilder::commit(StringRef Filename) {
 
   auto NS = WritableMappedBlockStream::createIndexedStream(Layout, Buffer,
                                                            StringTableStreamNo);
-  StreamWriter NSWriter(*NS);
+  BinaryStreamWriter NSWriter(*NS);
   if (auto EC = Strings.commit(NSWriter))
     return EC;
 

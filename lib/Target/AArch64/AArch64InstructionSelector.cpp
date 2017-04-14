@@ -14,6 +14,7 @@
 
 #include "AArch64InstructionSelector.h"
 #include "AArch64InstrInfo.h"
+#include "AArch64MachineFunctionInfo.h"
 #include "AArch64RegisterBankInfo.h"
 #include "AArch64RegisterInfo.h"
 #include "AArch64Subtarget.h"
@@ -36,13 +37,20 @@ using namespace llvm;
 #error "You shouldn't build this"
 #endif
 
+#define GET_GLOBALISEL_IMPL
 #include "AArch64GenGlobalISel.inc"
+#undef GET_GLOBALISEL_IMPL
 
 AArch64InstructionSelector::AArch64InstructionSelector(
     const AArch64TargetMachine &TM, const AArch64Subtarget &STI,
     const AArch64RegisterBankInfo &RBI)
-  : InstructionSelector(), TM(TM), STI(STI), TII(*STI.getInstrInfo()),
-      TRI(*STI.getRegisterInfo()), RBI(RBI) {}
+    : InstructionSelector(), TM(TM), STI(STI), TII(*STI.getInstrInfo()),
+      TRI(*STI.getRegisterInfo()), RBI(RBI)
+#define GET_GLOBALISEL_TEMPORARIES_INIT
+#include "AArch64GenGlobalISel.inc"
+#undef GET_GLOBALISEL_TEMPORARIES_INIT
+{
+}
 
 // FIXME: This should be target-independent, inferred from the types declared
 // for each class in the bank.
@@ -440,6 +448,38 @@ static void changeFCMPPredToAArch64CC(CmpInst::Predicate P,
   }
 }
 
+bool AArch64InstructionSelector::selectVaStartAAPCS(
+    MachineInstr &I, MachineFunction &MF, MachineRegisterInfo &MRI) const {
+  return false;
+}
+
+bool AArch64InstructionSelector::selectVaStartDarwin(
+    MachineInstr &I, MachineFunction &MF, MachineRegisterInfo &MRI) const {
+  AArch64FunctionInfo *FuncInfo = MF.getInfo<AArch64FunctionInfo>();
+  unsigned ListReg = I.getOperand(0).getReg();
+
+  unsigned ArgsAddrReg = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
+
+  auto MIB =
+      BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(AArch64::ADDXri))
+          .addDef(ArgsAddrReg)
+          .addFrameIndex(FuncInfo->getVarArgsStackIndex())
+          .addImm(0)
+          .addImm(0);
+
+  constrainSelectedInstRegOperands(*MIB, TII, TRI, RBI);
+
+  MIB = BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(AArch64::STRXui))
+            .addUse(ArgsAddrReg)
+            .addUse(ListReg)
+            .addImm(0)
+            .addMemOperand(*I.memoperands_begin());
+
+  constrainSelectedInstRegOperands(*MIB, TII, TRI, RBI);
+  I.eraseFromParent();
+  return true;
+}
+
 bool AArch64InstructionSelector::select(MachineInstr &I) const {
   assert(I.getParent() && "Instruction should be in a basic block!");
   assert(I.getParent()->getParent() && "Instruction should be in a function!");
@@ -601,8 +641,11 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
       // FIXME: Is going through int64_t always correct?
       ImmOp.ChangeToImmediate(
           ImmOp.getFPImm()->getValueAPF().bitcastToAPInt().getZExtValue());
-    } else {
+    } else if (I.getOperand(1).isCImm()) {
       uint64_t Val = I.getOperand(1).getCImm()->getZExtValue();
+      I.getOperand(1).ChangeToImmediate(Val);
+    } else if (I.getOperand(1).isImm()) {
+      uint64_t Val = I.getOperand(1).getImm();
       I.getOperand(1).ChangeToImmediate(Val);
     }
 
@@ -658,6 +701,12 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
       return false;
     }
 
+    auto &MemOp = **I.memoperands_begin();
+    if (MemOp.getOrdering() != AtomicOrdering::NotAtomic) {
+      DEBUG(dbgs() << "Atomic load/store not supported yet\n");
+      return false;
+    }
+
 #ifndef NDEBUG
     // Sanity-check the pointer register.
     const unsigned PtrReg = I.getOperand(1).getReg();
@@ -682,6 +731,34 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
     return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
   }
 
+  case TargetOpcode::G_SMULH:
+  case TargetOpcode::G_UMULH: {
+    // Reject the various things we don't support yet.
+    if (unsupportedBinOp(I, RBI, MRI, TRI))
+      return false;
+
+    const unsigned DefReg = I.getOperand(0).getReg();
+    const RegisterBank &RB = *RBI.getRegBank(DefReg, MRI, TRI);
+
+    if (RB.getID() != AArch64::GPRRegBankID) {
+      DEBUG(dbgs() << "G_[SU]MULH on bank: " << RB << ", expected: GPR\n");
+      return false;
+    }
+
+    if (Ty != LLT::scalar(64)) {
+      DEBUG(dbgs() << "G_[SU]MULH has type: " << Ty
+                   << ", expected: " << LLT::scalar(64) << '\n');
+      return false;
+    }
+
+    unsigned NewOpc = I.getOpcode() == TargetOpcode::G_SMULH ? AArch64::SMULHrr
+                                                             : AArch64::UMULHrr;
+    I.setDesc(TII.get(NewOpc));
+
+    // Now that we selected an opcode, we need to constrain the register
+    // operands to use appropriate classes.
+    return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
+  }
   case TargetOpcode::G_MUL: {
     // Reject the various things we don't support yet.
     if (unsupportedBinOp(I, RBI, MRI, TRI))
@@ -749,6 +826,17 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
     return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
   }
 
+  case TargetOpcode::G_PTR_MASK: {
+    uint64_t Align = I.getOperand(2).getImm();
+    if (Align >= 64 || Align == 0)
+      return false;
+
+    uint64_t Mask = ~((1ULL << Align) - 1);
+    I.setDesc(TII.get(AArch64::ANDXri));
+    I.getOperand(2).setImm(AArch64_AM::encodeLogicalImmediate(Mask, 64));
+
+    return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
+  }
   case TargetOpcode::G_PTRTOINT:
   case TargetOpcode::G_TRUNC: {
     const LLT DstTy = MRI.getType(I.getOperand(0).getReg());
@@ -1125,7 +1213,60 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
     I.eraseFromParent();
     return true;
   }
+  case TargetOpcode::G_VASTART:
+    return STI.isTargetDarwin() ? selectVaStartDarwin(I, MF, MRI)
+                                : selectVaStartAAPCS(I, MF, MRI);
   }
 
   return false;
+}
+
+/// SelectArithImmed - Select an immediate value that can be represented as
+/// a 12-bit value shifted left by either 0 or 12.  If so, return true with
+/// Val set to the 12-bit value and Shift set to the shifter operand.
+bool AArch64InstructionSelector::selectArithImmed(
+    MachineOperand &Root, MachineOperand &Result1,
+    MachineOperand &Result2) const {
+  MachineInstr &MI = *Root.getParent();
+  MachineBasicBlock &MBB = *MI.getParent();
+  MachineFunction &MF = *MBB.getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+
+  // This function is called from the addsub_shifted_imm ComplexPattern,
+  // which lists [imm] as the list of opcode it's interested in, however
+  // we still need to check whether the operand is actually an immediate
+  // here because the ComplexPattern opcode list is only used in
+  // root-level opcode matching.
+  uint64_t Immed;
+  if (Root.isImm())
+    Immed = Root.getImm();
+  else if (Root.isCImm())
+    Immed = Root.getCImm()->getZExtValue();
+  else if (Root.isReg()) {
+    MachineInstr *Def = MRI.getVRegDef(Root.getReg());
+    if (Def->getOpcode() != TargetOpcode::G_CONSTANT)
+      return false;
+    MachineOperand &Op1 = Def->getOperand(1);
+    if (!Op1.isCImm() || Op1.getCImm()->getBitWidth() > 64)
+      return false;
+    Immed = Op1.getCImm()->getZExtValue();
+  } else
+    return false;
+
+  unsigned ShiftAmt;
+
+  if (Immed >> 12 == 0) {
+    ShiftAmt = 0;
+  } else if ((Immed & 0xfff) == 0 && Immed >> 24 == 0) {
+    ShiftAmt = 12;
+    Immed = Immed >> 12;
+  } else
+    return false;
+
+  unsigned ShVal = AArch64_AM::getShifterImm(AArch64_AM::LSL, ShiftAmt);
+  Result1.ChangeToImmediate(Immed);
+  Result1.clearParent();
+  Result2.ChangeToImmediate(ShVal);
+  Result2.clearParent();
+  return true;
 }

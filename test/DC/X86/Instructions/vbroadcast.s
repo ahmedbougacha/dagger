@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vbroadcastf128	2(%rbx,%r14,2), %ymm8
 
 ## VBROADCASTI128
@@ -15,7 +14,6 @@ vbroadcastf128	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vbroadcasti128	2(%rbx,%r14,2), %ymm8
 
 ## VBROADCASTSDYrm
@@ -31,7 +29,6 @@ vbroadcasti128	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to double*
 # CHECK-NEXT: [[V5:%.+]] = load double, double* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vbroadcastsd	2(%rbx,%r14,2), %ymm8
 
 ## VBROADCASTSDYrr
@@ -43,7 +40,6 @@ vbroadcastsd	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x double>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vbroadcastsd	%xmm9, %ymm8
 
 ## VBROADCASTSSYrm
@@ -59,7 +55,6 @@ vbroadcastsd	%xmm9, %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to float*
 # CHECK-NEXT: [[V5:%.+]] = load float, float* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vbroadcastss	2(%rbx,%r14,2), %ymm8
 
 ## VBROADCASTSSYrr
@@ -71,7 +66,6 @@ vbroadcastss	2(%rbx,%r14,2), %ymm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vbroadcastss	%xmm9, %ymm8
 
 ## VBROADCASTSSrm
@@ -87,7 +81,6 @@ vbroadcastss	%xmm9, %ymm8
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to float*
 # CHECK-NEXT: [[V5:%.+]] = load float, float* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vbroadcastss	2(%rbx,%r14,2), %xmm8
 
 ## VBROADCASTSSrr
@@ -99,7 +92,6 @@ vbroadcastss	2(%rbx,%r14,2), %xmm8
 # CHECK-NEXT: [[V1:%.+]] = bitcast <4 x float> [[XMM9_0]] to i128
 # CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vbroadcastss	%xmm9, %xmm8
 
 retq

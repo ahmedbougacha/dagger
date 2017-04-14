@@ -11,7 +11,7 @@
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/LambdaResolver.h"
 #include "llvm/ExecutionEngine/Orc/LazyEmittingLayer.h"
-#include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
+#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
@@ -139,7 +139,7 @@ static std::vector<T> singletonSet(T t) {
 
 class DYNJIT {
 public:
-  typedef ObjectLinkingLayer<> ObjLayerT;
+  typedef RTDyldObjectLinkingLayer<> ObjLayerT;
   typedef IRCompileLayer<ObjLayerT> CompileLayerT;
   typedef LazyEmittingLayer<CompileLayerT> LazyEmitLayerT;
 

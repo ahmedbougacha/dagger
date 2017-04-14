@@ -48,6 +48,8 @@ AVRTargetLowering::AVRTargetLowering(AVRTargetMachine &tm)
   setOperationAction(ISD::GlobalAddress, MVT::i16, Custom);
   setOperationAction(ISD::BlockAddress, MVT::i16, Custom);
 
+  setOperationAction(ISD::STACKSAVE, MVT::Other, Expand);
+  setOperationAction(ISD::STACKRESTORE, MVT::Other, Expand);
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i8, Expand);
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i16, Expand);
 
@@ -354,7 +356,7 @@ SDValue AVRTargetLowering::LowerDivRem(SDValue Op, SelectionDAG &DAG) const {
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl)
       .setChain(InChain)
-      .setCallee(getLibcallCallingConv(LC), RetTy, Callee, std::move(Args))
+      .setLibCallee(getLibcallCallingConv(LC), RetTy, Callee, std::move(Args))
       .setInRegister()
       .setSExtResult(isSigned)
       .setZExtResult(!isSigned);
@@ -932,6 +934,12 @@ static void analyzeStandardArguments(TargetLowering::CallLoweringInfo *CLI,
   bool UsesStack = false;
   for (unsigned i = 0, pos = 0, e = Args.size(); i != e; ++i) {
     unsigned Size = Args[i];
+
+    // If we have a zero-sized argument, don't attempt to lower it.
+    // AVR-GCC does not support zero-sized arguments and so we need not
+    // worry about ABI compatibility.
+    if (Size == 0) continue;
+
     MVT LocVT = (IsCall) ? (*Outs)[pos].VT : (*Ins)[pos].VT;
 
     // If we have plenty of regs to pass the whole argument do it.
@@ -1975,4 +1983,3 @@ unsigned AVRTargetLowering::getRegisterByName(const char *RegName,
 }
 
 } // end of namespace llvm
-

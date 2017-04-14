@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 sarxl	%r12d, 2(%rbx,%r14,2), %r8d
 
 ## SARX32rr
@@ -15,7 +14,6 @@ sarxl	%r12d, 2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 sarxl	%r10d, %r9d, %r8d
 
 ## SARX64rm
@@ -24,7 +22,6 @@ sarxl	%r10d, %r9d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 sarxq	%rbp, 2(%rbx,%r14,2), %r11
 
 ## SARX64rr
@@ -33,7 +30,6 @@ sarxq	%rbp, 2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 sarxq	%r14, %rbx, %r11
 
 ## SHLX32rm
@@ -42,7 +38,6 @@ sarxq	%r14, %rbx, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shlxl	%r12d, 2(%rbx,%r14,2), %r8d
 
 ## SHLX32rr
@@ -51,7 +46,6 @@ shlxl	%r12d, 2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shlxl	%r10d, %r9d, %r8d
 
 ## SHLX64rm
@@ -60,7 +54,6 @@ shlxl	%r10d, %r9d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shlxq	%rbp, 2(%rbx,%r14,2), %r11
 
 ## SHLX64rr
@@ -69,7 +62,6 @@ shlxq	%rbp, 2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shlxq	%r14, %rbx, %r11
 
 ## SHRX32rm
@@ -78,7 +70,6 @@ shlxq	%r14, %rbx, %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrxl	%r12d, 2(%rbx,%r14,2), %r8d
 
 ## SHRX32rr
@@ -87,7 +78,6 @@ shrxl	%r12d, 2(%rbx,%r14,2), %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrxl	%r10d, %r9d, %r8d
 
 ## SHRX64rm
@@ -96,7 +86,6 @@ shrxl	%r10d, %r9d, %r8d
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 7
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrxq	%rbp, 2(%rbx,%r14,2), %r11
 
 ## SHRX64rr
@@ -105,7 +94,6 @@ shrxq	%rbp, 2(%rbx,%r14,2), %r11
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 5
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrxq	%r14, %rbx, %r11
 
 retq

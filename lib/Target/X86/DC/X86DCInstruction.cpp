@@ -326,29 +326,14 @@ bool X86DCInstruction::translateTargetInst() {
 
   case X86::HLT:
   case X86::XLAT:
-  case X86::CPUID: {
+  case X86::CPUID:
+  // FIXME: XCR[0] support is missing, they're not even in X86RegisterInfo.td
+  case X86::XGETBV:
+  case X86::XSAVE:
+  case X86::XRSTOR: {
     // FIXME: There's no reason to have a function, this is just a hack to get
     // it working.
     Builder.CreateCall(Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
-    Builder.CreateUnreachable();
-    return true;
-  }
-  case X86::XGETBV: {
-    // FIXME: XCR[0] support is missing, they're not even in X86RegisterInfo.td
-    Builder.CreateCall(Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
-    Builder.CreateUnreachable();
-    return true;
-  }
-  case X86::XSAVE: {
-    // FIXME: See XGETBV.
-    Builder.CreateCall(Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
-    Builder.CreateUnreachable();
-    return true;
-  }
-  case X86::XRSTOR: {
-    // FIXME: See XGETBV.
-    Builder.CreateCall(Intrinsic::getDeclaration(getModule(), Intrinsic::trap));
-    Builder.CreateUnreachable();
     return true;
   }
 

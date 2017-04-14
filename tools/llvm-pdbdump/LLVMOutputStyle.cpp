@@ -10,6 +10,7 @@
 #include "LLVMOutputStyle.h"
 
 #include "CompactTypeDumpVisitor.h"
+#include "StreamUtil.h"
 #include "llvm-pdbdump.h"
 
 #include "llvm/DebugInfo/CodeView/CVTypeDumper.h"
@@ -22,7 +23,6 @@
 #include "llvm/DebugInfo/CodeView/TypeDumpVisitor.h"
 #include "llvm/DebugInfo/CodeView/TypeVisitorCallbackPipeline.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
-#include "llvm/DebugInfo/MSF/StreamReader.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/EnumTables.h"
 #include "llvm/DebugInfo/PDB/Native/GlobalsStream.h"
@@ -36,6 +36,7 @@
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
 #include "llvm/DebugInfo/PDB/PDBExtras.h"
 #include "llvm/Object/COFF.h"
+#include "llvm/Support/BinaryStreamReader.h"
 #include "llvm/Support/FormatVariadic.h"
 
 #include <unordered_map>
@@ -172,124 +173,12 @@ Error LLVMOutputStyle::dumpFileHeaders() {
   return Error::success();
 }
 
-void LLVMOutputStyle::discoverStreamPurposes() {
-  if (!StreamPurposes.empty())
-    return;
-
-  // It's OK if we fail to load some of these streams, we still attempt to print
-  // what we can.
-  auto Dbi = File.getPDBDbiStream();
-  auto Tpi = File.getPDBTpiStream();
-  auto Ipi = File.getPDBIpiStream();
-  auto Info = File.getPDBInfoStream();
-
-  uint32_t StreamCount = File.getNumStreams();
-  std::unordered_map<uint16_t, const ModuleInfoEx *> ModStreams;
-  std::unordered_map<uint16_t, std::string> NamedStreams;
-
-  if (Dbi) {
-    for (auto &ModI : Dbi->modules()) {
-      uint16_t SN = ModI.Info.getModuleStreamIndex();
-      ModStreams[SN] = &ModI;
-    }
-  }
-  if (Info) {
-    for (auto &NSE : Info->named_streams()) {
-      NamedStreams[NSE.second] = NSE.first();
-    }
-  }
-
-  StreamPurposes.resize(StreamCount);
-  for (uint16_t StreamIdx = 0; StreamIdx < StreamCount; ++StreamIdx) {
-    std::string Value;
-    if (StreamIdx == OldMSFDirectory)
-      Value = "Old MSF Directory";
-    else if (StreamIdx == StreamPDB)
-      Value = "PDB Stream";
-    else if (StreamIdx == StreamDBI)
-      Value = "DBI Stream";
-    else if (StreamIdx == StreamTPI)
-      Value = "TPI Stream";
-    else if (StreamIdx == StreamIPI)
-      Value = "IPI Stream";
-    else if (Dbi && StreamIdx == Dbi->getGlobalSymbolStreamIndex())
-      Value = "Global Symbol Hash";
-    else if (Dbi && StreamIdx == Dbi->getPublicSymbolStreamIndex())
-      Value = "Public Symbol Hash";
-    else if (Dbi && StreamIdx == Dbi->getSymRecordStreamIndex())
-      Value = "Public Symbol Records";
-    else if (Tpi && StreamIdx == Tpi->getTypeHashStreamIndex())
-      Value = "TPI Hash";
-    else if (Tpi && StreamIdx == Tpi->getTypeHashStreamAuxIndex())
-      Value = "TPI Aux Hash";
-    else if (Ipi && StreamIdx == Ipi->getTypeHashStreamIndex())
-      Value = "IPI Hash";
-    else if (Ipi && StreamIdx == Ipi->getTypeHashStreamAuxIndex())
-      Value = "IPI Aux Hash";
-    else if (Dbi &&
-             StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::Exception))
-      Value = "Exception Data";
-    else if (Dbi && StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::Fixup))
-      Value = "Fixup Data";
-    else if (Dbi && StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::FPO))
-      Value = "FPO Data";
-    else if (Dbi &&
-             StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::NewFPO))
-      Value = "New FPO Data";
-    else if (Dbi &&
-             StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::OmapFromSrc))
-      Value = "Omap From Source Data";
-    else if (Dbi &&
-             StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::OmapToSrc))
-      Value = "Omap To Source Data";
-    else if (Dbi && StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::Pdata))
-      Value = "Pdata";
-    else if (Dbi &&
-             StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::SectionHdr))
-      Value = "Section Header Data";
-    else if (Dbi &&
-             StreamIdx ==
-                 Dbi->getDebugStreamIndex(DbgHeaderType::SectionHdrOrig))
-      Value = "Section Header Original Data";
-    else if (Dbi &&
-             StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::TokenRidMap))
-      Value = "Token Rid Data";
-    else if (Dbi && StreamIdx == Dbi->getDebugStreamIndex(DbgHeaderType::Xdata))
-      Value = "Xdata";
-    else {
-      auto ModIter = ModStreams.find(StreamIdx);
-      auto NSIter = NamedStreams.find(StreamIdx);
-      if (ModIter != ModStreams.end()) {
-        Value = "Module \"";
-        Value += ModIter->second->Info.getModuleName().str();
-        Value += "\"";
-      } else if (NSIter != NamedStreams.end()) {
-        Value = "Named Stream \"";
-        Value += NSIter->second;
-        Value += "\"";
-      } else {
-        Value = "???";
-      }
-    }
-    StreamPurposes[StreamIdx] = Value;
-  }
-
-  // Consume errors from missing streams.
-  if (!Dbi)
-    consumeError(Dbi.takeError());
-  if (!Tpi)
-    consumeError(Tpi.takeError());
-  if (!Ipi)
-    consumeError(Ipi.takeError());
-  if (!Info)
-    consumeError(Info.takeError());
-}
-
 Error LLVMOutputStyle::dumpStreamSummary() {
   if (!opts::raw::DumpStreamSummary)
     return Error::success();
 
-  discoverStreamPurposes();
+  if (StreamPurposes.empty())
+    discoverStreamPurposes(File, StreamPurposes);
 
   uint32_t StreamCount = File.getNumStreams();
 
@@ -431,7 +320,8 @@ Error LLVMOutputStyle::dumpStreamBytes() {
   if (opts::raw::DumpStreamData.empty())
     return Error::success();
 
-  discoverStreamPurposes();
+  if (StreamPurposes.empty())
+    discoverStreamPurposes(File, StreamPurposes);
 
   DictScope D(P, "Stream Data");
   for (uint32_t SI : opts::raw::DumpStreamData) {
@@ -450,7 +340,7 @@ Error LLVMOutputStyle::dumpStreamBytes() {
     auto Blocks = File.getMsfLayout().StreamMap[SI];
     P.printList("Blocks", Blocks);
 
-    StreamReader R(*S);
+    BinaryStreamReader R(*S);
     ArrayRef<uint8_t> StreamData;
     if (auto EC = R.readBytes(StreamData, S->getLength()))
       return EC;
@@ -497,6 +387,7 @@ Error LLVMOutputStyle::dumpInfoStream() {
   P.printHex("Signature", IS->getSignature());
   P.printNumber("Age", IS->getAge());
   P.printObject("Guid", IS->getGuid());
+  P.printHex("Features", IS->getFeatures());
   {
     DictScope DD(P, "Named Streams");
     for (const auto &S : IS->getNamedStreams().entries())
@@ -745,10 +636,10 @@ Error LLVMOutputStyle::dumpDbiStream() {
           public:
             RecordVisitor(ScopedPrinter &P, PDBFile &F) : P(P), F(F) {}
             Error visitUnknown(ModuleSubstreamKind Kind,
-                               ReadableStreamRef Stream) override {
+                               BinaryStreamRef Stream) override {
               DictScope DD(P, "Unknown");
               ArrayRef<uint8_t> Data;
-              StreamReader R(Stream);
+              BinaryStreamReader R(Stream);
               if (auto EC = R.readBytes(Data, R.bytesRemaining())) {
                 return make_error<RawError>(
                     raw_error_code::corrupt_file,
@@ -758,7 +649,7 @@ Error LLVMOutputStyle::dumpDbiStream() {
               return Error::success();
             }
             Error
-            visitFileChecksums(ReadableStreamRef Data,
+            visitFileChecksums(BinaryStreamRef Data,
                                const FileChecksumArray &Checksums) override {
               DictScope DD(P, "FileChecksums");
               for (const auto &C : Checksums) {
@@ -774,7 +665,7 @@ Error LLVMOutputStyle::dumpDbiStream() {
               return Error::success();
             }
 
-            Error visitLines(ReadableStreamRef Data,
+            Error visitLines(BinaryStreamRef Data,
                              const LineSubstreamHeader *Header,
                              const LineInfoArray &Lines) override {
               DictScope DD(P, "Lines");

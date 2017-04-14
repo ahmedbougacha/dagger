@@ -23,10 +23,6 @@ define void @s_fsub_f32(float addrspace(1)* %out, float %a, float %b) {
   ret void
 }
 
-declare float @llvm.r600.load.input(i32) readnone
-
-declare void @llvm.AMDGPU.store.output(float, i32)
-
 ; FUNC-LABEL: {{^}}fsub_v2f32:
 ; R600-DAG: ADD {{\** *}}T{{[0-9]+\.[XYZW]}}, KC0[3].X, -KC0[3].Z
 ; R600-DAG: ADD {{\** *}}T{{[0-9]+\.[XYZW]}}, KC0[2].W, -KC0[3].Y
@@ -122,6 +118,15 @@ define void @v_fneg_fsub_nsz_false_attribute_f32(float addrspace(1)* %out, float
   %result = fsub float %a, %b
   %neg.result = fsub float -0.0, %result
   store float %neg.result, float addrspace(1)* %out, align 4
+  ret void
+}
+
+; FUNC-LABEL: {{^}}v_fsub_0_nsz_attribute_f32:
+; SI-NOT: v_sub
+define void @v_fsub_0_nsz_attribute_f32(float addrspace(1)* %out, float addrspace(1)* %in) #0 {
+  %a = load float, float addrspace(1)* %in, align 4
+  %result = fsub float %a, 0.0
+  store float %result, float addrspace(1)* %out, align 4
   ret void
 }
 

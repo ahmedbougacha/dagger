@@ -9,16 +9,17 @@
 
 #include "ErrorChecking.h"
 
-#include "llvm/DebugInfo/MSF/ByteStream.h"
-#include "llvm/DebugInfo/MSF/StreamReader.h"
-#include "llvm/DebugInfo/MSF/StreamWriter.h"
 #include "llvm/DebugInfo/PDB/Native/StringTable.h"
 #include "llvm/DebugInfo/PDB/Native/StringTableBuilder.h"
+#include "llvm/Support/BinaryByteStream.h"
+#include "llvm/Support/BinaryStreamReader.h"
+#include "llvm/Support/BinaryStreamWriter.h"
 
 #include "gtest/gtest.h"
 
 using namespace llvm;
 using namespace llvm::pdb;
+using namespace llvm::support;
 
 namespace {
 class StringTableBuilderTest : public ::testing::Test {};
@@ -33,13 +34,13 @@ TEST_F(StringTableBuilderTest, Simple) {
   EXPECT_EQ(9U, Builder.insert("baz"));
 
   std::vector<uint8_t> Buffer(Builder.finalize());
-  msf::MutableByteStream OutStream(Buffer);
-  msf::StreamWriter Writer(OutStream);
+  MutableBinaryByteStream OutStream(Buffer, little);
+  BinaryStreamWriter Writer(OutStream);
   EXPECT_NO_ERROR(Builder.commit(Writer));
 
   // Reads the contents back.
-  msf::ByteStream InStream(Buffer);
-  msf::StreamReader Reader(InStream);
+  BinaryByteStream InStream(Buffer, little);
+  BinaryStreamReader Reader(InStream);
   StringTable Table;
   EXPECT_NO_ERROR(Table.load(Reader));
 

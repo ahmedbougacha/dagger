@@ -572,7 +572,7 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
     for (const auto &LI : MBB->liveins()) {
       if (isAllocatable(LI.PhysReg) && !MBB->isEHPad() &&
           MBB->getIterator() != MBB->getParent()->begin()) {
-        report("MBB has allocable live-in, but isn't entry or landing-pad.", MBB);
+        report("MBB has allocatable live-in, but isn't entry or landing-pad.", MBB);
       }
     }
   }
@@ -907,6 +907,14 @@ void MachineVerifier::visitMachineInstrBefore(const MachineInstr *MI) {
         report("Generic instruction cannot have physical register", MI);
     }
   }
+
+  // Generic loads and stores must have a single MachineMemOperand
+  // describing that access.
+  if ((MI->getOpcode() == TargetOpcode::G_LOAD ||
+       MI->getOpcode() == TargetOpcode::G_STORE) &&
+      !MI->hasOneMemOperand())
+    report("Generic instruction accessing memory must have one mem operand",
+           MI);
 
   StringRef ErrorInfo;
   if (!TII->verifyInstruction(*MI, ErrorInfo))

@@ -9,7 +9,6 @@
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to double
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 frinti	d16, d17
 
 ;; FRINTISr
@@ -21,7 +20,6 @@ frinti	d16, d17
 ; CHECK-NEXT: [[V1:%.+]] = bitcast float [[S17_0]] to i32
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i32 [[V1]] to float
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 frinti	s16, s17
 
 ;; FRINTIv2f32
@@ -33,7 +31,6 @@ frinti	s16, s17
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <2 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 frinti	v16.2s, v17.2s
 
 ;; FRINTIv2f64
@@ -45,7 +42,6 @@ frinti	v16.2s, v17.2s
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <2 x double>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 frinti	v16.2d, v17.2d
 
 ;; FRINTIv4f32
@@ -57,7 +53,6 @@ frinti	v16.2d, v17.2d
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <4 x float>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 frinti	v16.4s, v17.4s
 
 ret

@@ -9,7 +9,6 @@
 ; CHECK-NEXT: [[W18_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"W18")
 ; CHECK-NEXT: [[V1:%.+]] = add i32 [[W18_0]], 1
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 csinc	w16, w17, w18, eq
 
 ;; CSINCXr
@@ -21,7 +20,6 @@ csinc	w16, w17, w18, eq
 ; CHECK-NEXT: [[X18_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X18")
 ; CHECK-NEXT: [[V1:%.+]] = add i64 [[X18_0]], 1
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 csinc	x16, x17, x18, eq
 
 ret

@@ -8,7 +8,6 @@
 ; CHECK-NEXT: [[X17_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"X17")
 ; CHECK-NEXT: [[V1:%.+]] = call i64 @llvm.bswap.i64(i64 [[X17_0]])
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rev32	x16, x17
 
 ;; REV32v16i8
@@ -20,7 +19,6 @@ rev32	x16, x17
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <16 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rev32	v16.16b, v17.16b
 
 ;; REV32v4i16
@@ -32,7 +30,6 @@ rev32	v16.16b, v17.16b
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <4 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rev32	v16.4h, v17.4h
 
 ;; REV32v8i16
@@ -44,7 +41,6 @@ rev32	v16.4h, v17.4h
 ; CHECK-NEXT: [[V1:%.+]] = bitcast <16 x i8> [[Q17_0]] to i128
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i128 [[V1]] to <8 x i16>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rev32	v16.8h, v17.8h
 
 ;; REV32v8i8
@@ -56,7 +52,6 @@ rev32	v16.8h, v17.8h
 ; CHECK-NEXT: [[V1:%.+]] = bitcast double [[D17_0]] to i64
 ; CHECK-NEXT: [[V2:%.+]] = bitcast i64 [[V1]] to <8 x i8>
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rev32	v16.8b, v17.8b
 
 ret

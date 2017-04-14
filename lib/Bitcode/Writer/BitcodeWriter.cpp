@@ -1473,6 +1473,13 @@ void ModuleBitcodeWriter::writeDIDerivedType(const DIDerivedType *N,
   Record.push_back(N->getFlags());
   Record.push_back(VE.getMetadataOrNullID(N->getExtraData()));
 
+  // DWARF address space is encoded as N->getDWARFAddressSpace() + 1. 0 means
+  // that there is no DWARF address space associated with DIDerivedType.
+  if (const auto &DWARFAddressSpace = N->getDWARFAddressSpace())
+    Record.push_back(*DWARFAddressSpace + 1);
+  else
+    Record.push_back(0);
+
   Stream.EmitRecord(bitc::METADATA_DERIVED_TYPE, Record, Abbrev);
   Record.clear();
 }
@@ -3368,6 +3375,49 @@ void IndexBitcodeWriter::writeModStrings() {
   Stream.ExitBlock();
 }
 
+/// Write the function type metadata related records that need to appear before
+/// a function summary entry (whether per-module or combined).
+static void writeFunctionTypeMetadataRecords(BitstreamWriter &Stream,
+                                             FunctionSummary *FS) {
+  if (!FS->type_tests().empty())
+    Stream.EmitRecord(bitc::FS_TYPE_TESTS, FS->type_tests());
+
+  SmallVector<uint64_t, 64> Record;
+
+  auto WriteVFuncIdVec = [&](uint64_t Ty,
+                             ArrayRef<FunctionSummary::VFuncId> VFs) {
+    if (VFs.empty())
+      return;
+    Record.clear();
+    for (auto &VF : VFs) {
+      Record.push_back(VF.GUID);
+      Record.push_back(VF.Offset);
+    }
+    Stream.EmitRecord(Ty, Record);
+  };
+
+  WriteVFuncIdVec(bitc::FS_TYPE_TEST_ASSUME_VCALLS,
+                  FS->type_test_assume_vcalls());
+  WriteVFuncIdVec(bitc::FS_TYPE_CHECKED_LOAD_VCALLS,
+                  FS->type_checked_load_vcalls());
+
+  auto WriteConstVCallVec = [&](uint64_t Ty,
+                                ArrayRef<FunctionSummary::ConstVCall> VCs) {
+    for (auto &VC : VCs) {
+      Record.clear();
+      Record.push_back(VC.VFunc.GUID);
+      Record.push_back(VC.VFunc.Offset);
+      Record.insert(Record.end(), VC.Args.begin(), VC.Args.end());
+      Stream.EmitRecord(Ty, Record);
+    }
+  };
+
+  WriteConstVCallVec(bitc::FS_TYPE_TEST_ASSUME_CONST_VCALL,
+                     FS->type_test_assume_const_vcalls());
+  WriteConstVCallVec(bitc::FS_TYPE_CHECKED_LOAD_CONST_VCALL,
+                     FS->type_checked_load_const_vcalls());
+}
+
 // Helper to emit a single function summary record.
 void ModuleBitcodeWriter::writePerModuleFunctionSummaryRecord(
     SmallVector<uint64_t, 64> &NameVals, GlobalValueSummary *Summary,
@@ -3376,8 +3426,7 @@ void ModuleBitcodeWriter::writePerModuleFunctionSummaryRecord(
   NameVals.push_back(ValueID);
 
   FunctionSummary *FS = cast<FunctionSummary>(Summary);
-  if (!FS->type_tests().empty())
-    Stream.EmitRecord(bitc::FS_TYPE_TESTS, FS->type_tests());
+  writeFunctionTypeMetadataRecords(Stream, FS);
 
   NameVals.push_back(getEncodedGVSummaryFlags(FS->flags()));
   NameVals.push_back(FS->instCount());
@@ -3637,8 +3686,7 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
     }
 
     auto *FS = cast<FunctionSummary>(S);
-    if (!FS->type_tests().empty())
-      Stream.EmitRecord(bitc::FS_TYPE_TESTS, FS->type_tests());
+    writeFunctionTypeMetadataRecords(Stream, FS);
 
     NameVals.push_back(ValueId);
     NameVals.push_back(Index.getModuleId(FS->modulePath()));
@@ -3660,9 +3708,16 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
     for (auto &EI : FS->calls()) {
       // If this GUID doesn't have a value id, it doesn't have a function
       // summary and we don't need to record any calls to it.
-      if (!hasValueId(EI.first.getGUID()))
-        continue;
-      NameVals.push_back(getValueId(EI.first.getGUID()));
+      GlobalValue::GUID GUID = EI.first.getGUID();
+      if (!hasValueId(GUID)) {
+        // For SamplePGO, the indirect call targets for local functions will
+        // have its original name annotated in profile. We try to find the
+        // corresponding PGOFuncName as the GUID.
+        GUID = Index.getGUIDFromOriginalID(GUID);
+        if (GUID == 0 || !hasValueId(GUID))
+          continue;
+      }
+      NameVals.push_back(getValueId(GUID));
       if (HasProfileData)
         NameVals.push_back(static_cast<uint8_t>(EI.second.Hotness));
     }
@@ -3698,7 +3753,7 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
 
 /// Create the "IDENTIFICATION_BLOCK_ID" containing a single string with the
 /// current llvm version, and a record for the epoch number.
-void writeIdentificationBlock(BitstreamWriter &Stream) {
+static void writeIdentificationBlock(BitstreamWriter &Stream) {
   Stream.EnterSubblock(bitc::IDENTIFICATION_BLOCK_ID, 5);
 
   // Write the "user readable" string identifying the bitcode producer

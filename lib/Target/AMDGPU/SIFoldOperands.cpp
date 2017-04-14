@@ -12,6 +12,7 @@
 #include "AMDGPU.h"
 #include "AMDGPUSubtarget.h"
 #include "SIInstrInfo.h"
+#include "SIMachineFunctionInfo.h"
 #include "llvm/CodeGen/LiveIntervalAnalysis.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -66,6 +67,7 @@ public:
   MachineRegisterInfo *MRI;
   const SIInstrInfo *TII;
   const SIRegisterInfo *TRI;
+  const SISubtarget *ST;
 
   void foldOperand(MachineOperand &OpToFold,
                    MachineInstr *UseMI,
@@ -74,6 +76,12 @@ public:
                    SmallVectorImpl<MachineInstr *> &CopiesToReplace) const;
 
   void foldInstOperand(MachineInstr &MI, MachineOperand &OpToFold) const;
+
+  const MachineOperand *isClamp(const MachineInstr &MI) const;
+  bool tryFoldClamp(MachineInstr &MI);
+
+  std::pair<const MachineOperand *, int> isOMod(const MachineInstr &MI) const;
+  bool tryFoldOMod(MachineInstr &MI);
 
 public:
   SIFoldOperands() : MachineFunctionPass(ID) {
@@ -131,7 +139,7 @@ FunctionPass *llvm::createSIFoldOperandsPass() {
   return new SIFoldOperands();
 }
 
-static bool isSafeToFold(const MachineInstr &MI) {
+static bool isFoldableCopy(const MachineInstr &MI) {
   switch (MI.getOpcode()) {
   case AMDGPU::V_MOV_B32_e32:
   case AMDGPU::V_MOV_B32_e64:
@@ -359,8 +367,6 @@ void SIFoldOperands::foldOperand(
   const TargetRegisterClass *FoldRC =
     TRI->getRegClass(FoldDesc.OpInfo[0].RegClass);
 
-  APInt Imm(TII->operandBitWidth(FoldDesc.OpInfo[1].OperandType),
-            OpToFold.getImm());
 
   // Split 64-bit constants into 32-bits for folding.
   if (UseOp.getSubReg() && AMDGPU::getRegBitWidth(FoldRC->getID()) == 64) {
@@ -370,21 +376,25 @@ void SIFoldOperands::foldOperand(
       MRI->getRegClass(UseReg) :
       TRI->getPhysRegClass(UseReg);
 
-    assert(Imm.getBitWidth() == 64);
-
     if (AMDGPU::getRegBitWidth(UseRC->getID()) != 64)
       return;
 
+    APInt Imm(64, OpToFold.getImm());
     if (UseOp.getSubReg() == AMDGPU::sub0) {
       Imm = Imm.getLoBits(32);
     } else {
       assert(UseOp.getSubReg() == AMDGPU::sub1);
       Imm = Imm.getHiBits(32);
     }
+
+    MachineOperand ImmOp = MachineOperand::CreateImm(Imm.getSExtValue());
+    tryAddToFoldList(FoldList, UseMI, UseOpIdx, &ImmOp, TII);
+    return;
   }
 
-  MachineOperand ImmOp = MachineOperand::CreateImm(Imm.getSExtValue());
-  tryAddToFoldList(FoldList, UseMI, UseOpIdx, &ImmOp, TII);
+
+
+  tryAddToFoldList(FoldList, UseMI, UseOpIdx, &OpToFold, TII);
 }
 
 static bool evalBinaryInstruction(unsigned Opcode, int32_t &Result,
@@ -686,15 +696,207 @@ void SIFoldOperands::foldInstOperand(MachineInstr &MI,
   }
 }
 
+const MachineOperand *SIFoldOperands::isClamp(const MachineInstr &MI) const {
+  unsigned Op = MI.getOpcode();
+  switch (Op) {
+  case AMDGPU::V_MAX_F32_e64:
+  case AMDGPU::V_MAX_F16_e64:
+  case AMDGPU::V_MAX_F64: {
+    if (!TII->getNamedOperand(MI, AMDGPU::OpName::clamp)->getImm())
+      return nullptr;
+
+    // Make sure sources are identical.
+    const MachineOperand *Src0 = TII->getNamedOperand(MI, AMDGPU::OpName::src0);
+    const MachineOperand *Src1 = TII->getNamedOperand(MI, AMDGPU::OpName::src1);
+    if (!Src0->isReg() || Src0->getSubReg() != Src1->getSubReg() ||
+        Src0->getSubReg() != AMDGPU::NoSubRegister)
+      return nullptr;
+
+    // Can't fold up if we have modifiers.
+    if (TII->hasModifiersSet(MI, AMDGPU::OpName::src0_modifiers) ||
+        TII->hasModifiersSet(MI, AMDGPU::OpName::src1_modifiers) ||
+        TII->hasModifiersSet(MI, AMDGPU::OpName::omod))
+      return nullptr;
+    return Src0;
+  }
+  default:
+    return nullptr;
+  }
+}
+
+// We obviously have multiple uses in a clamp since the register is used twice
+// in the same instruction.
+static bool hasOneNonDBGUseInst(const MachineRegisterInfo &MRI, unsigned Reg) {
+  int Count = 0;
+  for (auto I = MRI.use_instr_nodbg_begin(Reg), E = MRI.use_instr_nodbg_end();
+       I != E; ++I) {
+    if (++Count > 1)
+      return false;
+  }
+
+  return true;
+}
+
+bool SIFoldOperands::tryFoldClamp(MachineInstr &MI) {
+  const MachineOperand *ClampSrc = isClamp(MI);
+  if (!ClampSrc || !hasOneNonDBGUseInst(*MRI, ClampSrc->getReg()))
+    return false;
+
+  MachineInstr *Def = MRI->getVRegDef(ClampSrc->getReg());
+  if (!TII->hasFPClamp(*Def))
+    return false;
+  MachineOperand *DefClamp = TII->getNamedOperand(*Def, AMDGPU::OpName::clamp);
+  if (!DefClamp)
+    return false;
+
+  DEBUG(dbgs() << "Folding clamp " << *DefClamp << " into " << *Def << '\n');
+
+  // Clamp is applied after omod, so it is OK if omod is set.
+  DefClamp->setImm(1);
+  MRI->replaceRegWith(MI.getOperand(0).getReg(), Def->getOperand(0).getReg());
+  MI.eraseFromParent();
+  return true;
+}
+
+static int getOModValue(unsigned Opc, int64_t Val) {
+  switch (Opc) {
+  case AMDGPU::V_MUL_F32_e64: {
+    switch (static_cast<uint32_t>(Val)) {
+    case 0x3f000000: // 0.5
+      return SIOutMods::DIV2;
+    case 0x40000000: // 2.0
+      return SIOutMods::MUL2;
+    case 0x40800000: // 4.0
+      return SIOutMods::MUL4;
+    default:
+      return SIOutMods::NONE;
+    }
+  }
+  case AMDGPU::V_MUL_F16_e64: {
+    switch (static_cast<uint16_t>(Val)) {
+    case 0x3800: // 0.5
+      return SIOutMods::DIV2;
+    case 0x4000: // 2.0
+      return SIOutMods::MUL2;
+    case 0x4400: // 4.0
+      return SIOutMods::MUL4;
+    default:
+      return SIOutMods::NONE;
+    }
+  }
+  default:
+    llvm_unreachable("invalid mul opcode");
+  }
+}
+
+// FIXME: Does this really not support denormals with f16?
+// FIXME: Does this need to check IEEE mode bit? SNaNs are generally not
+// handled, so will anything other than that break?
+std::pair<const MachineOperand *, int>
+SIFoldOperands::isOMod(const MachineInstr &MI) const {
+  unsigned Op = MI.getOpcode();
+  switch (Op) {
+  case AMDGPU::V_MUL_F32_e64:
+  case AMDGPU::V_MUL_F16_e64: {
+    // If output denormals are enabled, omod is ignored.
+    if ((Op == AMDGPU::V_MUL_F32_e64 && ST->hasFP32Denormals()) ||
+        (Op == AMDGPU::V_MUL_F16_e64 && ST->hasFP16Denormals()))
+      return std::make_pair(nullptr, SIOutMods::NONE);
+
+    const MachineOperand *RegOp = nullptr;
+    const MachineOperand *ImmOp = nullptr;
+    const MachineOperand *Src0 = TII->getNamedOperand(MI, AMDGPU::OpName::src0);
+    const MachineOperand *Src1 = TII->getNamedOperand(MI, AMDGPU::OpName::src1);
+    if (Src0->isImm()) {
+      ImmOp = Src0;
+      RegOp = Src1;
+    } else if (Src1->isImm()) {
+      ImmOp = Src1;
+      RegOp = Src0;
+    } else
+      return std::make_pair(nullptr, SIOutMods::NONE);
+
+    int OMod = getOModValue(Op, ImmOp->getImm());
+    if (OMod == SIOutMods::NONE ||
+        TII->hasModifiersSet(MI, AMDGPU::OpName::src0_modifiers) ||
+        TII->hasModifiersSet(MI, AMDGPU::OpName::src1_modifiers) ||
+        TII->hasModifiersSet(MI, AMDGPU::OpName::omod) ||
+        TII->hasModifiersSet(MI, AMDGPU::OpName::clamp))
+      return std::make_pair(nullptr, SIOutMods::NONE);
+
+    return std::make_pair(RegOp, OMod);
+  }
+  case AMDGPU::V_ADD_F32_e64:
+  case AMDGPU::V_ADD_F16_e64: {
+    // If output denormals are enabled, omod is ignored.
+    if ((Op == AMDGPU::V_ADD_F32_e64 && ST->hasFP32Denormals()) ||
+        (Op == AMDGPU::V_ADD_F16_e64 && ST->hasFP16Denormals()))
+      return std::make_pair(nullptr, SIOutMods::NONE);
+
+    // Look through the DAGCombiner canonicalization fmul x, 2 -> fadd x, x
+    const MachineOperand *Src0 = TII->getNamedOperand(MI, AMDGPU::OpName::src0);
+    const MachineOperand *Src1 = TII->getNamedOperand(MI, AMDGPU::OpName::src1);
+
+    if (Src0->isReg() && Src1->isReg() && Src0->getReg() == Src1->getReg() &&
+        Src0->getSubReg() == Src1->getSubReg() &&
+        !TII->hasModifiersSet(MI, AMDGPU::OpName::src0_modifiers) &&
+        !TII->hasModifiersSet(MI, AMDGPU::OpName::src1_modifiers) &&
+        !TII->hasModifiersSet(MI, AMDGPU::OpName::clamp) &&
+        !TII->hasModifiersSet(MI, AMDGPU::OpName::omod))
+      return std::make_pair(Src0, SIOutMods::MUL2);
+
+    return std::make_pair(nullptr, SIOutMods::NONE);
+  }
+  default:
+    return std::make_pair(nullptr, SIOutMods::NONE);
+  }
+}
+
+// FIXME: Does this need to check IEEE bit on function?
+bool SIFoldOperands::tryFoldOMod(MachineInstr &MI) {
+  const MachineOperand *RegOp;
+  int OMod;
+  std::tie(RegOp, OMod) = isOMod(MI);
+  if (OMod == SIOutMods::NONE || !RegOp->isReg() ||
+      RegOp->getSubReg() != AMDGPU::NoSubRegister ||
+      !hasOneNonDBGUseInst(*MRI, RegOp->getReg()))
+    return false;
+
+  MachineInstr *Def = MRI->getVRegDef(RegOp->getReg());
+  MachineOperand *DefOMod = TII->getNamedOperand(*Def, AMDGPU::OpName::omod);
+  if (!DefOMod || DefOMod->getImm() != SIOutMods::NONE)
+    return false;
+
+  // Clamp is applied after omod. If the source already has clamp set, don't
+  // fold it.
+  if (TII->hasModifiersSet(*Def, AMDGPU::OpName::clamp))
+    return false;
+
+  DEBUG(dbgs() << "Folding omod " << MI << " into " << *Def << '\n');
+
+  DefOMod->setImm(OMod);
+  MRI->replaceRegWith(MI.getOperand(0).getReg(), Def->getOperand(0).getReg());
+  MI.eraseFromParent();
+  return true;
+}
+
 bool SIFoldOperands::runOnMachineFunction(MachineFunction &MF) {
   if (skipFunction(*MF.getFunction()))
     return false;
 
-  const SISubtarget &ST = MF.getSubtarget<SISubtarget>();
-
   MRI = &MF.getRegInfo();
-  TII = ST.getInstrInfo();
+  ST = &MF.getSubtarget<SISubtarget>();
+  TII = ST->getInstrInfo();
   TRI = &TII->getRegisterInfo();
+
+  const SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
+
+  // omod is ignored by hardware if IEEE bit is enabled. omod also does not
+  // correctly handle signed zeros.
+  //
+  // TODO: Check nsz on instructions when fast math flags are preserved to MI
+  // level.
+  bool IsIEEEMode = ST->enableIEEEBit(MF) || !MFI->hasNoSignedZerosFPMath();
 
   for (MachineFunction::iterator BI = MF.begin(), BE = MF.end();
        BI != BE; ++BI) {
@@ -705,8 +907,11 @@ bool SIFoldOperands::runOnMachineFunction(MachineFunction &MF) {
       Next = std::next(I);
       MachineInstr &MI = *I;
 
-      if (!isSafeToFold(MI))
+      if (!isFoldableCopy(MI)) {
+        if (IsIEEEMode || !tryFoldOMod(MI))
+          tryFoldClamp(MI);
         continue;
+      }
 
       MachineOperand &OpToFold = MI.getOperand(1);
       bool FoldingImm = OpToFold.isImm() || OpToFold.isFI();

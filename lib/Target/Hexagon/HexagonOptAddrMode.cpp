@@ -208,7 +208,16 @@ bool HexagonOptAddrMode::allValidCandidates(NodeAddr<StmtNode *> SA,
     NodeAddr<UseNode *> UN = *I;
     RegisterRef UR = UN.Addr->getRegRef(*DFG);
     NodeSet Visited, Defs;
-    const auto &ReachingDefs = LV->getAllReachingDefsRec(UR, UN, Visited, Defs);
+    const auto &P = LV->getAllReachingDefsRec(UR, UN, Visited, Defs);
+    if (!P.second) {
+      DEBUG({
+        dbgs() << "*** Unable to collect all reaching defs for use ***\n"
+               << PrintNode<UseNode*>(UN, *DFG) << '\n'
+               << "The program's complexity may exceed the limits.\n";
+      });
+      return false;
+    }
+    const auto &ReachingDefs = P.first;
     if (ReachingDefs.size() > 1) {
       DEBUG({
         dbgs() << "*** Multiple Reaching Defs found!!! ***\n";
@@ -230,7 +239,7 @@ void HexagonOptAddrMode::getAllRealUses(NodeAddr<StmtNode *> SA,
   for (NodeAddr<DefNode *> DA : SA.Addr->members_if(DFG->IsDef, *DFG)) {
     DEBUG(dbgs() << "\t\t[DefNode]: " << Print<NodeAddr<DefNode *>>(DA, *DFG)
                  << "\n");
-    RegisterRef DR = DFG->normalizeRef(DA.Addr->getRegRef(*DFG));
+    RegisterRef DR = DFG->getPRI().normalize(DA.Addr->getRegRef(*DFG));
 
     auto UseSet = LV->getAllReachedUses(DR, DA);
 
@@ -617,7 +626,7 @@ bool HexagonOptAddrMode::constructDefMap(MachineBasicBlock *B) {
 
   for (NodeAddr<InstrNode *> IA : BA.Addr->members(*DFG)) {
     updateMap(IA);
-    DFG->pushDefs(IA, DefM);
+    DFG->pushAllDefs(IA, DefM);
   }
 
   MachineDomTreeNode *N = MDT->getNode(B);

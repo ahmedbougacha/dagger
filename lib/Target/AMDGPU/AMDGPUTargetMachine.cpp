@@ -15,6 +15,7 @@
 
 #include "AMDGPUTargetMachine.h"
 #include "AMDGPU.h"
+#include "AMDGPUAliasAnalysis.h"
 #include "AMDGPUCallLowering.h"
 #include "AMDGPUInstructionSelector.h"
 #include "AMDGPULegalizerInfo.h"
@@ -93,6 +94,11 @@ static cl::opt<bool> InternalizeSymbols(
   cl::init(false),
   cl::Hidden);
 
+// Enable address space based alias analysis
+static cl::opt<bool> EnableAMDGPUAliasAnalysis("enable-amdgpu-aa", cl::Hidden,
+  cl::desc("Enable AMDGPU Alias Analysis"),
+  cl::init(true));
+
 extern "C" void LLVMInitializeAMDGPUTarget() {
   // Register the target
   RegisterTargetMachine<R600TargetMachine> X(getTheAMDGPUTarget());
@@ -108,6 +114,7 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeSILoadStoreOptimizerPass(*PR);
   initializeAMDGPUAnnotateKernelFeaturesPass(*PR);
   initializeAMDGPUAnnotateUniformValuesPass(*PR);
+  initializeAMDGPULowerIntrinsicsPass(*PR);
   initializeAMDGPUPromoteAllocaPass(*PR);
   initializeAMDGPUCodeGenPreparePass(*PR);
   initializeAMDGPUUnifyMetadataPass(*PR);
@@ -118,6 +125,7 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeSIInsertSkipsPass(*PR);
   initializeSIDebuggerInsertNopsPass(*PR);
   initializeSIOptimizeExecMaskingPass(*PR);
+  initializeAMDGPUAAWrapperPassPass(*PR);
 }
 
 static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
@@ -135,8 +143,7 @@ static ScheduleDAGInstrs *createSIMachineScheduler(MachineSchedContext *C) {
 static ScheduleDAGInstrs *
 createGCNMaxOccupancyMachineScheduler(MachineSchedContext *C) {
   ScheduleDAGMILive *DAG =
-      new ScheduleDAGMILive(C,
-                            llvm::make_unique<GCNMaxOccupancySchedStrategy>(C));
+    new GCNScheduleDAGMILive(C, make_unique<GCNMaxOccupancySchedStrategy>(C));
   DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
   DAG->addMutation(createStoreClusterDAGMutation(DAG->TII, DAG->TRI));
   return DAG;
@@ -216,6 +223,8 @@ StringRef AMDGPUTargetMachine::getFeatureString(const Function &F) const {
 }
 
 void AMDGPUTargetMachine::adjustPassManager(PassManagerBuilder &Builder) {
+  Builder.DivergentTarget = true;
+
   bool Internalize = InternalizeSymbols &&
                      (getOptLevel() > CodeGenOpt::None) &&
                      (getTargetTriple().getArch() == Triple::amdgcn);
@@ -244,6 +253,7 @@ void AMDGPUTargetMachine::adjustPassManager(PassManagerBuilder &Builder) {
         }));
         PM.add(createGlobalDCEPass());
       }
+      PM.add(createAMDGPUAlwaysInlinePass());
   });
 }
 
@@ -472,6 +482,8 @@ void AMDGPUPassConfig::addIRPasses() {
   disablePass(&FuncletLayoutID);
   disablePass(&PatchableFunctionID);
 
+  addPass(createAMDGPULowerIntrinsicsPass());
+
   // Function calls are not supported, so make sure we inline everything.
   addPass(createAMDGPUAlwaysInlinePass());
   addPass(createAlwaysInlinerLegacyPass());
@@ -495,12 +507,22 @@ void AMDGPUPassConfig::addIRPasses() {
   addPass(createAMDGPUOpenCLImageTypeLoweringPass());
 
   if (TM.getOptLevel() > CodeGenOpt::None) {
+    addPass(createInferAddressSpacesPass());
     addPass(createAMDGPUPromoteAlloca(&TM));
 
     if (EnableSROA)
       addPass(createSROAPass());
 
     addStraightLineScalarOptimizationPasses();
+
+    if (EnableAMDGPUAliasAnalysis) {
+      addPass(createAMDGPUAAWrapperPass());
+      addPass(createExternalAAWrapperPass([](Pass &P, Function &,
+                                             AAResults &AAR) {
+        if (auto *WrapperPass = P.getAnalysisIfAvailable<AMDGPUAAWrapperPass>())
+          AAR.addAAResult(WrapperPass->getResult());
+        }));
+    }
   }
 
   TargetPassConfig::addIRPasses();
@@ -595,7 +617,8 @@ bool GCNPassConfig::addPreISel() {
 
   // FIXME: We need to run a pass to propagate the attributes when calls are
   // supported.
-  addPass(&AMDGPUAnnotateKernelFeaturesID);
+  const AMDGPUTargetMachine &TM = getAMDGPUTargetMachine();
+  addPass(createAMDGPUAnnotateKernelFeaturesPass(&TM));
   addPass(createStructurizeCFGPass(true)); // true -> SkipUniformRegions
   addPass(createSinkingPass());
   addPass(createSITypeRewriter());

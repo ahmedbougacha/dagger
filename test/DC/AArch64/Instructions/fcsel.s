@@ -12,7 +12,6 @@
 ; CHECK-NEXT: [[V3:%.+]] = bitcast double [[D18_0]] to i64
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i64 [[V3]] to double
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcsel	d16, d17, d18, eq
 
 ;; FCSELSrrr
@@ -27,7 +26,6 @@ fcsel	d16, d17, d18, eq
 ; CHECK-NEXT: [[V3:%.+]] = bitcast float [[S18_0]] to i32
 ; CHECK-NEXT: [[V4:%.+]] = bitcast i32 [[V3]] to float
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fcsel	s16, s17, s18, eq
 
 ret

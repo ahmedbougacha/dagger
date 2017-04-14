@@ -17,7 +17,6 @@
 # CHECK-NEXT: [[V7:%.+]] = inttoptr i64 [[V6]] to float*
 # CHECK-NEXT: [[V8:%.+]] = load float, float* [[V7]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpless	2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VCMPSSrm_alt
@@ -37,7 +36,6 @@ vcmpless	2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V7:%.+]] = inttoptr i64 [[V6]] to float*
 # CHECK-NEXT: [[V8:%.+]] = load float, float* [[V7]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpss	$2, 2(%r14,%r15,2), %xmm9, %xmm8
 
 ## VCMPSSrr
@@ -54,7 +52,6 @@ vcmpss	$2, 2(%r14,%r15,2), %xmm9, %xmm8
 # CHECK-NEXT: [[V5:%.+]] = trunc i128 [[V4]] to i32
 # CHECK-NEXT: [[V6:%.+]] = bitcast i32 [[V5]] to float
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpless	%xmm10, %xmm9, %xmm8
 
 ## VCMPSSrr_alt
@@ -71,7 +68,6 @@ vcmpless	%xmm10, %xmm9, %xmm8
 # CHECK-NEXT: [[V5:%.+]] = trunc i128 [[V4]] to i32
 # CHECK-NEXT: [[V6:%.+]] = bitcast i32 [[V5]] to float
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcmpss	$2, %xmm10, %xmm9, %xmm8
 
 retq

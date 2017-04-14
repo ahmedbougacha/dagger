@@ -13,7 +13,6 @@
 # CHECK-NEXT: [[V4:%.+]] = inttoptr i64 [[V3]] to <2 x double>*
 # CHECK-NEXT: [[V5:%.+]] = load <2 x double>, <2 x double>* [[V4]], align 1
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 vcvtpd2psx	2(%rbx,%r14,2), %xmm8
 
 retq

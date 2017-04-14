@@ -78,6 +78,41 @@ bool AArch64DCInstruction::translateTargetOpcode(unsigned Opcode) {
 }
 
 Value *AArch64DCInstruction::translateComplexPattern(unsigned Pattern) {
+  switch (Pattern) {
+  case AArch64::ComplexPattern::AddrModeWRO_8:
+  case AArch64::ComplexPattern::AddrModeWRO_16:
+  case AArch64::ComplexPattern::AddrModeWRO_32:
+  case AArch64::ComplexPattern::AddrModeWRO_64:
+  case AArch64::ComplexPattern::AddrModeXRO_8:
+  case AArch64::ComplexPattern::AddrModeXRO_16:
+  case AArch64::ComplexPattern::AddrModeXRO_32:
+  case AArch64::ComplexPattern::AddrModeXRO_64: {
+    Value *Base = getOperand(0);
+    Value *Offset = getOperand(1);
+    ConstantInt *ro_Wextend = cast<ConstantInt>(getOperand(2));
+
+    const unsigned Signed = ro_Wextend->getZExtValue() & 1;
+    const unsigned DoShift = ro_Wextend->getZExtValue() & 2;
+    assert(!(ro_Wextend->getZExtValue() & ~3ULL));
+    if (DoShift != 0)
+      return nullptr;
+
+    if (Signed)
+      Offset = Builder.CreateSExt(Offset, Base->getType());
+    else
+      Offset = Builder.CreateZExt(Offset, Base->getType());
+
+    return Builder.CreateAdd(Base, Offset);
+  }
+  case AArch64::ComplexPattern::AddrModeIndexed8:
+  case AArch64::ComplexPattern::AddrModeIndexed16:
+  case AArch64::ComplexPattern::AddrModeIndexed32:
+  case AArch64::ComplexPattern::AddrModeIndexed64:
+  case AArch64::ComplexPattern::AddrModeIndexed128: {
+    Value *Base = getOperand(0), *Idx = getOperand(1);
+    return Builder.CreateAdd(Base, Idx);
+  }
+  }
   return nullptr;
 }
 
@@ -93,16 +128,50 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
       return nullptr;
     return ConstantInt::get(getResultTy(0), Imm);
   }
-  case AArch64::OpTypes::am_bl_target: {
+  case AArch64::OpTypes::am_bl_target:
+  case AArch64::OpTypes::am_ldrlit: {
     auto *ResTy = Builder.getInt8PtrTy();
 
-    // bl target is an offset in number of (4byte) instructions from PC
+    // target is an offset in number of (4byte) instructions from PC
     // target = PC + (imm * 4)
     // TODO: add check that offset is +-128MB from PC?
-    signed offset = getImmOp(MIOperandNo)*4;
-    Value *blTarget = Builder.getInt64(TheMCInst.Address + offset);
-    return Builder.CreateIntToPtr(blTarget, ResTy);
+    //       aml_ldrlit is identical except +-1MB from PC.
+    int Offset = getImmOp(MIOperandNo)*4;
+    Value *ImmTarget = Builder.getInt64(TheMCInst.Address + Offset);
+    return Builder.CreateIntToPtr(ImmTarget, ResTy);
   }
+  case AArch64::OpTypes::arith_extended_reg32_i64:
+  case AArch64::OpTypes::arith_extended_reg32_i32:
+  case AArch64::OpTypes::arith_extended_reg32to64_i64: {
+    Value *R = getReg(getRegOp(MIOperandNo));
+    const unsigned ExtImm = getImmOp(MIOperandNo + 1);
+
+    const auto ShiftType = AArch64_AM::getArithExtendType(ExtImm);
+    const auto ShiftImm = AArch64_AM::getArithShiftValue(ExtImm);
+
+    if (ShiftType != AArch64_AM::UXTB)
+      return nullptr;
+
+    R = Builder.CreateZExt(
+      Builder.CreateTruncOrBitCast(R, Builder.getInt8Ty()), R->getType());
+
+    if (ShiftImm) {
+      R = Builder.CreateShl(R, ConstantInt::get(R->getType(), ShiftImm));
+    }
+
+    R = Builder.CreateZExtOrBitCast(R, getResultTy(0));
+    return R;
+  }
+  case AArch64::OpTypes::logical_imm32: {
+    return Builder.getInt32(
+        AArch64_AM::decodeLogicalImmediate(getImmOp(MIOperandNo), 32));
+  }
+  case AArch64::OpTypes::logical_imm64: {
+    return Builder.getInt64(
+        AArch64_AM::decodeLogicalImmediate(getImmOp(MIOperandNo), 64));
+  }
+  case AArch64::OpTypes::arith_shifted_reg32:
+  case AArch64::OpTypes::arith_shifted_reg64:
   case AArch64::OpTypes::logical_shifted_reg32:
   case AArch64::OpTypes::logical_shifted_reg64: {
     Value *R = getReg(getRegOp(MIOperandNo));
@@ -127,13 +196,52 @@ Value *AArch64DCInstruction::translateCustomOperand(unsigned OperandType,
     return ConstantInt::get(getResultTy(0), Imm);
   }
   case AArch64::OpTypes::simm7s4: {
-    return translateScaledImmediate(MIOperandNo, 4);
+    return translateScaledImmediate(MIOperandNo, 4, 32);
   }
   case AArch64::OpTypes::simm7s8: {
-    return translateScaledImmediate(MIOperandNo, 8);
+    return translateScaledImmediate(MIOperandNo, 8, 32);
   }
   case AArch64::OpTypes::simm7s16: {
-    return translateScaledImmediate(MIOperandNo, 16);
+    return translateScaledImmediate(MIOperandNo, 16, 32);
+  }
+  case AArch64::OpTypes::simm9: {
+    // simm9 is not scaled, so scale arg = 1
+    return translateScaledImmediate(MIOperandNo, 1, 64);
+  }
+  case AArch64::OpTypes::uimm12s1: {
+   return translateScaledImmediate(MIOperandNo, 1, 64);
+  }
+  case AArch64::OpTypes::uimm12s2: {
+    return translateScaledImmediate(MIOperandNo, 2, 64);
+  }
+  case AArch64::OpTypes::uimm12s4: {
+    return translateScaledImmediate(MIOperandNo, 4, 64);
+  }
+  case AArch64::OpTypes::uimm12s8: {
+    return translateScaledImmediate(MIOperandNo, 8, 64);
+  }
+  case AArch64::OpTypes::uimm12s16: {
+    return translateScaledImmediate(MIOperandNo, 16, 64);
+  }
+  case AArch64::OpTypes::ro_Wextend8:
+  case AArch64::OpTypes::ro_Wextend16:
+  case AArch64::OpTypes::ro_Wextend32:
+  case AArch64::OpTypes::ro_Wextend64:
+  case AArch64::OpTypes::ro_Wextend128:
+  case AArch64::OpTypes::ro_Xextend8:
+  case AArch64::OpTypes::ro_Xextend16:
+  case AArch64::OpTypes::ro_Xextend32:
+  case AArch64::OpTypes::ro_Xextend64:
+  case AArch64::OpTypes::ro_Xextend128: {
+    const unsigned Signed = getImmOp(MIOperandNo);
+    const unsigned DoShift = getImmOp(MIOperandNo + 1);
+    return Builder.getInt64(Signed + (DoShift << 1));
+  }
+  case AArch64::OpTypes::fpimm16:
+  case AArch64::OpTypes::fpimm32:
+  case AArch64::OpTypes::fpimm64: {
+    float FPV = AArch64_AM::getFPImmFloat(getImmOp(MIOperandNo));
+    return ConstantFP::get(getResultTy(0), FPV);
   }
   default:
     errs() << "Unknown AArch64 operand type found in semantics: "
@@ -158,8 +266,9 @@ bool AArch64DCInstruction::doesSubRegIndexClearSuper(unsigned SubRegIdx) {
 }
 
 Value *AArch64DCInstruction::translateScaledImmediate(unsigned MIOperandNo,
-                                                      unsigned Scale) {
-  APInt Val = APInt(32, getImmOp(MIOperandNo));
-  APInt APScale = APInt(32, Scale);
+                                                      unsigned Scale,
+                                                      unsigned Bits) {
+  APInt Val = APInt(Bits, getImmOp(MIOperandNo));
+  APInt APScale = APInt(Bits, Scale);
   return Builder.getInt(Val * APScale);
 }

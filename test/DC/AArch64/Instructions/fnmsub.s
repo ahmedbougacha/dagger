@@ -15,7 +15,6 @@
 ; CHECK-NEXT: [[V5:%.+]] = bitcast double [[D19_0]] to i64
 ; CHECK-NEXT: [[V6:%.+]] = bitcast i64 [[V5]] to double
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fnmsub	d16, d17, d18, d19
 
 ;; FNMSUBSrrr
@@ -33,7 +32,6 @@ fnmsub	d16, d17, d18, d19
 ; CHECK-NEXT: [[V5:%.+]] = bitcast float [[S19_0]] to i32
 ; CHECK-NEXT: [[V6:%.+]] = bitcast i32 [[V5]] to float
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 fnmsub	s16, s17, s18, s19
 
 ret

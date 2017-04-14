@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fcmovbe	%st(4), %st(0)
 
 ## CMOVB_F
@@ -15,7 +14,6 @@ fcmovbe	%st(4), %st(0)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fcmovb	%st(4), %st(0)
 
 ## CMOVE_F
@@ -24,7 +22,6 @@ fcmovb	%st(4), %st(0)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fcmove	%st(4), %st(0)
 
 ## CMOVNBE_F
@@ -33,7 +30,6 @@ fcmove	%st(4), %st(0)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fcmovnbe	%st(4), %st(0)
 
 ## CMOVNB_F
@@ -42,7 +38,6 @@ fcmovnbe	%st(4), %st(0)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fcmovnb	%st(4), %st(0)
 
 ## CMOVNE_F
@@ -51,7 +46,6 @@ fcmovnb	%st(4), %st(0)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fcmovne	%st(4), %st(0)
 
 ## CMOVNP_F
@@ -60,7 +54,6 @@ fcmovne	%st(4), %st(0)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fcmovnu	%st(4), %st(0)
 
 ## CMOVP_F
@@ -69,7 +62,6 @@ fcmovnu	%st(4), %st(0)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 fcmovu	%st(4), %st(0)
 
 retq

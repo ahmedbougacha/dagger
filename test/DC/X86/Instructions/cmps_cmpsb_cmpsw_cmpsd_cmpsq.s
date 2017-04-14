@@ -6,7 +6,6 @@
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 1
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmpsb	%es:(%rdi), (%rsi)
 
 ## CMPSQ
@@ -15,7 +14,6 @@ cmpsb	%es:(%rdi), (%rsi)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmpsq	%es:(%rdi), (%rsi)
 
 ## CMPSW
@@ -24,7 +22,6 @@ cmpsq	%es:(%rdi), (%rsi)
 # CHECK-NEXT: [[V0:%.+]] = add i64 [[RIP_0]], 2
 # CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"RIP")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 cmpsw	%es:(%rdi), (%rsi)
 
 retq

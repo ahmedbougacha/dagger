@@ -163,7 +163,8 @@ protected:
   ErrorOr<uint64_t> getBlockWeight(const BasicBlock *BB);
   const FunctionSamples *findCalleeFunctionSamples(const Instruction &I) const;
   const FunctionSamples *findFunctionSamples(const Instruction &I) const;
-  bool inlineHotFunctions(Function &F);
+  bool inlineHotFunctions(Function &F,
+                          DenseSet<GlobalValue::GUID> &ImportGUIDs);
   void printEdgeWeight(raw_ostream &OS, Edge E);
   void printBlockWeight(raw_ostream &OS, const BasicBlock *BB) const;
   void printBlockEquivalence(raw_ostream &OS, const BasicBlock *BB);
@@ -176,7 +177,7 @@ protected:
   void buildEdges(Function &F);
   bool propagateThroughEdges(Function &F, bool UpdateBlockCount);
   void computeDominanceAndLoopInfo(Function &F);
-  unsigned getOffset(unsigned L, unsigned H) const;
+  unsigned getOffset(const DILocation *DIL) const;
   void clearFunctionData();
 
   /// \brief Map basic blocks to their computed weights.
@@ -401,15 +402,11 @@ void SampleProfileLoader::clearFunctionData() {
   CoverageTracker.clear();
 }
 
-/// \brief Returns the offset of lineno \p L to head_lineno \p H
-///
-/// \param L  Lineno
-/// \param H  Header lineno of the function
-///
-/// \returns offset to the header lineno. 16 bits are used to represent offset.
+/// Returns the line offset to the start line of the subprogram.
 /// We assume that a single function will not exceed 65535 LOC.
-unsigned SampleProfileLoader::getOffset(unsigned L, unsigned H) const {
-  return (L - H) & 0xffff;
+unsigned SampleProfileLoader::getOffset(const DILocation *DIL) const {
+  return (DIL->getLine() - DIL->getScope()->getSubprogram()->getLine()) &
+         0xffff;
 }
 
 /// \brief Print the weight of edge \p E on stream \p OS.
@@ -472,19 +469,14 @@ ErrorOr<uint64_t> SampleProfileLoader::getInstWeight(const Instruction &Inst) {
   // If a call/invoke instruction is inlined in profile, but not inlined here,
   // it means that the inlined callsite has no sample, thus the call
   // instruction should have 0 count.
-  bool IsCall = isa<CallInst>(Inst) || isa<InvokeInst>(Inst);
-  if (IsCall && findCalleeFunctionSamples(Inst))
+  if ((isa<CallInst>(Inst) || isa<InvokeInst>(Inst)) &&
+      findCalleeFunctionSamples(Inst))
     return 0;
 
   const DILocation *DIL = DLoc;
-  unsigned Lineno = DLoc.getLine();
-  unsigned HeaderLineno = DIL->getScope()->getSubprogram()->getLine();
-
-  uint32_t LineOffset = getOffset(Lineno, HeaderLineno);
-  uint32_t Discriminator = DIL->getDiscriminator();
-  ErrorOr<uint64_t> R = IsCall
-                            ? FS->findCallSamplesAt(LineOffset, Discriminator)
-                            : FS->findSamplesAt(LineOffset, Discriminator);
+  uint32_t LineOffset = getOffset(DIL);
+  uint32_t Discriminator = DIL->getBaseDiscriminator();
+  ErrorOr<uint64_t> R = FS->findSamplesAt(LineOffset, Discriminator);
   if (R) {
     bool FirstMark =
         CoverageTracker.markSamplesUsed(FS, LineOffset, Discriminator, R.get());
@@ -497,9 +489,10 @@ ErrorOr<uint64_t> SampleProfileLoader::getInstWeight(const Instruction &Inst) {
               " samples from profile (offset: " + Twine(LineOffset) +
               ((Discriminator) ? Twine(".") + Twine(Discriminator) : "") + ")");
     }
-    DEBUG(dbgs() << "    " << Lineno << "." << DIL->getDiscriminator() << ":"
-                 << Inst << " (line offset: " << Lineno - HeaderLineno << "."
-                 << DIL->getDiscriminator() << " - weight: " << R.get()
+    DEBUG(dbgs() << "    " << DLoc.getLine() << "."
+                 << DIL->getBaseDiscriminator() << ":" << Inst
+                 << " (line offset: " << LineOffset << "."
+                 << DIL->getBaseDiscriminator() << " - weight: " << R.get()
                  << ")\n");
   }
   return R;
@@ -566,16 +559,12 @@ SampleProfileLoader::findCalleeFunctionSamples(const Instruction &Inst) const {
   if (!DIL) {
     return nullptr;
   }
-  DISubprogram *SP = DIL->getScope()->getSubprogram();
-  if (!SP)
-    return nullptr;
-
   const FunctionSamples *FS = findFunctionSamples(Inst);
   if (FS == nullptr)
     return nullptr;
 
-  return FS->findFunctionSamplesAt(LineLocation(
-      getOffset(DIL->getLine(), SP->getLine()), DIL->getDiscriminator()));
+  return FS->findFunctionSamplesAt(
+      LineLocation(getOffset(DIL), DIL->getBaseDiscriminator()));
 }
 
 /// \brief Get the FunctionSamples for an instruction.
@@ -594,13 +583,8 @@ SampleProfileLoader::findFunctionSamples(const Instruction &Inst) const {
   if (!DIL) {
     return Samples;
   }
-  for (DIL = DIL->getInlinedAt(); DIL; DIL = DIL->getInlinedAt()) {
-    DISubprogram *SP = DIL->getScope()->getSubprogram();
-    if (!SP)
-      return nullptr;
-    S.push_back(LineLocation(getOffset(DIL->getLine(), SP->getLine()),
-                             DIL->getDiscriminator()));
-  }
+  for (DIL = DIL->getInlinedAt(); DIL; DIL = DIL->getInlinedAt())
+    S.push_back(LineLocation(getOffset(DIL), DIL->getBaseDiscriminator()));
   if (S.size() == 0)
     return Samples;
   const FunctionSamples *FS = Samples;
@@ -619,9 +603,12 @@ SampleProfileLoader::findFunctionSamples(const Instruction &Inst) const {
 /// it to direct call. Each indirect call is limited with a single target.
 ///
 /// \param F function to perform iterative inlining.
+/// \param ImportGUIDs a set to be updated to include all GUIDs that come
+///     from a different module but inlined in the profiled binary.
 ///
 /// \returns True if there is any inline happened.
-bool SampleProfileLoader::inlineHotFunctions(Function &F) {
+bool SampleProfileLoader::inlineHotFunctions(
+    Function &F, DenseSet<GlobalValue::GUID> &ImportGUIDs) {
   DenseSet<Instruction *> PromotedInsns;
   bool Changed = false;
   LLVMContext &Ctx = F.getContext();
@@ -650,7 +637,8 @@ bool SampleProfileLoader::inlineHotFunctions(Function &F) {
       InlineFunctionInfo IFI(nullptr, ACT ? &GetAssumptionCache : nullptr);
       Function *CalledFunction = CallSite(I).getCalledFunction();
       Instruction *DI = I;
-      if (!CalledFunction && !PromotedInsns.count(I)) {
+      if (!CalledFunction && !PromotedInsns.count(I) &&
+          CallSite(I).isIndirectCall()) {
         auto CalleeFunctionName = findCalleeFunctionSamples(*I)->getName();
         const char *Reason = "Callee function not available";
         CalledFunction = F.getParent()->getFunction(CalleeFunctionName);
@@ -659,7 +647,9 @@ bool SampleProfileLoader::inlineHotFunctions(Function &F) {
           // result, we do not have profile info for the branch probability.
           // We set the probability to 80% taken to indicate that the static
           // call is likely taken.
-          DI = promoteIndirectCall(I, CalledFunction, 80, 100);
+          DI = dyn_cast<Instruction>(
+              promoteIndirectCall(I, CalledFunction, 80, 100, false)
+                  ->stripPointerCasts());
           PromotedInsns.insert(I);
         } else {
           DEBUG(dbgs() << "\nFailed to promote indirect call to "
@@ -667,12 +657,15 @@ bool SampleProfileLoader::inlineHotFunctions(Function &F) {
           continue;
         }
       }
-      if (!CalledFunction || !CalledFunction->getSubprogram())
+      if (!CalledFunction || !CalledFunction->getSubprogram()) {
+        findCalleeFunctionSamples(*I)->findImportedFunctions(
+            ImportGUIDs, F.getParent(),
+            Samples->getTotalSamples() * SampleProfileHotThreshold / 100);
         continue;
-      CallSite CS(DI);
+      }
       DebugLoc DLoc = I->getDebugLoc();
       uint64_t NumSamples = findCalleeFunctionSamples(*I)->getTotalSamples();
-      if (InlineFunction(CS, IFI)) {
+      if (InlineFunction(CallSite(DI), IFI)) {
         LocalChanged = true;
         emitOptimizationRemark(Ctx, DEBUG_TYPE, F, DLoc,
                                Twine("inlined hot callee '") +
@@ -1054,10 +1047,6 @@ void SampleProfileLoader::propagateWeights(Function &F) {
   bool Changed = true;
   unsigned I = 0;
 
-  // Add an entry count to the function using the samples gathered
-  // at the function entry.
-  F.setEntryCount(Samples->getHeadSamples() + 1);
-
   // If BB weight is larger than its corresponding loop's header BB weight,
   // use the BB weight to replace the loop header BB weight.
   for (auto &BI : F) {
@@ -1118,9 +1107,8 @@ void SampleProfileLoader::propagateWeights(Function &F) {
           if (!DLoc)
             continue;
           const DILocation *DIL = DLoc;
-          uint32_t LineOffset = getOffset(
-              DLoc.getLine(), DIL->getScope()->getSubprogram()->getLine());
-          uint32_t Discriminator = DIL->getDiscriminator();
+          uint32_t LineOffset = getOffset(DIL);
+          uint32_t Discriminator = DIL->getBaseDiscriminator();
 
           const FunctionSamples *FS = findFunctionSamples(I);
           if (!FS)
@@ -1287,12 +1275,19 @@ bool SampleProfileLoader::emitAnnotations(Function &F) {
   DEBUG(dbgs() << "Line number for the first instruction in " << F.getName()
                << ": " << getFunctionLoc(F) << "\n");
 
-  Changed |= inlineHotFunctions(F);
+  DenseSet<GlobalValue::GUID> ImportGUIDs;
+  Changed |= inlineHotFunctions(F, ImportGUIDs);
 
   // Compute basic block weights.
   Changed |= computeBlockWeights(F);
 
   if (Changed) {
+    // Add an entry count to the function using the samples gathered at the
+    // function entry. Also sets the GUIDs that comes from a different
+    // module but inlined in the profiled binary. This is aiming at making
+    // the IR match the profiled binary before annotation.
+    F.setEntryCount(Samples->getHeadSamples() + 1, &ImportGUIDs);
+
     // Compute dominance and loop info needed for propagation.
     computeDominanceAndLoopInfo(F);
 
@@ -1388,7 +1383,7 @@ bool SampleProfileLoaderLegacyPass::runOnModule(Module &M) {
 bool SampleProfileLoader::runOnFunction(Function &F) {
   F.setEntryCount(0);
   Samples = Reader->getSamplesFor(F);
-  if (!Samples->empty())
+  if (Samples && !Samples->empty())
     return emitAnnotations(F);
   return false;
 }

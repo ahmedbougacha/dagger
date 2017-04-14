@@ -64,6 +64,10 @@ def int_r600_recipsqrt_clamped : Intrinsic<
   [llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]
 >;
 
+def int_r600_cube : Intrinsic<
+  [llvm_v4f32_ty], [llvm_v4f32_ty], [IntrNoMem]
+>;
+
 } // End TargetPrefix = "r600"
 
 let TargetPrefix = "amdgcn" in {
@@ -121,7 +125,8 @@ def int_amdgcn_s_barrier : GCCBuiltin<"__builtin_amdgcn_s_barrier">,
 def int_amdgcn_wave_barrier : GCCBuiltin<"__builtin_amdgcn_wave_barrier">,
   Intrinsic<[], [], [IntrConvergent]>;
 
-def int_amdgcn_s_waitcnt : Intrinsic<[], [llvm_i32_ty], []>;
+def int_amdgcn_s_waitcnt : GCCBuiltin<"__builtin_amdgcn_s_waitcnt">,
+  Intrinsic<[], [llvm_i32_ty], []>;
 
 def int_amdgcn_div_scale : Intrinsic<
   // 1st parameter: Numerator
@@ -200,6 +205,10 @@ def int_amdgcn_frexp_exp : Intrinsic<
 // fract function. It should be ok on VI.
 def int_amdgcn_fract : Intrinsic<
   [llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]
+>;
+
+def int_amdgcn_cvt_pkrtz : Intrinsic<
+  [llvm_v2f16_ty], [llvm_float_ty, llvm_float_ty], [IntrNoMem]
 >;
 
 def int_amdgcn_class : Intrinsic<
@@ -561,7 +570,14 @@ def int_amdgcn_ds_swizzle :
   GCCBuiltin<"__builtin_amdgcn_ds_swizzle">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
 
-// llvm.amdgcn.lerp
+def int_amdgcn_ubfe : Intrinsic<[llvm_anyint_ty],
+  [LLVMMatchType<0>, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]
+>;
+
+def int_amdgcn_sbfe : Intrinsic<[llvm_anyint_ty],
+  [LLVMMatchType<0>, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]
+>;
+
 def int_amdgcn_lerp :
   GCCBuiltin<"__builtin_amdgcn_lerp">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
@@ -650,10 +666,48 @@ def int_amdgcn_s_memrealtime :
 
 // llvm.amdgcn.ds.permute <index> <src>
 def int_amdgcn_ds_permute :
+  GCCBuiltin<"__builtin_amdgcn_ds_permute">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
 
 // llvm.amdgcn.ds.bpermute <index> <src>
 def int_amdgcn_ds_bpermute :
+  GCCBuiltin<"__builtin_amdgcn_ds_bpermute">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
 
+
+//===----------------------------------------------------------------------===//
+// Special Intrinsics for backend internal use only. No frontend
+// should emit calls to these.
+// ===----------------------------------------------------------------------===//
+def int_amdgcn_if : Intrinsic<[llvm_i1_ty, llvm_i64_ty],
+  [llvm_i1_ty], [IntrConvergent]
+>;
+
+def int_amdgcn_else : Intrinsic<[llvm_i1_ty, llvm_i64_ty],
+  [llvm_i64_ty], [IntrConvergent]
+>;
+
+def int_amdgcn_break : Intrinsic<[llvm_i64_ty],
+  [llvm_i64_ty], [IntrNoMem, IntrConvergent]
+>;
+
+def int_amdgcn_if_break : Intrinsic<[llvm_i64_ty],
+  [llvm_i1_ty, llvm_i64_ty], [IntrNoMem, IntrConvergent]
+>;
+
+def int_amdgcn_else_break : Intrinsic<[llvm_i64_ty],
+  [llvm_i64_ty, llvm_i64_ty], [IntrNoMem, IntrConvergent]
+>;
+
+def int_amdgcn_loop : Intrinsic<[llvm_i1_ty],
+  [llvm_i64_ty], [IntrConvergent]
+>;
+
+def int_amdgcn_end_cf : Intrinsic<[], [llvm_i64_ty], [IntrConvergent]>;
+
+// Emit 2.5 ulp, no denormal division. Should only be inserted by
+// pass based on !fpmath metadata.
+def int_amdgcn_fdiv_fast : Intrinsic<
+  [llvm_float_ty], [llvm_float_ty, llvm_float_ty], [IntrNoMem]
+>;
 }

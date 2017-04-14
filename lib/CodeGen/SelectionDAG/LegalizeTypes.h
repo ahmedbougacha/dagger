@@ -602,6 +602,7 @@ private:
   SDValue ScalarizeVecRes_TernaryOp(SDNode *N);
   SDValue ScalarizeVecRes_UnaryOp(SDNode *N);
   SDValue ScalarizeVecRes_InregOp(SDNode *N);
+  SDValue ScalarizeVecRes_VecInregOp(SDNode *N);
 
   SDValue ScalarizeVecRes_BITCAST(SDNode *N);
   SDValue ScalarizeVecRes_BUILD_VECTOR(SDNode *N);
@@ -718,6 +719,7 @@ private:
   SDValue WidenVecRes_MGATHER(MaskedGatherSDNode* N);
   SDValue WidenVecRes_SCALAR_TO_VECTOR(SDNode* N);
   SDValue WidenVecRes_SELECT(SDNode* N);
+  SDValue WidenVSELECTAndMask(SDNode *N);
   SDValue WidenVecRes_SELECT_CC(SDNode* N);
   SDValue WidenVecRes_SETCC(SDNode* N);
   SDValue WidenVecRes_UNDEF(SDNode *N);
@@ -786,6 +788,13 @@ private:
   /// When FillWithZeroes is "on" the vector will be widened with zeroes.
   /// By default, the vector will be widened with undefined values.
   SDValue ModifyToType(SDValue InOp, EVT NVT, bool FillWithZeroes = false);
+
+  /// Return a mask of vector type MaskVT to replace InMask. Also adjust
+  /// MaskVT to ToMaskVT if needed with vector extension or truncation.
+  SDValue convertMask(SDValue InMask, EVT MaskVT, EVT ToMaskVT);
+
+  /// Get the target mask VT, and widen if needed.
+  EVT getSETCCWidenedResultTy(SDValue SetCC);
 
   //===--------------------------------------------------------------------===//
   // Generic Splitting: LegalizeTypesGeneric.cpp

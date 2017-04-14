@@ -77,9 +77,15 @@ STATISTIC(NumMovedLoads, "Number of load insts hoisted or sunk");
 STATISTIC(NumMovedCalls, "Number of call insts hoisted or sunk");
 STATISTIC(NumPromoted, "Number of memory locations promoted to registers");
 
+/// Memory promotion is enabled by default.
 static cl::opt<bool>
-    DisablePromotion("disable-licm-promotion", cl::Hidden,
+    DisablePromotion("disable-licm-promotion", cl::Hidden, cl::init(false),
                      cl::desc("Disable memory promotion in LICM pass"));
+
+static cl::opt<uint32_t> MaxNumUsesTraversed(
+    "licm-max-num-uses-traversed", cl::Hidden, cl::init(8),
+    cl::desc("Max num uses visited for identifying load "
+             "invariance in loop using invariant start (default = 8)"));
 
 static bool inSubLoop(BasicBlock *BB, Loop *CurLoop, LoopInfo *LI);
 static bool isNotUsedInLoop(const Instruction &I, const Loop *CurLoop,
@@ -480,6 +486,59 @@ void llvm::computeLoopSafetyInfo(LoopSafetyInfo *SafetyInfo, Loop *CurLoop) {
         SafetyInfo->BlockColors = colorEHFunclets(*Fn);
 }
 
+// Return true if LI is invariant within scope of the loop. LI is invariant if
+// CurLoop is dominated by an invariant.start representing the same memory location
+// and size as the memory location LI loads from, and also the invariant.start
+// has no uses.
+static bool isLoadInvariantInLoop(LoadInst *LI, DominatorTree *DT,
+                                  Loop *CurLoop) {
+  Value *Addr = LI->getOperand(0);
+  const DataLayout &DL = LI->getModule()->getDataLayout();
+  const uint32_t LocSizeInBits = DL.getTypeSizeInBits(
+      cast<PointerType>(Addr->getType())->getElementType());
+
+  // if the type is i8 addrspace(x)*, we know this is the type of
+  // llvm.invariant.start operand
+  auto *PtrInt8Ty = PointerType::get(Type::getInt8Ty(LI->getContext()),
+                                     LI->getPointerAddressSpace());
+  unsigned BitcastsVisited = 0;
+  // Look through bitcasts until we reach the i8* type (this is invariant.start
+  // operand type).
+  while (Addr->getType() != PtrInt8Ty) {
+    auto *BC = dyn_cast<BitCastInst>(Addr);
+    // Avoid traversing high number of bitcast uses.
+    if (++BitcastsVisited > MaxNumUsesTraversed || !BC)
+      return false;
+    Addr = BC->getOperand(0);
+  }
+
+  unsigned UsesVisited = 0;
+  // Traverse all uses of the load operand value, to see if invariant.start is
+  // one of the uses, and whether it dominates the load instruction.
+  for (auto *U : Addr->users()) {
+    // Avoid traversing for Load operand with high number of users.
+    if (++UsesVisited > MaxNumUsesTraversed)
+      return false;
+    IntrinsicInst *II = dyn_cast<IntrinsicInst>(U);
+    // If there are escaping uses of invariant.start instruction, the load maybe
+    // non-invariant.
+    if (!II || II->getIntrinsicID() != Intrinsic::invariant_start ||
+        II->hasNUsesOrMore(1))
+      continue;
+    unsigned InvariantSizeInBits =
+        cast<ConstantInt>(II->getArgOperand(0))->getSExtValue() * 8;
+    // Confirm the invariant.start location size contains the load operand size
+    // in bits. Also, the invariant.start should dominate the load, and we
+    // should not hoist the load out of a loop that contains this dominating
+    // invariant.start.
+    if (LocSizeInBits <= InvariantSizeInBits &&
+        DT->properlyDominates(II->getParent(), CurLoop->getHeader()))
+      return true;
+  }
+
+  return false;
+}
+
 bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
                               Loop *CurLoop, AliasSetTracker *CurAST,
                               LoopSafetyInfo *SafetyInfo,
@@ -494,6 +553,10 @@ bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
     if (AA->pointsToConstantMemory(LI->getOperand(0)))
       return true;
     if (LI->getMetadata(LLVMContext::MD_invariant_load))
+      return true;
+
+    // This checks for an invariant.start dominating the load.
+    if (isLoadInvariantInLoop(LI, DT, CurLoop))
       return true;
 
     // Don't hoist loads which have may-aliased stores in loop.
@@ -785,7 +848,7 @@ static bool hoist(Instruction &I, const DominatorTree *DT, const Loop *CurLoop,
   DEBUG(dbgs() << "LICM hoisting to " << Preheader->getName() << ": " << I
                << "\n");
   ORE->emit(OptimizationRemark(DEBUG_TYPE, "Hoisted", &I)
-            << "hosting " << ore::NV("Inst", &I));
+            << "hoisting " << ore::NV("Inst", &I));
 
   // Metadata can be dependent on conditions we are hoisting above.
   // Conservatively strip all metadata on the instruction unless we were
@@ -855,6 +918,7 @@ class LoopPromoter : public LoadAndStorePromoter {
   LoopInfo &LI;
   DebugLoc DL;
   int Alignment;
+  bool UnorderedAtomic;
   AAMDNodes AATags;
 
   Value *maybeInsertLCSSAPHI(Value *V, BasicBlock *BB) const {
@@ -878,10 +942,11 @@ public:
                SmallVectorImpl<BasicBlock *> &LEB,
                SmallVectorImpl<Instruction *> &LIP, PredIteratorCache &PIC,
                AliasSetTracker &ast, LoopInfo &li, DebugLoc dl, int alignment,
-               const AAMDNodes &AATags)
+               bool UnorderedAtomic, const AAMDNodes &AATags)
       : LoadAndStorePromoter(Insts, S), SomePtr(SP), PointerMustAliases(PMA),
         LoopExitBlocks(LEB), LoopInsertPts(LIP), PredCache(PIC), AST(ast),
-        LI(li), DL(std::move(dl)), Alignment(alignment), AATags(AATags) {}
+        LI(li), DL(std::move(dl)), Alignment(alignment),
+        UnorderedAtomic(UnorderedAtomic),AATags(AATags) {}
 
   bool isInstInList(Instruction *I,
                     const SmallVectorImpl<Instruction *> &) const override {
@@ -905,6 +970,8 @@ public:
       Value *Ptr = maybeInsertLCSSAPHI(SomePtr, ExitBlock);
       Instruction *InsertPos = LoopInsertPts[i];
       StoreInst *NewSI = new StoreInst(LiveInValue, Ptr, InsertPos);
+      if (UnorderedAtomic)
+        NewSI->setOrdering(AtomicOrdering::Unordered);
       NewSI->setAlignment(Alignment);
       NewSI->setDebugLoc(DL);
       if (AATags)
@@ -995,6 +1062,9 @@ bool llvm::promoteLoopAccessesToScalars(
   // We start with an alignment of one and try to find instructions that allow
   // us to prove better alignment.
   unsigned Alignment = 1;
+  // Keep track of which types of access we see
+  bool SawUnorderedAtomic = false; 
+  bool SawNotAtomic = false;
   AAMDNodes AATags;
 
   const DataLayout &MDL = Preheader->getModule()->getDataLayout();
@@ -1052,8 +1122,11 @@ bool llvm::promoteLoopAccessesToScalars(
       // it.
       if (LoadInst *Load = dyn_cast<LoadInst>(UI)) {
         assert(!Load->isVolatile() && "AST broken");
-        if (!Load->isSimple())
+        if (!Load->isUnordered())
           return false;
+        
+        SawUnorderedAtomic |= Load->isAtomic();
+        SawNotAtomic |= !Load->isAtomic();
 
         if (!DereferenceableInPH)
           DereferenceableInPH = isSafeToExecuteUnconditionally(
@@ -1064,8 +1137,11 @@ bool llvm::promoteLoopAccessesToScalars(
         if (UI->getOperand(1) != ASIV)
           continue;
         assert(!Store->isVolatile() && "AST broken");
-        if (!Store->isSimple())
+        if (!Store->isUnordered())
           return false;
+
+        SawUnorderedAtomic |= Store->isAtomic();
+        SawNotAtomic |= !Store->isAtomic();
 
         // If the store is guaranteed to execute, both properties are satisfied.
         // We may want to check if a store is guaranteed to execute even if we
@@ -1119,6 +1195,12 @@ bool llvm::promoteLoopAccessesToScalars(
     }
   }
 
+  // If we found both an unordered atomic instruction and a non-atomic memory
+  // access, bail.  We can't blindly promote non-atomic to atomic since we
+  // might not be able to lower the result.  We can't downgrade since that
+  // would violate memory model.  Also, align 0 is an error for atomics.
+  if (SawUnorderedAtomic && SawNotAtomic)
+    return false;
 
   // If we couldn't prove we can hoist the load, bail.
   if (!DereferenceableInPH)
@@ -1162,12 +1244,15 @@ bool llvm::promoteLoopAccessesToScalars(
   SmallVector<PHINode *, 16> NewPHIs;
   SSAUpdater SSA(&NewPHIs);
   LoopPromoter Promoter(SomePtr, LoopUses, SSA, PointerMustAliases, ExitBlocks,
-                        InsertPts, PIC, *CurAST, *LI, DL, Alignment, AATags);
+                        InsertPts, PIC, *CurAST, *LI, DL, Alignment,
+                        SawUnorderedAtomic, AATags);
 
   // Set up the preheader to have a definition of the value.  It is the live-out
   // value from the preheader that uses in the loop will use.
   LoadInst *PreheaderLoad = new LoadInst(
       SomePtr, SomePtr->getName() + ".promoted", Preheader->getTerminator());
+  if (SawUnorderedAtomic)
+    PreheaderLoad->setOrdering(AtomicOrdering::Unordered);
   PreheaderLoad->setAlignment(Alignment);
   PreheaderLoad->setDebugLoc(DL);
   if (AATags)

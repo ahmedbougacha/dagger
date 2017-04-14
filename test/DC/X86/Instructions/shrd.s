@@ -15,7 +15,6 @@
 # CHECK-NEXT: [[R15W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R15W")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdw	%cl, %r15w, 2(%r11,%rbx,2)
 
 ## SHRD16mri8
@@ -32,7 +31,6 @@ shrdw	%cl, %r15w, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i16, i16* [[V4]], align 1
 # CHECK-NEXT: [[R15W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R15W")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdw	$2, %r15w, 2(%r11,%rbx,2)
 
 ## SHRD16rrCL
@@ -44,7 +42,6 @@ shrdw	$2, %r15w, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R10W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R10W")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdw	%cl, %r10w, %r8w
 
 ## SHRD16rri8
@@ -55,7 +52,6 @@ shrdw	%cl, %r10w, %r8w
 # CHECK-NEXT: [[R8W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R8W")
 # CHECK-NEXT: [[R10W_0:%.+]] = call i16 @llvm.dc.getreg.i16(metadata !"R10W")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdw	$2, %r10w, %r8w
 
 ## SHRD32mrCL
@@ -73,7 +69,6 @@ shrdw	$2, %r10w, %r8w
 # CHECK-NEXT: [[R15D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R15D")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdl	%cl, %r15d, 2(%r11,%rbx,2)
 
 ## SHRD32mri8
@@ -90,7 +85,6 @@ shrdl	%cl, %r15d, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i32, i32* [[V4]], align 1
 # CHECK-NEXT: [[R15D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R15D")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdl	$2, %r15d, 2(%r11,%rbx,2)
 
 ## SHRD32rrCL
@@ -102,7 +96,6 @@ shrdl	$2, %r15d, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R10D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R10D")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdl	%cl, %r10d, %r8d
 
 ## SHRD32rri8
@@ -113,7 +106,6 @@ shrdl	%cl, %r10d, %r8d
 # CHECK-NEXT: [[R8D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R8D")
 # CHECK-NEXT: [[R10D_0:%.+]] = call i32 @llvm.dc.getreg.i32(metadata !"R10D")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdl	$2, %r10d, %r8d
 
 ## SHRD64mrCL
@@ -131,7 +123,6 @@ shrdl	$2, %r10d, %r8d
 # CHECK-NEXT: [[R13_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R13")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdq	%cl, %r13, 2(%r11,%rbx,2)
 
 ## SHRD64mri8
@@ -148,7 +139,6 @@ shrdq	%cl, %r13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[V5:%.+]] = load i64, i64* [[V4]], align 1
 # CHECK-NEXT: [[R13_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R13")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdq	$2, %r13, 2(%r11,%rbx,2)
 
 ## SHRD64rrCL
@@ -160,7 +150,6 @@ shrdq	$2, %r13, 2(%r11,%rbx,2)
 # CHECK-NEXT: [[R14_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R14")
 # CHECK-NEXT: [[CL_0:%.+]] = call i8 @llvm.dc.getreg.i8(metadata !"CL")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdq	%cl, %r14, %r11
 
 ## SHRD64rri8
@@ -171,7 +160,6 @@ shrdq	%cl, %r14, %r11
 # CHECK-NEXT: [[R11_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R11")
 # CHECK-NEXT: [[R14_0:%.+]] = call i64 @llvm.dc.getreg.i64(metadata !"R14")
 # CHECK-NEXT: call void @llvm.trap()
-# CHECK-NEXT: unreachable
 shrdq	$2, %r14, %r11
 
 retq

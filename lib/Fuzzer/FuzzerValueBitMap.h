@@ -68,7 +68,7 @@ struct ValueBitMap {
         Other.Map[i] = 0;
       }
       if (M)
-        Res += __builtin_popcountl(M);
+        Res += __builtin_popcountll(M);
     }
     NumBits = Res;
     return OldNumBits < NumBits;
@@ -76,7 +76,7 @@ struct ValueBitMap {
 
   template <class Callback>
   ATTRIBUTE_NO_SANITIZE_ALL
-  void ForEach(Callback CB) {
+  void ForEach(Callback CB) const {
     for (size_t i = 0; i < kMapSizeInWords; i++)
       if (uintptr_t M = Map[i])
         for (size_t j = 0; j < sizeof(M) * 8; j++)

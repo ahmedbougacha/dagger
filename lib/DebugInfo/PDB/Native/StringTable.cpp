@@ -10,20 +10,21 @@
 #include "llvm/DebugInfo/PDB/Native/StringTable.h"
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/DebugInfo/MSF/StreamReader.h"
 #include "llvm/DebugInfo/PDB/Native/Hash.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
+#include "llvm/Support/BinaryStreamReader.h"
 #include "llvm/Support/Endian.h"
 
 using namespace llvm;
-using namespace llvm::msf;
 using namespace llvm::support;
 using namespace llvm::pdb;
 
-StringTable::StringTable() : Signature(0), HashVersion(0), NameCount(0) {}
+StringTable::StringTable() {}
 
-Error StringTable::load(StreamReader &Stream) {
+Error StringTable::load(BinaryStreamReader &Stream) {
+  ByteSize = Stream.getLength();
+
   const StringTableHeader *H;
   if (auto EC = Stream.readObject(H))
     return EC;
@@ -57,7 +58,16 @@ Error StringTable::load(StreamReader &Stream) {
 
   if (auto EC = Stream.readInteger(NameCount))
     return EC;
+
+  if (Stream.bytesRemaining() > 0)
+    return make_error<RawError>(raw_error_code::stream_too_long,
+      "Unexpected bytes found in string table");
+
   return Error::success();
+}
+
+uint32_t StringTable::getByteSize() const {
+  return ByteSize;
 }
 
 StringRef StringTable::getStringForID(uint32_t ID) const {
@@ -68,9 +78,9 @@ StringRef StringTable::getStringForID(uint32_t ID) const {
   // the starting offset of the string we're looking for.  So just seek into
   // the desired offset and a read a null terminated stream from that offset.
   StringRef Result;
-  StreamReader NameReader(NamesBuffer);
+  BinaryStreamReader NameReader(NamesBuffer);
   NameReader.setOffset(ID);
-  if (auto EC = NameReader.readZeroString(Result))
+  if (auto EC = NameReader.readCString(Result))
     consumeError(std::move(EC));
   return Result;
 }

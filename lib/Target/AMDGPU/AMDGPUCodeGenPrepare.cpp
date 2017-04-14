@@ -14,7 +14,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPU.h"
-#include "AMDGPUIntrinsicInfo.h"
 #include "AMDGPUSubtarget.h"
 #include "AMDGPUTargetMachine.h"
 #include "llvm/ADT/StringRef.h"
@@ -181,12 +180,20 @@ bool AMDGPUCodeGenPrepare::isSigned(const SelectInst &I) const {
 }
 
 bool AMDGPUCodeGenPrepare::needsPromotionToI32(const Type *T) const {
-  if (T->isIntegerTy() && T->getIntegerBitWidth() > 1 &&
-      T->getIntegerBitWidth() <= 16)
+  const IntegerType *IntTy = dyn_cast<IntegerType>(T);
+  if (IntTy && IntTy->getBitWidth() > 1 && IntTy->getBitWidth() <= 16)
     return true;
-  if (!T->isVectorTy())
-    return false;
-  return needsPromotionToI32(cast<VectorType>(T)->getElementType());
+
+  if (const VectorType *VT = dyn_cast<VectorType>(T)) {
+    // TODO: The set of packed operations is more limited, so may want to
+    // promote some anyway.
+    if (ST->hasVOP3PInsts())
+      return false;
+
+    return needsPromotionToI32(VT->getElementType());
+  }
+
+  return false;
 }
 
 // Return true if the op promoted to i32 should have nsw set.
@@ -381,9 +388,7 @@ bool AMDGPUCodeGenPrepare::visitFDiv(BinaryOperator &FDiv) {
   Builder.setFastMathFlags(FMF);
   Builder.SetCurrentDebugLocation(FDiv.getDebugLoc());
 
-  const AMDGPUIntrinsicInfo *II = TM->getIntrinsicInfo();
-  Function *Decl
-    = II->getDeclaration(Mod, AMDGPUIntrinsic::amdgcn_fdiv_fast, {});
+  Function *Decl = Intrinsic::getDeclaration(Mod, Intrinsic::amdgcn_fdiv_fast);
 
   Value *Num = FDiv.getOperand(0);
   Value *Den = FDiv.getOperand(1);

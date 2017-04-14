@@ -6,7 +6,6 @@
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rsubhn	v16.2s, v17.2d, v18.2d
 
 ;; RSUBHNv4i32_v4i16
@@ -15,7 +14,6 @@ rsubhn	v16.2s, v17.2d, v18.2d
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rsubhn	v16.4h, v17.4s, v18.4s
 
 ;; RSUBHNv8i16_v8i8
@@ -24,7 +22,6 @@ rsubhn	v16.4h, v17.4s, v18.4s
 ; CHECK-NEXT: [[V0:%.+]] = add i64 [[PC_0]], 4
 ; CHECK-NEXT: call void @llvm.dc.setreg{{.*}} !"PC")
 ; CHECK-NEXT: call void @llvm.trap()
-; CHECK-NEXT: unreachable
 rsubhn	v16.8b, v17.8h, v18.8h
 
 ret
