@@ -504,8 +504,22 @@ TEST(StringRefTest, Count) {
 }
 
 TEST(StringRefTest, EditDistance) {
-  StringRef Str("hello");
-  EXPECT_EQ(2U, Str.edit_distance("hill"));
+  StringRef Hello("hello");
+  EXPECT_EQ(2U, Hello.edit_distance("hill"));
+
+  StringRef Industry("industry");
+  EXPECT_EQ(6U, Industry.edit_distance("interest"));
+
+  StringRef Soylent("soylent green is people");
+  EXPECT_EQ(19U, Soylent.edit_distance("people soiled our green"));
+  EXPECT_EQ(26U, Soylent.edit_distance("people soiled our green",
+                                      /* allow replacements = */ false));
+  EXPECT_EQ(9U, Soylent.edit_distance("people soiled our green",
+                                      /* allow replacements = */ true,
+                                      /* max edit distance = */ 8));
+  EXPECT_EQ(53U, Soylent.edit_distance("people soiled our green "
+                                       "people soiled our green "
+                                       "people soiled our green "));
 }
 
 TEST(StringRefTest, Misc) {
@@ -898,6 +912,8 @@ TEST(StringRefTest, joinStrings) {
   bool v2_join2 = join(v2.begin(), v2.end(), ":") == join_result2;
   EXPECT_TRUE(v2_join2);
   bool v2_join3 = join(v2.begin(), v2.end(), "::") == join_result3;
+  EXPECT_TRUE(v2_join3);
+  v2_join3 = join(v2, "::") == join_result3;
   EXPECT_TRUE(v2_join3);
 }
 

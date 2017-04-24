@@ -28,7 +28,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/ValueSymbolTable.h"
-#include "llvm/Object/IRObjectFile.h"
+#include "llvm/Object/ModuleSymbolTable.h"
 #include "llvm/Pass.h"
 using namespace llvm;
 
@@ -231,7 +231,7 @@ computeFunctionSummary(ModuleSummaryIndex &Index, const Module &M,
         }
         // We should have named any anonymous globals
         assert(CalledFunction->hasName());
-        auto ScaledCount = BFI ? BFI->getBlockProfileCount(&BB) : None;
+        auto ScaledCount = ProfileSummaryInfo::getProfileCount(&I, BFI);
         auto Hotness = ScaledCount ? getHotness(ScaledCount.getValue(), PSI)
                                    : CalleeInfo::HotnessType::Unknown;
 

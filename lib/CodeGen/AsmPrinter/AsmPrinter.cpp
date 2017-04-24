@@ -28,6 +28,7 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Analysis/ObjectUtils.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/GCMetadata.h"
@@ -121,6 +122,10 @@ static const char *const CodeViewLineTablesGroupDescription =
   "CodeView Line Tables";
 
 STATISTIC(EmittedInsts, "Number of machine instrs printed");
+
+static cl::opt<bool>
+    PrintSchedule("print-schedule", cl::Hidden, cl::init(false),
+                  cl::desc("Print 'sched: [latency:throughput]' in .s output"));
 
 char AsmPrinter::ID = 0;
 
@@ -719,7 +724,8 @@ void AsmPrinter::EmitFunctionEntryLabel() {
 }
 
 /// emitComments - Pretty-print comments for instructions.
-static void emitComments(const MachineInstr &MI, raw_ostream &CommentOS) {
+static void emitComments(const MachineInstr &MI, raw_ostream &CommentOS,
+                         AsmPrinter *AP) {
   const MachineFunction *MF = MI.getParent()->getParent();
   const TargetInstrInfo *TII = MF->getSubtarget().getInstrInfo();
 
@@ -727,6 +733,7 @@ static void emitComments(const MachineInstr &MI, raw_ostream &CommentOS) {
   int FI;
 
   const MachineFrameInfo &MFI = MF->getFrameInfo();
+  bool Commented = false;
 
   // We assume a single instruction only has a spill or reload, not
   // both.
@@ -734,24 +741,39 @@ static void emitComments(const MachineInstr &MI, raw_ostream &CommentOS) {
   if (TII->isLoadFromStackSlotPostFE(MI, FI)) {
     if (MFI.isSpillSlotObjectIndex(FI)) {
       MMO = *MI.memoperands_begin();
-      CommentOS << MMO->getSize() << "-byte Reload\n";
+      CommentOS << MMO->getSize() << "-byte Reload";
+      Commented = true;
     }
   } else if (TII->hasLoadFromStackSlot(MI, MMO, FI)) {
-    if (MFI.isSpillSlotObjectIndex(FI))
-      CommentOS << MMO->getSize() << "-byte Folded Reload\n";
+    if (MFI.isSpillSlotObjectIndex(FI)) {
+      CommentOS << MMO->getSize() << "-byte Folded Reload";
+      Commented = true;
+    }
   } else if (TII->isStoreToStackSlotPostFE(MI, FI)) {
     if (MFI.isSpillSlotObjectIndex(FI)) {
       MMO = *MI.memoperands_begin();
-      CommentOS << MMO->getSize() << "-byte Spill\n";
+      CommentOS << MMO->getSize() << "-byte Spill";
+      Commented = true;
     }
   } else if (TII->hasStoreToStackSlot(MI, MMO, FI)) {
-    if (MFI.isSpillSlotObjectIndex(FI))
-      CommentOS << MMO->getSize() << "-byte Folded Spill\n";
+    if (MFI.isSpillSlotObjectIndex(FI)) {
+      CommentOS << MMO->getSize() << "-byte Folded Spill";
+      Commented = true;
+    }
   }
 
   // Check for spill-induced copies
-  if (MI.getAsmPrinterFlag(MachineInstr::ReloadReuse))
-    CommentOS << " Reload Reuse\n";
+  if (MI.getAsmPrinterFlag(MachineInstr::ReloadReuse)) {
+    Commented = true;
+    CommentOS << " Reload Reuse";
+  }
+
+  if (Commented && AP->EnablePrintSchedInfo)
+    // If any comment was added above and we need sched info comment then
+    // add this new comment just after the above comment w/o "\n" between them.
+    CommentOS << " " << MF->getSubtarget().getSchedInfoStr(MI) << "\n";
+  else if (Commented)
+    CommentOS << "\n";
 }
 
 /// emitImplicitDef - This method emits the specified machine instruction
@@ -812,9 +834,9 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
   OS << " <- ";
 
   // The second operand is only an offset if it's an immediate.
-  bool Deref = MI->getOperand(0).isReg() && MI->getOperand(1).isImm();
-  int64_t Offset = Deref ? MI->getOperand(1).getImm() : 0;
-
+  bool Deref = false;
+  bool MemLoc = MI->getOperand(0).isReg() && MI->getOperand(1).isImm();
+  int64_t Offset = MemLoc ? MI->getOperand(1).getImm() : 0;
   for (unsigned i = 0; i < Expr->getNumElements(); ++i) {
     uint64_t Op = Expr->getElement(i);
     if (Op == dwarf::DW_OP_LLVM_fragment) {
@@ -822,7 +844,7 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
       break;
     } else if (Deref) {
       // We currently don't support extra Offsets or derefs after the first
-      // one. Bail out early instead of emitting an incorrect comment
+      // one. Bail out early instead of emitting an incorrect comment.
       OS << " [complex expression]";
       AP.OutStreamer->emitRawComment(OS.str());
       return true;
@@ -877,12 +899,12 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
       AP.OutStreamer->emitRawComment(OS.str());
       return true;
     }
-    if (Deref)
+    if (MemLoc || Deref)
       OS << '[';
     OS << PrintReg(Reg, AP.MF->getSubtarget().getRegisterInfo());
   }
 
-  if (Deref)
+  if (MemLoc || Deref)
     OS << '+' << Offset << ']';
 
   // NOTE: Want this comment at start of line, don't emit with AddComment.
@@ -965,7 +987,7 @@ void AsmPrinter::EmitFunctionBody() {
       }
 
       if (isVerbose())
-        emitComments(MI, OutStreamer->GetCommentOS());
+        emitComments(MI, OutStreamer->GetCommentOS(), this);
 
       switch (MI.getOpcode()) {
       case TargetOpcode::CFI_INSTRUCTION:
@@ -1024,15 +1046,18 @@ void AsmPrinter::EmitFunctionBody() {
   // If the function is empty and the object file uses .subsections_via_symbols,
   // then we need to emit *something* to the function body to prevent the
   // labels from collapsing together.  Just emit a noop.
-  if ((MAI->hasSubsectionsViaSymbols() && !HasAnyRealCode)) {
+  // Similarly, don't emit empty functions on Windows either. It can lead to
+  // duplicate entries (two functions with the same RVA) in the Guard CF Table
+  // after linking, causing the kernel not to load the binary:
+  // https://developercommunity.visualstudio.com/content/problem/45366/vc-linker-creates-invalid-dll-with-clang-cl.html
+  // FIXME: Hide this behind some API in e.g. MCAsmInfo or MCTargetStreamer.
+  const Triple &TT = TM.getTargetTriple();
+  if (!HasAnyRealCode && (MAI->hasSubsectionsViaSymbols() ||
+                          (TT.isOSWindows() && TT.isOSBinFormatCOFF()))) {
     MCInst Noop;
-    MF->getSubtarget().getInstrInfo()->getNoopForMachoTarget(Noop);
+    MF->getSubtarget().getInstrInfo()->getNoop(Noop);
     OutStreamer->AddComment("avoids zero-length function");
-
-    // Targets can opt-out of emitting the noop here by leaving the opcode
-    // unspecified.
-    if (Noop.getOpcode())
-      OutStreamer->EmitInstruction(Noop, getSubtargetInfo());
+    OutStreamer->EmitInstruction(Noop, getSubtargetInfo());
   }
 
   const Function *F = MF->getFunction();
@@ -1334,7 +1359,7 @@ bool AsmPrinter::doFinalization(Module &M) {
         OutContext.getOrCreateSymbol(StringRef("__morestack_addr"));
     OutStreamer->EmitLabel(AddrSymbol);
 
-    unsigned PtrSize = M.getDataLayout().getPointerSize(0);
+    unsigned PtrSize = MAI->getCodePointerSize();
     OutStreamer->EmitSymbolValue(GetExternalSymbolSymbol("__morestack"),
                                  PtrSize);
   }
@@ -1382,6 +1407,11 @@ void AsmPrinter::SetupMachineFunction(MachineFunction &MF) {
   ORE = &getAnalysis<MachineOptimizationRemarkEmitterPass>().getORE();
   if (isVerbose())
     LI = &getAnalysis<MachineLoopInfo>();
+
+  const TargetSubtargetInfo &STI = MF.getSubtarget();
+  EnablePrintSchedInfo = PrintSchedule.getNumOccurrences()
+                             ? PrintSchedule
+                             : STI.supportPrintSchedInfo();
 }
 
 namespace {
@@ -2219,7 +2249,7 @@ static void emitGlobalConstantLargeInt(const ConstantInt *CI, AsmPrinter &AP) {
       //       chu[nk1 chu][nk2 chu] ... [nkN-1 chunkN]
       ExtraBits = Realigned.getRawData()[0] &
         (((uint64_t)-1) >> (64 - ExtraBitsSize));
-      Realigned = Realigned.lshr(ExtraBitsSize);
+      Realigned.lshrInPlace(ExtraBitsSize);
     } else
       ExtraBits = Realigned.getRawData()[BitWidth / 64];
   }
@@ -2754,7 +2784,7 @@ void AsmPrinter::emitXRayTable() {
   // before the function's end, we assume that this is happening after
   // the last return instruction.
 
-  auto WordSizeBytes = TM.getPointerSize();
+  auto WordSizeBytes = MAI->getCodePointerSize();
   MCSymbol *Tmp = OutContext.createTempSymbol("xray_synthetic_", true);
   OutStreamer->EmitCodeAlignment(16);
   OutStreamer->EmitSymbolValue(Tmp, WordSizeBytes, false);

@@ -839,7 +839,8 @@ static Value *simplifyX86extrq(IntrinsicInst &II, Value *Op0,
     // Length bits.
     if (CI0) {
       APInt Elt = CI0->getValue();
-      Elt = Elt.lshr(Index).zextOrTrunc(Length);
+      Elt.lshrInPlace(Index);
+      Elt = Elt.zextOrTrunc(Length);
       return LowConstantHighUndef(Elt.getZExtValue());
     }
 
@@ -1036,7 +1037,7 @@ static Value *simplifyX86vpermilvar(const IntrinsicInst &II,
     // The PD variants uses bit 1 to select per-lane element index, so
     // shift down to convert to generic shuffle mask index.
     if (IsPD)
-      Index = Index.lshr(1);
+      Index.lshrInPlace(1);
 
     // The _256 variants are a bit trickier since the mask bits always index
     // into the corresponding 128 half. In order to convert to a generic
@@ -2091,6 +2092,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   case Intrinsic::floor:
   case Intrinsic::round:
   case Intrinsic::nearbyint:
+  case Intrinsic::rint:
   case Intrinsic::trunc: {
     Value *ExtSrc;
     if (match(II->getArgOperand(0), m_FPExt(m_Value(ExtSrc))) &&
@@ -2334,6 +2336,37 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     }
     if (MadeChange)
       return II;
+    break;
+  }
+  case Intrinsic::x86_avx512_mask_cmp_pd_128:
+  case Intrinsic::x86_avx512_mask_cmp_pd_256:
+  case Intrinsic::x86_avx512_mask_cmp_pd_512:
+  case Intrinsic::x86_avx512_mask_cmp_ps_128:
+  case Intrinsic::x86_avx512_mask_cmp_ps_256:
+  case Intrinsic::x86_avx512_mask_cmp_ps_512: {
+    // Folding cmp(sub(a,b),0) -> cmp(a,b) and cmp(0,sub(a,b)) -> cmp(b,a)
+    Value *Arg0 = II->getArgOperand(0);
+    Value *Arg1 = II->getArgOperand(1);
+    bool Arg0IsZero = match(Arg0, m_Zero());
+    if (Arg0IsZero)
+      std::swap(Arg0, Arg1);
+    Value *A, *B;
+    // This fold requires only the NINF(not +/- inf) since inf minus
+    // inf is nan.
+    // NSZ(No Signed Zeros) is not needed because zeros of any sign are
+    // equal for both compares.
+    // NNAN is not needed because nans compare the same for both compares.
+    // The compare intrinsic uses the above assumptions and therefore
+    // doesn't require additional flags.
+    if ((match(Arg0, m_OneUse(m_FSub(m_Value(A), m_Value(B)))) &&
+         match(Arg1, m_Zero()) &&
+         cast<Instruction>(Arg0)->getFastMathFlags().noInfs())) {
+      if (Arg0IsZero)
+        std::swap(A, B);
+      II->setArgOperand(0, A);
+      II->setArgOperand(1, B);
+      return II;
+    }
     break;
   }
 
@@ -3065,9 +3098,14 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
 
     break;
   }
-
   case Intrinsic::amdgcn_rcp: {
-    if (const ConstantFP *C = dyn_cast<ConstantFP>(II->getArgOperand(0))) {
+    Value *Src = II->getArgOperand(0);
+
+    // TODO: Move to ConstantFolding/InstSimplify?
+    if (isa<UndefValue>(Src))
+      return replaceInstUsesWith(CI, Src);
+
+    if (const ConstantFP *C = dyn_cast<ConstantFP>(Src)) {
       const APFloat &ArgVal = C->getValueAPF();
       APFloat Val(ArgVal.getSemantics(), 1.0);
       APFloat::opStatus Status = Val.divide(ArgVal,
@@ -3078,6 +3116,14 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
         return replaceInstUsesWith(CI, ConstantFP::get(II->getContext(), Val));
     }
 
+    break;
+  }
+  case Intrinsic::amdgcn_rsq: {
+    Value *Src = II->getArgOperand(0);
+
+    // TODO: Move to ConstantFolding/InstSimplify?
+    if (isa<UndefValue>(Src))
+      return replaceInstUsesWith(CI, Src);
     break;
   }
   case Intrinsic::amdgcn_frexp_mant:
@@ -3592,7 +3638,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
 
       // isKnownNonNull -> nonnull attribute
       if (isKnownNonNullAt(DerivedPtr, II, &DT))
-        II->addAttribute(AttributeSet::ReturnIndex, Attribute::NonNull);
+        II->addAttribute(AttributeList::ReturnIndex, Attribute::NonNull);
     }
 
     // TODO: bitcast(relocate(p)) -> relocate(bitcast(p))
@@ -3610,7 +3656,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
               m_Intrinsic<Intrinsic::experimental_guard>(m_Value(NextCond)))) {
       Value *CurrCond = II->getArgOperand(0);
 
-      // Remove a guard that it is immediately preceeded by an identical guard.
+      // Remove a guard that it is immediately preceded by an identical guard.
       if (CurrCond == NextCond)
         return eraseInstFromFunction(*NextInst);
 
@@ -3779,7 +3825,7 @@ Instruction *InstCombiner::visitCallSite(CallSite CS) {
 
   for (Value *V : CS.args()) {
     if (V->getType()->isPointerTy() &&
-        !CS.paramHasAttr(ArgNo + 1, Attribute::NonNull) &&
+        !CS.paramHasAttr(ArgNo, Attribute::NonNull) &&
         isKnownNonNullAt(V, CS.getInstruction(), &DT))
       Indices.push_back(ArgNo + 1);
     ArgNo++;
@@ -3788,7 +3834,7 @@ Instruction *InstCombiner::visitCallSite(CallSite CS) {
   assert(ArgNo == CS.arg_size() && "sanity check");
 
   if (!Indices.empty()) {
-    AttributeSet AS = CS.getAttributes();
+    AttributeList AS = CS.getAttributes();
     LLVMContext &Ctx = CS.getInstruction()->getContext();
     AS = AS.addAttribute(Ctx, Indices,
                          Attribute::get(Ctx, Attribute::NonNull));
@@ -3910,7 +3956,7 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
     return false;
 
   Instruction *Caller = CS.getInstruction();
-  const AttributeSet &CallerPAL = CS.getAttributes();
+  const AttributeList &CallerPAL = CS.getAttributes();
 
   // Okay, this is a cast from a function to a different type.  Unless doing so
   // would cause a type conversion of one of our arguments, change this call to
@@ -3937,7 +3983,7 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
     }
 
     if (!CallerPAL.isEmpty() && !Caller->use_empty()) {
-      AttrBuilder RAttrs(CallerPAL, AttributeSet::ReturnIndex);
+      AttrBuilder RAttrs(CallerPAL, AttributeList::ReturnIndex);
       if (RAttrs.overlaps(AttributeFuncs::typeIncompatible(NewRetTy)))
         return false;   // Attribute not compatible with transformed value.
     }
@@ -3978,8 +4024,8 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
     if (!CastInst::isBitOrNoopPointerCastable(ActTy, ParamTy, DL))
       return false;   // Cannot transform this parameter value.
 
-    if (AttrBuilder(CallerPAL.getParamAttributes(i + 1), i + 1).
-          overlaps(AttributeFuncs::typeIncompatible(ParamTy)))
+    if (AttrBuilder(CallerPAL.getParamAttributes(i))
+            .overlaps(AttributeFuncs::typeIncompatible(ParamTy)))
       return false;   // Attribute not compatible with transformed value.
 
     if (CS.isInAllocaArgument(i))
@@ -3987,9 +4033,7 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
 
     // If the parameter is passed as a byval argument, then we have to have a
     // sized type and the sized type has to have the same size as the old type.
-    if (ParamTy != ActTy &&
-        CallerPAL.getParamAttributes(i + 1).hasAttribute(i + 1,
-                                                         Attribute::ByVal)) {
+    if (ParamTy != ActTy && CallerPAL.hasParamAttribute(i, Attribute::ByVal)) {
       PointerType *ParamPTy = dyn_cast<PointerType>(ParamTy);
       if (!ParamPTy || !ParamPTy->getElementType()->isSized())
         return false;
@@ -4024,62 +4068,49 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
   }
 
   if (FT->getNumParams() < NumActualArgs && FT->isVarArg() &&
-      !CallerPAL.isEmpty())
+      !CallerPAL.isEmpty()) {
     // In this case we have more arguments than the new function type, but we
     // won't be dropping them.  Check that these extra arguments have attributes
     // that are compatible with being a vararg call argument.
-    for (unsigned i = CallerPAL.getNumSlots(); i; --i) {
-      unsigned Index = CallerPAL.getSlotIndex(i - 1);
-      if (Index <= FT->getNumParams())
-        break;
-
-      // Check if it has an attribute that's incompatible with varargs.
-      AttributeSet PAttrs = CallerPAL.getSlotAttributes(i - 1);
-      if (PAttrs.hasAttribute(Index, Attribute::StructRet))
-        return false;
-    }
-
+    unsigned SRetIdx;
+    if (CallerPAL.hasAttrSomewhere(Attribute::StructRet, &SRetIdx) &&
+        SRetIdx > FT->getNumParams())
+      return false;
+  }
 
   // Okay, we decided that this is a safe thing to do: go ahead and start
   // inserting cast instructions as necessary.
-  std::vector<Value*> Args;
+  SmallVector<Value *, 8> Args;
+  SmallVector<AttributeSet, 8> ArgAttrs;
   Args.reserve(NumActualArgs);
-  SmallVector<AttributeSet, 8> attrVec;
-  attrVec.reserve(NumCommonArgs);
+  ArgAttrs.reserve(NumActualArgs);
 
   // Get any return attributes.
-  AttrBuilder RAttrs(CallerPAL, AttributeSet::ReturnIndex);
+  AttrBuilder RAttrs(CallerPAL, AttributeList::ReturnIndex);
 
   // If the return value is not being used, the type may not be compatible
   // with the existing attributes.  Wipe out any problematic attributes.
   RAttrs.remove(AttributeFuncs::typeIncompatible(NewRetTy));
 
-  // Add the new return attributes.
-  if (RAttrs.hasAttributes())
-    attrVec.push_back(AttributeSet::get(Caller->getContext(),
-                                        AttributeSet::ReturnIndex, RAttrs));
-
   AI = CS.arg_begin();
   for (unsigned i = 0; i != NumCommonArgs; ++i, ++AI) {
     Type *ParamTy = FT->getParamType(i);
 
-    if ((*AI)->getType() == ParamTy) {
-      Args.push_back(*AI);
-    } else {
-      Args.push_back(Builder->CreateBitOrPointerCast(*AI, ParamTy));
-    }
+    Value *NewArg = *AI;
+    if ((*AI)->getType() != ParamTy)
+      NewArg = Builder->CreateBitOrPointerCast(*AI, ParamTy);
+    Args.push_back(NewArg);
 
     // Add any parameter attributes.
-    AttrBuilder PAttrs(CallerPAL.getParamAttributes(i + 1), i + 1);
-    if (PAttrs.hasAttributes())
-      attrVec.push_back(AttributeSet::get(Caller->getContext(), i + 1,
-                                          PAttrs));
+    ArgAttrs.push_back(CallerPAL.getParamAttributes(i));
   }
 
   // If the function takes more arguments than the call was taking, add them
   // now.
-  for (unsigned i = NumCommonArgs; i != FT->getNumParams(); ++i)
+  for (unsigned i = NumCommonArgs; i != FT->getNumParams(); ++i) {
     Args.push_back(Constant::getNullValue(FT->getParamType(i)));
+    ArgAttrs.push_back(AttributeSet());
+  }
 
   // If we are removing arguments to the function, emit an obnoxious warning.
   if (FT->getNumParams() < NumActualArgs) {
@@ -4088,54 +4119,56 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
       // Add all of the arguments in their promoted form to the arg list.
       for (unsigned i = FT->getNumParams(); i != NumActualArgs; ++i, ++AI) {
         Type *PTy = getPromotedType((*AI)->getType());
+        Value *NewArg = *AI;
         if (PTy != (*AI)->getType()) {
           // Must promote to pass through va_arg area!
           Instruction::CastOps opcode =
             CastInst::getCastOpcode(*AI, false, PTy, false);
-          Args.push_back(Builder->CreateCast(opcode, *AI, PTy));
-        } else {
-          Args.push_back(*AI);
+          NewArg = Builder->CreateCast(opcode, *AI, PTy);
         }
+        Args.push_back(NewArg);
 
         // Add any parameter attributes.
-        AttrBuilder PAttrs(CallerPAL.getParamAttributes(i + 1), i + 1);
-        if (PAttrs.hasAttributes())
-          attrVec.push_back(AttributeSet::get(FT->getContext(), i + 1,
-                                              PAttrs));
+        ArgAttrs.push_back(CallerPAL.getParamAttributes(i));
       }
     }
   }
 
   AttributeSet FnAttrs = CallerPAL.getFnAttributes();
-  if (CallerPAL.hasAttributes(AttributeSet::FunctionIndex))
-    attrVec.push_back(AttributeSet::get(Callee->getContext(), FnAttrs));
 
   if (NewRetTy->isVoidTy())
     Caller->setName("");   // Void type should not have a name.
 
-  const AttributeSet &NewCallerPAL = AttributeSet::get(Callee->getContext(),
-                                                       attrVec);
+  assert((ArgAttrs.size() == FT->getNumParams() || FT->isVarArg()) &&
+         "missing argument attributes");
+  LLVMContext &Ctx = Callee->getContext();
+  AttributeList NewCallerPAL = AttributeList::get(
+      Ctx, FnAttrs, AttributeSet::get(Ctx, RAttrs), ArgAttrs);
 
   SmallVector<OperandBundleDef, 1> OpBundles;
   CS.getOperandBundlesAsDefs(OpBundles);
 
-  Instruction *NC;
+  CallSite NewCS;
   if (InvokeInst *II = dyn_cast<InvokeInst>(Caller)) {
-    NC = Builder->CreateInvoke(Callee, II->getNormalDest(), II->getUnwindDest(),
-                               Args, OpBundles);
-    NC->takeName(II);
-    cast<InvokeInst>(NC)->setCallingConv(II->getCallingConv());
-    cast<InvokeInst>(NC)->setAttributes(NewCallerPAL);
+    NewCS = Builder->CreateInvoke(Callee, II->getNormalDest(),
+                                  II->getUnwindDest(), Args, OpBundles);
   } else {
-    CallInst *CI = cast<CallInst>(Caller);
-    NC = Builder->CreateCall(Callee, Args, OpBundles);
-    NC->takeName(CI);
-    cast<CallInst>(NC)->setTailCallKind(CI->getTailCallKind());
-    cast<CallInst>(NC)->setCallingConv(CI->getCallingConv());
-    cast<CallInst>(NC)->setAttributes(NewCallerPAL);
+    NewCS = Builder->CreateCall(Callee, Args, OpBundles);
+    cast<CallInst>(NewCS.getInstruction())
+        ->setTailCallKind(cast<CallInst>(Caller)->getTailCallKind());
   }
+  NewCS->takeName(Caller);
+  NewCS.setCallingConv(CS.getCallingConv());
+  NewCS.setAttributes(NewCallerPAL);
+
+  // Preserve the weight metadata for the new call instruction. The metadata
+  // is used by SamplePGO to check callsite's hotness.
+  uint64_t W;
+  if (Caller->extractProfTotalWeight(W))
+    NewCS->setProfWeight(W);
 
   // Insert a cast of the return type as necessary.
+  Instruction *NC = NewCS.getInstruction();
   Value *NV = NC;
   if (OldRetTy != NV->getType() && !Caller->use_empty()) {
     if (!NV->getType()->isVoidTy()) {
@@ -4180,7 +4213,7 @@ InstCombiner::transformCallThroughTrampoline(CallSite CS,
   Value *Callee = CS.getCalledValue();
   PointerType *PTy = cast<PointerType>(Callee->getType());
   FunctionType *FTy = cast<FunctionType>(PTy->getElementType());
-  const AttributeSet &Attrs = CS.getAttributes();
+  AttributeList Attrs = CS.getAttributes();
 
   // If the call already has the 'nest' attribute somewhere then give up -
   // otherwise 'nest' would occur twice after splicing in the chain.
@@ -4193,50 +4226,46 @@ InstCombiner::transformCallThroughTrampoline(CallSite CS,
   Function *NestF =cast<Function>(Tramp->getArgOperand(1)->stripPointerCasts());
   FunctionType *NestFTy = cast<FunctionType>(NestF->getValueType());
 
-  const AttributeSet &NestAttrs = NestF->getAttributes();
+  AttributeList NestAttrs = NestF->getAttributes();
   if (!NestAttrs.isEmpty()) {
-    unsigned NestIdx = 1;
+    unsigned NestArgNo = 0;
     Type *NestTy = nullptr;
     AttributeSet NestAttr;
 
     // Look for a parameter marked with the 'nest' attribute.
     for (FunctionType::param_iterator I = NestFTy->param_begin(),
-         E = NestFTy->param_end(); I != E; ++NestIdx, ++I)
-      if (NestAttrs.hasAttribute(NestIdx, Attribute::Nest)) {
+                                      E = NestFTy->param_end();
+         I != E; ++NestArgNo, ++I) {
+      AttributeSet AS = NestAttrs.getParamAttributes(NestArgNo);
+      if (AS.hasAttribute(Attribute::Nest)) {
         // Record the parameter type and any other attributes.
         NestTy = *I;
-        NestAttr = NestAttrs.getParamAttributes(NestIdx);
+        NestAttr = AS;
         break;
       }
+    }
 
     if (NestTy) {
       Instruction *Caller = CS.getInstruction();
       std::vector<Value*> NewArgs;
+      std::vector<AttributeSet> NewArgAttrs;
       NewArgs.reserve(CS.arg_size() + 1);
-
-      SmallVector<AttributeSet, 8> NewAttrs;
-      NewAttrs.reserve(Attrs.getNumSlots() + 1);
+      NewArgAttrs.reserve(CS.arg_size());
 
       // Insert the nest argument into the call argument list, which may
       // mean appending it.  Likewise for attributes.
 
-      // Add any result attributes.
-      if (Attrs.hasAttributes(AttributeSet::ReturnIndex))
-        NewAttrs.push_back(AttributeSet::get(Caller->getContext(),
-                                             Attrs.getRetAttributes()));
-
       {
-        unsigned Idx = 1;
+        unsigned ArgNo = 0;
         CallSite::arg_iterator I = CS.arg_begin(), E = CS.arg_end();
         do {
-          if (Idx == NestIdx) {
+          if (ArgNo == NestArgNo) {
             // Add the chain argument and attributes.
             Value *NestVal = Tramp->getArgOperand(2);
             if (NestVal->getType() != NestTy)
               NestVal = Builder->CreateBitCast(NestVal, NestTy, "nest");
             NewArgs.push_back(NestVal);
-            NewAttrs.push_back(AttributeSet::get(Caller->getContext(),
-                                                 NestAttr));
+            NewArgAttrs.push_back(NestAttr);
           }
 
           if (I == E)
@@ -4244,22 +4273,12 @@ InstCombiner::transformCallThroughTrampoline(CallSite CS,
 
           // Add the original argument and attributes.
           NewArgs.push_back(*I);
-          AttributeSet Attr = Attrs.getParamAttributes(Idx);
-          if (Attr.hasAttributes(Idx)) {
-            AttrBuilder B(Attr, Idx);
-            NewAttrs.push_back(AttributeSet::get(Caller->getContext(),
-                                                 Idx + (Idx >= NestIdx), B));
-          }
+          NewArgAttrs.push_back(Attrs.getParamAttributes(ArgNo));
 
-          ++Idx;
+          ++ArgNo;
           ++I;
         } while (true);
       }
-
-      // Add any function attributes.
-      if (Attrs.hasAttributes(AttributeSet::FunctionIndex))
-        NewAttrs.push_back(AttributeSet::get(FTy->getContext(),
-                                             Attrs.getFnAttributes()));
 
       // The trampoline may have been bitcast to a bogus type (FTy).
       // Handle this by synthesizing a new function type, equal to FTy
@@ -4271,12 +4290,12 @@ InstCombiner::transformCallThroughTrampoline(CallSite CS,
       // Insert the chain's type into the list of parameter types, which may
       // mean appending it.
       {
-        unsigned Idx = 1;
+        unsigned ArgNo = 0;
         FunctionType::param_iterator I = FTy->param_begin(),
           E = FTy->param_end();
 
         do {
-          if (Idx == NestIdx)
+          if (ArgNo == NestArgNo)
             // Add the chain's type.
             NewTypes.push_back(NestTy);
 
@@ -4286,7 +4305,7 @@ InstCombiner::transformCallThroughTrampoline(CallSite CS,
           // Add the original type.
           NewTypes.push_back(*I);
 
-          ++Idx;
+          ++ArgNo;
           ++I;
         } while (true);
       }
@@ -4299,8 +4318,9 @@ InstCombiner::transformCallThroughTrampoline(CallSite CS,
         NestF->getType() == PointerType::getUnqual(NewFTy) ?
         NestF : ConstantExpr::getBitCast(NestF,
                                          PointerType::getUnqual(NewFTy));
-      const AttributeSet &NewPAL =
-          AttributeSet::get(FTy->getContext(), NewAttrs);
+      AttributeList NewPAL =
+          AttributeList::get(FTy->getContext(), Attrs.getFnAttributes(),
+                             Attrs.getRetAttributes(), NewArgAttrs);
 
       SmallVector<OperandBundleDef, 1> OpBundles;
       CS.getOperandBundlesAsDefs(OpBundles);

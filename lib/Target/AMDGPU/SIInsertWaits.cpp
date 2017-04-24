@@ -648,7 +648,7 @@ bool SIInsertWaits::runOnMachineFunction(MachineFunction &MF) {
       handleSendMsg(MBB, I);
 
       if (I->getOpcode() == AMDGPU::S_ENDPGM ||
-          I->getOpcode() == AMDGPU::SI_RETURN)
+          I->getOpcode() == AMDGPU::SI_RETURN_TO_EPILOG)
         EndPgmBlocks.push_back(&MBB);
     }
 
@@ -679,7 +679,7 @@ bool SIInsertWaits::runOnMachineFunction(MachineFunction &MF) {
 
         // FIXME: It would be better to insert this before a waitcnt if any.
         if ((I->getOpcode() == AMDGPU::S_ENDPGM ||
-             I->getOpcode() == AMDGPU::SI_RETURN) && !SeenDCacheWB) {
+             I->getOpcode() == AMDGPU::SI_RETURN_TO_EPILOG) && !SeenDCacheWB) {
           Changes = true;
           BuildMI(*MBB, I, I->getDebugLoc(), TII->get(AMDGPU::S_DCACHE_WB));
         }
@@ -689,6 +689,20 @@ bool SIInsertWaits::runOnMachineFunction(MachineFunction &MF) {
 
   for (MachineInstr *I : RemoveMI)
     I->eraseFromParent();
+
+  if (!MFI->isEntryFunction()) {
+    // Wait for any outstanding memory operations that the input registers may
+    // depend on. We can't track them and it's better to to the wait after the
+    // costly call sequence.
+
+    // TODO: Could insert earlier and schedule more liberally with operations
+    // that only use caller preserved registers.
+    MachineBasicBlock &EntryBB = MF.front();
+    BuildMI(EntryBB, EntryBB.getFirstNonPHI(), DebugLoc(), TII->get(AMDGPU::S_WAITCNT))
+      .addImm(0);
+
+    Changes = true;
+  }
 
   return Changes;
 }

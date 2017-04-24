@@ -73,24 +73,26 @@ bool CodeExtractor::isBlockValidForExtraction(const BasicBlock &BB) {
 }
 
 /// \brief Build a set of blocks to extract if the input blocks are viable.
-template <typename IteratorT>
-static SetVector<BasicBlock *> buildExtractionBlockSet(IteratorT BBBegin,
-                                                       IteratorT BBEnd) {
+static SetVector<BasicBlock *>
+buildExtractionBlockSet(ArrayRef<BasicBlock *> BBs, DominatorTree *DT) {
+  assert(!BBs.empty() && "The set of blocks to extract must be non-empty");
   SetVector<BasicBlock *> Result;
-
-  assert(BBBegin != BBEnd);
 
   // Loop over the blocks, adding them to our set-vector, and aborting with an
   // empty set if we encounter invalid blocks.
-  do {
-    if (!Result.insert(*BBBegin))
-      llvm_unreachable("Repeated basic blocks in extraction input");
+  for (BasicBlock *BB : BBs) {
 
-    if (!CodeExtractor::isBlockValidForExtraction(**BBBegin)) {
+    // If this block is dead, don't process it.
+    if (DT && !DT->isReachableFromEntry(BB))
+      continue;
+
+    if (!Result.insert(BB))
+      llvm_unreachable("Repeated basic blocks in extraction input");
+    if (!CodeExtractor::isBlockValidForExtraction(*BB)) {
       Result.clear();
       return Result;
     }
-  } while (++BBBegin != BBEnd);
+  }
 
 #ifndef NDEBUG
   for (SetVector<BasicBlock *>::iterator I = std::next(Result.begin()),
@@ -106,48 +108,18 @@ static SetVector<BasicBlock *> buildExtractionBlockSet(IteratorT BBBegin,
   return Result;
 }
 
-/// \brief Helper to call buildExtractionBlockSet with an ArrayRef.
-static SetVector<BasicBlock *>
-buildExtractionBlockSet(ArrayRef<BasicBlock *> BBs) {
-  return buildExtractionBlockSet(BBs.begin(), BBs.end());
-}
-
-/// \brief Helper to call buildExtractionBlockSet with a RegionNode.
-static SetVector<BasicBlock *>
-buildExtractionBlockSet(const RegionNode &RN) {
-  if (!RN.isSubRegion())
-    // Just a single BasicBlock.
-    return buildExtractionBlockSet(RN.getNodeAs<BasicBlock>());
-
-  const Region &R = *RN.getNodeAs<Region>();
-
-  return buildExtractionBlockSet(R.block_begin(), R.block_end());
-}
-
-CodeExtractor::CodeExtractor(BasicBlock *BB, bool AggregateArgs,
-                             BlockFrequencyInfo *BFI,
-                             BranchProbabilityInfo *BPI)
-    : DT(nullptr), AggregateArgs(AggregateArgs || AggregateArgsOpt), BFI(BFI),
-      BPI(BPI), Blocks(buildExtractionBlockSet(BB)), NumExitBlocks(~0U) {}
-
 CodeExtractor::CodeExtractor(ArrayRef<BasicBlock *> BBs, DominatorTree *DT,
                              bool AggregateArgs, BlockFrequencyInfo *BFI,
                              BranchProbabilityInfo *BPI)
     : DT(DT), AggregateArgs(AggregateArgs || AggregateArgsOpt), BFI(BFI),
-      BPI(BPI), Blocks(buildExtractionBlockSet(BBs)), NumExitBlocks(~0U) {}
+      BPI(BPI), Blocks(buildExtractionBlockSet(BBs, DT)), NumExitBlocks(~0U) {}
 
 CodeExtractor::CodeExtractor(DominatorTree &DT, Loop &L, bool AggregateArgs,
                              BlockFrequencyInfo *BFI,
                              BranchProbabilityInfo *BPI)
     : DT(&DT), AggregateArgs(AggregateArgs || AggregateArgsOpt), BFI(BFI),
-      BPI(BPI), Blocks(buildExtractionBlockSet(L.getBlocks())),
+      BPI(BPI), Blocks(buildExtractionBlockSet(L.getBlocks(), &DT)),
       NumExitBlocks(~0U) {}
-
-CodeExtractor::CodeExtractor(DominatorTree &DT, const RegionNode &RN,
-                             bool AggregateArgs, BlockFrequencyInfo *BFI,
-                             BranchProbabilityInfo *BPI)
-    : DT(&DT), AggregateArgs(AggregateArgs || AggregateArgsOpt), BFI(BFI),
-      BPI(BPI), Blocks(buildExtractionBlockSet(RN)), NumExitBlocks(~0U) {}
 
 /// definedInRegion - Return true if the specified value is defined in the
 /// extracted region.
@@ -218,9 +190,7 @@ void CodeExtractor::severSplitPHINodes(BasicBlock *&Header) {
   // containing PHI nodes merging values from outside of the region, and a
   // second that contains all of the code for the block and merges back any
   // incoming values from inside of the region.
-  BasicBlock::iterator AfterPHIs = Header->getFirstNonPHI()->getIterator();
-  BasicBlock *NewBB = Header->splitBasicBlock(AfterPHIs,
-                                              Header->getName()+".ce");
+  BasicBlock *NewBB = llvm::SplitBlock(Header, Header->getFirstNonPHI(), DT);
 
   // We only want to code extract the second block now, and it becomes the new
   // header of the region.
@@ -228,11 +198,6 @@ void CodeExtractor::severSplitPHINodes(BasicBlock *&Header) {
   Blocks.remove(OldPred);
   Blocks.insert(NewBB);
   Header = NewBB;
-
-  // Okay, update dominator sets. The blocks that dominate the new one are the
-  // blocks that dominate TIBB plus the new block itself.
-  if (DT)
-    DT->splitBlock(NewBB);
 
   // Okay, now we need to adjust the PHI nodes and any branches from within the
   // region to go to the new header block instead of the old header block.
@@ -248,6 +213,7 @@ void CodeExtractor::severSplitPHINodes(BasicBlock *&Header) {
 
     // Okay, everything within the region is now branching to the right block, we
     // just have to update the PHI nodes now, inserting PHI nodes into NewBB.
+    BasicBlock::iterator AfterPHIs;
     for (AfterPHIs = OldPred->begin(); isa<PHINode>(AfterPHIs); ++AfterPHIs) {
       PHINode *PN = cast<PHINode>(AfterPHIs);
       // Create a new PHI node in the new region, which has an incoming value
@@ -362,8 +328,7 @@ Function *CodeExtractor::constructFunction(const ValueSet &inputs,
   //  "target-features" attribute allowing it to be lowered.
   // FIXME: This should be changed to check to see if a specific
   //           attribute can not be inherited.
-  AttributeSet OldFnAttrs = oldFunction->getAttributes().getFnAttributes();
-  AttrBuilder AB(OldFnAttrs, AttributeSet::FunctionIndex);
+  AttrBuilder AB(oldFunction->getAttributes().getFnAttributes());
   for (const auto &Attr : AB.td_attrs())
     newFunction->addFnAttr(Attr.first, Attr.second);
 
@@ -440,8 +405,10 @@ emitCallAndSwitchStatement(Function *newFunction, BasicBlock *codeReplacer,
   // Emit a call to the new function, passing in: *pointer to struct (if
   // aggregating parameters), or plan inputs and allocated memory for outputs
   std::vector<Value*> params, StructValues, ReloadOutputs, Reloads;
-  
-  LLVMContext &Context = newFunction->getContext();
+
+  Module *M = newFunction->getParent();
+  LLVMContext &Context = M->getContext();
+  const DataLayout &DL = M->getDataLayout();
 
   // Add inputs as params, or to be filled into the struct
   for (Value *input : inputs)
@@ -456,8 +423,9 @@ emitCallAndSwitchStatement(Function *newFunction, BasicBlock *codeReplacer,
       StructValues.push_back(output);
     } else {
       AllocaInst *alloca =
-          new AllocaInst(output->getType(), nullptr, output->getName() + ".loc",
-                         &codeReplacer->getParent()->front().front());
+        new AllocaInst(output->getType(), DL.getAllocaAddrSpace(),
+                       nullptr, output->getName() + ".loc",
+                       &codeReplacer->getParent()->front().front());
       ReloadOutputs.push_back(alloca);
       params.push_back(alloca);
     }
@@ -473,7 +441,8 @@ emitCallAndSwitchStatement(Function *newFunction, BasicBlock *codeReplacer,
 
     // Allocate a struct at the beginning of this function
     StructArgTy = StructType::get(newFunction->getContext(), ArgTypes);
-    Struct = new AllocaInst(StructArgTy, nullptr, "structArg",
+    Struct = new AllocaInst(StructArgTy, DL.getAllocaAddrSpace(), nullptr,
+                            "structArg",
                             &codeReplacer->getParent()->front().front());
     params.push_back(Struct);
 

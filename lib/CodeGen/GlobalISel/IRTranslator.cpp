@@ -223,10 +223,13 @@ bool IRTranslator::translateBr(const User &U, MachineIRBuilder &MIRBuilder) {
 
   const BasicBlock &BrTgt = *cast<BasicBlock>(BrInst.getSuccessor(Succ));
   MachineBasicBlock &TgtBB = getMBB(BrTgt);
-  MIRBuilder.buildBr(TgtBB);
+  MachineBasicBlock &CurBB = MIRBuilder.getMBB();
+
+  // If the unconditional target is the layout successor, fallthrough.
+  if (!CurBB.isLayoutSuccessor(&TgtBB))
+    MIRBuilder.buildBr(TgtBB);
 
   // Link successors.
-  MachineBasicBlock &CurBB = MIRBuilder.getMBB();
   for (const BasicBlock *Succ : BrInst.successors())
     CurBB.addSuccessor(&getMBB(*Succ));
   return true;
@@ -378,18 +381,19 @@ bool IRTranslator::translateInsertValue(const User &U,
   uint64_t Offset = 8 * DL->getIndexedOffsetInType(Src->getType(), Indices);
 
   unsigned Res = getOrCreateVReg(U);
-  const Value &Inserted = *U.getOperand(1);
-  MIRBuilder.buildInsert(Res, getOrCreateVReg(*Src), getOrCreateVReg(Inserted),
-                         Offset);
+  unsigned Inserted = getOrCreateVReg(*U.getOperand(1));
+  MIRBuilder.buildInsert(Res, getOrCreateVReg(*Src), Inserted, Offset);
 
   return true;
 }
 
 bool IRTranslator::translateSelect(const User &U,
                                    MachineIRBuilder &MIRBuilder) {
-  MIRBuilder.buildSelect(getOrCreateVReg(U), getOrCreateVReg(*U.getOperand(0)),
-                         getOrCreateVReg(*U.getOperand(1)),
-                         getOrCreateVReg(*U.getOperand(2)));
+  unsigned Res = getOrCreateVReg(U);
+  unsigned Tst = getOrCreateVReg(*U.getOperand(0));
+  unsigned Op0 = getOrCreateVReg(*U.getOperand(1));
+  unsigned Op1 = getOrCreateVReg(*U.getOperand(2));
+  MIRBuilder.buildSelect(Res, Tst, Op0, Op1);
   return true;
 }
 
@@ -523,7 +527,8 @@ bool IRTranslator::translateMemfunc(const CallInst &CI,
     return false;
   }
 
-  return CLI->lowerCall(MIRBuilder, MachineOperand::CreateES(Callee),
+  return CLI->lowerCall(MIRBuilder, CI.getCallingConv(),
+                        MachineOperand::CreateES(Callee),
                         CallLowering::ArgInfo(0, CI.getType()), Args);
 }
 
@@ -768,10 +773,7 @@ bool IRTranslator::translateCall(const User &U, MachineIRBuilder &MIRBuilder) {
     // Some intrinsics take metadata parameters. Reject them.
     if (isa<MetadataAsValue>(Arg))
       return false;
-    if (ConstantInt *CI = dyn_cast<ConstantInt>(Arg))
-      MIB.addImm(CI->getSExtValue());
-    else
-      MIB.addUse(getOrCreateVReg(*Arg));
+    MIB.addUse(getOrCreateVReg(*Arg));
   }
   return true;
 }
@@ -983,9 +985,11 @@ bool IRTranslator::translateInsertElement(const User &U,
     ValToVReg[&U] = Elt;
     return true;
   }
-  MIRBuilder.buildInsertVectorElement(
-      getOrCreateVReg(U), getOrCreateVReg(*U.getOperand(0)),
-      getOrCreateVReg(*U.getOperand(1)), getOrCreateVReg(*U.getOperand(2)));
+  unsigned Res = getOrCreateVReg(U);
+  unsigned Val = getOrCreateVReg(*U.getOperand(0));
+  unsigned Elt = getOrCreateVReg(*U.getOperand(1));
+  unsigned Idx = getOrCreateVReg(*U.getOperand(2));
+  MIRBuilder.buildInsertVectorElement(Res, Val, Elt, Idx);
   return true;
 }
 
@@ -998,9 +1002,20 @@ bool IRTranslator::translateExtractElement(const User &U,
     ValToVReg[&U] = Elt;
     return true;
   }
-  MIRBuilder.buildExtractVectorElement(getOrCreateVReg(U),
-                                       getOrCreateVReg(*U.getOperand(0)),
-                                       getOrCreateVReg(*U.getOperand(1)));
+  unsigned Res = getOrCreateVReg(U);
+  unsigned Val = getOrCreateVReg(*U.getOperand(0));
+  unsigned Idx = getOrCreateVReg(*U.getOperand(1));
+  MIRBuilder.buildExtractVectorElement(Res, Val, Idx);
+  return true;
+}
+
+bool IRTranslator::translateShuffleVector(const User &U,
+                                          MachineIRBuilder &MIRBuilder) {
+  MIRBuilder.buildInstr(TargetOpcode::G_SHUFFLE_VECTOR)
+      .addDef(getOrCreateVReg(U))
+      .addUse(getOrCreateVReg(*U.getOperand(0)))
+      .addUse(getOrCreateVReg(*U.getOperand(1)))
+      .addUse(getOrCreateVReg(*U.getOperand(2)));
   return true;
 }
 

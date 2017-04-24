@@ -171,6 +171,15 @@ Error TypeRecordMapping::visitKnownRecord(CVType &CVR,
 
 Error TypeRecordMapping::visitKnownRecord(CVType &CVR, ArgListRecord &Record) {
   error(IO.mapVectorN<uint32_t>(
+      Record.ArgIndices,
+      [](CodeViewRecordIO &IO, TypeIndex &N) { return IO.mapInteger(N); }));
+
+  return Error::success();
+}
+
+Error TypeRecordMapping::visitKnownRecord(CVType &CVR,
+                                          StringListRecord &Record) {
+  error(IO.mapVectorN<uint32_t>(
       Record.StringIndices,
       [](CodeViewRecordIO &IO, TypeIndex &N) { return IO.mapInteger(N); }));
 
@@ -368,6 +377,11 @@ Error TypeRecordMapping::visitKnownRecord(CVType &CVR,
   error(IO.mapGuid(Record.Guid));
   error(IO.mapInteger(Record.Age));
   error(IO.mapStringZ(Record.Name));
+  return Error::success();
+}
+
+Error TypeRecordMapping::visitKnownRecord(CVType &CVR, LabelRecord &Record) {
+  error(IO.mapEnum(Record.Mode));
   return Error::success();
 }
 

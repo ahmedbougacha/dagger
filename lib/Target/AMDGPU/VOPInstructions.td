@@ -107,8 +107,12 @@ class VOP3_Pseudo <string opName, VOPProfile P, list<dag> pattern = [],
   let AsmVariantName = AMDGPUAsmVariants.VOP3;
   let AsmMatchConverter =
     !if(!eq(VOP3Only,1),
-      !if(!and(P.IsPacked, isVOP3P), "cvtVOP3P", "cvtVOP3"),
-        !if(!eq(P.HasModifiers, 1), "cvtVOP3_2_mod", ""));
+        !if(!and(P.IsPacked, isVOP3P), "cvtVOP3P", "cvtVOP3"),
+        !if(!eq(P.HasModifiers, 1),
+            "cvtVOP3_2_mod",
+            !if(!eq(P.HasOMod, 1), "cvtVOP3OMod", "")
+        )
+    );
 
   VOPProfile Pfl = P;
 }
@@ -318,7 +322,7 @@ class VOP_SDWA_Pseudo <string opName, VOPProfile P, list<dag> pattern=[]> :
   let SDWA = 1;
   let Uses = [EXEC];
 
-  let SubtargetPredicate = HasSDWA;
+  let SubtargetPredicate = !if(P.HasExt, HasSDWA, DisableInst);
   let AssemblerPredicate = !if(P.HasExt, HasSDWA, DisableInst);
   let AsmVariantName = !if(P.HasExt, AMDGPUAsmVariants.SDWA,
                                      AMDGPUAsmVariants.Disable);

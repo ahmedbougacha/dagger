@@ -266,14 +266,13 @@ static unsigned findScratchNonCalleeSaveRegister(MachineBasicBlock *MBB) {
   if (&MF->front() == MBB)
     return AArch64::X9;
 
-  const TargetRegisterInfo &TRI = *MF->getSubtarget().getRegisterInfo();
-  LivePhysRegs LiveRegs(&TRI);
+  const AArch64Subtarget &Subtarget = MF->getSubtarget<AArch64Subtarget>();
+  const AArch64RegisterInfo *TRI = Subtarget.getRegisterInfo();
+  LivePhysRegs LiveRegs(TRI);
   LiveRegs.addLiveIns(*MBB);
 
   // Mark callee saved registers as used so we will not choose them.
-  const AArch64Subtarget &Subtarget = MF->getSubtarget<AArch64Subtarget>();
-  const AArch64RegisterInfo *RegInfo = Subtarget.getRegisterInfo();
-  const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(MF);
+  const MCPhysReg *CSRegs = TRI->getCalleeSavedRegs(MF);
   for (unsigned i = 0; CSRegs[i]; ++i)
     LiveRegs.addReg(CSRegs[i]);
 
@@ -883,7 +882,7 @@ static unsigned getPrologueDeath(MachineFunction &MF, unsigned Reg) {
 
 static bool produceCompactUnwindFrame(MachineFunction &MF) {
   const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
-  AttributeSet Attrs = MF.getFunction()->getAttributes();
+  AttributeList Attrs = MF.getFunction()->getAttributes();
   return Subtarget.isTargetMachO() &&
          !(Subtarget.getTargetLowering()->supportSwiftError() &&
            Attrs.hasAttrSomewhere(Attribute::SwiftError));
@@ -1126,7 +1125,7 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   if (RegInfo->hasBasePointer(MF))
     BasePointerReg = RegInfo->getBaseRegister();
 
-  bool ExtraCSSpill = false;
+  unsigned ExtraCSSpill = 0;
   const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
   // Figure out which callee-saved registers to save/restore.
   for (unsigned i = 0; CSRegs[i]; ++i) {
@@ -1154,7 +1153,7 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
       SavedRegs.set(PairedReg);
       if (AArch64::GPR64RegClass.contains(PairedReg) &&
           !RegInfo->isReservedReg(MF, PairedReg))
-        ExtraCSSpill = true;
+        ExtraCSSpill = PairedReg;
     }
   }
 
@@ -1187,8 +1186,8 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   // register scavenging. If we already spilled an extra callee-saved register
   // above to keep the number of spills even, we don't need to do anything else
   // here.
-  if (BigStack && !ExtraCSSpill) {
-    if (UnspilledCSGPR != AArch64::NoRegister) {
+  if (BigStack) {
+    if (!ExtraCSSpill && UnspilledCSGPR != AArch64::NoRegister) {
       DEBUG(dbgs() << "Spilling " << PrintReg(UnspilledCSGPR, RegInfo)
             << " to get a scratch register.\n");
       SavedRegs.set(UnspilledCSGPR);
@@ -1197,13 +1196,13 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
       // store the pair.
       if (produceCompactUnwindFrame(MF))
         SavedRegs.set(UnspilledCSGPRPaired);
-      ExtraCSSpill = true;
+      ExtraCSSpill = UnspilledCSGPRPaired;
       NumRegsSpilled = SavedRegs.count();
     }
 
     // If we didn't find an extra callee-saved register to spill, create
     // an emergency spill slot.
-    if (!ExtraCSSpill) {
+    if (!ExtraCSSpill || MF.getRegInfo().isPhysRegUsed(ExtraCSSpill)) {
       const TargetRegisterClass *RC = &AArch64::GPR64RegClass;
       int FI = MFI.CreateStackObject(RC->getSize(), RC->getAlignment(), false);
       RS->addScavengingFrameIndex(FI);

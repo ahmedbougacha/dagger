@@ -230,9 +230,15 @@ bool InferAddressSpaces::rewriteIntrinsicOperands(IntrinsicInst *II,
   Module *M = II->getParent()->getParent()->getParent();
 
   switch (II->getIntrinsicID()) {
-  case Intrinsic::objectsize:
   case Intrinsic::amdgcn_atomic_inc:
-  case Intrinsic::amdgcn_atomic_dec: {
+  case Intrinsic::amdgcn_atomic_dec:{
+    const ConstantInt *IsVolatile = dyn_cast<ConstantInt>(II->getArgOperand(4));
+    if (!IsVolatile || !IsVolatile->isNullValue())
+      return false;
+
+    LLVM_FALLTHROUGH;
+  }
+  case Intrinsic::objectsize: {
     Type *DestTy = II->getType();
     Type *SrcTy = NewV->getType();
     Function *NewDecl =
@@ -291,10 +297,14 @@ InferAddressSpaces::collectFlatAddressExpressions(Function &F) const {
                                                  &Visited);
   };
 
-  // We only explore address expressions that are reachable from loads and
-  // stores for now because we aim at generating faster loads and stores.
+  // Look at operations that may be interesting accelerate by moving to a known
+  // address space. We aim at generating after loads and stores, but pure
+  // addressing calculations may also be faster.
   for (Instruction &I : instructions(F)) {
-    if (auto *LI = dyn_cast<LoadInst>(&I))
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(&I)) {
+      if (!GEP->getType()->isVectorTy())
+        PushPtrOperand(GEP->getPointerOperand());
+    } else if (auto *LI = dyn_cast<LoadInst>(&I))
       PushPtrOperand(LI->getPointerOperand());
     else if (auto *SI = dyn_cast<StoreInst>(&I))
       PushPtrOperand(SI->getPointerOperand());

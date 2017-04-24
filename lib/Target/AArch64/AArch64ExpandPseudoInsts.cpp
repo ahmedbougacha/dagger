@@ -17,6 +17,7 @@
 #include "MCTargetDesc/AArch64AddressingModes.h"
 #include "AArch64InstrInfo.h"
 #include "AArch64Subtarget.h"
+#include "Utils/AArch64BaseInfo.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -889,6 +890,18 @@ bool AArch64ExpandPseudo::expandMI(MachineBasicBlock &MBB,
     MI.eraseFromParent();
     return true;
   }
+  case AArch64::MOVbaseTLS: {
+    unsigned DstReg = MI.getOperand(0).getReg();
+    auto SysReg = AArch64SysReg::TPIDR_EL0;
+    MachineFunction *MF = MBB.getParent();
+    if (MF->getTarget().getTargetTriple().isOSFuchsia() &&
+        MF->getTarget().getCodeModel() == CodeModel::Kernel)
+      SysReg = AArch64SysReg::TPIDR_EL1;
+    BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(AArch64::MRS), DstReg)
+        .addImm(SysReg);
+    MI.eraseFromParent();
+    return true;
+  }
 
   case AArch64::MOVi32imm:
     return expandMOVImm(MBB, MBBI, 32);
@@ -929,6 +942,7 @@ bool AArch64ExpandPseudo::expandMI(MachineBasicBlock &MBB,
                           AArch64::XZR, NextMBBI);
   case AArch64::CMP_SWAP_128:
     return expandCMP_SWAP_128(MBB, MBBI, NextMBBI);
+
   }
   return false;
 }

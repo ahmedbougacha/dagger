@@ -140,9 +140,8 @@ public:
           iterator_category;
   typedef typename std::iterator_traits<RootIt>::difference_type
           difference_type;
-  typedef typename std::result_of<
-            UnaryFunc(decltype(*std::declval<RootIt>()))>
-          ::type value_type;
+  typedef decltype(std::declval<UnaryFunc>()(*std::declval<RootIt>()))
+          value_type;
 
   typedef void pointer;
   //typedef typename UnaryFunc::result_type *pointer;
@@ -893,7 +892,8 @@ auto partition(R &&Range, UnaryPredicate P) -> decltype(std::begin(Range)) {
 /// SmallVector with elements of the vector.  This is useful, for example,
 /// when you want to iterate a range and then sort the results.
 template <unsigned Size, typename R>
-SmallVector<detail::ValueOfRange<R>, Size> to_vector(R &&Range) {
+SmallVector<typename std::remove_const<detail::ValueOfRange<R>>::type, Size>
+to_vector(R &&Range) {
   return {std::begin(Range), std::end(Range)};
 }
 

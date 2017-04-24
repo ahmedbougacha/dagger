@@ -111,6 +111,7 @@ namespace llvm {
   extern char &HexagonExpandCondsetsID;
   void initializeHexagonExpandCondsetsPass(PassRegistry&);
   void initializeHexagonLoopIdiomRecognizePass(PassRegistry&);
+  void initializeHexagonOptAddrModePass(PassRegistry&);
   Pass *createHexagonLoopIdiomPass();
 
   FunctionPass *createHexagonBitSimplify();
@@ -152,6 +153,7 @@ extern "C" void LLVMInitializeHexagonTarget() {
   // Register the target.
   RegisterTargetMachine<HexagonTargetMachine> X(getTheHexagonTarget());
   initializeHexagonLoopIdiomRecognizePass(*PassRegistry::getPassRegistry());
+  initializeHexagonOptAddrModePass(*PassRegistry::getPassRegistry());
 }
 
 HexagonTargetMachine::HexagonTargetMachine(const Target &T, const Triple &TT,
@@ -176,11 +178,11 @@ HexagonTargetMachine::HexagonTargetMachine(const Target &T, const Triple &TT,
 
 const HexagonSubtarget *
 HexagonTargetMachine::getSubtargetImpl(const Function &F) const {
-  AttributeSet FnAttrs = F.getAttributes();
+  AttributeList FnAttrs = F.getAttributes();
   Attribute CPUAttr =
-      FnAttrs.getAttribute(AttributeSet::FunctionIndex, "target-cpu");
+      FnAttrs.getAttribute(AttributeList::FunctionIndex, "target-cpu");
   Attribute FSAttr =
-      FnAttrs.getAttribute(AttributeSet::FunctionIndex, "target-features");
+      FnAttrs.getAttribute(AttributeList::FunctionIndex, "target-features");
 
   std::string CPU = !CPUAttr.hasAttribute(Attribute::None)
                         ? CPUAttr.getValueAsString().str()

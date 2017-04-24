@@ -494,13 +494,13 @@ namespace {
       if (StoreInst *SI = dyn_cast<StoreInst>(I)) {
         // For stores, it is the value type, not the pointer type that matters
         // because the value is what will come from a vector register.
-  
+
         Value *IVal = SI->getValueOperand();
         T1 = IVal->getType();
       } else {
         T1 = I->getType();
       }
-  
+
       if (CastInst *CI = dyn_cast<CastInst>(I))
         T2 = CI->getSrcTy();
       else
@@ -547,10 +547,11 @@ namespace {
     // Returns the cost of the provided instruction using TTI.
     // This does not handle loads and stores.
     unsigned getInstrCost(unsigned Opcode, Type *T1, Type *T2,
-                          TargetTransformInfo::OperandValueKind Op1VK = 
+                          TargetTransformInfo::OperandValueKind Op1VK =
                               TargetTransformInfo::OK_AnyValue,
                           TargetTransformInfo::OperandValueKind Op2VK =
-                              TargetTransformInfo::OK_AnyValue) {
+                              TargetTransformInfo::OK_AnyValue,
+                          const Instruction *I = nullptr) {
       switch (Opcode) {
       default: break;
       case Instruction::GetElementPtr:
@@ -584,7 +585,7 @@ namespace {
       case Instruction::Select:
       case Instruction::ICmp:
       case Instruction::FCmp:
-        return TTI->getCmpSelInstrCost(Opcode, T1, T2);
+        return TTI->getCmpSelInstrCost(Opcode, T1, T2, I);
       case Instruction::ZExt:
       case Instruction::SExt:
       case Instruction::FPToUI:
@@ -598,7 +599,7 @@ namespace {
       case Instruction::FPTrunc:
       case Instruction::BitCast:
       case Instruction::ShuffleVector:
-        return TTI->getCastInstrCost(Opcode, T1, T2);
+        return TTI->getCastInstrCost(Opcode, T1, T2, I);
       }
 
       return 1;
@@ -894,7 +895,7 @@ namespace {
       // vectors that has a scalar condition results in a malformed select.
       // FIXME: We could probably be smarter about this by rewriting the select
       // with different types instead.
-      return (SI->getCondition()->getType()->isVectorTy() == 
+      return (SI->getCondition()->getType()->isVectorTy() ==
               SI->getTrueValue()->getType()->isVectorTy());
     } else if (isa<CmpInst>(I)) {
       if (!Config.VectorizeCmp)
@@ -1044,14 +1045,14 @@ namespace {
         return false;
       }
     } else if (TTI) {
-      unsigned ICost = getInstrCost(I->getOpcode(), IT1, IT2);
-      unsigned JCost = getInstrCost(J->getOpcode(), JT1, JT2);
-      Type *VT1 = getVecTypeForPair(IT1, JT1),
-           *VT2 = getVecTypeForPair(IT2, JT2);
       TargetTransformInfo::OperandValueKind Op1VK =
           TargetTransformInfo::OK_AnyValue;
       TargetTransformInfo::OperandValueKind Op2VK =
           TargetTransformInfo::OK_AnyValue;
+      unsigned ICost = getInstrCost(I->getOpcode(), IT1, IT2, Op1VK, Op2VK, I);
+      unsigned JCost = getInstrCost(J->getOpcode(), JT1, JT2, Op1VK, Op2VK, J);
+      Type *VT1 = getVecTypeForPair(IT1, JT1),
+           *VT2 = getVecTypeForPair(IT2, JT2);
 
       // On some targets (example X86) the cost of a vector shift may vary
       // depending on whether the second operand is a Uniform or
@@ -1090,7 +1091,7 @@ namespace {
       // but this cost is ignored (because insert and extract element
       // instructions are assigned a zero depth factor and are not really
       // fused in general).
-      unsigned VCost = getInstrCost(I->getOpcode(), VT1, VT2, Op1VK, Op2VK);
+      unsigned VCost = getInstrCost(I->getOpcode(), VT1, VT2, Op1VK, Op2VK, I);
 
       if (VCost > ICost + JCost)
         return false;
@@ -2514,7 +2515,7 @@ namespace {
         if (I2 == I1 || isa<UndefValue>(I2))
           I2 = nullptr;
       }
-  
+
       if (HEE) {
         Value *I3 = HEE->getOperand(0);
         if (!I2 && I3 != I1)
@@ -2705,14 +2706,14 @@ namespace {
         // so extend the smaller vector to be the same length as the larger one.
         Instruction *NLOp;
         if (numElemL > 1) {
-  
+
           std::vector<Constant *> Mask(numElemH);
           unsigned v = 0;
           for (; v < numElemL; ++v)
             Mask[v] = ConstantInt::get(Type::getInt32Ty(Context), v);
           for (; v < numElemH; ++v)
             Mask[v] = UndefValue::get(Type::getInt32Ty(Context));
-    
+
           NLOp = new ShuffleVectorInst(LOp, UndefValue::get(ArgTypeL),
                                        ConstantVector::get(Mask),
                                        getReplacementName(IBeforeJ ? I : J,
@@ -2722,7 +2723,7 @@ namespace {
                                            getReplacementName(IBeforeJ ? I : J,
                                                               true, o, 1));
         }
-  
+
         NLOp->insertBefore(IBeforeJ ? J : I);
         LOp = NLOp;
       }
@@ -2732,7 +2733,7 @@ namespace {
       if (numElemH == 1 && expandIEChain(Context, I, J, o, LOp, numElemL,
                                          ArgTypeH, VArgType, IBeforeJ)) {
         Instruction *S =
-          InsertElementInst::Create(LOp, HOp, 
+          InsertElementInst::Create(LOp, HOp,
                                     ConstantInt::get(Type::getInt32Ty(Context),
                                                      numElemL),
                                     getReplacementName(IBeforeJ ? I : J,
@@ -2749,7 +2750,7 @@ namespace {
             Mask[v] = ConstantInt::get(Type::getInt32Ty(Context), v);
           for (; v < numElemL; ++v)
             Mask[v] = UndefValue::get(Type::getInt32Ty(Context));
-    
+
           NHOp = new ShuffleVectorInst(HOp, UndefValue::get(ArgTypeH),
                                        ConstantVector::get(Mask),
                                        getReplacementName(IBeforeJ ? I : J,

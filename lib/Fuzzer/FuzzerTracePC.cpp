@@ -27,7 +27,7 @@
 // The coverage counters and PCs.
 // These are declared as global variables named "__sancov_*" to simplify
 // experiments with inlined instrumentation.
-alignas(8) ATTRIBUTE_INTERFACE
+alignas(64) ATTRIBUTE_INTERFACE
 uint8_t __sancov_trace_pc_guard_8bit_counters[fuzzer::TracePC::kNumPCs];
 
 ATTRIBUTE_INTERFACE
@@ -283,6 +283,17 @@ ATTRIBUTE_NO_SANITIZE_ALL
 void __sanitizer_cov_trace_pc_guard(uint32_t *Guard) {
   uintptr_t PC = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
   uint32_t Idx = *Guard;
+  __sancov_trace_pc_pcs[Idx] = PC;
+  __sancov_trace_pc_guard_8bit_counters[Idx]++;
+}
+
+// Best-effort support for -fsanitize-coverage=trace-pc, which is available
+// in both Clang and GCC.
+ATTRIBUTE_INTERFACE
+ATTRIBUTE_NO_SANITIZE_ALL
+void __sanitizer_cov_trace_pc() {
+  uintptr_t PC = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+  uintptr_t Idx = PC & (((uintptr_t)1 << fuzzer::TracePC::kTracePcBits) - 1);
   __sancov_trace_pc_pcs[Idx] = PC;
   __sancov_trace_pc_guard_8bit_counters[Idx]++;
 }

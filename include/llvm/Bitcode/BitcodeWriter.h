@@ -15,6 +15,7 @@
 #define LLVM_BITCODE_BITCODEWRITER_H
 
 #include "llvm/IR/ModuleSummaryIndex.h"
+#include "llvm/MC/StringTableBuilder.h"
 #include <string>
 
 namespace llvm {
@@ -26,11 +27,24 @@ namespace llvm {
     SmallVectorImpl<char> &Buffer;
     std::unique_ptr<BitstreamWriter> Stream;
 
+    StringTableBuilder StrtabBuilder{StringTableBuilder::RAW};
+    bool WroteStrtab = false;
+
+    void writeBlob(unsigned Block, unsigned Record, StringRef Blob);
+
    public:
     /// Create a BitcodeWriter that writes to Buffer.
     BitcodeWriter(SmallVectorImpl<char> &Buffer);
 
     ~BitcodeWriter();
+
+    /// Write the bitcode file's string table. This must be called exactly once
+    /// after all modules have been written.
+    void writeStrtab();
+
+    /// Copy the string table for another module into this bitcode file. This
+    /// should be called after copying the module itself into the bitcode file.
+    void copyStrtab(StringRef Strtab);
 
     /// Write the specified module to the buffer specified at construction time.
     ///
@@ -43,9 +57,16 @@ namespace llvm {
     ///
     /// \p GenerateHash enables hashing the Module and including the hash in the
     /// bitcode (currently for use in ThinLTO incremental build).
+    ///
+    /// If \p ModHash is non-null, when GenerateHash is true, the resulting
+    /// hash is written into ModHash. When GenerateHash is false, that value
+    /// is used as the hash instead of computing from the generated bitcode.
+    /// Can be used to produce the same module hash for a minimized bitcode
+    /// used just for the thin link as in the regular full bitcode that will
+    /// be used in the backend.
     void writeModule(const Module *M, bool ShouldPreserveUseListOrder = false,
                      const ModuleSummaryIndex *Index = nullptr,
-                     bool GenerateHash = false);
+                     bool GenerateHash = false, ModuleHash *ModHash = nullptr);
   };
 
   /// \brief Write the specified module to the specified raw output stream.
@@ -62,10 +83,18 @@ namespace llvm {
   ///
   /// \p GenerateHash enables hashing the Module and including the hash in the
   /// bitcode (currently for use in ThinLTO incremental build).
+  ///
+  /// If \p ModHash is non-null, when GenerateHash is true, the resulting
+  /// hash is written into ModHash. When GenerateHash is false, that value
+  /// is used as the hash instead of computing from the generated bitcode.
+  /// Can be used to produce the same module hash for a minimized bitcode
+  /// used just for the thin link as in the regular full bitcode that will
+  /// be used in the backend.
   void WriteBitcodeToFile(const Module *M, raw_ostream &Out,
                           bool ShouldPreserveUseListOrder = false,
                           const ModuleSummaryIndex *Index = nullptr,
-                          bool GenerateHash = false);
+                          bool GenerateHash = false,
+                          ModuleHash *ModHash = nullptr);
 
   /// Write the specified module summary index to the given raw output stream,
   /// where it will be written in a new bitcode block. This is used when

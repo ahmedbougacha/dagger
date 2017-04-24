@@ -1,10 +1,18 @@
-; RUN: llc -mtriple arm-unknown -mattr=+vfp2 -global-isel %s -o - | FileCheck %s
+; RUN: llc -mtriple arm-unknown -mattr=+vfp2,+v6 -global-isel %s -o - | FileCheck %s
 
 define void @test_void_return() {
 ; CHECK-LABEL: test_void_return:
 ; CHECK: bx lr
 entry:
   ret void
+}
+
+define i32 @test_constant_return_i32() {
+; CHECK-LABEL: test_constant_return_i32:
+; CHECK: mov r0, #42
+; CHECK: bx lr
+entry:
+  ret i32 42
 }
 
 define zeroext i1 @test_zext_i1(i1 %x) {
@@ -40,6 +48,30 @@ entry:
   ret i16 %x
 }
 
+define void @test_trunc_i32_i16(i32 %v, i16 *%p) {
+; CHECK-LABEL: test_trunc_i32_i16:
+; The trunc doesn't result in any instructions, but we
+; expect the store to be explicitly 16-bit.
+; CHECK: strh r0, [r1]
+; CHECK: bx lr
+entry:
+  %v16 = trunc i32 %v to i16
+  store i16 %v16, i16 *%p
+  ret void
+}
+
+define void @test_trunc_i32_i8(i32 %v, i8 *%p) {
+; CHECK-LABEL: test_trunc_i32_i8:
+; The trunc doesn't result in any instructions, but we
+; expect the store to be explicitly 8-bit.
+; CHECK: strb r0, [r1]
+; CHECK: bx lr
+entry:
+  %v8 = trunc i32 %v to i8
+  store i8 %v8, i8 *%p
+  ret void
+}
+
 define i8 @test_add_i8(i8 %x, i8 %y) {
 ; CHECK-LABEL: test_add_i8:
 ; CHECK: add r0, r0, r1
@@ -64,6 +96,60 @@ define i32 @test_add_i32(i32 %x, i32 %y) {
 ; CHECK: bx lr
 entry:
   %sum = add i32 %x, %y
+  ret i32 %sum
+}
+
+define i8 @test_sub_i8(i8 %x, i8 %y) {
+; CHECK-LABEL: test_sub_i8:
+; CHECK: sub r0, r0, r1
+; CHECK: bx lr
+entry:
+  %sum = sub i8 %x, %y
+  ret i8 %sum
+}
+
+define i16 @test_sub_i16(i16 %x, i16 %y) {
+; CHECK-LABEL: test_sub_i16:
+; CHECK: sub r0, r0, r1
+; CHECK: bx lr
+entry:
+  %sum = sub i16 %x, %y
+  ret i16 %sum
+}
+
+define i32 @test_sub_i32(i32 %x, i32 %y) {
+; CHECK-LABEL: test_sub_i32:
+; CHECK: sub r0, r0, r1
+; CHECK: bx lr
+entry:
+  %sum = sub i32 %x, %y
+  ret i32 %sum
+}
+
+define i8 @test_mul_i8(i8 %x, i8 %y) {
+; CHECK-LABEL: test_mul_i8:
+; CHECK: mul r0, r0, r1
+; CHECK: bx lr
+entry:
+  %sum = mul i8 %x, %y
+  ret i8 %sum
+}
+
+define i16 @test_mul_i16(i16 %x, i16 %y) {
+; CHECK-LABEL: test_mul_i16:
+; CHECK: mul r0, r0, r1
+; CHECK: bx lr
+entry:
+  %sum = mul i16 %x, %y
+  ret i16 %sum
+}
+
+define i32 @test_mul_i32(i32 %x, i32 %y) {
+; CHECK-LABEL: test_mul_i32:
+; CHECK: mul r0, r0, r1
+; CHECK: bx lr
+entry:
+  %sum = mul i32 %x, %y
   ret i32 %sum
 }
 

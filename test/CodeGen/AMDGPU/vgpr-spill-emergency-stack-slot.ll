@@ -1,5 +1,6 @@
 ; RUN: llc -march=amdgcn -mcpu=tahiti -mattr=+vgpr-spilling -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=SI %s
 ; RUN: llc -march=amdgcn -mcpu=fiji -mattr=+vgpr-spilling -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=VI %s
+; RUN: llc -march=amdgcn -mcpu=gfx900 -mattr=+vgpr-spilling -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=GFX9 %s
 
 ; This ends up using all 255 registers and requires register
 ; scavenging which will fail to find an unsued register.
@@ -18,6 +19,7 @@
 ; GCN-DAG: s_mov_b32 s{{[0-9]+}}, -1
 ; SI-DAG: s_mov_b32 s[[DESC3:[0-9]+]], 0xe8f000
 ; VI-DAG: s_mov_b32 s[[DESC3:[0-9]+]], 0xe80000
+; GFX9-DAG: s_mov_b32 s[[DESC3:[0-9]+]], 0xe00000
 
 ; OFFREG is offset system SGPR
 ; GCN: buffer_store_dword {{v[0-9]+}}, off, s{{\[}}[[DESC0]]:[[DESC3]]], s[[OFFREG]] offset:{{[0-9]+}} ; 4-byte Folded Spill
@@ -35,7 +37,8 @@ bb:
   %tmp15 = getelementptr [16 x <16 x i8>], [16 x <16 x i8>] addrspace(2)* %arg4, i64 0, i64 0
   %tmp16 = load <16 x i8>, <16 x i8> addrspace(2)* %tmp15, align 16, !tbaa !0
   %tmp17 = add i32 %arg5, %arg7
-  %tmp18 = call <4 x float> @llvm.SI.vs.load.input(<16 x i8> %tmp16, i32 0, i32 %tmp17)
+  %tmp16.cast = bitcast <16 x i8> %tmp16 to <4 x i32>
+  %tmp18 = call <4 x float> @llvm.amdgcn.buffer.load.format.v4f32(<4 x i32> %tmp16.cast, i32 %tmp17, i32 0, i1 false, i1 false)
   %tmp19 = extractelement <4 x float> %tmp18, i32 0
   %tmp20 = extractelement <4 x float> %tmp18, i32 1
   %tmp21 = extractelement <4 x float> %tmp18, i32 2
@@ -486,10 +489,11 @@ declare i32 @llvm.amdgcn.mbcnt.lo(i32, i32) #1
 declare void @llvm.amdgcn.exp.f32(i32, i32, float, float, float, float, i1, i1) #0
 
 declare float @llvm.SI.load.const(<16 x i8>, i32) #1
-declare <4 x float> @llvm.SI.vs.load.input(<16 x i8>, i32, i32) #1
+declare <4 x float> @llvm.amdgcn.buffer.load.format.v4f32(<4 x i32>, i32, i32, i1, i1) #2
 
 attributes #0 = { nounwind }
 attributes #1 = { nounwind readnone }
+attributes #2 = { nounwind readonly }
 
 !0 = !{!1, !1, i64 0, i32 1}
 !1 = !{!"const", !2}

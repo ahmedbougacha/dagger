@@ -1058,8 +1058,8 @@ ConstantFoldConstantImpl(const Constant *C, const DataLayout &DL,
       if (It == FoldedOps.end()) {
         if (auto *FoldedC =
                 ConstantFoldConstantImpl(NewC, DL, TLI, FoldedOps)) {
-          NewC = FoldedC;
           FoldedOps.insert({NewC, FoldedC});
+          NewC = FoldedC;
         } else {
           FoldedOps.insert({NewC, NewC});
         }
@@ -1401,7 +1401,7 @@ bool llvm::canConstantFoldCallTo(const Function *F) {
     return true;
   default:
     return false;
-  case 0: break;
+  case Intrinsic::not_intrinsic: break;
   }
 
   if (!F->hasName())
@@ -1518,9 +1518,9 @@ Constant *ConstantFoldSSEConvertToInt(const APFloat &Val, bool roundTowardZero,
   bool isExact = false;
   APFloat::roundingMode mode = roundTowardZero? APFloat::rmTowardZero
                                               : APFloat::rmNearestTiesToEven;
-  APFloat::opStatus status = Val.convertToInteger(&UIntVal, ResultWidth,
-                                                  /*isSigned=*/true, mode,
-                                                  &isExact);
+  APFloat::opStatus status =
+      Val.convertToInteger(makeMutableArrayRef(UIntVal), ResultWidth,
+                           /*isSigned=*/true, mode, &isExact);
   if (status != APFloat::opOK &&
       (!roundTowardZero || status != APFloat::opInexact))
     return nullptr;

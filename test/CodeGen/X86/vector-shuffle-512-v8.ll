@@ -976,6 +976,24 @@ define <8 x double> @shuffle_v8f64_f511235a(<8 x double> %a, <8 x double> %b) {
   ret <8 x double> %shuffle
 }
 
+define <8 x double> @shuffle_v8f64_1z2z5z6z(<8 x double> %a, <8 x double> %b) {
+; AVX512F-LABEL: shuffle_v8f64_1z2z5z6z:
+; AVX512F:       # BB#0:
+; AVX512F-NEXT:    vpxord %zmm1, %zmm1, %zmm1
+; AVX512F-NEXT:    vmovapd {{.*#+}} zmm2 = [1,8,2,8,5,8,6,8]
+; AVX512F-NEXT:    vpermt2pd %zmm1, %zmm2, %zmm0
+; AVX512F-NEXT:    retq
+;
+; AVX512F-32-LABEL: shuffle_v8f64_1z2z5z6z:
+; AVX512F-32:       # BB#0:
+; AVX512F-32-NEXT:    vpxord %zmm1, %zmm1, %zmm1
+; AVX512F-32-NEXT:    vmovapd {{.*#+}} zmm2 = [1,0,8,0,2,0,8,0,5,0,8,0,6,0,8,0]
+; AVX512F-32-NEXT:    vpermt2pd %zmm1, %zmm2, %zmm0
+; AVX512F-32-NEXT:    retl
+  %shuffle = shufflevector <8 x double> %a, <8 x double> <double 0.000000e+00, double undef, double undef, double undef, double undef, double undef, double undef, double undef>, <8 x i32> <i32 1, i32 8, i32 2, i32 8, i32 5, i32 8, i32 6, i32 8>
+  ret <8 x double> %shuffle
+}
+
 define <8 x i64> @shuffle_v8i64_00000000(<8 x i64> %a, <8 x i64> %b) {
 ;
 ; AVX512F-LABEL: shuffle_v8i64_00000000:
@@ -2588,6 +2606,22 @@ define <8 x i64> @shuffle_v8i64_01234589(<8 x i64> %a, <8 x i64> %b) {
 ; AVX512F-32-NEXT:    retl
   %shuffle = shufflevector <8 x i64> %a, <8 x i64> %b, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 8, i32 9>
   ret <8 x i64> %shuffle
+}
+
+define <8 x double> @shuffle_v4f64_v8f64_22222222(<4 x double> %a) {
+; AVX512F-LABEL: shuffle_v4f64_v8f64_22222222:
+; AVX512F:       # BB#0:
+; AVX512F-NEXT:    vextractf128 $1, %ymm0, %xmm0
+; AVX512F-NEXT:    vbroadcastsd %xmm0, %zmm0
+; AVX512F-NEXT:    retq
+;
+; AVX512F-32-LABEL: shuffle_v4f64_v8f64_22222222:
+; AVX512F-32:       # BB#0:
+; AVX512F-32-NEXT:    vextractf128 $1, %ymm0, %xmm0
+; AVX512F-32-NEXT:    vbroadcastsd %xmm0, %zmm0
+; AVX512F-32-NEXT:    retl
+  %shuffle = shufflevector <4 x double> %a, <4 x double> undef, <8 x i32> <i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2>
+  ret <8 x double> %shuffle
 }
 
 define <8 x i64> @shuffle_v2i64_v8i64_01010101(<2 x i64> %a) {

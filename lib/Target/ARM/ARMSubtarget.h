@@ -64,6 +64,7 @@ protected:
     CortexR7,
     ExynosM1,
     Krait,
+    Kryo,
     Swift
   };
   enum ARMProcClassEnum {
@@ -207,8 +208,8 @@ protected:
   /// FP registers for VFPv3.
   bool HasD16 = false;
 
-  /// HasHardwareDivide - True if subtarget supports [su]div
-  bool HasHardwareDivide = false;
+  /// HasHardwareDivide - True if subtarget supports [su]div in Thumb mode
+  bool HasHardwareDivideInThumb = false;
 
   /// HasHardwareDivideInARM - True if subtarget supports [su]div in ARM mode
   bool HasHardwareDivideInARM = false;
@@ -350,6 +351,10 @@ protected:
 
   /// UseSjLjEH - If true, the target uses SjLj exception handling (e.g. iOS).
   bool UseSjLjEH = false;
+
+  /// Implicitly convert an instruction to a different one if its immediates
+  /// cannot be encoded. For example, ADD r0, r1, #FFFFFFFF -> SUB r0, r1, #1.
+  bool NegativeImmediates = true;
 
   /// stackAlignment - The minimum alignment known to hold of the stack frame on
   /// entry to the function and which must be maintained by every function.
@@ -502,7 +507,7 @@ public:
     return hasNEON() && UseNEONForSinglePrecisionFP;
   }
 
-  bool hasDivide() const { return HasHardwareDivide; }
+  bool hasDivideInThumbMode() const { return HasHardwareDivideInThumb; }
   bool hasDivideInARMMode() const { return HasHardwareDivideInARM; }
   bool hasDataBarrier() const { return HasDataBarrier; }
   bool hasV7Clrex() const { return HasV7Clrex; }

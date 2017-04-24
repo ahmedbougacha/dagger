@@ -1,4 +1,4 @@
-//===- ModuleSummaryIndexObjectFile.cpp - Summary index file implementation ==//
+//==- ModuleSummaryIndexObjectFile.cpp - Summary index file implementation -==//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -11,29 +11,38 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Object/ModuleSummaryIndexObjectFile.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/ModuleSummaryIndex.h"
-#include "llvm/MC/MCStreamer.h"
+#include "llvm/Object/Binary.h"
+#include "llvm/Object/Error.h"
+#include "llvm/Object/ModuleSummaryIndexObjectFile.h"
 #include "llvm/Object/ObjectFile.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorOr.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <memory>
+#include <system_error>
+
 using namespace llvm;
 using namespace object;
 
-static llvm::cl::opt<bool> IgnoreEmptyThinLTOIndexFile(
-    "ignore-empty-index-file", llvm::cl::ZeroOrMore,
-    llvm::cl::desc(
+static cl::opt<bool> IgnoreEmptyThinLTOIndexFile(
+    "ignore-empty-index-file", cl::ZeroOrMore,
+    cl::desc(
         "Ignore an empty index file and perform non-ThinLTO compilation"),
-    llvm::cl::init(false));
+    cl::init(false));
 
 ModuleSummaryIndexObjectFile::ModuleSummaryIndexObjectFile(
     MemoryBufferRef Object, std::unique_ptr<ModuleSummaryIndex> I)
     : SymbolicFile(Binary::ID_ModuleSummaryIndex, Object), Index(std::move(I)) {
 }
 
-ModuleSummaryIndexObjectFile::~ModuleSummaryIndexObjectFile() {}
+ModuleSummaryIndexObjectFile::~ModuleSummaryIndexObjectFile() = default;
 
 std::unique_ptr<ModuleSummaryIndex> ModuleSummaryIndexObjectFile::takeIndex() {
   return std::move(Index);
@@ -96,13 +105,18 @@ ModuleSummaryIndexObjectFile::create(MemoryBufferRef Object) {
 // Parse the module summary index out of an IR file and return the summary
 // index object if found, or nullptr if not.
 Expected<std::unique_ptr<ModuleSummaryIndex>>
-llvm::getModuleSummaryIndexForFile(StringRef Path) {
+llvm::getModuleSummaryIndexForFile(StringRef Path, StringRef Identifier) {
   ErrorOr<std::unique_ptr<MemoryBuffer>> FileOrErr =
       MemoryBuffer::getFileOrSTDIN(Path);
   std::error_code EC = FileOrErr.getError();
   if (EC)
     return errorCodeToError(EC);
-  MemoryBufferRef BufferRef = (FileOrErr.get())->getMemBufferRef();
+  std::unique_ptr<MemoryBuffer> MemBuffer = std::move(FileOrErr.get());
+  // If Identifier is non-empty, use it as the buffer identifier, which
+  // will become the module path in the index.
+  if (Identifier.empty())
+    Identifier = MemBuffer->getBufferIdentifier();
+  MemoryBufferRef BufferRef(MemBuffer->getBuffer(), Identifier);
   if (IgnoreEmptyThinLTOIndexFile && !BufferRef.getBufferSize())
     return nullptr;
   Expected<std::unique_ptr<object::ModuleSummaryIndexObjectFile>> ObjOrErr =

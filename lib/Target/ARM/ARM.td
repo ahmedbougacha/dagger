@@ -67,8 +67,9 @@ def FeatureFullFP16 : SubtargetFeature<"fullfp16", "HasFullFP16", "true",
                                        [FeatureFPARMv8]>;
 def FeatureD16    : SubtargetFeature<"d16", "HasD16", "true",
                                      "Restrict FP to 16 double registers">;
-def FeatureHWDiv  : SubtargetFeature<"hwdiv", "HasHardwareDivide", "true",
-                                     "Enable divide instructions">;
+def FeatureHWDivThumb : SubtargetFeature<"hwdiv", "HasHardwareDivideInThumb",
+                                         "true",
+                                         "Enable divide instructions in Thumb">;
 def FeatureHWDivARM  : SubtargetFeature<"hwdiv-arm",
                                         "HasHardwareDivideInARM", "true",
                                       "Enable divide instructions in ARM mode">;
@@ -225,7 +226,7 @@ def FeatureMP : SubtargetFeature<"mp", "HasMPExtension", "true",
 def FeatureVirtualization : SubtargetFeature<"virtualization",
                                  "HasVirtualization", "true",
                                  "Supports Virtualization extension",
-                                 [FeatureHWDiv, FeatureHWDivARM]>;
+                                 [FeatureHWDivThumb, FeatureHWDivARM]>;
 
 // M-series ISA
 def FeatureMClass : SubtargetFeature<"mclass", "ARMProcClass", "MClass",
@@ -261,6 +262,12 @@ def FeatureNoMovt : SubtargetFeature<"no-movt", "NoMovt", "true",
                                      "Don't use movt/movw pairs for 32-bit "
                                      "imms">;
 
+def FeatureNoNegativeImmediates : SubtargetFeature<"no-neg-immediates",
+                                        "NegativeImmediates", "false",
+                                        "Convert immediates and instructions "
+                                        "to their negated or complemented "
+                                        "equivalent when the immediate does "
+                                        "not fit in the encoding.">;
 
 //===----------------------------------------------------------------------===//
 // ARM ISAa.
@@ -339,7 +346,9 @@ def ProcA73     : SubtargetFeature<"a73", "ARMProcFamily", "CortexA73",
                                    "Cortex-A73 ARM processors", []>;
 
 def ProcKrait   : SubtargetFeature<"krait", "ARMProcFamily", "Krait",
-                                   "Qualcomm ARM processors", []>;
+                                   "Qualcomm Krait processors", []>;
+def ProcKryo    : SubtargetFeature<"kryo", "ARMProcFamily", "Kryo",
+                                   "Qualcomm Kryo processors", []>;
 def ProcSwift   : SubtargetFeature<"swift", "ARMProcFamily", "Swift",
                                    "Swift ARM processors", []>;
 
@@ -425,21 +434,21 @@ def ARMv7ve   : Architecture<"armv7ve",   "ARMv7ve",  [HasV7Ops,
 def ARMv7r    : Architecture<"armv7-r",   "ARMv7r",   [HasV7Ops,
                                                        FeatureDB,
                                                        FeatureDSP,
-                                                       FeatureHWDiv,
+                                                       FeatureHWDivThumb,
                                                        FeatureRClass]>;
 
 def ARMv7m    : Architecture<"armv7-m",   "ARMv7m",   [HasV7Ops,
                                                        FeatureThumb2,
                                                        FeatureNoARM,
                                                        FeatureDB,
-                                                       FeatureHWDiv,
+                                                       FeatureHWDivThumb,
                                                        FeatureMClass]>;
 
 def ARMv7em   : Architecture<"armv7e-m",  "ARMv7em",  [HasV7Ops,
                                                        FeatureThumb2,
                                                        FeatureNoARM,
                                                        FeatureDB,
-                                                       FeatureHWDiv,
+                                                       FeatureHWDivThumb,
                                                        FeatureMClass,
                                                        FeatureDSP]>;
 
@@ -494,7 +503,7 @@ def ARMv8mBaseline : Architecture<"armv8-m.base", "ARMv8mBaseline",
                                                       [HasV8MBaselineOps,
                                                        FeatureNoARM,
                                                        FeatureDB,
-                                                       FeatureHWDiv,
+                                                       FeatureHWDivThumb,
                                                        FeatureV7Clrex,
                                                        Feature8MSecExt,
                                                        FeatureAcquireRelease,
@@ -504,7 +513,7 @@ def ARMv8mMainline : Architecture<"armv8-m.main", "ARMv8mMainline",
                                                       [HasV8MMainlineOps,
                                                        FeatureNoARM,
                                                        FeatureDB,
-                                                       FeatureHWDiv,
+                                                       FeatureHWDivThumb,
                                                        Feature8MSecExt,
                                                        FeatureAcquireRelease,
                                                        FeatureMClass]>;
@@ -670,7 +679,7 @@ def : ProcessorModel<"krait",       CortexA9Model,      [ARMv7a, ProcKrait,
                                                          FeatureFP16,
                                                          FeatureAvoidPartialCPSR,
                                                          FeatureVFP4,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM]>;
 
 def : ProcessorModel<"swift",       SwiftModel,         [ARMv7a, ProcSwift,
@@ -678,7 +687,7 @@ def : ProcessorModel<"swift",       SwiftModel,         [ARMv7a, ProcSwift,
                                                          FeatureNEONForFP,
                                                          FeatureVFP4,
                                                          FeatureMP,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureAvoidPartialCPSR,
                                                          FeatureAvoidMOVsShOp,
@@ -760,39 +769,39 @@ def : ProcNoItin<"cortex-m33",                          [ARMv8mMainline,
                                                          FeatureVFPOnlySP]>;
 
 def : ProcNoItin<"cortex-a32",                           [ARMv8a,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"cortex-a35",                          [ARMv8a, ProcA35,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"cortex-a53",                          [ARMv8a, ProcA53,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureCrypto,
                                                          FeatureCRC,
                                                          FeatureFPAO]>;
 
 def : ProcNoItin<"cortex-a57",                          [ARMv8a, ProcA57,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureCrypto,
                                                          FeatureCRC,
                                                          FeatureFPAO]>;
 
 def : ProcNoItin<"cortex-a72",                          [ARMv8a, ProcA72,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"cortex-a73",                          [ARMv8a, ProcA73,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
@@ -803,7 +812,7 @@ def : ProcessorModel<"cyclone",     SwiftModel,         [ARMv8a, ProcSwift,
                                                          FeatureNEONForFP,
                                                          FeatureVFP4,
                                                          FeatureMP,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureAvoidPartialCPSR,
                                                          FeatureAvoidMOVsShOp,
@@ -812,19 +821,25 @@ def : ProcessorModel<"cyclone",     SwiftModel,         [ARMv8a, ProcSwift,
                                                          FeatureZCZeroing]>;
 
 def : ProcNoItin<"exynos-m1",                           [ARMv8a, ProcExynosM1,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"exynos-m2",                           [ARMv8a, ProcExynosM1,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"exynos-m3",                           [ARMv8a, ProcExynosM1,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
+                                                         FeatureHWDivARM,
+                                                         FeatureCrypto,
+                                                         FeatureCRC]>;
+
+def : ProcNoItin<"kryo",                                [ARMv8a, ProcKryo,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;

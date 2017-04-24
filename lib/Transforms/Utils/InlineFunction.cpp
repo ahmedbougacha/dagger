@@ -25,6 +25,7 @@
 #include "llvm/Analysis/CaptureTracking.h"
 #include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/Analysis/InstructionSimplify.h"
+#include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/CallSite.h"
@@ -1224,6 +1225,7 @@ static Value *HandleByValArgument(Value *Arg, Instruction *TheCall,
   Type *AggTy = ArgTy->getElementType();
 
   Function *Caller = TheCall->getFunction();
+  const DataLayout &DL = Caller->getParent()->getDataLayout();
 
   // If the called function is readonly, then it could not mutate the caller's
   // copy of the byval'd memory.  In this case, it is safe to elide the copy and
@@ -1237,31 +1239,30 @@ static Value *HandleByValArgument(Value *Arg, Instruction *TheCall,
 
     AssumptionCache *AC =
         IFI.GetAssumptionCache ? &(*IFI.GetAssumptionCache)(*Caller) : nullptr;
-    const DataLayout &DL = Caller->getParent()->getDataLayout();
 
     // If the pointer is already known to be sufficiently aligned, or if we can
     // round it up to a larger alignment, then we don't need a temporary.
     if (getOrEnforceKnownAlignment(Arg, ByValAlignment, DL, TheCall, AC) >=
         ByValAlignment)
       return Arg;
-    
+
     // Otherwise, we have to make a memcpy to get a safe alignment.  This is bad
     // for code quality, but rarely happens and is required for correctness.
   }
 
   // Create the alloca.  If we have DataLayout, use nice alignment.
-  unsigned Align =
-      Caller->getParent()->getDataLayout().getPrefTypeAlignment(AggTy);
+  unsigned Align = DL.getPrefTypeAlignment(AggTy);
 
   // If the byval had an alignment specified, we *must* use at least that
   // alignment, as it is required by the byval argument (and uses of the
   // pointer inside the callee).
   Align = std::max(Align, ByValAlignment);
-  
-  Value *NewAlloca = new AllocaInst(AggTy, nullptr, Align, Arg->getName(), 
+
+  Value *NewAlloca = new AllocaInst(AggTy, DL.getAllocaAddrSpace(),
+                                    nullptr, Align, Arg->getName(),
                                     &*Caller->begin()->begin());
   IFI.StaticAllocas.push_back(cast<AllocaInst>(NewAlloca));
-  
+
   // Uses of the argument in the function should use our new alloca
   // instead.
   return NewAlloca;
@@ -1425,28 +1426,54 @@ static void updateCallerBFI(BasicBlock *CallSiteBlock,
       ClonedBBs);
 }
 
+/// Update the branch metadata for cloned call instructions.
+static void updateCallProfile(Function *Callee, const ValueToValueMapTy &VMap,
+                              const Optional<uint64_t> &CalleeEntryCount,
+                              const Instruction *TheCall) {
+  if (!CalleeEntryCount.hasValue() || CalleeEntryCount.getValue() < 1)
+    return;
+  Optional<uint64_t> CallSiteCount =
+      ProfileSummaryInfo::getProfileCount(TheCall, nullptr);
+  uint64_t CallCount =
+      std::min(CallSiteCount.hasValue() ? CallSiteCount.getValue() : 0,
+               CalleeEntryCount.getValue());
+
+  for (auto const &Entry : VMap)
+    if (isa<CallInst>(Entry.first))
+      if (auto *CI = dyn_cast_or_null<CallInst>(Entry.second))
+        CI->updateProfWeight(CallCount, CalleeEntryCount.getValue());
+  for (BasicBlock &BB : *Callee)
+    // No need to update the callsite if it is pruned during inlining.
+    if (VMap.count(&BB))
+      for (Instruction &I : BB)
+        if (CallInst *CI = dyn_cast<CallInst>(&I))
+          CI->updateProfWeight(CalleeEntryCount.getValue() - CallCount,
+                               CalleeEntryCount.getValue());
+}
+
 /// Update the entry count of callee after inlining.
 ///
 /// The callsite's block count is subtracted from the callee's function entry
 /// count.
-static void updateCalleeCount(BlockFrequencyInfo &CallerBFI, BasicBlock *CallBB,
-                              Function *Callee) {
+static void updateCalleeCount(BlockFrequencyInfo *CallerBFI, BasicBlock *CallBB,
+                              Instruction *CallInst, Function *Callee) {
   // If the callee has a original count of N, and the estimated count of
   // callsite is M, the new callee count is set to N - M. M is estimated from
   // the caller's entry count, its entry block frequency and the block frequency
   // of the callsite.
   Optional<uint64_t> CalleeCount = Callee->getEntryCount();
-  if (!CalleeCount)
+  if (!CalleeCount.hasValue())
     return;
-  Optional<uint64_t> CallSiteCount = CallerBFI.getBlockProfileCount(CallBB);
-  if (!CallSiteCount)
+  Optional<uint64_t> CallCount =
+      ProfileSummaryInfo::getProfileCount(CallInst, CallerBFI);
+  if (!CallCount.hasValue())
     return;
   // Since CallSiteCount is an estimate, it could exceed the original callee
   // count and has to be set to 0.
-  if (CallSiteCount.getValue() > CalleeCount.getValue())
+  if (CallCount.getValue() > CalleeCount.getValue())
     Callee->setEntryCount(0);
   else
-    Callee->setEntryCount(CalleeCount.getValue() - CallSiteCount.getValue());
+    Callee->setEntryCount(CalleeCount.getValue() - CallCount.getValue());
 }
 
 /// This function inlines the called function into the basic block of the
@@ -1636,13 +1663,14 @@ bool llvm::InlineFunction(CallSite CS, InlineFunctionInfo &IFI,
     // Remember the first block that is newly cloned over.
     FirstNewBlock = LastBlock; ++FirstNewBlock;
 
-    if (IFI.CallerBFI != nullptr && IFI.CalleeBFI != nullptr) {
+    if (IFI.CallerBFI != nullptr && IFI.CalleeBFI != nullptr)
       // Update the BFI of blocks cloned into the caller.
       updateCallerBFI(OrigBB, VMap, IFI.CallerBFI, IFI.CalleeBFI,
                       CalledFunc->front());
-      // Update the profile count of callee.
-      updateCalleeCount(*IFI.CallerBFI, OrigBB, CalledFunc);
-    }
+
+    updateCallProfile(CalledFunc, VMap, CalledFunc->getEntryCount(), TheCall);
+    // Update the profile count of callee.
+    updateCalleeCount(IFI.CallerBFI, OrigBB, TheCall, CalledFunc);
 
     // Inject byval arguments initialization.
     for (std::pair<Value*, Value*> &Init : ByValInit)

@@ -35,6 +35,19 @@ entry:
   ret i8 %sum
 }
 
+define i8 @test_sub_i8(i8 %x, i8 %y) {
+; CHECK-LABEL: name: test_sub_i8
+; CHECK: liveins: %r0, %r1
+; CHECK-DAG: [[VREGX:%[0-9]+]](s8) = COPY %r0
+; CHECK-DAG: [[VREGY:%[0-9]+]](s8) = COPY %r1
+; CHECK: [[RES:%[0-9]+]](s8) = G_SUB [[VREGX]], [[VREGY]]
+; CHECK: %r0 = COPY [[RES]](s8)
+; CHECK: BX_RET 14, _, implicit %r0
+entry:
+  %res = sub i8 %x, %y
+  ret i8 %res
+}
+
 define signext i8 @test_return_sext_i8(i8 %x) {
 ; CHECK-LABEL: name: test_return_sext_i8
 ; CHECK: liveins: %r0
@@ -59,6 +72,19 @@ entry:
   ret i16 %sum
 }
 
+define i16 @test_sub_i16(i16 %x, i16 %y) {
+; CHECK-LABEL: name: test_sub_i16
+; CHECK: liveins: %r0, %r1
+; CHECK-DAG: [[VREGX:%[0-9]+]](s16) = COPY %r0
+; CHECK-DAG: [[VREGY:%[0-9]+]](s16) = COPY %r1
+; CHECK: [[RES:%[0-9]+]](s16) = G_SUB [[VREGX]], [[VREGY]]
+; CHECK: %r0 = COPY [[RES]](s16)
+; CHECK: BX_RET 14, _, implicit %r0
+entry:
+  %res = sub i16 %x, %y
+  ret i16 %res
+}
+
 define zeroext i16 @test_return_zext_i16(i16 %x) {
 ; CHECK-LABEL: name: test_return_zext_i16
 ; CHECK: liveins: %r0
@@ -81,6 +107,19 @@ define i32 @test_add_i32(i32 %x, i32 %y) {
 entry:
   %sum = add i32 %x, %y
   ret i32 %sum
+}
+
+define i32 @test_sub_i32(i32 %x, i32 %y) {
+; CHECK-LABEL: name: test_sub_i32
+; CHECK: liveins: %r0, %r1
+; CHECK-DAG: [[VREGX:%[0-9]+]](s32) = COPY %r0
+; CHECK-DAG: [[VREGY:%[0-9]+]](s32) = COPY %r1
+; CHECK: [[RES:%[0-9]+]](s32) = G_SUB [[VREGX]], [[VREGY]]
+; CHECK: %r0 = COPY [[RES]](s32)
+; CHECK: BX_RET 14, _, implicit %r0
+entry:
+  %res = sub i32 %x, %y
+  ret i32 %res
 }
 
 define i32 @test_stack_args(i32 %p0, i32 %p1, i32 %p2, i32 %p3, i32 %p4, i32 %p5) {
@@ -525,4 +564,101 @@ define arm_aapcscc double @test_call_aapcs_fp_params(double %a, float %b) {
 entry:
   %r = notail call arm_aapcscc double @aapcscc_fp_target(float %b, double %a, float %b, double %a)
   ret double %r
+}
+
+declare arm_aapcscc float @different_call_conv_target(float)
+
+define arm_aapcs_vfpcc float @test_call_different_call_conv(float %x) {
+; CHECK-LABEL: name: test_call_different_call_conv
+; CHECK: [[X:%[0-9]+]](s32) = COPY %s0
+; CHECK: ADJCALLSTACKDOWN 0, 14, _, implicit-def %sp, implicit %sp
+; CHECK: %r0 = COPY [[X]]
+; CHECK: BLX @different_call_conv_target, csr_aapcs, implicit-def %lr, implicit %sp, implicit %r0, implicit-def %r0
+; CHECK: [[R:%[0-9]+]](s32) = COPY %r0
+; CHECK: ADJCALLSTACKUP 0, 0, 14, _, implicit-def %sp, implicit %sp
+; CHECK: %s0 = COPY [[R]]
+; CHECK: BX_RET 14, _, implicit %s0
+entry:
+  %r = notail call arm_aapcscc float @different_call_conv_target(float %x)
+  ret float %r
+}
+
+define i32 @test_shufflevector_s32_v2s32(i32 %arg) {
+; CHECK-LABEL: name: test_shufflevector_s32_v2s32
+; CHECK: [[ARG:%[0-9]+]](s32) = COPY %r0
+; CHECK-DAG: [[UNDEF:%[0-9]+]](s32) = IMPLICIT_DEF
+; CHECK-DAG: [[C0:%[0-9]+]](s32) = G_CONSTANT i32 0
+; CHECK-DAG: [[MASK:%[0-9]+]](<2 x s32>) = G_MERGE_VALUES [[C0]](s32), [[C0]](s32)
+; CHECK: [[VEC:%[0-9]+]](<2 x s32>) = G_SHUFFLE_VECTOR [[ARG]](s32), [[UNDEF]], [[MASK]](<2 x s32>)
+; CHECK: G_EXTRACT_VECTOR_ELT [[VEC]](<2 x s32>)
+  %vec = insertelement <1 x i32> undef, i32 %arg, i32 0
+  %shuffle = shufflevector <1 x i32> %vec, <1 x i32> undef, <2 x i32> zeroinitializer
+  %res = extractelement <2 x i32> %shuffle, i32 0
+  ret i32 %res
+}
+
+define i32 @test_shufflevector_v2s32_v3s32(i32 %arg1, i32 %arg2) {
+; CHECK-LABEL: name: test_shufflevector_v2s32_v3s32
+; CHECK: [[ARG1:%[0-9]+]](s32) = COPY %r0
+; CHECK: [[ARG2:%[0-9]+]](s32) = COPY %r1
+; CHECK-DAG: [[UNDEF:%[0-9]+]](<2 x s32>) = IMPLICIT_DEF
+; CHECK-DAG: [[C0:%[0-9]+]](s32) = G_CONSTANT i32 0
+; CHECK-DAG: [[C1:%[0-9]+]](s32) = G_CONSTANT i32 1
+; CHECK-DAG: [[MASK:%[0-9]+]](<3 x s32>) = G_MERGE_VALUES [[C1]](s32), [[C0]](s32), [[C1]](s32)
+; CHECK-DAG: [[V1:%[0-9]+]](<2 x s32>) = G_INSERT_VECTOR_ELT [[UNDEF]], [[ARG1]](s32), [[C0]](s32)
+; CHECK-DAG: [[V2:%[0-9]+]](<2 x s32>) = G_INSERT_VECTOR_ELT [[V1]], [[ARG2]](s32), [[C1]](s32)
+; CHECK: [[VEC:%[0-9]+]](<3 x s32>) = G_SHUFFLE_VECTOR [[V2]](<2 x s32>), [[UNDEF]], [[MASK]](<3 x s32>)
+; CHECK: G_EXTRACT_VECTOR_ELT [[VEC]](<3 x s32>)
+  %v1 = insertelement <2 x i32> undef, i32 %arg1, i32 0
+  %v2 = insertelement <2 x i32> %v1, i32 %arg2, i32 1
+  %shuffle = shufflevector <2 x i32> %v2, <2 x i32> undef, <3 x i32> <i32 1, i32 0, i32 1>
+  %res = extractelement <3 x i32> %shuffle, i32 0
+  ret i32 %res
+}
+
+
+define i32 @test_shufflevector_v2s32_v4s32(i32 %arg1, i32 %arg2) {
+; CHECK-LABEL: name: test_shufflevector_v2s32_v4s32
+; CHECK: [[ARG1:%[0-9]+]](s32) = COPY %r0
+; CHECK: [[ARG2:%[0-9]+]](s32) = COPY %r1
+; CHECK-DAG: [[UNDEF:%[0-9]+]](<2 x s32>) = IMPLICIT_DEF
+; CHECK-DAG: [[C0:%[0-9]+]](s32) = G_CONSTANT i32 0
+; CHECK-DAG: [[C1:%[0-9]+]](s32) = G_CONSTANT i32 1
+; CHECK-DAG: [[MASK:%[0-9]+]](<4 x s32>) = G_MERGE_VALUES [[C0]](s32), [[C0]](s32), [[C0]](s32), [[C0]](s32)
+; CHECK-DAG: [[V1:%[0-9]+]](<2 x s32>) = G_INSERT_VECTOR_ELT [[UNDEF]], [[ARG1]](s32), [[C0]](s32)
+; CHECK-DAG: [[V2:%[0-9]+]](<2 x s32>) = G_INSERT_VECTOR_ELT [[V1]], [[ARG2]](s32), [[C1]](s32)
+; CHECK: [[VEC:%[0-9]+]](<4 x s32>) = G_SHUFFLE_VECTOR [[V2]](<2 x s32>), [[UNDEF]], [[MASK]](<4 x s32>)
+; CHECK: G_EXTRACT_VECTOR_ELT [[VEC]](<4 x s32>)
+  %v1 = insertelement <2 x i32> undef, i32 %arg1, i32 0
+  %v2 = insertelement <2 x i32> %v1, i32 %arg2, i32 1
+  %shuffle = shufflevector <2 x i32> %v2, <2 x i32> undef, <4 x i32> zeroinitializer
+  %res = extractelement <4 x i32> %shuffle, i32 0
+  ret i32 %res
+}
+
+define i32 @test_shufflevector_v4s32_v2s32(i32 %arg1, i32 %arg2, i32 %arg3, i32 %arg4) {
+; CHECK-LABEL: name: test_shufflevector_v4s32_v2s32
+; CHECK: [[ARG1:%[0-9]+]](s32) = COPY %r0
+; CHECK: [[ARG2:%[0-9]+]](s32) = COPY %r1
+; CHECK: [[ARG3:%[0-9]+]](s32) = COPY %r2
+; CHECK: [[ARG4:%[0-9]+]](s32) = COPY %r3
+; CHECK-DAG: [[UNDEF:%[0-9]+]](<4 x s32>) = IMPLICIT_DEF
+; CHECK-DAG: [[C0:%[0-9]+]](s32) = G_CONSTANT i32 0
+; CHECK-DAG: [[C1:%[0-9]+]](s32) = G_CONSTANT i32 1
+; CHECK-DAG: [[C2:%[0-9]+]](s32) = G_CONSTANT i32 2
+; CHECK-DAG: [[C3:%[0-9]+]](s32) = G_CONSTANT i32 3
+; CHECK-DAG: [[MASK:%[0-9]+]](<2 x s32>) = G_MERGE_VALUES [[C1]](s32), [[C3]](s32)
+; CHECK-DAG: [[V1:%[0-9]+]](<4 x s32>) = G_INSERT_VECTOR_ELT [[UNDEF]], [[ARG1]](s32), [[C0]](s32)
+; CHECK-DAG: [[V2:%[0-9]+]](<4 x s32>) = G_INSERT_VECTOR_ELT [[V1]], [[ARG2]](s32), [[C1]](s32)
+; CHECK-DAG: [[V3:%[0-9]+]](<4 x s32>) = G_INSERT_VECTOR_ELT [[V2]], [[ARG3]](s32), [[C2]](s32)
+; CHECK-DAG: [[V4:%[0-9]+]](<4 x s32>) = G_INSERT_VECTOR_ELT [[V3]], [[ARG4]](s32), [[C3]](s32)
+; CHECK: [[VEC:%[0-9]+]](<2 x s32>) = G_SHUFFLE_VECTOR [[V4]](<4 x s32>), [[UNDEF]], [[MASK]](<2 x s32>)
+; CHECK: G_EXTRACT_VECTOR_ELT [[VEC]](<2 x s32>)
+  %v1 = insertelement <4 x i32> undef, i32 %arg1, i32 0
+  %v2 = insertelement <4 x i32> %v1, i32 %arg2, i32 1
+  %v3 = insertelement <4 x i32> %v2, i32 %arg3, i32 2
+  %v4 = insertelement <4 x i32> %v3, i32 %arg4, i32 3
+  %shuffle = shufflevector <4 x i32> %v4, <4 x i32> undef, <2 x i32> <i32 1, i32 3>
+  %res = extractelement <2 x i32> %shuffle, i32 0
+  ret i32 %res
 }

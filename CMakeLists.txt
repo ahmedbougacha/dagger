@@ -367,8 +367,6 @@ set(LLVM_TARGETS_TO_BUILD
    ${LLVM_EXPERIMENTAL_TARGETS_TO_BUILD})
 list(REMOVE_DUPLICATES LLVM_TARGETS_TO_BUILD)
 
-include(AddLLVMDefinitions)
-
 option(LLVM_ENABLE_PIC "Build Position-Independent Code" ON)
 option(LLVM_ENABLE_WARNINGS "Enable compiler warnings." ON)
 option(LLVM_ENABLE_MODULES "Compile with C++ modules enabled." OFF)
@@ -485,6 +483,10 @@ option(LLVM_INCLUDE_UTILS "Generate build targets for the LLVM utils." ON)
 option(LLVM_BUILD_UTILS
   "Build LLVM utility binaries. If OFF, just generate build targets." ON)
 
+option(LLVM_INCLUDE_RUNTIMES "Generate build targets for the LLVM runtimes." ON)
+option(LLVM_BUILD_RUNTIMES
+  "Build the LLVM runtimes. If OFF, just generate build targets." ON)
+
 option(LLVM_BUILD_RUNTIME
   "Build the LLVM runtime libraries." ON)
 option(LLVM_BUILD_EXAMPLES
@@ -509,6 +511,9 @@ set(LLVM_INSTALL_OCAMLDOC_HTML_DIR "share/doc/llvm/ocaml-html"
 
 option (LLVM_BUILD_EXTERNAL_COMPILER_RT
   "Build compiler-rt as an external project." OFF)
+
+option (LLVM_VERSION_PRINTER_SHOW_HOST_TARGET_INFO
+  "Show target and host info when tools are invoked with --version." ON)
 
 # You can configure which libraries from LLVM you want to include in the
 # shared library by setting LLVM_DYLIB_COMPONENTS to a semi-colon delimited
@@ -620,7 +625,7 @@ endif (LLVM_USE_OPROFILE)
 
 message(STATUS "Constructing LLVMBuild project information")
 execute_process(
-  COMMAND ${PYTHON_EXECUTABLE} ${LLVMBUILDTOOL}
+  COMMAND ${PYTHON_EXECUTABLE} -B ${LLVMBUILDTOOL}
             --native-target "${LLVM_NATIVE_ARCH}"
             --enable-targets "${LLVM_TARGETS_TO_BUILD}"
             --enable-optional-components "${LLVMOPTIONALCOMPONENTS}"
@@ -873,7 +878,9 @@ if( LLVM_INCLUDE_TOOLS )
   add_subdirectory(tools)
 endif()
 
-add_subdirectory(runtimes)
+if( LLVM_INCLUDE_RUNTIMES )
+  add_subdirectory(runtimes)
+endif()
 
 if( LLVM_INCLUDE_EXAMPLES )
   add_subdirectory(examples)

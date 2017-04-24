@@ -18,6 +18,7 @@
 #define LLVM_ADT_APFLOAT_H
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <memory>
 
@@ -139,22 +140,25 @@ enum lostFraction { // Example of truncated bits:
 // implementation classes. This struct should not define any non-static data
 // members.
 struct APFloatBase {
+  // TODO remove this and use APInt typedef directly.
+  typedef APInt::WordType integerPart;
+
   /// A signed type to represent a floating point numbers unbiased exponent.
   typedef signed short ExponentType;
 
   /// \name Floating Point Semantics.
   /// @{
 
-  static const fltSemantics &IEEEhalf();
-  static const fltSemantics &IEEEsingle();
-  static const fltSemantics &IEEEdouble();
-  static const fltSemantics &IEEEquad();
-  static const fltSemantics &PPCDoubleDouble();
-  static const fltSemantics &x87DoubleExtended();
+  static const fltSemantics &IEEEhalf() LLVM_READNONE;
+  static const fltSemantics &IEEEsingle() LLVM_READNONE;
+  static const fltSemantics &IEEEdouble() LLVM_READNONE;
+  static const fltSemantics &IEEEquad() LLVM_READNONE;
+  static const fltSemantics &PPCDoubleDouble() LLVM_READNONE;
+  static const fltSemantics &x87DoubleExtended() LLVM_READNONE;
 
   /// A Pseudo fltsemantic used to construct APFloats that cannot conflict with
   /// anything real.
-  static const fltSemantics &Bogus();
+  static const fltSemantics &Bogus() LLVM_READNONE;
 
   /// @}
 
@@ -273,8 +277,8 @@ public:
   /// @{
 
   opStatus convert(const fltSemantics &, roundingMode, bool *);
-  opStatus convertToInteger(integerPart *, unsigned int, bool, roundingMode,
-                            bool *) const;
+  opStatus convertToInteger(MutableArrayRef<integerPart>, unsigned int, bool,
+                            roundingMode, bool *) const;
   opStatus convertFromAPInt(const APInt &, bool, roundingMode);
   opStatus convertFromSignExtendedInteger(const integerPart *, unsigned int,
                                           bool, roundingMode);
@@ -361,7 +365,7 @@ public:
   /// Returns true if and only if the number has the largest possible finite
   /// magnitude in the current semantics.
   bool isLargest() const;
-  
+
   /// Returns true if and only if the number is an exact integer.
   bool isInteger() const;
 
@@ -393,6 +397,12 @@ public:
   ///   consider inserting before falling back to scientific
   ///   notation.  0 means to always use scientific notation.
   ///
+  /// \param TruncateZero Indicate whether to remove the trailing zero in
+  ///   fraction part or not. Also setting this parameter to false forcing
+  ///   producing of output more similar to default printf behavior.
+  ///   Specifically the lower e is used as exponent delimiter and exponent
+  ///   always contains no less than two digits.
+  ///
   /// Number       Precision    MaxPadding      Result
   /// ------       ---------    ----------      ------
   /// 1.01E+4              5             2       10100
@@ -402,7 +412,7 @@ public:
   /// 1.01E-2              4             2       0.0101
   /// 1.01E-2              4             1       1.01E-2
   void toString(SmallVectorImpl<char> &Str, unsigned FormatPrecision = 0,
-                unsigned FormatMaxPadding = 3) const;
+                unsigned FormatMaxPadding = 3, bool TruncateZero = true) const;
 
   /// If this value has an exact multiplicative inverse, store it in inv and
   /// return true.
@@ -495,8 +505,9 @@ private:
   opStatus addOrSubtract(const IEEEFloat &, roundingMode, bool subtract);
   opStatus handleOverflow(roundingMode);
   bool roundAwayFromZero(roundingMode, lostFraction, unsigned int) const;
-  opStatus convertToSignExtendedInteger(integerPart *, unsigned int, bool,
-                                        roundingMode, bool *) const;
+  opStatus convertToSignExtendedInteger(MutableArrayRef<integerPart>,
+                                        unsigned int, bool, roundingMode,
+                                        bool *) const;
   opStatus convertFromUnsignedParts(const integerPart *, unsigned int,
                                     roundingMode);
   opStatus convertFromHexadecimalString(StringRef, roundingMode);
@@ -625,8 +636,8 @@ public:
   opStatus convertFromString(StringRef, roundingMode);
   opStatus next(bool nextDown);
 
-  opStatus convertToInteger(integerPart *Input, unsigned int Width,
-                            bool IsSigned, roundingMode RM,
+  opStatus convertToInteger(MutableArrayRef<integerPart> Input,
+                            unsigned int Width, bool IsSigned, roundingMode RM,
                             bool *IsExact) const;
   opStatus convertFromAPInt(const APInt &Input, bool IsSigned, roundingMode RM);
   opStatus convertFromSignExtendedInteger(const integerPart *Input,
@@ -644,7 +655,7 @@ public:
   bool isInteger() const;
 
   void toString(SmallVectorImpl<char> &Str, unsigned FormatPrecision,
-                unsigned FormatMaxPadding) const;
+                unsigned FormatMaxPadding, bool TruncateZero = true) const;
 
   bool getExactInverse(APFloat *inv) const;
 
@@ -1055,8 +1066,8 @@ public:
 
   opStatus convert(const fltSemantics &ToSemantics, roundingMode RM,
                    bool *losesInfo);
-  opStatus convertToInteger(integerPart *Input, unsigned int Width,
-                            bool IsSigned, roundingMode RM,
+  opStatus convertToInteger(MutableArrayRef<integerPart> Input,
+                            unsigned int Width, bool IsSigned, roundingMode RM,
                             bool *IsExact) const {
     APFLOAT_DISPATCH_ON_SEMANTICS(
         convertToInteger(Input, Width, IsSigned, RM, IsExact));
@@ -1139,9 +1150,9 @@ public:
   APFloat &operator=(APFloat &&RHS) = default;
 
   void toString(SmallVectorImpl<char> &Str, unsigned FormatPrecision = 0,
-                unsigned FormatMaxPadding = 3) const {
+                unsigned FormatMaxPadding = 3, bool TruncateZero = true) const {
     APFLOAT_DISPATCH_ON_SEMANTICS(
-        toString(Str, FormatPrecision, FormatMaxPadding));
+        toString(Str, FormatPrecision, FormatMaxPadding, TruncateZero));
   }
 
   void print(raw_ostream &) const;

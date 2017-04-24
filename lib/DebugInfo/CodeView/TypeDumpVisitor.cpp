@@ -146,6 +146,10 @@ static const EnumEntry<uint8_t> FunctionOptionEnum[] = {
     ENUM_ENTRY(FunctionOptions, ConstructorWithVirtualBases),
 };
 
+static const EnumEntry<uint16_t> LabelTypeEnum[] = {
+    ENUM_ENTRY(LabelType, Near), ENUM_ENTRY(LabelType, Far),
+};
+
 #undef ENUM_ENTRY
 
 static StringRef getLeafTypeName(TypeLeafKind LT) {
@@ -164,9 +168,14 @@ void TypeDumpVisitor::printTypeIndex(StringRef FieldName, TypeIndex TI) const {
   CVTypeDumper::printTypeIndex(*W, FieldName, TI, TypeDB);
 }
 
+void TypeDumpVisitor::printItemIndex(StringRef FieldName, TypeIndex TI) const {
+  CVTypeDumper::printTypeIndex(*W, FieldName, TI, getSourceDB());
+}
+
 Error TypeDumpVisitor::visitTypeBegin(CVType &Record) {
   W->startLine() << getLeafTypeName(Record.Type);
-  W->getOStream() << " (" << HexNumber(TypeDB.getNextTypeIndex().getIndex())
+  W->getOStream() << " ("
+                  << HexNumber(getSourceDB().getNextTypeIndex().getIndex())
                   << ")";
   W->getOStream() << " {\n";
   W->indent();
@@ -212,7 +221,7 @@ Error TypeDumpVisitor::visitKnownRecord(CVType &CVR,
 }
 
 Error TypeDumpVisitor::visitKnownRecord(CVType &CVR, StringIdRecord &String) {
-  printTypeIndex("Id", String.getId());
+  printItemIndex("Id", String.getId());
   W->printString("StringData", String.getString());
   return Error::success();
 }
@@ -224,6 +233,17 @@ Error TypeDumpVisitor::visitKnownRecord(CVType &CVR, ArgListRecord &Args) {
   ListScope Arguments(*W, "Arguments");
   for (uint32_t I = 0; I < Size; ++I) {
     printTypeIndex("ArgType", Indices[I]);
+  }
+  return Error::success();
+}
+
+Error TypeDumpVisitor::visitKnownRecord(CVType &CVR, StringListRecord &Strs) {
+  auto Indices = Strs.getIndices();
+  uint32_t Size = Indices.size();
+  W->printNumber("NumStrings", Size);
+  ListScope Arguments(*W, "Strings");
+  for (uint32_t I = 0; I < Size; ++I) {
+    printTypeIndex("String", Indices[I]);
   }
   return Error::success();
 }
@@ -330,7 +350,7 @@ Error TypeDumpVisitor::visitKnownRecord(CVType &CVR,
 }
 
 Error TypeDumpVisitor::visitKnownRecord(CVType &CVR, FuncIdRecord &Func) {
-  printTypeIndex("ParentScope", Func.getParentScope());
+  printItemIndex("ParentScope", Func.getParentScope());
   printTypeIndex("FunctionType", Func.getFunctionType());
   W->printString("Name", Func.getName());
   return Error::success();
@@ -391,7 +411,7 @@ Error TypeDumpVisitor::visitKnownRecord(CVType &CVR,
 Error TypeDumpVisitor::visitKnownRecord(CVType &CVR,
                                         UdtSourceLineRecord &Line) {
   printTypeIndex("UDT", Line.getUDT());
-  printTypeIndex("SourceFile", Line.getSourceFile());
+  printItemIndex("SourceFile", Line.getSourceFile());
   W->printNumber("LineNumber", Line.getLineNumber());
   return Error::success();
 }
@@ -399,7 +419,7 @@ Error TypeDumpVisitor::visitKnownRecord(CVType &CVR,
 Error TypeDumpVisitor::visitKnownRecord(CVType &CVR,
                                         UdtModSourceLineRecord &Line) {
   printTypeIndex("UDT", Line.getUDT());
-  printTypeIndex("SourceFile", Line.getSourceFile());
+  printItemIndex("SourceFile", Line.getSourceFile());
   W->printNumber("LineNumber", Line.getLineNumber());
   W->printNumber("Module", Line.getModule());
   return Error::success();
@@ -410,7 +430,7 @@ Error TypeDumpVisitor::visitKnownRecord(CVType &CVR, BuildInfoRecord &Args) {
 
   ListScope Arguments(*W, "Arguments");
   for (auto Arg : Args.getArgs()) {
-    printTypeIndex("ArgType", Arg);
+    printItemIndex("ArgType", Arg);
   }
   return Error::success();
 }
@@ -529,5 +549,10 @@ Error TypeDumpVisitor::visitKnownMember(CVMemberRecord &CVR,
 Error TypeDumpVisitor::visitKnownMember(CVMemberRecord &CVR,
                                         ListContinuationRecord &Cont) {
   printTypeIndex("ContinuationIndex", Cont.getContinuationIndex());
+  return Error::success();
+}
+
+Error TypeDumpVisitor::visitKnownRecord(CVType &CVR, LabelRecord &LR) {
+  W->printEnum("Mode", uint16_t(LR.Mode), makeArrayRef(LabelTypeEnum));
   return Error::success();
 }

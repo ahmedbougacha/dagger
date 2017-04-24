@@ -39,7 +39,6 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Dwarf.h"
-#include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/LEB128.h"
@@ -90,14 +89,6 @@ DwarfAccelTables("dwarf-accel-tables", cl::Hidden,
                             clEnumVal(Enable, "Enabled"),
                             clEnumVal(Disable, "Disabled")),
                  cl::init(Default));
-
-static cl::opt<DefaultOnOff>
-SplitDwarf("split-dwarf", cl::Hidden,
-           cl::desc("Output DWARF5 split debug info."),
-           cl::values(clEnumVal(Default, "Default for platform"),
-                      clEnumVal(Enable, "Enabled"),
-                      clEnumVal(Disable, "Disabled")),
-           cl::init(Default));
 
 static cl::opt<DefaultOnOff>
 DwarfPubSections("generate-dwarf-pub-sections", cl::Hidden,
@@ -200,6 +191,12 @@ const DIType *DbgVariable::getType() const {
 }
 
 ArrayRef<DbgVariable::FrameIndexExpr> DbgVariable::getFrameIndexExprs() const {
+  if (FrameIndexExprs.size() == 1)
+    return FrameIndexExprs;
+
+  assert(all_of(FrameIndexExprs,
+                [](const FrameIndexExpr &A) { return A.Expr->isFragment(); }) &&
+         "multiple FI expressions without DW_OP_LLVM_fragment");
   std::sort(FrameIndexExprs.begin(), FrameIndexExprs.end(),
             [](const FrameIndexExpr &A, const FrameIndexExpr &B) -> bool {
               return A.Expr->getFragmentInfo()->OffsetInBits <
@@ -248,11 +245,8 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
 
   HasAppleExtensionAttributes = tuneForLLDB();
 
-  // Handle split DWARF. Off by default for now.
-  if (SplitDwarf == Default)
-    HasSplitDwarf = false;
-  else
-    HasSplitDwarf = SplitDwarf == Enable;
+  // Handle split DWARF.
+  HasSplitDwarf = !Asm->TM.Options.MCOptions.SplitDwarfFile.empty();
 
   // Pubnames/pubtypes on by default for GDB.
   if (DwarfPubSections == Default)
@@ -407,7 +401,7 @@ DwarfDebug::constructDwarfCompileUnit(const DICompileUnit *DIUnit) {
   if (useSplitDwarf()) {
     NewCU.setSkeleton(constructSkeletonCU(NewCU));
     NewCU.addString(Die, dwarf::DW_AT_GNU_dwo_name,
-                    DIUnit->getSplitDebugFilename());
+                  Asm->TM.Options.MCOptions.SplitDwarfFile);
   }
 
   // LTO with assembly output shares a single line table amongst multiple CUs.
@@ -418,7 +412,14 @@ DwarfDebug::constructDwarfCompileUnit(const DICompileUnit *DIUnit) {
     Asm->OutStreamer->getContext().setMCLineTableCompilationDir(
         NewCU.getUniqueID(), CompilationDir);
 
-  NewCU.addString(Die, dwarf::DW_AT_producer, DIUnit->getProducer());
+  StringRef Producer = DIUnit->getProducer();
+  StringRef Flags = DIUnit->getFlags();
+  if (!Flags.empty()) {
+    std::string ProducerWithFlags = Producer.str() + " " + Flags.str();
+    NewCU.addString(Die, dwarf::DW_AT_producer, ProducerWithFlags);
+  } else
+    NewCU.addString(Die, dwarf::DW_AT_producer, Producer);
+
   NewCU.addUInt(Die, dwarf::DW_AT_language, dwarf::DW_FORM_data2,
                 DIUnit->getSourceLanguage());
   NewCU.addString(Die, dwarf::DW_AT_name, FN);
@@ -1493,8 +1494,9 @@ static void emitDebugLocValue(const AsmPrinter &AP, const DIBasicType *BT,
                               ByteStreamer &Streamer,
                               const DebugLocEntry::Value &Value,
                               DwarfExpression &DwarfExpr) {
-  DIExpressionCursor ExprCursor(Value.getExpression());
-  DwarfExpr.addFragmentOffset(Value.getExpression());
+  auto *DIExpr = Value.getExpression();
+  DIExpressionCursor ExprCursor(DIExpr);
+  DwarfExpr.addFragmentOffset(DIExpr);
   // Regular entry.
   if (Value.isInt()) {
     if (BT && (BT->getEncoding() == dwarf::DW_ATE_signed ||
@@ -1503,12 +1505,20 @@ static void emitDebugLocValue(const AsmPrinter &AP, const DIBasicType *BT,
     else
       DwarfExpr.addUnsignedConstant(Value.getInt());
   } else if (Value.isLocation()) {
-    MachineLocation Loc = Value.getLoc();
+    MachineLocation Location = Value.getLoc();
+    if (Location.isIndirect())
+      DwarfExpr.setMemoryLocationKind();
+    SmallVector<uint64_t, 8> Ops;
+    if (Location.isIndirect() && Location.getOffset()) {
+      Ops.push_back(dwarf::DW_OP_plus);
+      Ops.push_back(Location.getOffset());
+    }
+    Ops.append(DIExpr->elements_begin(), DIExpr->elements_end());
+    DIExpressionCursor Cursor(Ops);
     const TargetRegisterInfo &TRI = *AP.MF->getSubtarget().getRegisterInfo();
-    if (Loc.getOffset())
-      DwarfExpr.addMachineRegIndirect(TRI, Loc.getReg(), Loc.getOffset());
-    else
-      DwarfExpr.addMachineRegExpression(TRI, ExprCursor, Loc.getReg());
+    if (!DwarfExpr.addMachineRegExpression(TRI, Cursor, Location.getReg()))
+      return;
+    return DwarfExpr.addExpression(std::move(Cursor));
   } else if (Value.isConstantFP()) {
     APInt RawBytes = Value.getConstantFP()->getValueAPF().bitcastToAPInt();
     DwarfExpr.addUnsignedConstant(RawBytes);
@@ -1556,7 +1566,7 @@ void DwarfDebug::emitDebugLoc() {
   // Start the dwarf loc section.
   Asm->OutStreamer->SwitchSection(
       Asm->getObjFileLowering().getDwarfLocSection());
-  unsigned char Size = Asm->getDataLayout().getPointerSize();
+  unsigned char Size = Asm->MAI->getCodePointerSize();
   for (const auto &List : DebugLocs.getLists()) {
     Asm->OutStreamer->EmitLabel(List.Label);
     const DwarfCompileUnit *CU = List.CU;
@@ -1686,7 +1696,7 @@ void DwarfDebug::emitDebugARanges() {
   Asm->OutStreamer->SwitchSection(
       Asm->getObjFileLowering().getDwarfARangesSection());
 
-  unsigned PtrSize = Asm->getDataLayout().getPointerSize();
+  unsigned PtrSize = Asm->MAI->getCodePointerSize();
 
   // Build a list of CUs used.
   std::vector<DwarfCompileUnit *> CUs;
@@ -1769,7 +1779,7 @@ void DwarfDebug::emitDebugRanges() {
       Asm->getObjFileLowering().getDwarfRangesSection());
 
   // Size for our labels.
-  unsigned char Size = Asm->getDataLayout().getPointerSize();
+  unsigned char Size = Asm->MAI->getCodePointerSize();
 
   // Grab the specific ranges for the compile units in the module.
   for (const auto &I : CUMap) {
@@ -1864,7 +1874,7 @@ void DwarfDebug::emitDebugMacinfo() {
 void DwarfDebug::initSkeletonUnit(const DwarfUnit &U, DIE &Die,
                                   std::unique_ptr<DwarfCompileUnit> NewU) {
   NewU->addString(Die, dwarf::DW_AT_GNU_dwo_name,
-                  U.getCUNode()->getSplitDebugFilename());
+                  Asm->TM.Options.MCOptions.SplitDwarfFile);
 
   if (!CompilationDir.empty())
     NewU->addString(Die, dwarf::DW_AT_comp_dir, CompilationDir);
@@ -1935,11 +1945,11 @@ uint64_t DwarfDebug::makeTypeSignature(StringRef Identifier) {
   MD5 Hash;
   Hash.update(Identifier);
   // ... take the least significant 8 bytes and return those. Our MD5
-  // implementation always returns its results in little endian, swap bytes
-  // appropriately.
+  // implementation always returns its results in little endian, so we actually
+  // need the "high" word.
   MD5::MD5Result Result;
   Hash.final(Result);
-  return support::endian::read64le(Result + 8);
+  return Result.high();
 }
 
 void DwarfDebug::addDwarfTypeUnitType(DwarfCompileUnit &CU,

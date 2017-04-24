@@ -1269,7 +1269,7 @@ bool JumpThreadingPass::ProcessThreadableEdges(Value *Cond, BasicBlock *BB,
     else if (BranchInst *BI = dyn_cast<BranchInst>(BB->getTerminator()))
       DestBB = BI->getSuccessor(cast<ConstantInt>(Val)->isZero());
     else if (SwitchInst *SI = dyn_cast<SwitchInst>(BB->getTerminator())) {
-      DestBB = SI->findCaseValue(cast<ConstantInt>(Val)).getCaseSuccessor();
+      DestBB = SI->findCaseValue(cast<ConstantInt>(Val))->getCaseSuccessor();
     } else {
       assert(isa<IndirectBrInst>(BB->getTerminator())
               && "Unexpected terminator");
@@ -1288,6 +1288,36 @@ bool JumpThreadingPass::ProcessThreadableEdges(Value *Cond, BasicBlock *BB,
   // If all edges were unthreadable, we fail.
   if (PredToDestList.empty())
     return false;
+
+  // If all the predecessors go to a single known successor, we want to fold,
+  // not thread. By doing so, we do not need to duplicate the current block and
+  // also miss potential opportunities in case we dont/cant duplicate.
+  if (OnlyDest && OnlyDest != MultipleDestSentinel) {
+    if (PredToDestList.size() ==
+        (size_t)std::distance(pred_begin(BB), pred_end(BB))) {
+      bool SeenFirstBranchToOnlyDest = false;
+      for (BasicBlock *SuccBB : successors(BB)) {
+        if (SuccBB == OnlyDest && !SeenFirstBranchToOnlyDest)
+          SeenFirstBranchToOnlyDest = true; // Don't modify the first branch.
+        else
+          SuccBB->removePredecessor(BB, true); // This is unreachable successor.
+      }
+
+      // Finally update the terminator.
+      TerminatorInst *Term = BB->getTerminator();
+      BranchInst::Create(OnlyDest, Term);
+      Term->eraseFromParent();
+
+      // If the condition is now dead due to the removal of the old terminator,
+      // erase it.
+      auto *CondInst = dyn_cast<Instruction>(Cond);
+      if (CondInst && CondInst->use_empty())
+        CondInst->eraseFromParent();
+      // FIXME: in case this instruction is defined in the current BB and it
+      // resolves to a single value from all predecessors, we can do RAUW.
+      return true;
+    }
+  }
 
   // Determine which is the most common successor.  If we have many inputs and
   // this block is a switch, we want to start by threading the batch that goes

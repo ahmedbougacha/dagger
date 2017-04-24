@@ -809,7 +809,7 @@ Value *LibCallSimplifier::optimizeMemMove(CallInst *CI, IRBuilder<> &B) {
 
 // TODO: Does this belong in BuildLibCalls or should all of those similar
 // functions be moved here?
-static Value *emitCalloc(Value *Num, Value *Size, const AttributeSet &Attrs,
+static Value *emitCalloc(Value *Num, Value *Size, const AttributeList &Attrs,
                          IRBuilder<> &B, const TargetLibraryInfo &TLI) {
   LibFunc Func;
   if (!TLI.getLibFunc("calloc", Func) || !TLI.has(Func))
@@ -819,7 +819,7 @@ static Value *emitCalloc(Value *Num, Value *Size, const AttributeSet &Attrs,
   const DataLayout &DL = M->getDataLayout();
   IntegerType *PtrType = DL.getIntPtrType((B.GetInsertBlock()->getContext()));
   Value *Calloc = M->getOrInsertFunction("calloc", Attrs, B.getInt8PtrTy(),
-                                         PtrType, PtrType, nullptr);
+                                         PtrType, PtrType);
   CallInst *CI = B.CreateCall(Calloc, { Num, Size }, "calloc");
 
   if (const auto *F = dyn_cast<Function>(Calloc->stripPointerCasts()))
@@ -1219,7 +1219,7 @@ Value *LibCallSimplifier::optimizeExp2(CallInst *CI, IRBuilder<> &B) {
       Module *M = CI->getModule();
       Value *NewCallee =
           M->getOrInsertFunction(TLI->getName(LdExp), Op->getType(),
-                                 Op->getType(), B.getInt32Ty(), nullptr);
+                                 Op->getType(), B.getInt32Ty());
       CallInst *CI = B.CreateCall(NewCallee, {One, LdExpArg});
       if (const Function *F = dyn_cast<Function>(Callee->stripPointerCasts()))
         CI->setCallingConv(F->getCallingConv());
@@ -1443,7 +1443,7 @@ static void insertSinCosCall(IRBuilder<> &B, Function *OrigCallee, Value *Arg,
 
   Module *M = OrigCallee->getParent();
   Value *Callee = M->getOrInsertFunction(Name, OrigCallee->getAttributes(),
-                                         ResTy, ArgTy, nullptr);
+                                         ResTy, ArgTy);
 
   if (Instruction *ArgInst = dyn_cast<Instruction>(Arg)) {
     // If the argument is an instruction, it must dominate all uses so put our
@@ -1625,7 +1625,7 @@ Value *LibCallSimplifier::optimizeErrorReporting(CallInst *CI, IRBuilder<> &B,
   // Proceedings of PACT'98, Oct. 1998, IEEE
   if (!CI->hasFnAttr(Attribute::Cold) &&
       isReportingError(Callee, CI, StreamArg)) {
-    CI->addAttribute(AttributeSet::FunctionIndex, Attribute::Cold);
+    CI->addAttribute(AttributeList::FunctionIndex, Attribute::Cold);
   }
 
   return nullptr;
@@ -2160,8 +2160,9 @@ Value *LibCallSimplifier::optimizeCall(CallInst *CI) {
     case LibFunc_round:
       return replaceUnaryCall(CI, Builder, Intrinsic::round);
     case LibFunc_nearbyint:
-    case LibFunc_rint:
       return replaceUnaryCall(CI, Builder, Intrinsic::nearbyint);
+    case LibFunc_rint:
+      return replaceUnaryCall(CI, Builder, Intrinsic::rint);
     case LibFunc_trunc:
       return replaceUnaryCall(CI, Builder, Intrinsic::trunc);
     case LibFunc_acos:

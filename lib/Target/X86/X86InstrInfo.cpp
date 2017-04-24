@@ -3616,18 +3616,13 @@ int X86InstrInfo::getSPAdjust(const MachineInstr &MI) const {
   const MachineFunction *MF = MI.getParent()->getParent();
   const TargetFrameLowering *TFI = MF->getSubtarget().getFrameLowering();
 
-  if (MI.getOpcode() == getCallFrameSetupOpcode() ||
-      MI.getOpcode() == getCallFrameDestroyOpcode()) {
+  if (isFrameInstr(MI)) {
     unsigned StackAlign = TFI->getStackAlignment();
-    int SPAdj =
-        (MI.getOperand(0).getImm() + StackAlign - 1) / StackAlign * StackAlign;
-
-    SPAdj -= MI.getOperand(1).getImm();
-
-    if (MI.getOpcode() == getCallFrameSetupOpcode())
-      return SPAdj;
-    else
-      return -SPAdj;
+    int SPAdj = alignTo(getFrameSize(MI), StackAlign);
+    SPAdj -= getFrameAdjustment(MI);
+    if (!isFrameSetup(MI))
+      SPAdj = -SPAdj;
+    return SPAdj;
   }
 
   // To know whether a call adjusts the stack, we need information
@@ -6309,8 +6304,6 @@ static unsigned CopyToFromAsymmetricReg(unsigned &DestReg, unsigned &SrcReg,
 
   // SrcReg(MaskReg) -> DestReg(GR64)
   // SrcReg(MaskReg) -> DestReg(GR32)
-  // SrcReg(MaskReg) -> DestReg(GR16)
-  // SrcReg(MaskReg) -> DestReg(GR8)
 
   // All KMASK RegClasses hold the same k registers, can be tested against anyone.
   if (X86::VK16RegClass.contains(SrcReg)) {
@@ -6320,21 +6313,10 @@ static unsigned CopyToFromAsymmetricReg(unsigned &DestReg, unsigned &SrcReg,
     }
     if (X86::GR32RegClass.contains(DestReg))
       return Subtarget.hasBWI() ? X86::KMOVDrk : X86::KMOVWrk;
-    if (X86::GR16RegClass.contains(DestReg)) {
-      DestReg = getX86SubSuperRegister(DestReg, 32);
-      return X86::KMOVWrk;
-    }
-    if (X86::GR8RegClass.contains(DestReg)) {
-      assert(!isHReg(DestReg) && "Cannot move between mask and h-reg");
-      DestReg = getX86SubSuperRegister(DestReg, 32);
-      return Subtarget.hasDQI() ? X86::KMOVBrk : X86::KMOVWrk;
-    }
   }
 
   // SrcReg(GR64) -> DestReg(MaskReg)
   // SrcReg(GR32) -> DestReg(MaskReg)
-  // SrcReg(GR16) -> DestReg(MaskReg)
-  // SrcReg(GR8)  -> DestReg(MaskReg)
 
   // All KMASK RegClasses hold the same k registers, can be tested against anyone.
   if (X86::VK16RegClass.contains(DestReg)) {
@@ -6344,15 +6326,6 @@ static unsigned CopyToFromAsymmetricReg(unsigned &DestReg, unsigned &SrcReg,
     }
     if (X86::GR32RegClass.contains(SrcReg))
       return Subtarget.hasBWI() ? X86::KMOVDkr : X86::KMOVWkr;
-    if (X86::GR16RegClass.contains(SrcReg)) {
-      SrcReg = getX86SubSuperRegister(SrcReg, 32);
-      return X86::KMOVWkr;
-    }
-    if (X86::GR8RegClass.contains(SrcReg)) {
-      assert(!isHReg(SrcReg) && "Cannot move between mask and h-reg");
-      SrcReg = getX86SubSuperRegister(SrcReg, 32);
-      return Subtarget.hasDQI() ? X86::KMOVBkr : X86::KMOVWkr;
-    }
   }
 
 
@@ -6630,28 +6603,36 @@ static unsigned getLoadStoreRegOpcode(unsigned Reg,
     assert(X86::RFP80RegClass.hasSubClassEq(RC) && "Unknown 10-byte regclass");
     return load ? X86::LD_Fp80m : X86::ST_FpP80m;
   case 16: {
-    assert(X86::VR128XRegClass.hasSubClassEq(RC) && "Unknown 16-byte regclass");
-    // If stack is realigned we can use aligned stores.
-    if (isStackAligned)
-      return load ?
-        (HasVLX    ? X86::VMOVAPSZ128rm :
-         HasAVX512 ? X86::VMOVAPSZ128rm_NOVLX :
-         HasAVX    ? X86::VMOVAPSrm :
-                     X86::MOVAPSrm):
-        (HasVLX    ? X86::VMOVAPSZ128mr :
-         HasAVX512 ? X86::VMOVAPSZ128mr_NOVLX :
-         HasAVX    ? X86::VMOVAPSmr :
-                     X86::MOVAPSmr);
-    else
-      return load ?
-        (HasVLX    ? X86::VMOVUPSZ128rm :
-         HasAVX512 ? X86::VMOVUPSZ128rm_NOVLX :
-         HasAVX    ? X86::VMOVUPSrm :
-                     X86::MOVUPSrm):
-        (HasVLX    ? X86::VMOVUPSZ128mr :
-         HasAVX512 ? X86::VMOVUPSZ128mr_NOVLX :
-         HasAVX    ? X86::VMOVUPSmr :
-                     X86::MOVUPSmr);
+    if (X86::VR128XRegClass.hasSubClassEq(RC)) {
+      // If stack is realigned we can use aligned stores.
+      if (isStackAligned)
+        return load ?
+          (HasVLX    ? X86::VMOVAPSZ128rm :
+           HasAVX512 ? X86::VMOVAPSZ128rm_NOVLX :
+           HasAVX    ? X86::VMOVAPSrm :
+                       X86::MOVAPSrm):
+          (HasVLX    ? X86::VMOVAPSZ128mr :
+           HasAVX512 ? X86::VMOVAPSZ128mr_NOVLX :
+           HasAVX    ? X86::VMOVAPSmr :
+                       X86::MOVAPSmr);
+      else
+        return load ?
+          (HasVLX    ? X86::VMOVUPSZ128rm :
+           HasAVX512 ? X86::VMOVUPSZ128rm_NOVLX :
+           HasAVX    ? X86::VMOVUPSrm :
+                       X86::MOVUPSrm):
+          (HasVLX    ? X86::VMOVUPSZ128mr :
+           HasAVX512 ? X86::VMOVUPSZ128mr_NOVLX :
+           HasAVX    ? X86::VMOVUPSmr :
+                       X86::MOVUPSmr);
+    }
+    if (X86::BNDRRegClass.hasSubClassEq(RC)) {
+      if (STI.is64Bit())
+        return load ? X86::BNDMOVRM64rm : X86::BNDMOVMR64mr;
+      else
+        return load ? X86::BNDMOVRM32rm : X86::BNDMOVMR32mr;
+    }
+    llvm_unreachable("Unknown 16-byte regclass");
   }
   case 32:
     assert(X86::VR256XRegClass.hasSubClassEq(RC) && "Unknown 32-byte regclass");
@@ -9002,28 +8983,29 @@ X86InstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
     break;
   }
 
-  // Check if chain operands and base addresses match.
-  if (Load1->getOperand(0) != Load2->getOperand(0) ||
-      Load1->getOperand(5) != Load2->getOperand(5))
-    return false;
-  // Segment operands should match as well.
-  if (Load1->getOperand(4) != Load2->getOperand(4))
-    return false;
-  // Scale should be 1, Index should be Reg0.
-  if (Load1->getOperand(1) == Load2->getOperand(1) &&
-      Load1->getOperand(2) == Load2->getOperand(2)) {
-    if (cast<ConstantSDNode>(Load1->getOperand(1))->getZExtValue() != 1)
-      return false;
+  // Lambda to check if both the loads have the same value for an operand index.
+  auto HasSameOp = [&](int I) {
+    return Load1->getOperand(I) == Load2->getOperand(I);
+  };
 
-    // Now let's examine the displacements.
-    if (isa<ConstantSDNode>(Load1->getOperand(3)) &&
-        isa<ConstantSDNode>(Load2->getOperand(3))) {
-      Offset1 = cast<ConstantSDNode>(Load1->getOperand(3))->getSExtValue();
-      Offset2 = cast<ConstantSDNode>(Load2->getOperand(3))->getSExtValue();
-      return true;
-    }
-  }
-  return false;
+  // All operands except the displacement should match.
+  if (!HasSameOp(X86::AddrBaseReg) || !HasSameOp(X86::AddrScaleAmt) ||
+      !HasSameOp(X86::AddrIndexReg) || !HasSameOp(X86::AddrSegmentReg))
+    return false;
+
+  // Chain Operand must be the same.
+  if (!HasSameOp(5))
+    return false;
+
+  // Now let's examine if the displacements are constants.
+  auto Disp1 = dyn_cast<ConstantSDNode>(Load1->getOperand(X86::AddrDisp));
+  auto Disp2 = dyn_cast<ConstantSDNode>(Load2->getOperand(X86::AddrDisp));
+  if (!Disp1 || !Disp2)
+    return false;
+
+  Offset1 = Disp1->getSExtValue();
+  Offset2 = Disp2->getSExtValue();
+  return true;
 }
 
 bool X86InstrInfo::shouldScheduleLoadsNear(SDNode *Load1, SDNode *Load2,
@@ -9540,7 +9522,7 @@ void X86InstrInfo::setExecutionDomain(MachineInstr &MI, unsigned Domain) const {
 }
 
 /// Return the noop instruction to use for a noop.
-void X86InstrInfo::getNoopForMachoTarget(MCInst &NopInst) const {
+void X86InstrInfo::getNoop(MCInst &NopInst) const {
   NopInst.setOpcode(X86::NOOP);
 }
 

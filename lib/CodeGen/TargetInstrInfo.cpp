@@ -428,8 +428,8 @@ static const TargetRegisterClass *canFoldCopy(const MachineInstr &MI,
   return nullptr;
 }
 
-void TargetInstrInfo::getNoopForMachoTarget(MCInst &NopInst) const {
-  llvm_unreachable("Not a MachO target");
+void TargetInstrInfo::getNoop(MCInst &NopInst) const {
+  llvm_unreachable("Not implemented");
 }
 
 static MachineInstr *foldPatchpoint(MachineFunction &MF, MachineInstr &MI,
@@ -941,12 +941,10 @@ int TargetInstrInfo::getSPAdjust(const MachineInstr &MI) const {
   unsigned FrameSetupOpcode = getCallFrameSetupOpcode();
   unsigned FrameDestroyOpcode = getCallFrameDestroyOpcode();
 
-  if (MI.getOpcode() != FrameSetupOpcode &&
-      MI.getOpcode() != FrameDestroyOpcode)
+  if (!isFrameInstr(MI))
     return 0;
 
-  int SPAdj = MI.getOperand(0).getImm();
-  SPAdj = TFI->alignSPAdjust(SPAdj);
+  int SPAdj = TFI->alignSPAdjust(getFrameSize(MI));
 
   if ((!StackGrowsDown && MI.getOpcode() == FrameSetupOpcode) ||
       (StackGrowsDown && MI.getOpcode() == FrameDestroyOpcode))

@@ -763,6 +763,17 @@ bool AArch64InstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
   llvm_unreachable("Unknown opcode to check as cheap as a move!");
 }
 
+bool AArch64InstrInfo::isFalkorLSLFast(const MachineInstr &MI) const {
+  if (MI.getNumOperands() < 4)
+    return false;
+  unsigned ShOpVal = MI.getOperand(3).getImm();
+  unsigned ShImm = AArch64_AM::getShiftValue(ShOpVal);
+  if (AArch64_AM::getShiftType(ShOpVal) == AArch64_AM::LSL &&
+       ShImm < 4)
+    return true;
+  return false;
+}
+
 bool AArch64InstrInfo::isCoalescableExtInstr(const MachineInstr &MI,
                                              unsigned &SrcReg, unsigned &DstReg,
                                              unsigned &SubIdx) const {
@@ -3014,7 +3025,7 @@ bool llvm::rewriteAArch64FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
   return false;
 }
 
-void AArch64InstrInfo::getNoopForMachoTarget(MCInst &NopInst) const {
+void AArch64InstrInfo::getNoop(MCInst &NopInst) const {
   NopInst.setOpcode(AArch64::HINT);
   NopInst.addOperand(MCOperand::createImm(0));
 }
@@ -4348,10 +4359,8 @@ AArch64InstrInfo::getOutliningType(MachineInstr &MI) const {
       // TODO: We should really test what happens if an instruction overflows.
       // This is tricky to test with IR tests, but when the outliner is moved
       // to a MIR test, it really ought to be checked.
-      if (Offset + 16 < MinOffset || Offset + 16 > MaxOffset) {
-        errs() << "Overflow!\n";
-        return MachineOutlinerInstrType::Illegal;
-      }
+      if (Offset + 16 < MinOffset || Offset + 16 > MaxOffset)
+	return MachineOutlinerInstrType::Illegal;
 
       // It's in range, so we can outline it.
       return MachineOutlinerInstrType::Legal;

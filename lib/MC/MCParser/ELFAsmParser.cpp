@@ -298,7 +298,7 @@ static unsigned parseSectionFlags(StringRef flagsStr, bool *UseLastGroup) {
     case 'w':
       flags |= ELF::SHF_WRITE;
       break;
-    case 'm':
+    case 'o':
       flags |= ELF::SHF_LINK_ORDER;
       break;
     case 'M':
@@ -472,6 +472,10 @@ bool ELFAsmParser::maybeParseUniqueID(int64_t &UniqueID) {
   return false;
 }
 
+static bool hasPrefix(StringRef SectionName, StringRef Prefix) {
+  return SectionName.startswith(Prefix) || SectionName == Prefix.drop_back();
+}
+
 bool ELFAsmParser::ParseSectionArguments(bool IsPush, SMLoc loc) {
   StringRef SectionName;
 
@@ -489,11 +493,20 @@ bool ELFAsmParser::ParseSectionArguments(bool IsPush, SMLoc loc) {
   int64_t UniqueID = ~0;
 
   // Set the defaults first.
-  if (SectionName == ".fini" || SectionName == ".init" ||
-      SectionName == ".rodata")
+  if (hasPrefix(SectionName, ".rodata.") || SectionName == ".rodata1")
     Flags |= ELF::SHF_ALLOC;
-  if (SectionName == ".fini" || SectionName == ".init")
-    Flags |= ELF::SHF_EXECINSTR;
+  if (SectionName == ".fini" || SectionName == ".init" ||
+      hasPrefix(SectionName, ".text."))
+    Flags |= ELF::SHF_ALLOC | ELF::SHF_EXECINSTR;
+  if (hasPrefix(SectionName, ".data.") || SectionName == ".data1" ||
+      hasPrefix(SectionName, ".bss.") ||
+      hasPrefix(SectionName, ".init_array.") ||
+      hasPrefix(SectionName, ".fini_array.") ||
+      hasPrefix(SectionName, ".preinit_array."))
+    Flags |= ELF::SHF_ALLOC | ELF::SHF_WRITE;
+  if (hasPrefix(SectionName, ".tdata.") ||
+      hasPrefix(SectionName, ".tbss."))
+    Flags |= ELF::SHF_ALLOC | ELF::SHF_WRITE | ELF::SHF_TLS;
 
   if (getLexer().is(AsmToken::Comma)) {
     Lex();
@@ -565,11 +578,15 @@ EndStmt:
   if (TypeName.empty()) {
     if (SectionName.startswith(".note"))
       Type = ELF::SHT_NOTE;
-    else if (SectionName == ".init_array")
+    else if (hasPrefix(SectionName, ".init_array."))
       Type = ELF::SHT_INIT_ARRAY;
-    else if (SectionName == ".fini_array")
+    else if (hasPrefix(SectionName, ".bss."))
+      Type = ELF::SHT_NOBITS;
+    else if (hasPrefix(SectionName, ".tbss."))
+      Type = ELF::SHT_NOBITS;
+    else if (hasPrefix(SectionName, ".fini_array."))
       Type = ELF::SHT_FINI_ARRAY;
-    else if (SectionName == ".preinit_array")
+    else if (hasPrefix(SectionName, ".preinit_array."))
       Type = ELF::SHT_PREINIT_ARRAY;
   } else {
     if (TypeName == "init_array")

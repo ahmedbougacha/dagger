@@ -45,8 +45,6 @@ void GCNMaxOccupancySchedStrategy::initialize(ScheduleDAGMI *DAG) {
 
   const SIRegisterInfo *SRI = static_cast<const SIRegisterInfo*>(TRI);
 
-  if (MF != &DAG->MF)
-    TargetOccupancy = 0;
   MF = &DAG->MF;
 
   const SISubtarget &ST = MF->getSubtarget<SISubtarget>();
@@ -323,16 +321,6 @@ GCNScheduleDAGMILive::GCNScheduleDAGMILive(MachineSchedContext *C,
   DEBUG(dbgs() << "Starting occupancy is " << StartingOccupancy << ".\n");
 }
 
-void GCNScheduleDAGMILive::enterRegion(MachineBasicBlock *bb,
-                                       MachineBasicBlock::iterator begin,
-                                       MachineBasicBlock::iterator end,
-                                       unsigned regioninstrs) {
-  ScheduleDAGMILive::enterRegion(bb, begin, end, regioninstrs);
-
-  if (Stage == 0)
-    Regions.push_back(std::make_pair(begin, end));
-}
-
 void GCNScheduleDAGMILive::schedule() {
   std::vector<MachineInstr*> Unsched;
   Unsched.reserve(NumRegionInstrs);
@@ -347,6 +335,9 @@ void GCNScheduleDAGMILive::schedule() {
   }
 
   ScheduleDAGMILive::schedule();
+  if (Stage == 0)
+    Regions.push_back(std::make_pair(RegionBegin, RegionEnd));
+
   if (!LIS)
     return;
 
@@ -407,6 +398,8 @@ void GCNScheduleDAGMILive::schedule() {
     DEBUG(dbgs() << "Scheduling " << *MI);
   }
   RegionBegin = Unsched.front()->getIterator();
+  if (Stage == 0)
+    Regions.back() = std::make_pair(RegionBegin, RegionEnd);
 
   placeDebugValues();
 }
@@ -531,7 +524,7 @@ void GCNScheduleDAGMILive::finalizeSchedule() {
 
   Stage++;
   GCNMaxOccupancySchedStrategy &S = (GCNMaxOccupancySchedStrategy&)*SchedImpl;
-  S.TargetOccupancy = MinOccupancy;
+  S.setTargetOccupancy(MinOccupancy);
 
   MachineBasicBlock *MBB = nullptr;
   for (auto Region : Regions) {

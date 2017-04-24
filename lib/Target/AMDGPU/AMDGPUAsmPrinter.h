@@ -15,6 +15,8 @@
 #ifndef LLVM_LIB_TARGET_AMDGPU_AMDGPUASMPRINTER_H
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUASMPRINTER_H
 
+#include "AMDKernelCodeT.h"
+#include "AMDGPU.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include <cstddef>
@@ -26,6 +28,7 @@
 
 namespace llvm {
 
+class AMDGPUTargetStreamer;
 class MCOperand;
 
 class AMDGPUAsmPrinter final : public AsmPrinter {
@@ -52,7 +55,7 @@ private:
 
     uint32_t NumVGPR = 0;
     uint32_t NumSGPR = 0;
-    uint32_t LDSSize;
+    uint32_t LDSSize = 0;
     bool FlatUsed = false;
 
     // Number of SGPRs that meets number of waves per execution unit request.
@@ -82,12 +85,14 @@ private:
 
     // Bonus information for debugging.
     bool VCCUsed = false;
-    uint64_t CodeLen = 0;
 
     SIProgramInfo() = default;
   };
 
+  uint64_t getFunctionCodeSize(const MachineFunction &MF) const;
   void getSIProgramInfo(SIProgramInfo &Out, const MachineFunction &MF) const;
+  void getAmdKernelCode(amd_kernel_code_t &Out, const SIProgramInfo &KernelInfo,
+                        const MachineFunction &MF) const;
   void findNumUsedRegistersSI(const MachineFunction &MF,
                               unsigned &NumSGPR,
                               unsigned &NumVGPR) const;
@@ -96,16 +101,18 @@ private:
   /// can correctly setup the GPU state.
   void EmitProgramInfoR600(const MachineFunction &MF);
   void EmitProgramInfoSI(const MachineFunction &MF, const SIProgramInfo &KernelInfo);
-  void EmitAmdKernelCodeT(const MachineFunction &MF,
-                          const SIProgramInfo &KernelInfo) const;
 
 public:
   explicit AMDGPUAsmPrinter(TargetMachine &TM,
                             std::unique_ptr<MCStreamer> Streamer);
 
-  bool runOnMachineFunction(MachineFunction &MF) override;
-
   StringRef getPassName() const override;
+
+  const MCSubtargetInfo* getSTI() const;
+
+  AMDGPUTargetStreamer& getTargetStreamer() const;
+
+  bool runOnMachineFunction(MachineFunction &MF) override;
 
   /// \brief Wrapper for MCInstLowering.lowerOperand() for the tblgen'erated
   /// pseudo lowering.
@@ -132,6 +139,8 @@ public:
 
   void EmitStartOfAsmFile(Module &M) override;
 
+  void EmitEndOfAsmFile(Module &M) override;
+
   bool isBlockOnlyReachableByFallthrough(
     const MachineBasicBlock *MBB) const override;
 
@@ -142,6 +151,7 @@ public:
 protected:
   std::vector<std::string> DisasmLines, HexLines;
   size_t DisasmLineMaxLen;
+  AMDGPUAS AMDGPUASI;
 };
 
 } // end namespace llvm

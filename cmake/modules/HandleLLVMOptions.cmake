@@ -8,7 +8,6 @@ string(TOUPPER "${CMAKE_BUILD_TYPE}" uppercase_CMAKE_BUILD_TYPE)
 
 include(CheckCompilerVersion)
 include(HandleLLVMStdlib)
-include(AddLLVMDefinitions)
 include(CheckCCompilerFlag)
 include(CheckCXXCompilerFlag)
 
@@ -223,6 +222,13 @@ if( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WIN32 )
   endif( LLVM_BUILD_32_BITS )
 endif( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WIN32 )
 
+# If building on a GNU specific 32-bit system, make sure off_t is 64 bits
+# so that off_t can stored offset > 2GB
+if( CMAKE_SIZEOF_VOID_P EQUAL 4 )
+  add_definitions( -D_LARGEFILE_SOURCE )
+  add_definitions( -D_FILE_OFFSET_BITS=64 )
+endif()
+
 if( XCODE )
   # For Xcode enable several build settings that correspond to
   # many warnings that are on by default in Clang but are
@@ -253,10 +259,10 @@ if( MSVC_IDE )
     "Number of parallel compiler jobs. 0 means use all processors. Default is 0.")
   if( NOT LLVM_COMPILER_JOBS STREQUAL "1" )
     if( LLVM_COMPILER_JOBS STREQUAL "0" )
-      add_llvm_definitions( /MP )
+      add_definitions( /MP )
     else()
       message(STATUS "Number of parallel compiler jobs set to " ${LLVM_COMPILER_JOBS})
-      add_llvm_definitions( /MP${LLVM_COMPILER_JOBS} )
+      add_definitions( /MP${LLVM_COMPILER_JOBS} )
     endif()
   else()
     message(STATUS "Parallel compilation disabled")
@@ -285,17 +291,17 @@ if( MSVC )
   if( CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.0 )
     # For MSVC 2013, disable iterator null pointer checking in debug mode,
     # especially so std::equal(nullptr, nullptr, nullptr) will not assert.
-    add_llvm_definitions("-D_DEBUG_POINTER_IMPL=")
+    add_definitions("-D_DEBUG_POINTER_IMPL=")
   endif()
   
   include(ChooseMSVCCRT)
 
   if( MSVC11 )
-    add_llvm_definitions(-D_VARIADIC_MAX=10)
+    add_definitions(-D_VARIADIC_MAX=10)
   endif()
   
   # Add definitions that make MSVC much less annoying.
-  add_llvm_definitions(
+  add_definitions(
     # For some reason MS wants to deprecate a bunch of standard functions...
     -D_CRT_SECURE_NO_DEPRECATE
     -D_CRT_SECURE_NO_WARNINGS
@@ -306,7 +312,7 @@ if( MSVC )
     )
 
   # Tell MSVC to use the Unicode version of the Win32 APIs instead of ANSI.
-  add_llvm_definitions(
+  add_definitions(
     -DUNICODE
     -D_UNICODE
   )
@@ -562,6 +568,10 @@ if (LLVM_ENABLE_WARNINGS AND (LLVM_COMPILER_IS_GCC_COMPATIBLE OR CLANG_CL))
   add_flag_if_supported("-Wstring-conversion" STRING_CONVERSION_FLAG)
 endif (LLVM_ENABLE_WARNINGS AND (LLVM_COMPILER_IS_GCC_COMPATIBLE OR CLANG_CL))
 
+if (LLVM_COMPILER_IS_GCC_COMPATIBLE AND NOT LLVM_ENABLE_WARNINGS)
+  append("-w" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+endif()
+
 macro(append_common_sanitizer_flags)
   if (NOT MSVC)
     # Append -fno-omit-frame-pointer and turn on debug info to get better
@@ -646,9 +656,9 @@ if(LLVM_USE_SPLIT_DWARF)
   add_definitions("-gsplit-dwarf")
 endif()
 
-add_llvm_definitions( -D__STDC_CONSTANT_MACROS )
-add_llvm_definitions( -D__STDC_FORMAT_MACROS )
-add_llvm_definitions( -D__STDC_LIMIT_MACROS )
+add_definitions( -D__STDC_CONSTANT_MACROS )
+add_definitions( -D__STDC_FORMAT_MACROS )
+add_definitions( -D__STDC_LIMIT_MACROS )
 
 # clang doesn't print colored diagnostics when invoked from Ninja
 if (UNIX AND
@@ -774,3 +784,16 @@ if(WIN32 OR CYGWIN)
 else()
   set(LLVM_ENABLE_PLUGINS ON)
 endif()
+
+function(get_compile_definitions)
+  get_directory_property(top_dir_definitions DIRECTORY ${CMAKE_SOURCE_DIR} COMPILE_DEFINITIONS)
+  foreach(definition ${top_dir_definitions})
+    if(DEFINED result)
+      string(APPEND result " -D${definition}")
+    else()
+      set(result "-D${definition}")
+    endif()
+  endforeach()
+  set(LLVM_DEFINITIONS "${result}" PARENT_SCOPE)
+endfunction()
+get_compile_definitions()

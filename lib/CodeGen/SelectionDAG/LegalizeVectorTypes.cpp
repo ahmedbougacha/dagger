@@ -1293,12 +1293,9 @@ void DAGTypeLegalizer::SplitVecRes_ExtendOp(SDNode *N, SDValue &Lo,
   if ((NumElements & 1) == 0 &&
       SrcVT.getSizeInBits() * 2 < DestVT.getSizeInBits()) {
     LLVMContext &Ctx = *DAG.getContext();
-    EVT NewSrcVT = EVT::getVectorVT(
-        Ctx, EVT::getIntegerVT(
-                 Ctx, SrcVT.getScalarSizeInBits() * 2),
-        NumElements);
-    EVT SplitSrcVT =
-        EVT::getVectorVT(Ctx, SrcVT.getVectorElementType(), NumElements / 2);
+    EVT NewSrcVT = SrcVT.widenIntegerVectorElementType(Ctx);
+    EVT SplitSrcVT = SrcVT.getHalfNumVectorElementsVT(Ctx);
+
     EVT SplitLoVT, SplitHiVT;
     std::tie(SplitLoVT, SplitHiVT) = DAG.GetSplitDestVTs(NewSrcVT);
     if (TLI.isTypeLegal(SrcVT) && !TLI.isTypeLegal(SplitSrcVT) &&
@@ -1509,6 +1506,12 @@ bool DAGTypeLegalizer::SplitVectorOperand(SDNode *N, unsigned OpNo) {
     case ISD::FCANONICALIZE:
       Res = SplitVecOp_UnaryOp(N);
       break;
+
+    case ISD::ANY_EXTEND_VECTOR_INREG:
+    case ISD::SIGN_EXTEND_VECTOR_INREG:
+    case ISD::ZERO_EXTEND_VECTOR_INREG:
+      Res = SplitVecOp_ExtVecInRegOp(N);
+      break;
     }
   }
 
@@ -1668,6 +1671,16 @@ SDValue DAGTypeLegalizer::SplitVecOp_EXTRACT_VECTOR_ELT(SDNode *N) {
   StackPtr = TLI.getVectorElementPointer(DAG, StackPtr, VecVT, Idx);
   return DAG.getExtLoad(ISD::EXTLOAD, dl, N->getValueType(0), Store, StackPtr,
                         MachinePointerInfo(), EltVT);
+}
+
+SDValue DAGTypeLegalizer::SplitVecOp_ExtVecInRegOp(SDNode *N) {
+  SDValue Lo, Hi;
+
+  // *_EXTEND_VECTOR_INREG only reference the lower half of the input, so
+  // splitting the result has the same effect as splitting the input operand.
+  SplitVecRes_ExtVecInRegOp(N, Lo, Hi);
+
+  return DAG.getNode(ISD::CONCAT_VECTORS, SDLoc(N), N->getValueType(0), Lo, Hi);
 }
 
 SDValue DAGTypeLegalizer::SplitVecOp_MGATHER(MaskedGatherSDNode *MGT,
@@ -2996,8 +3009,8 @@ SDValue DAGTypeLegalizer::WidenVSELECTAndMask(SDNode *N) {
   // Don't touch if this will be scalarized.
   EVT FinalVT = VSelVT;
   while (getTypeAction(FinalVT) == TargetLowering::TypeSplitVector)
-    FinalVT = EVT::getVectorVT(Ctx, FinalVT.getVectorElementType(),
-                               FinalVT.getVectorNumElements() / 2);
+    FinalVT = FinalVT.getHalfNumVectorElementsVT(Ctx);
+
   if (FinalVT.getVectorNumElements() == 1)
     return SDValue();
 

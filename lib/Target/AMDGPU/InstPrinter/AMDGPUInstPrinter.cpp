@@ -113,7 +113,7 @@ void AMDGPUInstPrinter::printOffset(const MCInst *MI, unsigned OpNo,
                                     raw_ostream &O) {
   uint16_t Imm = MI->getOperand(OpNo).getImm();
   if (Imm != 0) {
-    O << " offset:";
+    O << ((OpNo == 0)? "offset:" : " offset:");
     printU16ImmDecOperand(MI, OpNo, O);
   }
 }
@@ -543,13 +543,34 @@ void AMDGPUInstPrinter::printOperandAndFPInputMods(const MCInst *MI,
                                                    const MCSubtargetInfo &STI,
                                                    raw_ostream &O) {
   unsigned InputModifiers = MI->getOperand(OpNo).getImm();
-  if (InputModifiers & SISrcMods::NEG)
-    O << '-';
+
+  // Use 'neg(...)' instead of '-' to avoid ambiguity.
+  // This is important for integer literals because
+  // -1 is not the same value as neg(1).
+  bool NegMnemo = false;
+
+  if (InputModifiers & SISrcMods::NEG) {
+    if (OpNo + 1 < MI->getNumOperands() &&
+        (InputModifiers & SISrcMods::ABS) == 0) {
+      const MCOperand &Op = MI->getOperand(OpNo + 1);
+      NegMnemo = Op.isImm() || Op.isFPImm();
+    }
+    if (NegMnemo) {
+      O << "neg(";
+    } else {
+      O << '-';
+    }
+  }
+
   if (InputModifiers & SISrcMods::ABS)
     O << '|';
   printOperand(MI, OpNo + 1, STI, O);
   if (InputModifiers & SISrcMods::ABS)
     O << '|';
+
+  if (NegMnemo) {
+    O << ')';
+  }
 }
 
 void AMDGPUInstPrinter::printOperandAndIntInputMods(const MCInst *MI,

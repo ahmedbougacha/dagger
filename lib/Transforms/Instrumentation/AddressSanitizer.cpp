@@ -101,10 +101,6 @@ static const char *const kAsanRegisterImageGlobalsName =
   "__asan_register_image_globals";
 static const char *const kAsanUnregisterImageGlobalsName =
   "__asan_unregister_image_globals";
-static const char *const kAsanRegisterElfGlobalsName =
-  "__asan_register_elf_globals";
-static const char *const kAsanUnregisterElfGlobalsName =
-  "__asan_unregister_elf_globals";
 static const char *const kAsanPoisonGlobalsName = "__asan_before_dynamic_init";
 static const char *const kAsanUnpoisonGlobalsName = "__asan_after_dynamic_init";
 static const char *const kAsanInitName = "__asan_init";
@@ -124,11 +120,8 @@ static const char *const kAsanPoisonStackMemoryName =
     "__asan_poison_stack_memory";
 static const char *const kAsanUnpoisonStackMemoryName =
     "__asan_unpoison_stack_memory";
-
-// ASan version script has __asan_* wildcard. Triple underscore prevents a
-// linker (gold) warning about attempting to export a local symbol.
 static const char *const kAsanGlobalsRegisteredFlagName =
-    "___asan_globals_registered";
+    "__asan_globals_registered";
 
 static const char *const kAsanOptionDetectUseAfterReturn =
     "__asan_option_detect_stack_use_after_return";
@@ -583,8 +576,6 @@ struct AddressSanitizer : public FunctionPass {
   Type *IntptrTy;
   ShadowMapping Mapping;
   DominatorTree *DT;
-  Function *AsanCtorFunction = nullptr;
-  Function *AsanInitFunction = nullptr;
   Function *AsanHandleNoReturnFunc;
   Function *AsanPtrCmpFunction, *AsanPtrSubFunction;
   // This array is indexed by AccessIsWrite, Experiment and log2(AccessSize).
@@ -619,10 +610,6 @@ private:
   void InstrumentGlobalsCOFF(IRBuilder<> &IRB, Module &M,
                              ArrayRef<GlobalVariable *> ExtendedGlobals,
                              ArrayRef<Constant *> MetadataInitializers);
-  void InstrumentGlobalsELF(IRBuilder<> &IRB, Module &M,
-                            ArrayRef<GlobalVariable *> ExtendedGlobals,
-                            ArrayRef<Constant *> MetadataInitializers,
-                            const std::string &UniqueModuleId);
   void InstrumentGlobalsMachO(IRBuilder<> &IRB, Module &M,
                               ArrayRef<GlobalVariable *> ExtendedGlobals,
                               ArrayRef<Constant *> MetadataInitializers);
@@ -633,8 +620,7 @@ private:
 
   GlobalVariable *CreateMetadataGlobal(Module &M, Constant *Initializer,
                                        StringRef OriginalName);
-  void SetComdatForGlobalMetadata(GlobalVariable *G, GlobalVariable *Metadata,
-                                  StringRef InternalSuffix);
+  void SetComdatForGlobalMetadata(GlobalVariable *G, GlobalVariable *Metadata);
   IRBuilder<> CreateAsanModuleDtor(Module &M);
 
   bool ShouldInstrumentGlobal(GlobalVariable *G);
@@ -659,8 +645,6 @@ private:
   Function *AsanUnregisterGlobals;
   Function *AsanRegisterImageGlobals;
   Function *AsanUnregisterImageGlobals;
-  Function *AsanRegisterElfGlobals;
-  Function *AsanUnregisterElfGlobals;
 };
 
 // Stack poisoning does not play well with exception handling.
@@ -1584,48 +1568,38 @@ void AddressSanitizerModule::initializeCallbacks(Module &M) {
 
   // Declare our poisoning and unpoisoning functions.
   AsanPoisonGlobals = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-      kAsanPoisonGlobalsName, IRB.getVoidTy(), IntptrTy, nullptr));
+      kAsanPoisonGlobalsName, IRB.getVoidTy(), IntptrTy));
   AsanPoisonGlobals->setLinkage(Function::ExternalLinkage);
   AsanUnpoisonGlobals = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-      kAsanUnpoisonGlobalsName, IRB.getVoidTy(), nullptr));
+      kAsanUnpoisonGlobalsName, IRB.getVoidTy()));
   AsanUnpoisonGlobals->setLinkage(Function::ExternalLinkage);
 
   // Declare functions that register/unregister globals.
   AsanRegisterGlobals = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-      kAsanRegisterGlobalsName, IRB.getVoidTy(), IntptrTy, IntptrTy, nullptr));
+      kAsanRegisterGlobalsName, IRB.getVoidTy(), IntptrTy, IntptrTy));
   AsanRegisterGlobals->setLinkage(Function::ExternalLinkage);
   AsanUnregisterGlobals = checkSanitizerInterfaceFunction(
       M.getOrInsertFunction(kAsanUnregisterGlobalsName, IRB.getVoidTy(),
-                            IntptrTy, IntptrTy, nullptr));
+                            IntptrTy, IntptrTy));
   AsanUnregisterGlobals->setLinkage(Function::ExternalLinkage);
 
   // Declare the functions that find globals in a shared object and then invoke
   // the (un)register function on them.
   AsanRegisterImageGlobals =
       checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-          kAsanRegisterImageGlobalsName, IRB.getVoidTy(), IntptrTy, nullptr));
+          kAsanRegisterImageGlobalsName, IRB.getVoidTy(), IntptrTy));
   AsanRegisterImageGlobals->setLinkage(Function::ExternalLinkage);
 
   AsanUnregisterImageGlobals =
       checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-          kAsanUnregisterImageGlobalsName, IRB.getVoidTy(), IntptrTy, nullptr));
+          kAsanUnregisterImageGlobalsName, IRB.getVoidTy(), IntptrTy));
   AsanUnregisterImageGlobals->setLinkage(Function::ExternalLinkage);
-
-  AsanRegisterElfGlobals = checkSanitizerInterfaceFunction(
-      M.getOrInsertFunction(kAsanRegisterElfGlobalsName, IRB.getVoidTy(),
-                            IntptrTy, IntptrTy, IntptrTy, nullptr));
-  AsanRegisterElfGlobals->setLinkage(Function::ExternalLinkage);
-
-  AsanUnregisterElfGlobals = checkSanitizerInterfaceFunction(
-      M.getOrInsertFunction(kAsanUnregisterElfGlobalsName, IRB.getVoidTy(),
-                            IntptrTy, IntptrTy, IntptrTy, nullptr));
-  AsanUnregisterElfGlobals->setLinkage(Function::ExternalLinkage);
 }
 
 // Put the metadata and the instrumented global in the same group. This ensures
 // that the metadata is discarded if the instrumented global is discarded.
 void AddressSanitizerModule::SetComdatForGlobalMetadata(
-    GlobalVariable *G, GlobalVariable *Metadata, StringRef InternalSuffix) {
+    GlobalVariable *G, GlobalVariable *Metadata) {
   Module &M = *G->getParent();
   Comdat *C = G->getComdat();
   if (!C) {
@@ -1635,15 +1609,7 @@ void AddressSanitizerModule::SetComdatForGlobalMetadata(
       assert(G->hasLocalLinkage());
       G->setName(Twine(kAsanGenPrefix) + "_anon_global");
     }
-
-    if (!InternalSuffix.empty() && G->hasLocalLinkage()) {
-      std::string Name = G->getName();
-      Name += InternalSuffix;
-      C = M.getOrInsertComdat(Name);
-    } else {
-      C = M.getOrInsertComdat(G->getName());
-    }
-
+    C = M.getOrInsertComdat(G->getName());
     // Make this IMAGE_COMDAT_SELECT_NODUPLICATES on COFF.
     if (TargetTriple.isOSBinFormatCOFF())
       C->setSelectionKind(Comdat::NoDuplicates);
@@ -1659,11 +1625,12 @@ void AddressSanitizerModule::SetComdatForGlobalMetadata(
 GlobalVariable *
 AddressSanitizerModule::CreateMetadataGlobal(Module &M, Constant *Initializer,
                                              StringRef OriginalName) {
-  GlobalVariable *Metadata =
-      new GlobalVariable(M, Initializer->getType(), false,
-                         GlobalVariable::InternalLinkage, Initializer,
-                         Twine("__asan_global_") +
-                             GlobalValue::getRealLinkageName(OriginalName));
+  auto Linkage = TargetTriple.isOSBinFormatMachO()
+                     ? GlobalVariable::InternalLinkage
+                     : GlobalVariable::PrivateLinkage;
+  GlobalVariable *Metadata = new GlobalVariable(
+      M, Initializer->getType(), false, Linkage, Initializer,
+      Twine("__asan_global_") + GlobalValue::getRealLinkageName(OriginalName));
   Metadata->setSection(getGlobalMetadataSection());
   return Metadata;
 }
@@ -1698,67 +1665,8 @@ void AddressSanitizerModule::InstrumentGlobalsCOFF(
            "global metadata will not be padded appropriately");
     Metadata->setAlignment(SizeOfGlobalStruct);
 
-    SetComdatForGlobalMetadata(G, Metadata, "");
+    SetComdatForGlobalMetadata(G, Metadata);
   }
-}
-
-void AddressSanitizerModule::InstrumentGlobalsELF(
-    IRBuilder<> &IRB, Module &M, ArrayRef<GlobalVariable *> ExtendedGlobals,
-    ArrayRef<Constant *> MetadataInitializers,
-    const std::string &UniqueModuleId) {
-  assert(ExtendedGlobals.size() == MetadataInitializers.size());
-
-  SmallVector<GlobalValue *, 16> MetadataGlobals(ExtendedGlobals.size());
-  for (size_t i = 0; i < ExtendedGlobals.size(); i++) {
-    GlobalVariable *G = ExtendedGlobals[i];
-    GlobalVariable *Metadata =
-        CreateMetadataGlobal(M, MetadataInitializers[i], G->getName());
-    MDNode *MD = MDNode::get(M.getContext(), ValueAsMetadata::get(G));
-    Metadata->setMetadata(LLVMContext::MD_associated, MD);
-    MetadataGlobals[i] = Metadata;
-
-    SetComdatForGlobalMetadata(G, Metadata, UniqueModuleId);
-  }
-
-  // Update llvm.compiler.used, adding the new metadata globals. This is
-  // needed so that during LTO these variables stay alive.
-  if (!MetadataGlobals.empty())
-    appendToCompilerUsed(M, MetadataGlobals);
-
-  // RegisteredFlag serves two purposes. First, we can pass it to dladdr()
-  // to look up the loaded image that contains it. Second, we can store in it
-  // whether registration has already occurred, to prevent duplicate
-  // registration.
-  //
-  // Common linkage ensures that there is only one global per shared library.
-  GlobalVariable *RegisteredFlag = new GlobalVariable(
-      M, IntptrTy, false, GlobalVariable::CommonLinkage,
-      ConstantInt::get(IntptrTy, 0), kAsanGlobalsRegisteredFlagName);
-  RegisteredFlag->setVisibility(GlobalVariable::HiddenVisibility);
-
-  // Create start and stop symbols.
-  GlobalVariable *StartELFMetadata = new GlobalVariable(
-      M, IntptrTy, false, GlobalVariable::ExternalWeakLinkage, nullptr,
-      "__start_" + getGlobalMetadataSection());
-  StartELFMetadata->setVisibility(GlobalVariable::HiddenVisibility);
-  GlobalVariable *StopELFMetadata = new GlobalVariable(
-      M, IntptrTy, false, GlobalVariable::ExternalWeakLinkage, nullptr,
-      "__stop_" + getGlobalMetadataSection());
-  StopELFMetadata->setVisibility(GlobalVariable::HiddenVisibility);
-
-  // Create a call to register the globals with the runtime.
-  IRB.CreateCall(AsanRegisterElfGlobals,
-                 {IRB.CreatePointerCast(RegisteredFlag, IntptrTy),
-                  IRB.CreatePointerCast(StartELFMetadata, IntptrTy),
-                  IRB.CreatePointerCast(StopELFMetadata, IntptrTy)});
-
-  // We also need to unregister globals at the end, e.g., when a shared library
-  // gets closed.
-  IRBuilder<> IRB_Dtor = CreateAsanModuleDtor(M);
-  IRB_Dtor.CreateCall(AsanUnregisterElfGlobals,
-                      {IRB.CreatePointerCast(RegisteredFlag, IntptrTy),
-                       IRB.CreatePointerCast(StartELFMetadata, IntptrTy),
-                       IRB.CreatePointerCast(StopELFMetadata, IntptrTy)});
 }
 
 void AddressSanitizerModule::InstrumentGlobalsMachO(
@@ -2003,12 +1911,7 @@ bool AddressSanitizerModule::InstrumentGlobals(IRBuilder<> &IRB, Module &M) {
     Initializers[i] = Initializer;
   }
 
-  std::string ELFUniqueModuleId =
-      TargetTriple.isOSBinFormatELF() ? getUniqueModuleId(&M) : "";
-
-  if (!ELFUniqueModuleId.empty()) {
-    InstrumentGlobalsELF(IRB, M, NewGlobals, Initializers, ELFUniqueModuleId);
-  } else if (TargetTriple.isOSBinFormatCOFF()) {
+  if (TargetTriple.isOSBinFormatCOFF()) {
     InstrumentGlobalsCOFF(IRB, M, NewGlobals, Initializers);
   } else if (ShouldUseMachOGlobalsSection()) {
     InstrumentGlobalsMachO(IRB, M, NewGlobals, Initializers);
@@ -2032,13 +1935,19 @@ bool AddressSanitizerModule::runOnModule(Module &M) {
   Mapping = getShadowMapping(TargetTriple, LongSize, CompileKernel);
   initializeCallbacks(M);
 
-  bool Changed = false;
+  if (CompileKernel)
+    return false;
 
+  Function *AsanCtorFunction;
+  std::tie(AsanCtorFunction, std::ignore) = createSanitizerCtorAndInitFunctions(
+      M, kAsanModuleCtorName, kAsanInitName, /*InitArgTypes=*/{},
+      /*InitArgs=*/{}, kAsanVersionCheckName);
+  appendToGlobalCtors(M, AsanCtorFunction, kAsanCtorAndDtorPriority);
+
+  bool Changed = false;
   // TODO(glider): temporarily disabled globals instrumentation for KASan.
-  if (ClGlobals && !CompileKernel) {
-    Function *CtorFunc = M.getFunction(kAsanModuleCtorName);
-    assert(CtorFunc);
-    IRBuilder<> IRB(CtorFunc->getEntryBlock().getTerminator());
+  if (ClGlobals) {
+    IRBuilder<> IRB(AsanCtorFunction->getEntryBlock().getTerminator());
     Changed |= InstrumentGlobals(IRB, M);
   }
 
@@ -2055,49 +1964,60 @@ void AddressSanitizer::initializeCallbacks(Module &M) {
       const std::string ExpStr = Exp ? "exp_" : "";
       const std::string SuffixStr = CompileKernel ? "N" : "_n";
       const std::string EndingStr = Recover ? "_noabort" : "";
-      Type *ExpType = Exp ? Type::getInt32Ty(*C) : nullptr;
-      AsanErrorCallbackSized[AccessIsWrite][Exp] =
-          checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-              kAsanReportErrorTemplate + ExpStr + TypeStr + SuffixStr + EndingStr,
-              IRB.getVoidTy(), IntptrTy, IntptrTy, ExpType, nullptr));
-      AsanMemoryAccessCallbackSized[AccessIsWrite][Exp] =
-          checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-              ClMemoryAccessCallbackPrefix + ExpStr + TypeStr + "N" + EndingStr,
-              IRB.getVoidTy(), IntptrTy, IntptrTy, ExpType, nullptr));
-      for (size_t AccessSizeIndex = 0; AccessSizeIndex < kNumberOfAccessSizes;
-           AccessSizeIndex++) {
-        const std::string Suffix = TypeStr + itostr(1ULL << AccessSizeIndex);
-        AsanErrorCallback[AccessIsWrite][Exp][AccessSizeIndex] =
-            checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-                kAsanReportErrorTemplate + ExpStr + Suffix + EndingStr,
-                IRB.getVoidTy(), IntptrTy, ExpType, nullptr));
-        AsanMemoryAccessCallback[AccessIsWrite][Exp][AccessSizeIndex] =
-            checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-                ClMemoryAccessCallbackPrefix + ExpStr + Suffix + EndingStr,
-                IRB.getVoidTy(), IntptrTy, ExpType, nullptr));
+
+      SmallVector<Type *, 3> Args2 = {IntptrTy, IntptrTy};
+      SmallVector<Type *, 2> Args1{1, IntptrTy};
+      if (Exp) {
+        Type *ExpType = Type::getInt32Ty(*C);
+        Args2.push_back(ExpType);
+        Args1.push_back(ExpType);
       }
-    }
+	    AsanErrorCallbackSized[AccessIsWrite][Exp] =
+	        checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+	            kAsanReportErrorTemplate + ExpStr + TypeStr + SuffixStr +
+	                EndingStr,
+	            FunctionType::get(IRB.getVoidTy(), Args2, false)));
+
+	    AsanMemoryAccessCallbackSized[AccessIsWrite][Exp] =
+	        checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+	            ClMemoryAccessCallbackPrefix + ExpStr + TypeStr + "N" + EndingStr,
+	            FunctionType::get(IRB.getVoidTy(), Args2, false)));
+
+	    for (size_t AccessSizeIndex = 0; AccessSizeIndex < kNumberOfAccessSizes;
+	         AccessSizeIndex++) {
+	      const std::string Suffix = TypeStr + itostr(1ULL << AccessSizeIndex);
+	      AsanErrorCallback[AccessIsWrite][Exp][AccessSizeIndex] =
+	          checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+	              kAsanReportErrorTemplate + ExpStr + Suffix + EndingStr,
+	              FunctionType::get(IRB.getVoidTy(), Args1, false)));
+
+	      AsanMemoryAccessCallback[AccessIsWrite][Exp][AccessSizeIndex] =
+	          checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+	              ClMemoryAccessCallbackPrefix + ExpStr + Suffix + EndingStr,
+	              FunctionType::get(IRB.getVoidTy(), Args1, false)));
+	    }
+	  }
   }
 
   const std::string MemIntrinCallbackPrefix =
       CompileKernel ? std::string("") : ClMemoryAccessCallbackPrefix;
   AsanMemmove = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
       MemIntrinCallbackPrefix + "memmove", IRB.getInt8PtrTy(),
-      IRB.getInt8PtrTy(), IRB.getInt8PtrTy(), IntptrTy, nullptr));
+      IRB.getInt8PtrTy(), IRB.getInt8PtrTy(), IntptrTy));
   AsanMemcpy = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
       MemIntrinCallbackPrefix + "memcpy", IRB.getInt8PtrTy(),
-      IRB.getInt8PtrTy(), IRB.getInt8PtrTy(), IntptrTy, nullptr));
+      IRB.getInt8PtrTy(), IRB.getInt8PtrTy(), IntptrTy));
   AsanMemset = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
       MemIntrinCallbackPrefix + "memset", IRB.getInt8PtrTy(),
-      IRB.getInt8PtrTy(), IRB.getInt32Ty(), IntptrTy, nullptr));
+      IRB.getInt8PtrTy(), IRB.getInt32Ty(), IntptrTy));
 
   AsanHandleNoReturnFunc = checkSanitizerInterfaceFunction(
-      M.getOrInsertFunction(kAsanHandleNoReturnName, IRB.getVoidTy(), nullptr));
+      M.getOrInsertFunction(kAsanHandleNoReturnName, IRB.getVoidTy()));
 
   AsanPtrCmpFunction = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-      kAsanPtrCmp, IRB.getVoidTy(), IntptrTy, IntptrTy, nullptr));
+      kAsanPtrCmp, IRB.getVoidTy(), IntptrTy, IntptrTy));
   AsanPtrSubFunction = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-      kAsanPtrSub, IRB.getVoidTy(), IntptrTy, IntptrTy, nullptr));
+      kAsanPtrSub, IRB.getVoidTy(), IntptrTy, IntptrTy));
   // We insert an empty inline asm after __asan_report* to avoid callback merge.
   EmptyAsm = InlineAsm::get(FunctionType::get(IRB.getVoidTy(), false),
                             StringRef(""), StringRef(""),
@@ -2107,7 +2027,6 @@ void AddressSanitizer::initializeCallbacks(Module &M) {
 // virtual
 bool AddressSanitizer::doInitialization(Module &M) {
   // Initialize the private fields. No one has accessed them before.
-
   GlobalsMD.init(M);
 
   C = &(M.getContext());
@@ -2115,13 +2034,6 @@ bool AddressSanitizer::doInitialization(Module &M) {
   IntptrTy = Type::getIntNTy(*C, LongSize);
   TargetTriple = Triple(M.getTargetTriple());
 
-  if (!CompileKernel) {
-    std::tie(AsanCtorFunction, AsanInitFunction) =
-        createSanitizerCtorAndInitFunctions(
-            M, kAsanModuleCtorName, kAsanInitName,
-            /*InitArgTypes=*/{}, /*InitArgs=*/{}, kAsanVersionCheckName);
-    appendToGlobalCtors(M, AsanCtorFunction, kAsanCtorAndDtorPriority);
-  }
   Mapping = getShadowMapping(TargetTriple, LongSize, CompileKernel);
   return true;
 }
@@ -2140,6 +2052,8 @@ bool AddressSanitizer::maybeInsertAsanInitAtFunctionEntry(Function &F) {
   // We cannot just ignore these methods, because they may call other
   // instrumented functions.
   if (F.getName().find(" load]") != std::string::npos) {
+    Function *AsanInitFunction =
+        declareSanitizerInitFunction(*F.getParent(), kAsanInitName, {});
     IRBuilder<> IRB(&F.front(), F.front().begin());
     IRB.CreateCall(AsanInitFunction, {});
     return true;
@@ -2187,7 +2101,6 @@ void AddressSanitizer::markEscapedLocalAllocas(Function &F) {
 }
 
 bool AddressSanitizer::runOnFunction(Function &F) {
-  if (&F == AsanCtorFunction) return false;
   if (F.getLinkage() == GlobalValue::AvailableExternallyLinkage) return false;
   if (!ClDebugFunc.empty() && ClDebugFunc == F.getName()) return false;
   if (F.getName().startswith("__asan_")) return false;
@@ -2281,8 +2194,9 @@ bool AddressSanitizer::runOnFunction(Function &F) {
       (ClInstrumentationWithCallsThreshold >= 0 &&
        ToInstrument.size() > (unsigned)ClInstrumentationWithCallsThreshold);
   const DataLayout &DL = F.getParent()->getDataLayout();
-  ObjectSizeOffsetVisitor ObjSizeVis(DL, TLI, F.getContext(),
-                                     /*RoundToAlign=*/true);
+  ObjectSizeOpts ObjSizeOpts;
+  ObjSizeOpts.RoundToAlign = true;
+  ObjectSizeOffsetVisitor ObjSizeVis(DL, TLI, F.getContext(), ObjSizeOpts);
 
   // Instrument.
   int NumInstrumented = 0;
@@ -2340,18 +2254,18 @@ void FunctionStackPoisoner::initializeCallbacks(Module &M) {
     std::string Suffix = itostr(i);
     AsanStackMallocFunc[i] = checkSanitizerInterfaceFunction(
         M.getOrInsertFunction(kAsanStackMallocNameTemplate + Suffix, IntptrTy,
-                              IntptrTy, nullptr));
+                              IntptrTy));
     AsanStackFreeFunc[i] = checkSanitizerInterfaceFunction(
         M.getOrInsertFunction(kAsanStackFreeNameTemplate + Suffix,
-                              IRB.getVoidTy(), IntptrTy, IntptrTy, nullptr));
+                              IRB.getVoidTy(), IntptrTy, IntptrTy));
   }
   if (ASan.UseAfterScope) {
     AsanPoisonStackMemoryFunc = checkSanitizerInterfaceFunction(
         M.getOrInsertFunction(kAsanPoisonStackMemoryName, IRB.getVoidTy(),
-                              IntptrTy, IntptrTy, nullptr));
+                              IntptrTy, IntptrTy));
     AsanUnpoisonStackMemoryFunc = checkSanitizerInterfaceFunction(
         M.getOrInsertFunction(kAsanUnpoisonStackMemoryName, IRB.getVoidTy(),
-                              IntptrTy, IntptrTy, nullptr));
+                              IntptrTy, IntptrTy));
   }
 
   for (size_t Val : {0x00, 0xf1, 0xf2, 0xf3, 0xf5, 0xf8}) {
@@ -2360,14 +2274,14 @@ void FunctionStackPoisoner::initializeCallbacks(Module &M) {
     Name << std::setw(2) << std::setfill('0') << std::hex << Val;
     AsanSetShadowFunc[Val] =
         checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-            Name.str(), IRB.getVoidTy(), IntptrTy, IntptrTy, nullptr));
+            Name.str(), IRB.getVoidTy(), IntptrTy, IntptrTy));
   }
 
   AsanAllocaPoisonFunc = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-      kAsanAllocaPoison, IRB.getVoidTy(), IntptrTy, IntptrTy, nullptr));
+      kAsanAllocaPoison, IRB.getVoidTy(), IntptrTy, IntptrTy));
   AsanAllocasUnpoisonFunc =
       checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-          kAsanAllocasUnpoison, IRB.getVoidTy(), IntptrTy, IntptrTy, nullptr));
+          kAsanAllocasUnpoison, IRB.getVoidTy(), IntptrTy, IntptrTy));
 }
 
 void FunctionStackPoisoner::copyToShadowInline(ArrayRef<uint8_t> ShadowMask,
@@ -2672,7 +2586,7 @@ void FunctionStackPoisoner::processStaticAllocas() {
     Value *NewAllocaPtr = IRB.CreateIntToPtr(
         IRB.CreateAdd(LocalStackBase, ConstantInt::get(IntptrTy, Desc.Offset)),
         AI->getType());
-    replaceDbgDeclareForAlloca(AI, NewAllocaPtr, DIB, /*Deref=*/true);
+    replaceDbgDeclareForAlloca(AI, NewAllocaPtr, DIB, /*Deref=*/false);
     AI->replaceAllUsesWith(NewAllocaPtr);
   }
 

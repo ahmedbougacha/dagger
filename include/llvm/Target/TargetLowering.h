@@ -186,7 +186,7 @@ public:
           IsNest(false), IsByVal(false), IsInAlloca(false), IsReturned(false),
           IsSwiftSelf(false), IsSwiftError(false) {}
 
-    void setAttributes(ImmutableCallSite *CS, unsigned AttrIdx);
+    void setAttributes(ImmutableCallSite *CS, unsigned ArgIdx);
   };
   typedef std::vector<ArgListEntry> ArgListTy;
 
@@ -228,6 +228,12 @@ public:
   /// FIXME: The default needs to be removed once all the code is updated.
   MVT getPointerTy(const DataLayout &DL, uint32_t AS = 0) const {
     return MVT::getIntegerVT(DL.getPointerSizeInBits(AS));
+  }
+
+  /// Return the type for frame index, which is determined by
+  /// the alloca address space specified through the data layout.
+  MVT getFrameIndexTy(const DataLayout &DL) const {
+    return getPointerTy(DL, DL.getAllocaAddrSpace());
   }
 
   /// EVT is not used in-tree, but is used by out-of-tree target.
@@ -284,9 +290,7 @@ public:
   /// several shifts, adds, and multiplies for this target.
   /// The definition of "cheaper" may depend on whether we're optimizing
   /// for speed or for size.
-  virtual bool isIntDivCheap(EVT VT, AttributeSet Attr) const {
-    return false;
-  }
+  virtual bool isIntDivCheap(EVT VT, AttributeList Attr) const { return false; }
 
   /// Return true if the target can handle a standalone remainder operation.
   virtual bool hasStandaloneRem(EVT VT) const {
@@ -437,6 +441,24 @@ public:
   /// \endcode
   virtual bool isMaskAndCmp0FoldingBeneficial(const Instruction &AndI) const {
     return false;
+  }
+
+  /// Use bitwise logic to make pairs of compares more efficient. For example:
+  /// and (seteq A, B), (seteq C, D) --> seteq (or (xor A, B), (xor C, D)), 0
+  /// This should be true when it takes more than one instruction to lower
+  /// setcc (cmp+set on x86 scalar), when bitwise ops are faster than logic on
+  /// condition bits (crand on PowerPC), and/or when reducing cmp+br is a win.
+  virtual bool convertSetCCLogicToBitwiseLogic(EVT VT) const {
+    return false;
+  }
+
+  /// Return the preferred operand type if the target has a quick way to compare
+  /// integer values of the given size. Assume that any legal integer type can
+  /// be compared efficiently. Targets may override this to allow illegal wide
+  /// types to return a vector type if there is support to compare that type.
+  virtual MVT hasFastEqualityCompare(unsigned NumBits) const {
+    MVT VT = MVT::getIntegerVT(NumBits);
+    return isTypeLegal(VT) ? VT : MVT::INVALID_SIMPLE_VALUE_TYPE;
   }
 
   /// Return true if the target should transform:
@@ -2366,29 +2388,38 @@ public:
       New = N;
       return true;
     }
-
-    /// Check to see if the specified operand of the specified instruction is a
-    /// constant integer.  If so, check to see if there are any bits set in the
-    /// constant that are not demanded.  If so, shrink the constant and return
-    /// true.
-    bool ShrinkDemandedConstant(SDValue Op, const APInt &Demanded);
-
-    /// Convert x+y to (VT)((SmallVT)x+(SmallVT)y) if the casts are free.  This
-    /// uses isZExtFree and ZERO_EXTEND for the widening cast, but it could be
-    /// generalized for targets with other types of implicit widening casts.
-    bool ShrinkDemandedOp(SDValue Op, unsigned BitWidth, const APInt &Demanded,
-                          const SDLoc &dl);
-
-    /// Helper for SimplifyDemandedBits that can simplify an operation with
-    /// multiple uses.  This function uses TLI.SimplifyDemandedBits to
-    /// simplify Operand \p OpIdx of \p User and then updated \p User with
-    /// the simplified version.  No other uses of \p OpIdx are updated.
-    /// If \p User is the only user of \p OpIdx, this function behaves exactly
-    /// like TLI.SimplifyDemandedBits except that it also updates the DAG by
-    /// calling DCI.CommitTargetLoweringOpt.
-    bool SimplifyDemandedBits(SDNode *User, unsigned OpIdx,
-                              const APInt &Demanded, DAGCombinerInfo &DCI);
   };
+
+  /// Check to see if the specified operand of the specified instruction is a
+  /// constant integer.  If so, check to see if there are any bits set in the
+  /// constant that are not demanded.  If so, shrink the constant and return
+  /// true.
+  bool ShrinkDemandedConstant(SDValue Op, const APInt &Demanded,
+                              TargetLoweringOpt &TLO) const;
+
+  // Target hook to do target-specific const optimization, which is called by
+  // ShrinkDemandedConstant. This function should return true if the target
+  // doesn't want ShrinkDemandedConstant to further optimize the constant.
+  virtual bool targetShrinkDemandedConstant(SDValue Op, const APInt &Demanded,
+                                            TargetLoweringOpt &TLO) const {
+    return false;
+  }
+
+  /// Convert x+y to (VT)((SmallVT)x+(SmallVT)y) if the casts are free.  This
+  /// uses isZExtFree and ZERO_EXTEND for the widening cast, but it could be
+  /// generalized for targets with other types of implicit widening casts.
+  bool ShrinkDemandedOp(SDValue Op, unsigned BitWidth, const APInt &Demanded,
+                        TargetLoweringOpt &TLO) const;
+
+  /// Helper for SimplifyDemandedBits that can simplify an operation with
+  /// multiple uses.  This function simplifies operand \p OpIdx of \p User and
+  /// then updates \p User with the simplified version. No other uses of
+  /// \p OpIdx are updated. If \p User is the only user of \p OpIdx, this
+  /// function behaves exactly like function SimplifyDemandedBits declared
+  /// below except that it also updates the DAG by calling
+  /// DCI.CommitTargetLoweringOpt.
+  bool SimplifyDemandedBits(SDNode *User, unsigned OpIdx, const APInt &Demanded,
+                            DAGCombinerInfo &DCI, TargetLoweringOpt &TLO) const;
 
   /// Look at Op.  At this point, we know that only the DemandedMask bits of the
   /// result of Op are ever used downstream.  If we can use this information to
@@ -2414,16 +2445,22 @@ public:
                             DAGCombinerInfo &DCI) const;
 
   /// Determine which of the bits specified in Mask are known to be either zero
-  /// or one and return them in the KnownZero/KnownOne bitsets.
+  /// or one and return them in the KnownZero/KnownOne bitsets. The DemandedElts
+  /// argument allows us to only collect the known bits that are shared by the
+  /// requested vector elements.
   virtual void computeKnownBitsForTargetNode(const SDValue Op,
                                              APInt &KnownZero,
                                              APInt &KnownOne,
+                                             const APInt &DemandedElts,
                                              const SelectionDAG &DAG,
                                              unsigned Depth = 0) const;
 
   /// This method can be implemented by targets that want to expose additional
-  /// information about sign bits to the DAG Combiner.
+  /// information about sign bits to the DAG Combiner. The DemandedElts
+  /// argument allows us to only collect the minimum sign bits that are shared
+  /// by the requested vector elements.
   virtual unsigned ComputeNumSignBitsForTargetNode(SDValue Op,
+                                                   const APInt &DemandedElts,
                                                    const SelectionDAG &DAG,
                                                    unsigned Depth = 0) const;
 
@@ -2658,15 +2695,15 @@ public:
                                 ImmutableCallSite &Call) {
       RetTy = ResultType;
 
-      IsInReg = Call.paramHasAttr(0, Attribute::InReg);
+      IsInReg = Call.hasRetAttr(Attribute::InReg);
       DoesNotReturn =
           Call.doesNotReturn() ||
           (!Call.isInvoke() &&
            isa<UnreachableInst>(Call.getInstruction()->getNextNode()));
       IsVarArg = FTy->isVarArg();
       IsReturnValueUsed = !Call.getInstruction()->use_empty();
-      RetSExt = Call.paramHasAttr(0, Attribute::SExt);
-      RetZExt = Call.paramHasAttr(0, Attribute::ZExt);
+      RetSExt = Call.hasRetAttr(Attribute::SExt);
+      RetZExt = Call.hasRetAttr(Attribute::ZExt);
 
       Callee = Target;
 
@@ -2785,7 +2822,7 @@ public:
   /// Return true if the target may be able emit the call instruction as a tail
   /// call. This is used by optimization passes to determine if it's profitable
   /// to duplicate return instructions to enable tailcall optimization.
-  virtual bool mayBeEmittedAsTailCall(CallInst *) const {
+  virtual bool mayBeEmittedAsTailCall(const CallInst *) const {
     return false;
   }
 
@@ -3217,7 +3254,7 @@ private:
 /// Given an LLVM IR type and return type attributes, compute the return value
 /// EVTs and flags, and optionally also the offsets, if the return value is
 /// being lowered to memory.
-void GetReturnInfo(Type *ReturnType, AttributeSet attr,
+void GetReturnInfo(Type *ReturnType, AttributeList attr,
                    SmallVectorImpl<ISD::OutputArg> &Outs,
                    const TargetLowering &TLI, const DataLayout &DL);
 

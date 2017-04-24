@@ -39,6 +39,9 @@ class AArch64Inst<Format f, string cstr> : Instruction {
   let Constraints = cstr;
 }
 
+class InstSubst<string Asm, dag Result, bit EmitPriority = 0>
+  : InstAlias<Asm, Result, EmitPriority>, Requires<[UseNegativeImmediates]>;
+
 // Pseudo instructions (don't have encoding information)
 class Pseudo<dag oops, dag iops, list<dag> pattern, string cstr = "">
     : AArch64Inst<PseudoFrm, cstr> {
@@ -690,11 +693,11 @@ def addsub_shifted_imm32_neg : addsub_shifted_imm_neg<i32>;
 def addsub_shifted_imm64_neg : addsub_shifted_imm_neg<i64>;
 
 def gi_addsub_shifted_imm32 :
-    GIComplexOperandMatcher<s32, (ops i32imm, i32imm), "selectArithImmed">,
+    GIComplexOperandMatcher<s32, "selectArithImmed">,
     GIComplexPatternEquiv<addsub_shifted_imm32>;
 
 def gi_addsub_shifted_imm64 :
-    GIComplexOperandMatcher<s64, (ops i32imm, i32imm), "selectArithImmed">,
+    GIComplexOperandMatcher<s64, "selectArithImmed">,
     GIComplexPatternEquiv<addsub_shifted_imm64>;
 
 class neg_addsub_shifted_imm<ValueType Ty>
@@ -1803,10 +1806,10 @@ multiclass AddSub<bit isSub, string mnemonic, string alias,
   }
 
   // add Rd, Rb, -imm -> sub Rd, Rn, imm
-  def : InstAlias<alias#"\t$Rd, $Rn, $imm",
+  def : InstSubst<alias#"\t$Rd, $Rn, $imm",
                   (!cast<Instruction>(NAME # "Wri") GPR32sp:$Rd, GPR32sp:$Rn,
                       addsub_shifted_imm32_neg:$imm), 0>;
-  def : InstAlias<alias#"\t$Rd, $Rn, $imm",
+  def : InstSubst<alias#"\t$Rd, $Rn, $imm",
                   (!cast<Instruction>(NAME # "Xri") GPR64sp:$Rd, GPR64sp:$Rn,
                        addsub_shifted_imm64_neg:$imm), 0>;
 
@@ -1878,10 +1881,10 @@ multiclass AddSubS<bit isSub, string mnemonic, SDNode OpNode, string cmp,
   } // Defs = [NZCV]
 
   // Support negative immediates, e.g. adds Rd, Rn, -imm -> subs Rd, Rn, imm
-  def : InstAlias<alias#"\t$Rd, $Rn, $imm",
+  def : InstSubst<alias#"\t$Rd, $Rn, $imm",
                   (!cast<Instruction>(NAME # "Wri") GPR32:$Rd, GPR32sp:$Rn,
                       addsub_shifted_imm32_neg:$imm), 0>;
-  def : InstAlias<alias#"\t$Rd, $Rn, $imm",
+  def : InstSubst<alias#"\t$Rd, $Rn, $imm",
                   (!cast<Instruction>(NAME # "Xri") GPR64:$Rd, GPR64sp:$Rn,
                        addsub_shifted_imm64_neg:$imm), 0>;
 
@@ -1902,9 +1905,9 @@ multiclass AddSubS<bit isSub, string mnemonic, SDNode OpNode, string cmp,
                   XZR, GPR64:$src1, GPR64:$src2, arith_shift64:$sh), 4>;
 
   // Support negative immediates, e.g. cmp Rn, -imm -> cmn Rn, imm
-  def : InstAlias<cmpAlias#"\t$src, $imm", (!cast<Instruction>(NAME#"Wri")
+  def : InstSubst<cmpAlias#"\t$src, $imm", (!cast<Instruction>(NAME#"Wri")
                   WZR, GPR32sp:$src, addsub_shifted_imm32_neg:$imm), 0>;
-  def : InstAlias<cmpAlias#"\t$src, $imm", (!cast<Instruction>(NAME#"Xri")
+  def : InstSubst<cmpAlias#"\t$src, $imm", (!cast<Instruction>(NAME#"Xri")
                   XZR, GPR64sp:$src, addsub_shifted_imm64_neg:$imm), 0>;
 
   // Compare shorthands
@@ -2119,10 +2122,10 @@ multiclass LogicalImm<bits<2> opc, string mnemonic, SDNode OpNode,
     let Inst{31} = 1;
   }
 
-  def : InstAlias<Alias # "\t$Rd, $Rn, $imm",
+  def : InstSubst<Alias # "\t$Rd, $Rn, $imm",
                   (!cast<Instruction>(NAME # "Wri") GPR32sp:$Rd, GPR32:$Rn,
                       logical_imm32_not:$imm), 0>;
-  def : InstAlias<Alias # "\t$Rd, $Rn, $imm",
+  def : InstSubst<Alias # "\t$Rd, $Rn, $imm",
                   (!cast<Instruction>(NAME # "Xri") GPR64sp:$Rd, GPR64:$Rn,
                        logical_imm64_not:$imm), 0>;
 }
@@ -2141,10 +2144,10 @@ multiclass LogicalImmS<bits<2> opc, string mnemonic, SDNode OpNode,
   }
   } // end Defs = [NZCV]
 
-  def : InstAlias<Alias # "\t$Rd, $Rn, $imm",
+  def : InstSubst<Alias # "\t$Rd, $Rn, $imm",
                   (!cast<Instruction>(NAME # "Wri") GPR32:$Rd, GPR32:$Rn,
                       logical_imm32_not:$imm), 0>;
-  def : InstAlias<Alias # "\t$Rd, $Rn, $imm",
+  def : InstSubst<Alias # "\t$Rd, $Rn, $imm",
                   (!cast<Instruction>(NAME # "Xri") GPR64:$Rd, GPR64:$Rn,
                        logical_imm64_not:$imm), 0>;
 }
