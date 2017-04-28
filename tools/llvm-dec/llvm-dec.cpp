@@ -40,12 +40,6 @@ static cl::opt<std::string>
 TripleName("triple", cl::desc("Target triple to disassemble for, "
                               "see -version for available targets"));
 
-// cl::opt<uint64_t> isn't currently supported (PR19665).
-static cl::opt<unsigned long long>
-TranslationEntrypoint("entrypoint",
-                      cl::desc("Address to start translating from "
-                               "(default = object entrypoint)"));
-
 static cl::opt<unsigned>
 TransOptLevel("O",
               cl::desc("Optimization level. [-O0, -O1, -O2, or -O3] "
@@ -210,13 +204,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (!TranslationEntrypoint) {
-    if (auto MainEntrypoint = MOS->getMainEntrypoint())
-      TranslationEntrypoint = *MainEntrypoint;
-  }
-
   DT->getDCModule()->getOrCreateMainFunction(translateRecursivelyAt(
-      TranslationEntrypoint, *DT, *MCM, OD.get(), MOS.get()));
+      MOS->getMainEntrypoint().getValue(), *DT, *MCM, OD.get(), MOS.get()));
 
   for (auto &F : MCM->funcs())
     translateRecursivelyAt(F->getStartAddr(), *DT, *MCM, OD.get(), MOS.get());
