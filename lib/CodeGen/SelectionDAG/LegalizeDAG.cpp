@@ -2589,7 +2589,7 @@ SDValue SelectionDAGLegalize::ExpandBITREVERSE(SDValue Op, const SDLoc &dl) {
           DAG.getNode(ISD::SRL, dl, VT, Op, DAG.getConstant(I - J, dl, SHVT));
 
     APInt Shift(Sz, 1);
-    Shift = Shift.shl(J);
+    Shift <<= J;
     Tmp2 = DAG.getNode(ISD::AND, dl, VT, Tmp2, DAG.getConstant(Shift, dl, VT));
     Tmp = DAG.getNode(ISD::OR, dl, VT, Tmp, Tmp2);
   }
@@ -3497,11 +3497,11 @@ bool SelectionDAGLegalize::ExpandNode(SDNode *Node) {
       // part.
       unsigned LoSize = VT.getSizeInBits();
       SDValue HiLHS =
-          DAG.getNode(ISD::SRA, dl, VT, RHS,
+          DAG.getNode(ISD::SRA, dl, VT, LHS,
                       DAG.getConstant(LoSize - 1, dl,
                                       TLI.getPointerTy(DAG.getDataLayout())));
       SDValue HiRHS =
-          DAG.getNode(ISD::SRA, dl, VT, LHS,
+          DAG.getNode(ISD::SRA, dl, VT, RHS,
                       DAG.getConstant(LoSize - 1, dl,
                                       TLI.getPointerTy(DAG.getDataLayout())));
 

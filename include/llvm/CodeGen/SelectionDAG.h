@@ -33,6 +33,7 @@
 
 namespace llvm {
 
+struct KnownBits;
 class MachineConstantPoolValue;
 class MachineFunction;
 class MDNode;
@@ -654,6 +655,15 @@ public:
     return getNode(ISD::BUILD_VECTOR, DL, VT, Ops);
   }
 
+  /// Return an ISD::BUILD_VECTOR node. The number of elements in VT,
+  /// which must be a vector type, must match the number of operands in Ops.
+  /// The operands must have the same type as (or, for integers, a type wider
+  /// than) VT's element type.
+  SDValue getBuildVector(EVT VT, const SDLoc &DL, ArrayRef<SDUse> Ops) {
+    // VerifySDNode (via InsertNode) checks BUILD_VECTOR later.
+    return getNode(ISD::BUILD_VECTOR, DL, VT, Ops);
+  }
+
   /// Return a splat ISD::BUILD_VECTOR node, consisting of Op splatted to all
   /// elements. VT must be a vector type. Op's type must be the same as (or,
   /// for integers, a type wider than) VT's element type.
@@ -968,7 +978,7 @@ public:
                         bool IsExpanding = false);
   SDValue getMaskedStore(SDValue Chain, const SDLoc &dl, SDValue Val,
                          SDValue Ptr, SDValue Mask, EVT MemVT,
-                         MachineMemOperand *MMO, bool IsTruncating = false, 
+                         MachineMemOperand *MMO, bool IsTruncating = false,
                          bool IsCompressing = false);
   SDValue getMaskedGather(SDVTList VTs, EVT VT, const SDLoc &dl,
                           ArrayRef<SDValue> Ops, MachineMemOperand *MMO);
@@ -1274,21 +1284,19 @@ public:
     const;
 
   /// Determine which bits of Op are known to be either zero or one and return
-  /// them in the KnownZero/KnownOne bitsets. For vectors, the known bits are
-  /// those that are shared by every vector element.
+  /// them in Known. For vectors, the known bits are those that are shared by
+  /// every vector element.
   /// Targets can implement the computeKnownBitsForTargetNode method in the
   /// TargetLowering class to allow target nodes to be understood.
-  void computeKnownBits(SDValue Op, APInt &KnownZero, APInt &KnownOne,
-                        unsigned Depth = 0) const;
+  void computeKnownBits(SDValue Op, KnownBits &Known, unsigned Depth = 0) const;
 
   /// Determine which bits of Op are known to be either zero or one and return
-  /// them in the KnownZero/KnownOne bitsets. The DemandedElts argument allows
-  /// us to only collect the known bits that are shared by the requested vector
-  /// elements.
+  /// them in Known. The DemandedElts argument allows us to only collect the
+  /// known bits that are shared by the requested vector elements.
   /// Targets can implement the computeKnownBitsForTargetNode method in the
   /// TargetLowering class to allow target nodes to be understood.
-  void computeKnownBits(SDValue Op, APInt &KnownZero, APInt &KnownOne,
-                        const APInt &DemandedElts, unsigned Depth = 0) const;
+  void computeKnownBits(SDValue Op, KnownBits &Known, const APInt &DemandedElts,
+                        unsigned Depth = 0) const;
 
   /// Used to represent the possible overflow behavior of an operation.
   /// Never: the operation cannot overflow.

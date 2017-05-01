@@ -688,6 +688,8 @@ static uint64_t getAttrKindEncoding(Attribute::AttrKind Kind) {
     return bitc::ATTR_KIND_RETURNS_TWICE;
   case Attribute::SExt:
     return bitc::ATTR_KIND_S_EXT;
+  case Attribute::Speculatable:
+    return bitc::ATTR_KIND_SPECULATABLE;
   case Attribute::StackAlignment:
     return bitc::ATTR_KIND_STACK_ALIGNMENT;
   case Attribute::StackProtect:
@@ -726,54 +728,50 @@ static uint64_t getAttrKindEncoding(Attribute::AttrKind Kind) {
 }
 
 void ModuleBitcodeWriter::writeAttributeGroupTable() {
-  const std::vector<AttributeList> &AttrGrps = VE.getAttributeGroups();
+  const std::vector<ValueEnumerator::IndexAndAttrSet> &AttrGrps =
+      VE.getAttributeGroups();
   if (AttrGrps.empty()) return;
 
   Stream.EnterSubblock(bitc::PARAMATTR_GROUP_BLOCK_ID, 3);
 
   SmallVector<uint64_t, 64> Record;
-  for (unsigned i = 0, e = AttrGrps.size(); i != e; ++i) {
-    AttributeList AS = AttrGrps[i];
-    for (unsigned i = 0, e = AS.getNumSlots(); i != e; ++i) {
-      AttributeList A = AS.getSlotAttributes(i);
+  for (ValueEnumerator::IndexAndAttrSet Pair : AttrGrps) {
+    unsigned AttrListIndex = Pair.first;
+    AttributeSet AS = Pair.second;
+    Record.push_back(VE.getAttributeGroupID(Pair));
+    Record.push_back(AttrListIndex);
 
-      Record.push_back(VE.getAttributeGroupID(A));
-      Record.push_back(AS.getSlotIndex(i));
+    for (Attribute Attr : AS) {
+      if (Attr.isEnumAttribute()) {
+        Record.push_back(0);
+        Record.push_back(getAttrKindEncoding(Attr.getKindAsEnum()));
+      } else if (Attr.isIntAttribute()) {
+        Record.push_back(1);
+        Record.push_back(getAttrKindEncoding(Attr.getKindAsEnum()));
+        Record.push_back(Attr.getValueAsInt());
+      } else {
+        StringRef Kind = Attr.getKindAsString();
+        StringRef Val = Attr.getValueAsString();
 
-      for (AttributeList::iterator I = AS.begin(0), E = AS.end(0); I != E;
-           ++I) {
-        Attribute Attr = *I;
-        if (Attr.isEnumAttribute()) {
+        Record.push_back(Val.empty() ? 3 : 4);
+        Record.append(Kind.begin(), Kind.end());
+        Record.push_back(0);
+        if (!Val.empty()) {
+          Record.append(Val.begin(), Val.end());
           Record.push_back(0);
-          Record.push_back(getAttrKindEncoding(Attr.getKindAsEnum()));
-        } else if (Attr.isIntAttribute()) {
-          Record.push_back(1);
-          Record.push_back(getAttrKindEncoding(Attr.getKindAsEnum()));
-          Record.push_back(Attr.getValueAsInt());
-        } else {
-          StringRef Kind = Attr.getKindAsString();
-          StringRef Val = Attr.getValueAsString();
-
-          Record.push_back(Val.empty() ? 3 : 4);
-          Record.append(Kind.begin(), Kind.end());
-          Record.push_back(0);
-          if (!Val.empty()) {
-            Record.append(Val.begin(), Val.end());
-            Record.push_back(0);
-          }
         }
       }
-
-      Stream.EmitRecord(bitc::PARAMATTR_GRP_CODE_ENTRY, Record);
-      Record.clear();
     }
+
+    Stream.EmitRecord(bitc::PARAMATTR_GRP_CODE_ENTRY, Record);
+    Record.clear();
   }
 
   Stream.ExitBlock();
 }
 
 void ModuleBitcodeWriter::writeAttributeTable() {
-  const std::vector<AttributeList> &Attrs = VE.getAttributes();
+  const std::vector<AttributeList> &Attrs = VE.getAttributeLists();
   if (Attrs.empty()) return;
 
   Stream.EnterSubblock(bitc::PARAMATTR_BLOCK_ID, 3);
@@ -782,7 +780,8 @@ void ModuleBitcodeWriter::writeAttributeTable() {
   for (unsigned i = 0, e = Attrs.size(); i != e; ++i) {
     const AttributeList &A = Attrs[i];
     for (unsigned i = 0, e = A.getNumSlots(); i != e; ++i)
-      Record.push_back(VE.getAttributeGroupID(A.getSlotAttributes(i)));
+      Record.push_back(
+          VE.getAttributeGroupID({A.getSlotIndex(i), A.getSlotAttributes(i)}));
 
     Stream.EmitRecord(bitc::PARAMATTR_CODE_ENTRY, Record);
     Record.clear();
@@ -1270,7 +1269,7 @@ void ModuleBitcodeWriter::writeModuleInfo() {
     Vals.push_back(F.getCallingConv());
     Vals.push_back(F.isDeclaration());
     Vals.push_back(getEncodedLinkage(F));
-    Vals.push_back(VE.getAttributeID(F.getAttributes()));
+    Vals.push_back(VE.getAttributeListID(F.getAttributes()));
     Vals.push_back(Log2_32(F.getAlignment())+1);
     Vals.push_back(F.hasSection() ? SectionMap[F.getSection()] : 0);
     Vals.push_back(getEncodedVisibility(F));
@@ -1611,6 +1610,7 @@ void ModuleBitcodeWriter::writeDISubprogram(const DISubprogram *N,
   Record.push_back(VE.getMetadataOrNullID(N->getDeclaration()));
   Record.push_back(VE.getMetadataOrNullID(N->getVariables().get()));
   Record.push_back(N->getThisAdjustment());
+  Record.push_back(VE.getMetadataOrNullID(N->getThrownTypes().get()));
 
   Stream.EmitRecord(bitc::METADATA_SUBPROGRAM, Record, Abbrev);
   Record.clear();
@@ -1646,9 +1646,7 @@ void ModuleBitcodeWriter::writeDINamespace(const DINamespace *N,
                                            unsigned Abbrev) {
   Record.push_back(N->isDistinct() | N->getExportSymbols() << 1);
   Record.push_back(VE.getMetadataOrNullID(N->getScope()));
-  Record.push_back(VE.getMetadataOrNullID(N->getFile()));
   Record.push_back(VE.getMetadataOrNullID(N->getRawName()));
-  Record.push_back(N->getLine());
 
   Stream.EmitRecord(bitc::METADATA_NAMESPACE, Record, Abbrev);
   Record.clear();
@@ -2616,7 +2614,7 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
 
     Code = bitc::FUNC_CODE_INST_INVOKE;
 
-    Vals.push_back(VE.getAttributeID(II->getAttributes()));
+    Vals.push_back(VE.getAttributeListID(II->getAttributes()));
     Vals.push_back(II->getCallingConv() | 1 << 13);
     Vals.push_back(VE.getValueID(II->getNormalDest()));
     Vals.push_back(VE.getValueID(II->getUnwindDest()));
@@ -2808,7 +2806,7 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
 
     Code = bitc::FUNC_CODE_INST_CALL;
 
-    Vals.push_back(VE.getAttributeID(CI.getAttributes()));
+    Vals.push_back(VE.getAttributeListID(CI.getAttributes()));
 
     unsigned Flags = getOptimizationFlags(&I);
     Vals.push_back(CI.getCallingConv() << bitc::CALL_CCONV |

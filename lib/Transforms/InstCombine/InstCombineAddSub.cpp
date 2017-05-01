@@ -17,6 +17,7 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/PatternMatch.h"
+#include "llvm/Support/KnownBits.h"
 
 using namespace llvm;
 using namespace PatternMatch;
@@ -794,6 +795,11 @@ unsigned FAddCombine::calcInstrNumber(const AddendVect &Opnds) {
     if (Opnd->isConstant())
       continue;
 
+    // The constant check above is really for a few special constant
+    // coefficients.
+    if (isa<UndefValue>(Opnd->getSymVal()))
+      continue;
+
     const FAddendCoef &CE = Opnd->getCoef();
     if (CE.isMinusOne() || CE.isMinusTwo())
       NegOpndNum++;
@@ -855,7 +861,7 @@ static bool checkRippleForAdd(const APInt &Op0KnownZero,
   // Find the most significant known 0 other than the sign bit.
   int BitWidth = Op0KnownZero.getBitWidth();
   APInt Op0KnownZeroTemp(Op0KnownZero);
-  Op0KnownZeroTemp.clearBit(BitWidth - 1);
+  Op0KnownZeroTemp.clearSignBit();
   int Op0ZeroPosition = BitWidth - Op0KnownZeroTemp.countLeadingZeros() - 1;
 
   int Op1OnePosition = BitWidth - Op1MaybeOne.countLeadingZeros() - 1;
@@ -894,24 +900,22 @@ bool InstCombiner::WillNotOverflowSignedAdd(Value *LHS, Value *RHS,
     return true;
 
   unsigned BitWidth = LHS->getType()->getScalarSizeInBits();
-  APInt LHSKnownZero(BitWidth, 0);
-  APInt LHSKnownOne(BitWidth, 0);
-  computeKnownBits(LHS, LHSKnownZero, LHSKnownOne, 0, &CxtI);
+  KnownBits LHSKnown(BitWidth);
+  computeKnownBits(LHS, LHSKnown, 0, &CxtI);
 
-  APInt RHSKnownZero(BitWidth, 0);
-  APInt RHSKnownOne(BitWidth, 0);
-  computeKnownBits(RHS, RHSKnownZero, RHSKnownOne, 0, &CxtI);
+  KnownBits RHSKnown(BitWidth);
+  computeKnownBits(RHS, RHSKnown, 0, &CxtI);
 
   // Addition of two 2's complement numbers having opposite signs will never
   // overflow.
-  if ((LHSKnownOne[BitWidth - 1] && RHSKnownZero[BitWidth - 1]) ||
-      (LHSKnownZero[BitWidth - 1] && RHSKnownOne[BitWidth - 1]))
+  if ((LHSKnown.One[BitWidth - 1] && RHSKnown.Zero[BitWidth - 1]) ||
+      (LHSKnown.Zero[BitWidth - 1] && RHSKnown.One[BitWidth - 1]))
     return true;
 
   // Check if carry bit of addition will not cause overflow.
-  if (checkRippleForAdd(LHSKnownZero, RHSKnownZero))
+  if (checkRippleForAdd(LHSKnown.Zero, RHSKnown.Zero))
     return true;
-  if (checkRippleForAdd(RHSKnownZero, LHSKnownZero))
+  if (checkRippleForAdd(RHSKnown.Zero, LHSKnown.Zero))
     return true;
 
   return false;
@@ -931,18 +935,16 @@ bool InstCombiner::WillNotOverflowSignedSub(Value *LHS, Value *RHS,
     return true;
 
   unsigned BitWidth = LHS->getType()->getScalarSizeInBits();
-  APInt LHSKnownZero(BitWidth, 0);
-  APInt LHSKnownOne(BitWidth, 0);
-  computeKnownBits(LHS, LHSKnownZero, LHSKnownOne, 0, &CxtI);
+  KnownBits LHSKnown(BitWidth);
+  computeKnownBits(LHS, LHSKnown, 0, &CxtI);
 
-  APInt RHSKnownZero(BitWidth, 0);
-  APInt RHSKnownOne(BitWidth, 0);
-  computeKnownBits(RHS, RHSKnownZero, RHSKnownOne, 0, &CxtI);
+  KnownBits RHSKnown(BitWidth);
+  computeKnownBits(RHS, RHSKnown, 0, &CxtI);
 
   // Subtraction of two 2's complement numbers having identical signs will
   // never overflow.
-  if ((LHSKnownOne[BitWidth - 1] && RHSKnownOne[BitWidth - 1]) ||
-      (LHSKnownZero[BitWidth - 1] && RHSKnownZero[BitWidth - 1]))
+  if ((LHSKnown.One[BitWidth - 1] && RHSKnown.One[BitWidth - 1]) ||
+      (LHSKnown.Zero[BitWidth - 1] && RHSKnown.Zero[BitWidth - 1]))
     return true;
 
   // TODO: implement logic similar to checkRippleForAdd
@@ -1035,7 +1037,7 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
     return replaceInstUsesWith(I, V);
 
   if (Value *V = SimplifyAddInst(LHS, RHS, I.hasNoSignedWrap(),
-                                 I.hasNoUnsignedWrap(), DL, &TLI, &DT, &AC))
+                                 I.hasNoUnsignedWrap(), SQ))
     return replaceInstUsesWith(I, V);
 
    // (A*B)+(A*C) -> A*(B+C) etc
@@ -1113,10 +1115,9 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
       // a sub and fuse this add with it.
       if (LHS->hasOneUse() && (XorRHS->getValue()+1).isPowerOf2()) {
         IntegerType *IT = cast<IntegerType>(I.getType());
-        APInt LHSKnownOne(IT->getBitWidth(), 0);
-        APInt LHSKnownZero(IT->getBitWidth(), 0);
-        computeKnownBits(XorLHS, LHSKnownZero, LHSKnownOne, 0, &I);
-        if ((XorRHS->getValue() | LHSKnownZero).isAllOnesValue())
+        KnownBits LHSKnown(IT->getBitWidth());
+        computeKnownBits(XorLHS, LHSKnown, 0, &I);
+        if ((XorRHS->getValue() | LHSKnown.Zero).isAllOnesValue())
           return BinaryOperator::CreateSub(ConstantExpr::getAdd(XorRHS, CI),
                                            XorLHS);
       }
@@ -1357,8 +1358,7 @@ Instruction *InstCombiner::visitFAdd(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (Value *V =
-          SimplifyFAddInst(LHS, RHS, I.getFastMathFlags(), DL, &TLI, &DT, &AC))
+  if (Value *V = SimplifyFAddInst(LHS, RHS, I.getFastMathFlags(), SQ))
     return replaceInstUsesWith(I, V);
 
   if (isa<Constant>(RHS))
@@ -1549,7 +1549,7 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
     return replaceInstUsesWith(I, V);
 
   if (Value *V = SimplifySubInst(Op0, Op1, I.hasNoSignedWrap(),
-                                 I.hasNoUnsignedWrap(), DL, &TLI, &DT, &AC))
+                                 I.hasNoUnsignedWrap(), SQ))
     return replaceInstUsesWith(I, V);
 
   // (A*B)-(A*C) -> A*(B-C) etc
@@ -1636,10 +1636,9 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
     // Turn this into a xor if LHS is 2^n-1 and the remaining bits are known
     // zero.
     if (Op0C->isMask()) {
-      APInt RHSKnownZero(BitWidth, 0);
-      APInt RHSKnownOne(BitWidth, 0);
-      computeKnownBits(Op1, RHSKnownZero, RHSKnownOne, 0, &I);
-      if ((*Op0C | RHSKnownZero).isAllOnesValue())
+      KnownBits RHSKnown(BitWidth);
+      computeKnownBits(Op1, RHSKnown, 0, &I);
+      if ((*Op0C | RHSKnown.Zero).isAllOnesValue())
         return BinaryOperator::CreateXor(Op1, Op0);
     }
   }
@@ -1756,8 +1755,7 @@ Instruction *InstCombiner::visitFSub(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (Value *V =
-          SimplifyFSubInst(Op0, Op1, I.getFastMathFlags(), DL, &TLI, &DT, &AC))
+  if (Value *V = SimplifyFSubInst(Op0, Op1, I.getFastMathFlags(), SQ))
     return replaceInstUsesWith(I, V);
 
   // fsub nsz 0, X ==> fsub nsz -0.0, X

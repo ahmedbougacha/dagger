@@ -108,6 +108,21 @@ def int_amdgcn_implicit_buffer_ptr :
   GCCBuiltin<"__builtin_amdgcn_implicit_buffer_ptr">,
   Intrinsic<[LLVMQualPointerType<llvm_i8_ty, 2>], [], [IntrNoMem]>;
 
+// Set EXEC to the 64-bit value given.
+// This is always moved to the beginning of the basic block.
+def int_amdgcn_init_exec : Intrinsic<[],
+  [llvm_i64_ty],      // 64-bit literal constant
+  [IntrConvergent]>;
+
+// Set EXEC according to a thread count packed in an SGPR input:
+//    thread_count = (input >> bitoffset) & 0x7f;
+// This is always moved to the beginning of the basic block.
+def int_amdgcn_init_exec_from_input : Intrinsic<[],
+  [llvm_i32_ty,       // 32-bit SGPR input
+   llvm_i32_ty],      // bit offset of the thread count
+  [IntrConvergent]>;
+
+
 //===----------------------------------------------------------------------===//
 // Instruction Intrinsics
 //===----------------------------------------------------------------------===//
@@ -629,6 +644,8 @@ def int_amdgcn_readfirstlane :
   GCCBuiltin<"__builtin_amdgcn_readfirstlane">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
 
+// The lane argument must be uniform across the currently active threads of the
+// current wave. Otherwise, the result is undefined.
 def int_amdgcn_readlane :
   GCCBuiltin<"__builtin_amdgcn_readlane">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;

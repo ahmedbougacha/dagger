@@ -315,6 +315,8 @@ std::string Attribute::getAsString(bool InAttrGrp) const {
     return "returns_twice";
   if (hasAttribute(Attribute::SExt))
     return "signext";
+  if (hasAttribute(Attribute::Speculatable))
+    return "speculatable";
   if (hasAttribute(Attribute::StackProtect))
     return "ssp";
   if (hasAttribute(Attribute::StackProtectReq))
@@ -955,13 +957,13 @@ AttributeList AttributeList::addAttribute(LLVMContext &C,
   for (unsigned Index : Indices) {
     // Add all attribute slots before the current index.
     for (; I < E && getSlotIndex(I) < Index; ++I)
-      AttrVec.emplace_back(getSlotIndex(I), pImpl->getSlotNode(I));
+      AttrVec.emplace_back(getSlotIndex(I), pImpl->getSlotAttributes(I));
 
     // Add the attribute at this index. If we already have attributes at this
     // index, merge them into a new set.
     AttrBuilder B;
     if (I < E && getSlotIndex(I) == Index) {
-      B.merge(AttrBuilder(pImpl->getSlotNode(I)));
+      B.merge(AttrBuilder(pImpl->getSlotAttributes(I)));
       ++I;
     }
     B.addAttribute(A);
@@ -970,7 +972,7 @@ AttributeList AttributeList::addAttribute(LLVMContext &C,
 
   // Add remaining attributes.
   for (; I < E; ++I)
-    AttrVec.emplace_back(getSlotIndex(I), pImpl->getSlotNode(I));
+    AttrVec.emplace_back(getSlotIndex(I), pImpl->getSlotAttributes(I));
 
   return get(C, AttrVec);
 }
@@ -1008,13 +1010,13 @@ AttributeList AttributeList::addAttributes(LLVMContext &C, unsigned Index,
   for (I = 0; I < NumAttrs; ++I) {
     if (getSlotIndex(I) >= Index)
       break;
-    AttrVec.emplace_back(getSlotIndex(I), pImpl->getSlotNode(I));
+    AttrVec.emplace_back(getSlotIndex(I), pImpl->getSlotAttributes(I));
   }
 
   AttrBuilder NewAttrs;
   if (I < NumAttrs && getSlotIndex(I) == Index) {
     // We need to merge the attribute sets.
-    NewAttrs.merge(pImpl->getSlotNode(I));
+    NewAttrs.merge(pImpl->getSlotAttributes(I));
     ++I;
   }
   NewAttrs.merge(B);
@@ -1024,7 +1026,7 @@ AttributeList AttributeList::addAttributes(LLVMContext &C, unsigned Index,
 
   // Add the remaining entries.
   for (; I < NumAttrs; ++I)
-    AttrVec.emplace_back(getSlotIndex(I), pImpl->getSlotNode(I));
+    AttrVec.emplace_back(getSlotIndex(I), pImpl->getSlotAttributes(I));
 
   return get(C, AttrVec);
 }
@@ -1063,11 +1065,11 @@ AttributeList AttributeList::removeAttributes(LLVMContext &C, unsigned Index,
   for (unsigned I = 0, E = NumAttrs; I != E; ++I) {
     if (getSlotIndex(I) >= Index) {
       if (getSlotIndex(I) == Index)
-        B = AttrBuilder(pImpl->getSlotNode(LastIndex++));
+        B = AttrBuilder(getSlotAttributes(LastIndex++));
       break;
     }
     LastIndex = I + 1;
-    AttrSets.push_back({getSlotIndex(I), pImpl->getSlotNode(I)});
+    AttrSets.push_back({getSlotIndex(I), getSlotAttributes(I)});
   }
 
   // Remove the attributes from the existing set and add them.
@@ -1077,7 +1079,7 @@ AttributeList AttributeList::removeAttributes(LLVMContext &C, unsigned Index,
 
   // Add the remaining attribute slots.
   for (unsigned I = LastIndex, E = NumAttrs; I < E; ++I)
-    AttrSets.push_back({getSlotIndex(I), pImpl->getSlotNode(I)});
+    AttrSets.push_back({getSlotIndex(I), getSlotAttributes(I)});
 
   return get(C, AttrSets);
 }
@@ -1091,7 +1093,7 @@ AttributeList AttributeList::removeAttributes(LLVMContext &C,
   for (unsigned I = 0, E = pImpl->getNumSlots(); I != E; ++I) {
     unsigned Index = getSlotIndex(I);
     if (Index != WithoutIndex)
-      AttrSet.push_back({Index, pImpl->getSlotNode(I)});
+      AttrSet.push_back({Index, pImpl->getSlotAttributes(I)});
   }
   return get(C, AttrSet);
 }
@@ -1189,8 +1191,12 @@ Attribute AttributeList::getAttribute(unsigned Index, StringRef Kind) const {
   return getAttributes(Index).getAttribute(Kind);
 }
 
-unsigned AttributeList::getParamAlignment(unsigned Index) const {
-  return getAttributes(Index).getAlignment();
+unsigned AttributeList::getRetAlignment() const {
+  return getAttributes(ReturnIndex).getAlignment();
+}
+
+unsigned AttributeList::getParamAlignment(unsigned ArgNo) const {
+  return getAttributes(ArgNo + 1).getAlignment();
 }
 
 unsigned AttributeList::getStackAlignment(unsigned Index) const {
@@ -1220,7 +1226,7 @@ AttributeSet AttributeList::getAttributes(unsigned Index) const {
   // Loop through to find the attribute node we want.
   for (unsigned I = 0, E = pImpl->getNumSlots(); I != E; ++I)
     if (pImpl->getSlotIndex(I) == Index)
-      return pImpl->getSlotNode(I);
+      return pImpl->getSlotAttributes(I);
 
   return AttributeSet();
 }
@@ -1251,7 +1257,7 @@ unsigned AttributeList::getSlotIndex(unsigned Slot) const {
   return pImpl->getSlotIndex(Slot);
 }
 
-AttributeList AttributeList::getSlotAttributes(unsigned Slot) const {
+AttributeSet AttributeList::getSlotAttributes(unsigned Slot) const {
   assert(pImpl && Slot < pImpl->getNumSlots() &&
          "Slot # out of range!");
   return pImpl->getSlotAttributes(Slot);
@@ -1363,15 +1369,7 @@ AttrBuilder &AttrBuilder::removeAttribute(Attribute::AttrKind Val) {
 }
 
 AttrBuilder &AttrBuilder::removeAttributes(AttributeList A, uint64_t Index) {
-  for (Attribute Attr : A.getAttributes(Index)) {
-    if (Attr.isEnumAttribute() || Attr.isIntAttribute()) {
-      removeAttribute(Attr.getKindAsEnum());
-    } else {
-      assert(Attr.isStringAttribute() && "Invalid attribute type!");
-      removeAttribute(Attr.getKindAsString());
-    }
-  }
-
+  remove(A.getAttributes(Index));
   return *this;
 }
 
@@ -1513,25 +1511,16 @@ bool AttrBuilder::hasAttributes() const {
   return !Attrs.none() || !TargetDepAttrs.empty();
 }
 
-bool AttrBuilder::hasAttributes(AttributeList A, uint64_t Index) const {
-  unsigned Slot = ~0U;
-  for (unsigned I = 0, E = A.getNumSlots(); I != E; ++I)
-    if (A.getSlotIndex(I) == Index) {
-      Slot = I;
-      break;
-    }
+bool AttrBuilder::hasAttributes(AttributeList AL, uint64_t Index) const {
+  AttributeSet AS = AL.getAttributes(Index);
 
-  assert(Slot != ~0U && "Couldn't find the index!");
-
-  for (AttributeList::iterator I = A.begin(Slot), E = A.end(Slot); I != E;
-       ++I) {
-    Attribute Attr = *I;
+  for (Attribute Attr : AS) {
     if (Attr.isEnumAttribute() || Attr.isIntAttribute()) {
-      if (Attrs[I->getKindAsEnum()])
+      if (contains(Attr.getKindAsEnum()))
         return true;
     } else {
       assert(Attr.isStringAttribute() && "Invalid attribute kind!");
-      return TargetDepAttrs.find(Attr.getKindAsString())!=TargetDepAttrs.end();
+      return contains(Attr.getKindAsString());
     }
   }
 
