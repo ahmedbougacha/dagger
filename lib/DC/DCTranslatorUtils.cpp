@@ -24,13 +24,16 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dctranslator-utils"
 
-Function *llvm::translateRecursivelyAt(uint64_t EntryAddr, DCTranslator &DCT,
-                                       MCModule &MCM,
-                                       MCObjectDisassembler *MCOD,
-                                       MCObjectSymbolizer *MOS) {
+void llvm::translateRecursivelyAt(ArrayRef<uint64_t> EntryAddrs,
+                                  DCTranslator &DCT, MCModule &MCM,
+                                  MCObjectDisassembler *MCOD,
+                                  MCObjectSymbolizer *MOS) {
   DCModule &DCM = *DCT.getDCModule();
   SmallSetVector<uint64_t, 16> WorkList;
-  WorkList.insert(EntryAddr);
+
+  for (auto EntryAddr : EntryAddrs)
+    WorkList.insert(EntryAddr);
+
   for (size_t i = 0; i < WorkList.size(); ++i) {
     uint64_t Addr = WorkList[i];
     Function *F = DCM.getOrCreateFunction(Addr);
@@ -76,5 +79,4 @@ Function *llvm::translateRecursivelyAt(uint64_t EntryAddr, DCTranslator &DCT,
     for (uint64_t CallTarget : MCFN->callees())
       WorkList.insert(CallTarget);
   }
-  return DCM.getOrCreateFunction(EntryAddr);
 }

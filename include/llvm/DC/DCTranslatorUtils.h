@@ -14,6 +14,7 @@
 #ifndef LLVM_DC_UTILS_TRANSLATOR_H
 #define LLVM_DC_UTILS_TRANSLATOR_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include <cstdint>
 
 namespace llvm {
@@ -24,10 +25,9 @@ class MCModule;
 class MCObjectDisassembler;
 class MCObjectSymbolizer;
 
-Function *translateRecursivelyAt(uint64_t EntryAddr, DCTranslator &DCT,
-                                 MCModule &MCM,
-                                 MCObjectDisassembler *MCOD = nullptr,
-                                 MCObjectSymbolizer *MOS = nullptr);
+void translateRecursivelyAt(ArrayRef<uint64_t> EntryAddrs, DCTranslator &DCT,
+                            MCModule &MCM, MCObjectDisassembler *MCOD = nullptr,
+                            MCObjectSymbolizer *MOS = nullptr);
 
 } // end namespace llvm
 

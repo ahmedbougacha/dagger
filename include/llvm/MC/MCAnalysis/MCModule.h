@@ -56,6 +56,7 @@ public:
 
   /// \name Access to the owned function list.
   /// @{
+  size_t func_size() const { return Functions.size(); }
   // FIXME: Iterating on unique_ptrs is a pain, could it be hidden?
   typedef FunctionListTy::const_iterator const_func_iterator;
   typedef FunctionListTy::      iterator       func_iterator;

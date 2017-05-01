@@ -250,7 +250,8 @@ static DYNJIT *__dc_JIT;
 
 static void *__llvm_dc_translate_at(void *addr) {
   void *ptr = nullptr;
-  Function *F = translateRecursivelyAt((uint64_t)addr, *__dc_DT, *__dc_MCM, __dc_MCOD, __dc_MOS);
+  translateRecursivelyAt((uint64_t)addr, *__dc_DT, *__dc_MCM, __dc_MCOD, __dc_MOS);
+  Function *F = __dc_DT->getDCModule()->getOrCreateFunction((uint64_t)addr);
   DEBUG(dbgs() << "__llvm_dc_translate_at " << addr << "\n");
   DEBUG(dbgs() << "Jumping to " << F->getName() << "\n");
   ptr = (void*)__dc_JIT->findUnmangledSymbol(F->getName()).getAddress();
@@ -469,17 +470,14 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
 
   // Translate all static init functions.
   auto TranslateAndRunStaticInitExit = [&](ArrayRef<uint64_t> Fns) {
-    std::vector<Function *> TranslatedFns;
-    TranslatedFns.reserve(Fns.size());
-    for (auto FnAddr : Fns)
-      TranslatedFns.push_back(translateRecursivelyAt(
-          MOS->getEffectiveLoadAddr(FnAddr), *DT, *MCM, OD.get(), MOS.get()));
+    translateRecursivelyAt(Fns, *DT, *MCM, OD.get(), MOS.get());
 
     // Add these to the JIT, and run them.
     Module *M = DT->finalizeTranslationModule();
     DEBUG(M->print(dbgs(), nullptr));
     J.addModule(M);
-    for (auto Fn : TranslatedFns) {
+    for (auto FnAddr : Fns) {
+      auto *Fn = DT->getDCModule()->getOrCreateFunction(FnAddr);
       DEBUG(dbgs() << "Executing static init/fini function " << Fn->getName()
                    << "\n");
       RunIRFunction(Fn);
@@ -501,8 +499,8 @@ void dyn_entry(int argc, char **argv, const char **envp, const char **apple,
   uint64_t CurPC = MOS->getEffectiveLoadAddr(*MainEntrypoint);
   assert(dlsym(RTLD_MAIN_ONLY, "main") == (void *)CurPC);
   do {
-    Function *Fn =
-        translateRecursivelyAt(CurPC, *DT, *MCM, OD.get(), MOS.get());
+    translateRecursivelyAt(CurPC, *DT, *MCM, OD.get(), MOS.get());
+    auto *Fn = DT->getDCModule()->getOrCreateFunction(CurPC);
     DEBUG(dbgs() << "Executing function " << Fn->getName() << "\n");
     J.addModule(DT->finalizeTranslationModule());
     RunIRFunction(Fn);

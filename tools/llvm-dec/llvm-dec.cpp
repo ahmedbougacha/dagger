@@ -215,11 +215,15 @@ int main(int argc, char **argv) {
       TranslationEntrypoint = *MainEntrypoint;
   }
 
-  DT->getDCModule()->getOrCreateMainFunction(translateRecursivelyAt(
-      TranslationEntrypoint, *DT, *MCM, OD.get(), MOS.get()));
+  translateRecursivelyAt({TranslationEntrypoint}, *DT, *MCM, OD.get(), MOS.get());
+  DT->getDCModule()->getOrCreateMainFunction(
+      DT->getDCModule()->getOrCreateFunction(TranslationEntrypoint));
 
+  std::vector<uint64_t> FuncEntrypoints;
+  FuncEntrypoints.reserve(MCM->func_size());
   for (auto &F : MCM->funcs())
-    translateRecursivelyAt(F->getStartAddr(), *DT, *MCM, OD.get(), MOS.get());
+    FuncEntrypoints.push_back(F->getStartAddr());
+  translateRecursivelyAt(FuncEntrypoints, *DT, *MCM, OD.get(), MOS.get());
 
   Module *M = DT->finalizeTranslationModule();
   M->print(outs(), /*AnnotWriter=*/nullptr);

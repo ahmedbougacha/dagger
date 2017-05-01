@@ -173,8 +173,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  std::vector<uint64_t> FuncEntrypoints;
+  FuncEntrypoints.reserve(MCM->func_size());
   for (auto &F : MCM->funcs())
-    translateRecursivelyAt(F->getStartAddr(), *DT, *MCM);
+    FuncEntrypoints.push_back(F->getStartAddr());
+  translateRecursivelyAt(FuncEntrypoints, *DT, *MCM);
 
   Module *M = DT->finalizeTranslationModule();
   M->print(outs(), /*AnnotWriter=*/nullptr);
