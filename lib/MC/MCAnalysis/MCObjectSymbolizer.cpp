@@ -243,9 +243,11 @@ static bool shouldSkipELFSection(SectionRef S) {
 
 MCELFObjectSymbolizer::MCELFObjectSymbolizer(
     MCContext &Ctx, std::unique_ptr<MCRelocationInfo> RelInfo,
-    const ELFObjectFileBase &OF)
-    : MCObjectSymbolizer(Ctx, std::move(RelInfo), OF, shouldSkipELFSection),
-      OF(OF) {
+    const ELFObjectFileBase &ELFOF)
+    : MCObjectSymbolizer(Ctx, std::move(RelInfo), ELFOF, shouldSkipELFSection),
+      OF(ELFOF) {
+
+  (void)OF;
 
   // Refine the main entrypoint if possible.
   // FIXME: We only handle 64bit LE ELF.
