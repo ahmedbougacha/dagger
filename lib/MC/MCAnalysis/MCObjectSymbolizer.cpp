@@ -17,6 +17,7 @@
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/SymbolSize.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DataExtractor.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/TargetRegistry.h"
@@ -27,6 +28,13 @@ using namespace llvm;
 using namespace object;
 
 #define DEBUG_TYPE "mcobjectsymbolizer"
+
+//===- Command Line Arguments----------------------------------------------===//
+// cl::opt<uint64_t> isn't currently supported (PR19665).
+static cl::opt<unsigned long long>
+    TranslationEntrypoint("entrypoint",
+                          cl::desc("Address to start translating from "
+                                       "(default = object entrypoint)"));
 
 //===- Helpers ------------------------------------------------------------===//
 
@@ -247,10 +255,22 @@ MCELFObjectSymbolizer::MCELFObjectSymbolizer(
     : MCObjectSymbolizer(Ctx, std::move(RelInfo), OF, shouldSkipELFSection),
       OF(OF) {
 
-  // Refine the main entrypoint if possible.
-  // FIXME: We only handle 64bit LE ELF.
-  if (auto *EF = dyn_cast<ELF64LEObjectFile>(&OF))
-    MainEntrypoint = EF->getELFFile()->getHeader()->e_entry;
+  if(MainEntrypoint.hasValue() == false){
+      
+    DEBUG(dbgs() << "Found stripped ELF file, could not find entrypoint.\n");
+        
+    // FIXME: Find the main entrypoint in a stripped ELF-File if possible.
+    // The Entrypoint specified in the ELF-Header is not useful, because it 
+    // calls __libc_start_main and does not return in a way daggger could detect 
+    // it. So the goal is to identify the start of the main()-function here.
+        
+    // check if we now have found the main()-Entrypoint
+    if(MainEntrypoint.hasValue() == true){
+      DEBUG(dbgs() << "Found main()-entrypoint");
+    }else{
+      report_fatal_error("Could not autodetect entrypoint for ELF file.");
+    }
+  }
 }
 
 //===- MCObjectSymbolizer -------------------------------------------------===//
@@ -276,8 +296,12 @@ MCObjectSymbolizer::MCObjectSymbolizer(
     if (Name == "main" || Name == "_main")
       MainEntrypoint = Addr;
     Entrypoints.push_back(Addr);
+    }
+
+  // Set the Entrypoint if specified per CommandLine Argument
+  if(TranslationEntrypoint)
+    MainEntrypoint = TranslationEntrypoint;
   }
-}
 
 Optional<uint64_t> MCObjectSymbolizer::getMainEntrypoint() {
   return MainEntrypoint;
