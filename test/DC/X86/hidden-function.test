@@ -1,0 +1,83 @@
+#RUN: llvm-dec %p/Inputs/hidden-function.elf-x86_64 | FileCheck %s
+
+# Test that we correctly translate functions that aren't associated with an
+# external symbol.
+
+# Assembly source:
+#   .type main,@function
+#   .globl main
+#   main:
+#     retq
+#
+#   .type f,@function
+#   .globl f
+#   f:
+#     callq .Lg0
+#     callq .Lg1
+#     callq .Lg2
+#     callq .Lg3
+#     callq .Lg4
+#     callq .Lg5
+#     callq .Lg6
+#     callq .Lg7
+#     retq
+#
+#   .Lg0: movq $0, %rax; retq
+#   .Lg1: movq $1, %rax; retq
+#   .Lg2: movq $2, %rax; retq
+#   .Lg3: movq $3, %rax; retq
+#   .Lg4: movq $4, %rax; retq
+#   .Lg5: movq $5, %rax; retq
+#   .Lg6: movq $6, %rax; retq
+#   .Lg7: movq $7, %rax; retq
+
+
+CHECK-LABEL: define void @fn_2010F8(%regset* noalias nocapture)
+
+CHECK-LABEL: define i32 @main(i32, i8**) {
+CHECK:   call void @fn_2010F8(%regset* %3)
+CHECK: }
+
+
+CHECK-LABEL: define void @fn_2010F9(%regset* noalias nocapture) {
+CHECK:   call void @fn_201122(%regset* %0)
+CHECK:   call void @fn_20112A(%regset* %0)
+CHECK:   call void @fn_201132(%regset* %0)
+CHECK:   call void @fn_20113A(%regset* %0)
+CHECK:   call void @fn_201142(%regset* %0)
+CHECK:   call void @fn_20114A(%regset* %0)
+CHECK:   call void @fn_201152(%regset* %0)
+CHECK:   call void @fn_20115A(%regset* %0)
+CHECK: }
+
+CHECK-LABEL: define void @fn_201122(%regset* noalias nocapture) {
+CHECK:   store i64 0, i64* %RAX
+CHECK: }
+
+CHECK-LABEL: define void @fn_20112A(%regset* noalias nocapture) {
+CHECK:   store i64 1, i64* %RAX
+CHECK: }
+
+CHECK-LABEL: define void @fn_201132(%regset* noalias nocapture) {
+CHECK:   store i64 2, i64* %RAX
+CHECK: }
+
+CHECK-LABEL: define void @fn_20113A(%regset* noalias nocapture) {
+CHECK:   store i64 3, i64* %RAX
+CHECK: }
+
+CHECK-LABEL: define void @fn_201142(%regset* noalias nocapture) {
+CHECK:   store i64 4, i64* %RAX
+CHECK: }
+
+CHECK-LABEL: define void @fn_20114A(%regset* noalias nocapture) {
+CHECK:   store i64 5, i64* %RAX
+CHECK: }
+
+CHECK-LABEL: define void @fn_201152(%regset* noalias nocapture) {
+CHECK:   store i64 6, i64* %RAX
+CHECK: }
+
+CHECK-LABEL: define void @fn_20115A(%regset* noalias nocapture) {
+CHECK:   store i64 7, i64* %RAX
+CHECK: }

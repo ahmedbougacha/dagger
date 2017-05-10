@@ -1,0 +1,808 @@
+RUN: llvm-mccfg %p/Inputs/hidden-function.exe.elf-x86_64 | FileCheck %s
+
+CHECK-LABEL: ---
+CHECK-NEXT: Functions:       
+CHECK-NEXT:   - Name:            fn_2010F8
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x00000000002010F8
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     1
+CHECK-NEXT:         InstCount:       1
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_201030
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x0000000000201030
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [ 0x0000000000201045, 0x0000000000201060 ]
+CHECK-NEXT:         SizeInBytes:     21
+CHECK-NEXT:         InstCount:       6
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REAX, I2105367 ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            SUB64i32
+CHECK-NEXT:             Size:            6
+CHECK-NEXT:             Ops:             [ I2105360 ]
+CHECK-NEXT:           - Inst:            CMP64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRAX, I14 ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBP, RRSP ]
+CHECK-NEXT:           - Inst:            JBE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I27 ]
+CHECK-NEXT:       - Address:         0x0000000000201045
+CHECK-NEXT:         Preds:           [ 0x0000000000201030 ]
+CHECK-NEXT:         Succs:           [ 0x000000000020104F, 0x0000000000201060 ]
+CHECK-NEXT:         SizeInBytes:     10
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REAX, I0 ]
+CHECK-NEXT:           - Inst:            TEST64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRAX, RRAX ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I17 ]
+CHECK-NEXT:       - Address:         0x0000000000201060
+CHECK-NEXT:         Preds:           [ 0x0000000000201030, 0x0000000000201045 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     2
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:       - Address:         0x000000000020104F
+CHECK-NEXT:         Preds:           [ 0x0000000000201045 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REDI, I2105360 ]
+CHECK-NEXT:           - Inst:            JMP64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RRAX ]
+CHECK-NEXT:   - Name:            fn_201070
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x0000000000201070
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [ 0x0000000000201093, 0x00000000002010A8 ]
+CHECK-NEXT:         SizeInBytes:     35
+CHECK-NEXT:         InstCount:       10
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ RESI, I2105360 ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            SUB64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRSI, RRSI, I2105360 ]
+CHECK-NEXT:           - Inst:            SAR64ri
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSI, RRSI, I3 ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBP, RRSP ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRAX, RRSI ]
+CHECK-NEXT:           - Inst:            SHR64ri
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRAX, RRAX, I63 ]
+CHECK-NEXT:           - Inst:            ADD64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRSI, RRSI, RRAX ]
+CHECK-NEXT:           - Inst:            SAR64r1
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRSI, RRSI ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I21 ]
+CHECK-NEXT:       - Address:         0x0000000000201093
+CHECK-NEXT:         Preds:           [ 0x0000000000201070 ]
+CHECK-NEXT:         Succs:           [ 0x000000000020109D, 0x00000000002010A8 ]
+CHECK-NEXT:         SizeInBytes:     10
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REAX, I0 ]
+CHECK-NEXT:           - Inst:            TEST64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRAX, RRAX ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I11 ]
+CHECK-NEXT:       - Address:         0x00000000002010A8
+CHECK-NEXT:         Preds:           [ 0x0000000000201070, 0x0000000000201093 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     2
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:       - Address:         0x000000000020109D
+CHECK-NEXT:         Preds:           [ 0x0000000000201093 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REDI, I2105360 ]
+CHECK-NEXT:           - Inst:            JMP64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RRAX ]
+CHECK-NEXT:   - Name:            fn_2010B0
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x00000000002010B0
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [ 0x00000000002010B9, 0x00000000002010CA ]
+CHECK-NEXT:         SizeInBytes:     9
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            CMP8mi
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRIP, I1, R, I12105, R, I0 ]
+CHECK-NEXT:           - Inst:            JNE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I17 ]
+CHECK-NEXT:       - Address:         0x00000000002010B9
+CHECK-NEXT:         Preds:           [ 0x00000000002010B0 ]
+CHECK-NEXT:         Succs:           [ 0x00000000002010CA ]
+CHECK-NEXT:         SizeInBytes:     17
+CHECK-NEXT:         InstCount:       5
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBP, RRSP ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I-146 ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            MOV8mi
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRIP, I1, R, I12086, R, I1 ]
+CHECK-NEXT:       - Address:         0x00000000002010CA
+CHECK-NEXT:         Preds:           [ 0x00000000002010B0, 0x00000000002010B9 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     2
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            REP_PREFIX
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_2010D0
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x00000000002010D0
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [ 0x00000000002010DB, 0x00000000002010E0 ]
+CHECK-NEXT:         SizeInBytes:     11
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REDI, I2109440 ]
+CHECK-NEXT:           - Inst:            CMP64mi8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRDI, I1, R, I0, R, I0 ]
+CHECK-NEXT:           - Inst:            JNE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I5 ]
+CHECK-NEXT:       - Address:         0x00000000002010DB
+CHECK-NEXT:         Preds:           [ 0x00000000002010D0, 0x00000000002010E0 ]
+CHECK-NEXT:         Succs:           [ 0x0000000000201070 ]
+CHECK-NEXT:         SizeInBytes:     2
+CHECK-NEXT:         InstCount:       1
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            JMP_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I-109 ]
+CHECK-NEXT:       - Address:         0x00000000002010E0
+CHECK-NEXT:         Preds:           [ 0x00000000002010D0 ]
+CHECK-NEXT:         Succs:           [ 0x00000000002010DB, 0x00000000002010EA ]
+CHECK-NEXT:         SizeInBytes:     10
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REAX, I0 ]
+CHECK-NEXT:           - Inst:            TEST64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRAX, RRAX ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I-15 ]
+CHECK-NEXT:       - Address:         0x0000000000201070
+CHECK-NEXT:         Preds:           [ 0x00000000002010DB, 0x00000000002010EA ]
+CHECK-NEXT:         Succs:           [ 0x0000000000201093, 0x00000000002010A8 ]
+CHECK-NEXT:         SizeInBytes:     35
+CHECK-NEXT:         InstCount:       10
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ RESI, I2105360 ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            SUB64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRSI, RRSI, I2105360 ]
+CHECK-NEXT:           - Inst:            SAR64ri
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSI, RRSI, I3 ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBP, RRSP ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRAX, RRSI ]
+CHECK-NEXT:           - Inst:            SHR64ri
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRAX, RRAX, I63 ]
+CHECK-NEXT:           - Inst:            ADD64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRSI, RRSI, RRAX ]
+CHECK-NEXT:           - Inst:            SAR64r1
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRSI, RRSI ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I21 ]
+CHECK-NEXT:       - Address:         0x00000000002010EA
+CHECK-NEXT:         Preds:           [ 0x00000000002010E0 ]
+CHECK-NEXT:         Succs:           [ 0x0000000000201070 ]
+CHECK-NEXT:         SizeInBytes:     12
+CHECK-NEXT:         InstCount:       5
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBP, RRSP ]
+CHECK-NEXT:           - Inst:            CALL64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RRAX ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            JMP_4
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I-134 ]
+CHECK-NEXT:       - Address:         0x0000000000201093
+CHECK-NEXT:         Preds:           [ 0x0000000000201070 ]
+CHECK-NEXT:         Succs:           [ 0x000000000020109D, 0x00000000002010A8 ]
+CHECK-NEXT:         SizeInBytes:     10
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REAX, I0 ]
+CHECK-NEXT:           - Inst:            TEST64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRAX, RRAX ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I11 ]
+CHECK-NEXT:       - Address:         0x00000000002010A8
+CHECK-NEXT:         Preds:           [ 0x0000000000201070, 0x0000000000201093 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     2
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:       - Address:         0x000000000020109D
+CHECK-NEXT:         Preds:           [ 0x0000000000201093 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REDI, I2105360 ]
+CHECK-NEXT:           - Inst:            JMP64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RRAX ]
+CHECK-NEXT:   - Name:            fn_2011E0
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x00000000002011E0
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     2
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            REP_PREFIX
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_201000
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x0000000000201000
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [ 0x0000000000201045, 0x0000000000201060 ]
+CHECK-NEXT:         SizeInBytes:     69
+CHECK-NEXT:         InstCount:       20
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            XOR32rr
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ REBP, REBP, REBP ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RR9, RRDX ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRSI ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRDX, RRSP ]
+CHECK-NEXT:           - Inst:            AND64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I-16 ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRAX ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRSP ]
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RR8, I2101728 ]
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRCX, I2101616 ]
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRDI, I2101496 ]
+CHECK-NEXT:           - Inst:            CALL64m
+CHECK-NEXT:             Size:            6
+CHECK-NEXT:             Ops:             [ RRIP, I1, R, I8494, R ]
+CHECK-NEXT:           - Inst:            HLT
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:           - Inst:            ADD8mr
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RRAX, I1, R, I0, R, RAL ]
+CHECK-NEXT:           - Inst:            ADD8mr
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RRAX, I1, R, I0, R, RAL ]
+CHECK-NEXT:           - Inst:            ADD8mr
+CHECK-NEXT:             Size:            6
+CHECK-NEXT:             Ops:             [ RRAX, I1, R, I2105367, R, RBH ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            SUB64i32
+CHECK-NEXT:             Size:            6
+CHECK-NEXT:             Ops:             [ I2105360 ]
+CHECK-NEXT:           - Inst:            CMP64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRAX, I14 ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBP, RRSP ]
+CHECK-NEXT:           - Inst:            JBE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I27 ]
+CHECK-NEXT:       - Address:         0x0000000000201045
+CHECK-NEXT:         Preds:           [ 0x0000000000201000 ]
+CHECK-NEXT:         Succs:           [ 0x000000000020104F, 0x0000000000201060 ]
+CHECK-NEXT:         SizeInBytes:     10
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REAX, I0 ]
+CHECK-NEXT:           - Inst:            TEST64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRAX, RRAX ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I17 ]
+CHECK-NEXT:       - Address:         0x0000000000201060
+CHECK-NEXT:         Preds:           [ 0x0000000000201000, 0x0000000000201045 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     2
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:       - Address:         0x000000000020104F
+CHECK-NEXT:         Preds:           [ 0x0000000000201045 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            MOV32ri
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ REDI, I2105360 ]
+CHECK-NEXT:           - Inst:            JMP64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RRAX ]
+CHECK-NEXT:   - Name:            fn_201170
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x0000000000201170
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [ 0x00000000002011A6, 0x00000000002011C6 ]
+CHECK-NEXT:         SizeInBytes:     54
+CHECK-NEXT:         InstCount:       17
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RR15 ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RR14 ]
+CHECK-NEXT:           - Inst:            MOV32rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RR15D, REDI ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RR13 ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RR12 ]
+CHECK-NEXT:           - Inst:            LEA64r
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RR12, RRIP, I1, R, I7822, R ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            LEA64r
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRBP, RRIP, I1, R, I7822, R ]
+CHECK-NEXT:           - Inst:            PUSH64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBX ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RR14, RRSI ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RR13, RRDX ]
+CHECK-NEXT:           - Inst:            SUB64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBP, RRBP, RR12 ]
+CHECK-NEXT:           - Inst:            SUB64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I8 ]
+CHECK-NEXT:           - Inst:            SAR64ri
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRBP, RRBP, I3 ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I67 ]
+CHECK-NEXT:           - Inst:            TEST64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBP, RRBP ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I32 ]
+CHECK-NEXT:       - Address:         0x00000000002011A6
+CHECK-NEXT:         Preds:           [ 0x0000000000201170 ]
+CHECK-NEXT:         Succs:           [ 0x00000000002011B0 ]
+CHECK-NEXT:         SizeInBytes:     10
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            XOR32rr
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ REBX, REBX, REBX ]
+CHECK-NEXT:           - Inst:            NOOPL
+CHECK-NEXT:             Size:            8
+CHECK-NEXT:             Ops:             [ RRAX, I1, RRAX, I0, R ]
+CHECK-NEXT:       - Address:         0x00000000002011C6
+CHECK-NEXT:         Preds:           [ 0x0000000000201170, 0x00000000002011B0 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     15
+CHECK-NEXT:         InstCount:       8
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            ADD64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I8 ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBX ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [ RRBP ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RR12 ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RR13 ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RR14 ]
+CHECK-NEXT:           - Inst:            POP64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RR15 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:       - Address:         0x00000000002011B0
+CHECK-NEXT:         Preds:           [ 0x00000000002011A6, 0x00000000002011B0 ]
+CHECK-NEXT:         Succs:           [ 0x00000000002011B0, 0x00000000002011C6 ]
+CHECK-NEXT:         SizeInBytes:     22
+CHECK-NEXT:         InstCount:       7
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRDX, RR13 ]
+CHECK-NEXT:           - Inst:            MOV64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRSI, RR14 ]
+CHECK-NEXT:           - Inst:            MOV32rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ REDI, RR15D ]
+CHECK-NEXT:           - Inst:            CALL64m
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RR12, I8, RRBX, I0, R ]
+CHECK-NEXT:           - Inst:            ADD64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRBX, RRBX, I1 ]
+CHECK-NEXT:           - Inst:            CMP64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRBP, RRBX ]
+CHECK-NEXT:           - Inst:            JNE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I-22 ]
+CHECK-NEXT:   - Name:            fn_2011E4
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x00000000002011E4
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [ 0x00000000002011F4, 0x00000000002011F6 ]
+CHECK-NEXT:         SizeInBytes:     16
+CHECK-NEXT:         InstCount:       4
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            SUB64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I8 ]
+CHECK-NEXT:           - Inst:            MOV64rm
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, RRIP, I1, R, I8049, R ]
+CHECK-NEXT:           - Inst:            TEST64rr
+CHECK-NEXT:             Size:            3
+CHECK-NEXT:             Ops:             [ RRAX, RRAX ]
+CHECK-NEXT:           - Inst:            JE_1
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ I2 ]
+CHECK-NEXT:       - Address:         0x00000000002011F4
+CHECK-NEXT:         Preds:           [ 0x00000000002011E4 ]
+CHECK-NEXT:         Succs:           [ 0x00000000002011F6 ]
+CHECK-NEXT:         SizeInBytes:     2
+CHECK-NEXT:         InstCount:       1
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            CALL64r
+CHECK-NEXT:             Size:            2
+CHECK-NEXT:             Ops:             [ RRAX ]
+CHECK-NEXT:       - Address:         0x00000000002011F6
+CHECK-NEXT:         Preds:           [ 0x00000000002011E4, 0x00000000002011F4 ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     5
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            ADD64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I8 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_2011FC
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x00000000002011FC
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     9
+CHECK-NEXT:         InstCount:       3
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            SUB64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I8 ]
+CHECK-NEXT:           - Inst:            ADD64ri8
+CHECK-NEXT:             Size:            4
+CHECK-NEXT:             Ops:             [ RRSP, RRSP, I8 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_2010F9
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x00000000002010F9
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     41
+CHECK-NEXT:         InstCount:       9
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I36 ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I39 ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I42 ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I45 ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I48 ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I51 ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I54 ]
+CHECK-NEXT:           - Inst:            CALL64pcrel32
+CHECK-NEXT:             Size:            5
+CHECK-NEXT:             Ops:             [ I57 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_201122
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x0000000000201122
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, I0 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_20112A
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x000000000020112A
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, I1 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_201132
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x0000000000201132
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, I2 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_20113A
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x000000000020113A
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, I3 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_201142
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x0000000000201142
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, I4 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_20114A
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x000000000020114A
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, I5 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_201152
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x0000000000201152
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, I6 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_20115A
+CHECK-NEXT:     BasicBlocks:     
+CHECK-NEXT:       - Address:         0x000000000020115A
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     8
+CHECK-NEXT:         InstCount:       2
+CHECK-NEXT:         Instructions:    
+CHECK-NEXT:           - Inst:            MOV64ri32
+CHECK-NEXT:             Size:            7
+CHECK-NEXT:             Ops:             [ RRAX, I7 ]
+CHECK-NEXT:           - Inst:            RETQ
+CHECK-NEXT:             Size:            1
+CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT: ...

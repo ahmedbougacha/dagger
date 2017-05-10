@@ -61,4 +61,6 @@ CHECK-NEXT:             Ops:             [ RRBP ]
 CHECK-NEXT:           - Inst:            RETQ
 CHECK-NEXT:             Size:            1
 CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            printf
+CHECK-NEXT:     BasicBlocks:
 CHECK-NEXT: ...

@@ -8,9 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/MC/MCAnalysis/MCModule.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
-#include <algorithm>
 
 using namespace llvm;
 

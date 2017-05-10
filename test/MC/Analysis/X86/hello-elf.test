@@ -82,4 +82,15 @@ CHECK-NEXT:             Ops:             [ RRSP, RRSP, I8 ]
 CHECK-NEXT:           - Inst:            RETQ
 CHECK-NEXT:             Size:            1
 CHECK-NEXT:             Ops:             [  ]
+CHECK-NEXT:   - Name:            fn_400440
+CHECK-NEXT:     BasicBlocks:
+CHECK-NEXT:       - Address:         0x0000000000400440
+CHECK-NEXT:         Preds:           [  ]
+CHECK-NEXT:         Succs:           [  ]
+CHECK-NEXT:         SizeInBytes:     6
+CHECK-NEXT:         InstCount:       1
+CHECK-NEXT:         Instructions:
+CHECK-NEXT:           - Inst:            JMP64m
+CHECK-NEXT:             Size:            6
+CHECK-NEXT:             Ops:             [ RRIP, I1, R, I5298, R ]
 CHECK-NEXT: ...

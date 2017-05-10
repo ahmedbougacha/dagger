@@ -128,48 +128,31 @@ static void RemoveDupsFromAddressVector(MCObjectDisassembler::AddressSetTy &V) {
 }
 
 void MCObjectDisassembler::buildCFG(MCModule &Module) {
-  AddressSetTy CallTargets;
+  SmallSetVector<uint64_t, 16> WorkList;
 
-  if (MOS) {
-    // Start the disassembly at specific function entrypoints.
-    AddressSetTy FuncAddrs;
+  // Without an object symbolizer, we can't find any entrypoints.
+  if (!MOS)
+    return;
 
-    // If the object has a well-defined entrypoint, use it.
-    if (auto MainEntrypoint = MOS->getMainEntrypoint())
-      FuncAddrs.push_back(*MainEntrypoint);
+  // Start the disassembly at specific function entrypoints.
+  AddressSetTy FuncAddrs;
 
-    // Also use other entrypoints (function symbols, etc.).
-    auto Entrypoints = MOS->getEntrypoints();
-    FuncAddrs.insert(FuncAddrs.end(), Entrypoints.begin(), Entrypoints.end());
-    RemoveDupsFromAddressVector(FuncAddrs);
+  // If the object has a well-defined entrypoint, use it.
+  if (auto MainEntrypoint = MOS->getMainEntrypoint())
+    WorkList.insert(*MainEntrypoint);
 
-    // Now that we gathered functions, disassemble them all.
-    for (uint64_t Addr : FuncAddrs) {
-      if (getRegionFor(Addr).Bytes.empty())
-        continue;
-      MCFunction *MCFN = createFunction(&Module, Addr);
-      for (uint64_t Callee : MCFN->callees())
-        CallTargets.push_back(Callee);
-    }
-  }
+  // Also use other entrypoints (function symbols, etc.).
+  for (auto Entrypoint : MOS->getEntrypoints())
+    WorkList.insert(Entrypoint);
 
-  RemoveDupsFromAddressVector(CallTargets);
-
-  AddressSetTy NewCallTargets;
-
-  while (!NewCallTargets.empty()) {
-    // First, create functions for all the previously found targets
-    for (uint64_t CallTarget : CallTargets) {
-      if (MOS)
-        CallTarget = MOS->getEffectiveLoadAddr(CallTarget);
-      MCFunction *MCFN = createFunction(&Module, CallTarget);
-      for (uint64_t Callee : MCFN->callees())
-        NewCallTargets.push_back(Callee);
-    }
-    // Next, forget about those targets, since we just handled them.
-    CallTargets.clear();
-    RemoveDupsFromAddressVector(NewCallTargets);
-    CallTargets = NewCallTargets;
+  // Starting from there, disassemble each discovered function.
+  for (size_t i = 0; i < WorkList.size(); ++i) {
+    uint64_t Addr = WorkList[i];
+    if (getRegionFor(Addr).Bytes.empty())
+      continue;
+    MCFunction *MCFN = createFunction(&Module, Addr);
+    for (uint64_t Callee : MCFN->callees())
+      WorkList.insert(Callee);
   }
 }
 
