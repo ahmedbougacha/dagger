@@ -41,8 +41,8 @@ DCFunction::DCFunction(DCModule &DCM, const MCFunction &MCF)
 
   assert(getFunction()->empty() && "Translating into non-empty function!");
 
-  getFunction()->setDoesNotAlias(1);
-  getFunction()->setDoesNotCapture(1);
+  getFunction()->addParamAttr(0, Attribute::NoAlias);
+  getFunction()->addParamAttr(0, Attribute::NoCapture);
 
   if (auto *DebugStream = DCM.getDebugStream()) {
     const auto StartLine = DCM.incrementDebugLine();
