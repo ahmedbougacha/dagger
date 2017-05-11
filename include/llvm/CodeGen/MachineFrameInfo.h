@@ -220,7 +220,7 @@ class MachineFrameInfo {
   /// setup/destroy pseudo instructions (as defined in the TargetFrameInfo
   /// class).  This information is important for frame pointer elimination.
   /// It is only valid during and after prolog/epilog code insertion.
-  unsigned MaxCallFrameSize = 0;
+  unsigned MaxCallFrameSize = ~0u;
 
   /// The prolog/epilog code inserter fills in this vector with each
   /// callee saved register saved in the frame.  Beyond its use by the prolog/
@@ -520,12 +520,29 @@ public:
   bool hasTailCall() const { return HasTailCall; }
   void setHasTailCall() { HasTailCall = true; }
 
+  /// Computes the maximum size of a callframe and the AdjustsStack property.
+  /// This only works for targets defining
+  /// TargetInstrInfo::getCallFrameSetupOpcode(), getCallFrameDestroyOpcode(),
+  /// and getFrameSize().
+  /// This is usually computed by the prologue epilogue inserter but some
+  /// targets may call this to compute it earlier.
+  void computeMaxCallFrameSize(const MachineFunction &MF);
+
   /// Return the maximum size of a call frame that must be
   /// allocated for an outgoing function call.  This is only available if
   /// CallFrameSetup/Destroy pseudo instructions are used by the target, and
   /// then only during or after prolog/epilog code insertion.
   ///
-  unsigned getMaxCallFrameSize() const { return MaxCallFrameSize; }
+  unsigned getMaxCallFrameSize() const {
+    // TODO: Enable this assert when targets are fixed.
+    //assert(isMaxCallFrameSizeComputed() && "MaxCallFrameSize not computed yet");
+    if (!isMaxCallFrameSizeComputed())
+      return 0;
+    return MaxCallFrameSize;
+  }
+  bool isMaxCallFrameSizeComputed() const {
+    return MaxCallFrameSize != ~0u;
+  }
   void setMaxCallFrameSize(unsigned S) { MaxCallFrameSize = S; }
 
   /// Create a new object at a fixed location on the stack.

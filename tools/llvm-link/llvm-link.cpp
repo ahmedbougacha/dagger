@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/AutoUpgrade.h"
 #include "llvm/IR/DiagnosticInfo.h"
@@ -23,7 +24,6 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
-#include "llvm/Object/ModuleSummaryIndexObjectFile.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/ManagedStatic.h"
@@ -300,7 +300,7 @@ static bool linkFiles(const char *argv0, LLVMContext &Context, Linker &L,
       // does not do the ThinLink that would normally determine what values to
       // promote.
       for (auto &I : *Index) {
-        for (auto &S : I.second) {
+        for (auto &S : I.second.SummaryList) {
           if (GlobalValue::isLocalLinkage(S->linkage()))
             S->setLinkage(GlobalValue::ExternalLinkage);
         }

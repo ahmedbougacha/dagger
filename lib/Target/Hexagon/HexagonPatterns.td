@@ -1,13 +1,5 @@
 // Pattern fragment that combines the value type and the register class
 // into a single parameter.
-// The pat frags in the definitions below need to have a named register,
-// otherwise i32 will be assumed regardless of the register class. The
-// name of the register does not matter.
-def I1  : PatLeaf<(i1 PredRegs:$R)>;
-def I32 : PatLeaf<(i32 IntRegs:$R)>;
-def I64 : PatLeaf<(i64 DoubleRegs:$R)>;
-def F32 : PatLeaf<(f32 IntRegs:$R)>;
-def F64 : PatLeaf<(f64 DoubleRegs:$R)>;
 
 // Pattern fragments to extract the low and high subregisters from a
 // 64-bit value.
@@ -722,7 +714,8 @@ def: Pat<(i1 0), (PS_false)>;
 def: Pat<(i1 1), (PS_true)>;
 
 // Pseudo instructions.
-def SDT_SPCallSeqStart : SDCallSeqStart<[ SDTCisVT<0, i32> ]>;
+def SDT_SPCallSeqStart : SDCallSeqStart<[ SDTCisVT<0, i32>,
+                                          SDTCisVT<1, i32> ]>;
 def SDT_SPCallSeqEnd   : SDCallSeqEnd<[ SDTCisVT<0, i32>,
                                         SDTCisVT<1, i32> ]>;
 
@@ -740,8 +733,8 @@ def HexagonTCRet : SDNode<"HexagonISD::TC_RETURN", SDT_SPCall,
                           [SDNPHasChain,  SDNPOptInGlue, SDNPVariadic]>;
 
 
-def: Pat<(callseq_start timm:$amt),
-          (ADJCALLSTACKDOWN imm:$amt)>;
+def: Pat<(callseq_start timm:$amt, timm:$amt2),
+          (ADJCALLSTACKDOWN imm:$amt, imm:$amt2)>;
 def: Pat<(callseq_end timm:$amt1, timm:$amt2),
          (ADJCALLSTACKUP imm:$amt1, imm:$amt2)>;
 

@@ -277,6 +277,9 @@ void PEI::calculateCallFrameInfo(MachineFunction &Fn) {
           AdjustsStack = true;
       }
 
+  assert(!MFI.isMaxCallFrameSizeComputed() ||
+         (MFI.getMaxCallFrameSize() == MaxCallFrameSize &&
+          MFI.adjustsStack() == AdjustsStack));
   MFI.setAdjustsStack(AdjustsStack);
   MFI.setMaxCallFrameSize(MaxCallFrameSize);
 
@@ -761,6 +764,9 @@ void PEI::calculateFrameObjectOffsets(MachineFunction &Fn) {
   } else if (MaxCSFrameIndex >= MinCSFrameIndex) {
     // Be careful about underflow in comparisons agains MinCSFrameIndex.
     for (unsigned i = MaxCSFrameIndex; i != MinCSFrameIndex - 1; --i) {
+      if (MFI.isDeadObjectIndex(i))
+        continue;
+
       unsigned Align = MFI.getObjectAlignment(i);
       // Adjust to alignment boundary
       Offset = alignTo(Offset, Align, Skew);

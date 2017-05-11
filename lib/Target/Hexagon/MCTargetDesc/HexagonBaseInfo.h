@@ -29,7 +29,7 @@ namespace llvm {
 ///
 namespace HexagonII {
   unsigned const TypeCVI_FIRST = TypeCVI_HIST;
-  unsigned const TypeCVI_LAST = TypeCVI_VX_DV;
+  unsigned const TypeCVI_LAST = TypeCVI_VX_LATE;
 
   enum SubTarget {
     HasV4SubT     = 0x3f,
@@ -128,10 +128,6 @@ namespace HexagonII {
     ExtentAlignPos  = 33,
     ExtentAlignMask = 0x3,
 
-    // Valid subtargets
-    validSubTargetPos  = 35,
-    validSubTargetMask = 0x3f,
-
     // Addressing mode for load/store instructions.
     AddrModePos  = 41,
     AddrModeMask = 0x7,
@@ -163,7 +159,10 @@ namespace HexagonII {
     PrefersSlot3Mask = 0x1,
 
     CofMax1Pos = 60,
-    CofMax1Mask = 0x1
+    CofMax1Mask = 0x1,
+
+    CVINewPos = 61,
+    CVINewMask = 0x1
   };
 
   // *** The code above must match HexagonInstrFormat*.td *** //

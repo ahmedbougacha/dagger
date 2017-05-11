@@ -1131,8 +1131,7 @@ SDValue XCoreTargetLowering::LowerCCCCallTo(
   unsigned NumBytes = RetCCInfo.getNextStackOffset();
   auto PtrVT = getPointerTy(DAG.getDataLayout());
 
-  Chain = DAG.getCALLSEQ_START(Chain,
-                               DAG.getConstant(NumBytes, dl, PtrVT, true), dl);
+  Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
 
   SmallVector<std::pair<unsigned, SDValue>, 4> RegsToPass;
   SmallVector<SDValue, 12> MemOpChains;
@@ -1825,7 +1824,7 @@ void XCoreTargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
                                                         const APInt &DemandedElts,
                                                         const SelectionDAG &DAG,
                                                         unsigned Depth) const {
-  Known.Zero.clearAllBits(); Known.One.clearAllBits();
+  Known.resetAll();
   switch (Op.getOpcode()) {
   default: break;
   case XCoreISD::LADD:

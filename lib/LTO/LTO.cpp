@@ -25,7 +25,6 @@
 #include "llvm/LTO/LTOBackend.h"
 #include "llvm/Linker/IRMover.h"
 #include "llvm/Object/IRObjectFile.h"
-#include "llvm/Object/ModuleSummaryIndexObjectFile.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -275,13 +274,14 @@ void llvm::thinLTOResolveWeakForLinkerInIndex(
   // when needed.
   DenseSet<GlobalValueSummary *> GlobalInvolvedWithAlias;
   for (auto &I : Index)
-    for (auto &S : I.second)
+    for (auto &S : I.second.SummaryList)
       if (auto AS = dyn_cast<AliasSummary>(S.get()))
         GlobalInvolvedWithAlias.insert(&AS->getAliasee());
 
   for (auto &I : Index)
-    thinLTOResolveWeakForLinkerGUID(I.second, I.first, GlobalInvolvedWithAlias,
-                                    isPrevailing, recordNewLinkage);
+    thinLTOResolveWeakForLinkerGUID(I.second.SummaryList, I.first,
+                                    GlobalInvolvedWithAlias, isPrevailing,
+                                    recordNewLinkage);
 }
 
 static void thinLTOInternalizeAndPromoteGUID(
@@ -302,7 +302,7 @@ void llvm::thinLTOInternalizeAndPromoteInIndex(
     ModuleSummaryIndex &Index,
     function_ref<bool(StringRef, GlobalValue::GUID)> isExported) {
   for (auto &I : Index)
-    thinLTOInternalizeAndPromoteGUID(I.second, I.first, isExported);
+    thinLTOInternalizeAndPromoteGUID(I.second.SummaryList, I.first, isExported);
 }
 
 // Requires a destructor for std::vector<InputModule>.
@@ -592,11 +592,9 @@ Error LTO::addThinLTO(BitcodeModule BM,
                       ArrayRef<InputFile::Symbol> Syms,
                       const SymbolResolution *&ResI,
                       const SymbolResolution *ResE) {
-  Expected<std::unique_ptr<ModuleSummaryIndex>> SummaryOrErr = BM.getSummary();
-  if (!SummaryOrErr)
-    return SummaryOrErr.takeError();
-  ThinLTO.CombinedIndex.mergeFrom(std::move(*SummaryOrErr),
-                                  ThinLTO.ModuleMap.size());
+  if (Error Err =
+          BM.readSummary(ThinLTO.CombinedIndex, ThinLTO.ModuleMap.size()))
+    return Err;
 
   for (const InputFile::Symbol &Sym : Syms) {
     assert(ResI != ResE);

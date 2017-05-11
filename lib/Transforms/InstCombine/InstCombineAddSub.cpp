@@ -847,29 +847,49 @@ Value *FAddCombine::createAddendVal(const FAddend &Opnd, bool &NeedNeg) {
   return createFMul(OpndVal, Coeff.getValue(Instr->getType()));
 }
 
-// If one of the operands only has one non-zero bit, and if the other
-// operand has a known-zero bit in a more significant place than it (not
-// including the sign bit) the ripple may go up to and fill the zero, but
-// won't change the sign. For example, (X & ~4) + 1.
-static bool checkRippleForAdd(const APInt &Op0KnownZero,
-                              const APInt &Op1KnownZero) {
-  APInt Op1MaybeOne = ~Op1KnownZero;
-  // Make sure that one of the operand has at most one bit set to 1.
-  if (Op1MaybeOne.countPopulation() != 1)
-    return false;
+/// \brief Return true if we can prove that adding the two values of the
+/// knownbits will not overflow.
+/// Otherwise return false.
+static bool checkRippleForAdd(const KnownBits &LHSKnown,
+                              const KnownBits &RHSKnown) {
+  // Addition of two 2's complement numbers having opposite signs will never
+  // overflow.
+  if ((LHSKnown.isNegative() && RHSKnown.isNonNegative()) ||
+      (LHSKnown.isNonNegative() && RHSKnown.isNegative()))
+    return true;
 
-  // Find the most significant known 0 other than the sign bit.
-  int BitWidth = Op0KnownZero.getBitWidth();
-  APInt Op0KnownZeroTemp(Op0KnownZero);
-  Op0KnownZeroTemp.clearSignBit();
-  int Op0ZeroPosition = BitWidth - Op0KnownZeroTemp.countLeadingZeros() - 1;
+  // If either of the values is known to be non-negative, adding them can only
+  // overflow if the second is also non-negative, so we can assume that.
+  // Two non-negative numbers will only overflow if there is a carry to the 
+  // sign bit, so we can check if even when the values are as big as possible
+  // there is no overflow to the sign bit.
+  if (LHSKnown.isNonNegative() || RHSKnown.isNonNegative()) {
+    APInt MaxLHS = ~LHSKnown.Zero;
+    MaxLHS.clearSignBit();
+    APInt MaxRHS = ~RHSKnown.Zero;
+    MaxRHS.clearSignBit();
+    APInt Result = std::move(MaxLHS) + std::move(MaxRHS);
+    return Result.isSignBitClear();
+  }
 
-  int Op1OnePosition = BitWidth - Op1MaybeOne.countLeadingZeros() - 1;
-  assert(Op1OnePosition >= 0);
+  // If either of the values is known to be negative, adding them can only
+  // overflow if the second is also negative, so we can assume that.
+  // Two negative number will only overflow if there is no carry to the sign
+  // bit, so we can check if even when the values are as small as possible
+  // there is overflow to the sign bit.
+  if (LHSKnown.isNegative() || RHSKnown.isNegative()) {
+    APInt MinLHS = LHSKnown.One;
+    MinLHS.clearSignBit();
+    APInt MinRHS = RHSKnown.One;
+    MinRHS.clearSignBit();
+    APInt Result = std::move(MinLHS) + std::move(MinRHS);
+    return Result.isSignBitSet();
+  }
 
-  // This also covers the case of no known zero, since in that case
-  // Op0ZeroPosition is -1.
-  return Op0ZeroPosition >= Op1OnePosition;
+  // If we reached here it means that we know nothing about the sign bits.
+  // In this case we can't know if there will be an overflow, since by 
+  // changing the sign bits any two values can be made to overflow.
+  return false;
 }
 
 /// Return true if we can prove that:
@@ -906,16 +926,8 @@ bool InstCombiner::WillNotOverflowSignedAdd(Value *LHS, Value *RHS,
   KnownBits RHSKnown(BitWidth);
   computeKnownBits(RHS, RHSKnown, 0, &CxtI);
 
-  // Addition of two 2's complement numbers having opposite signs will never
-  // overflow.
-  if ((LHSKnown.One[BitWidth - 1] && RHSKnown.Zero[BitWidth - 1]) ||
-      (LHSKnown.Zero[BitWidth - 1] && RHSKnown.One[BitWidth - 1]))
-    return true;
-
   // Check if carry bit of addition will not cause overflow.
-  if (checkRippleForAdd(LHSKnown.Zero, RHSKnown.Zero))
-    return true;
-  if (checkRippleForAdd(RHSKnown.Zero, LHSKnown.Zero))
+  if (checkRippleForAdd(LHSKnown, RHSKnown))
     return true;
 
   return false;
@@ -1029,6 +1041,57 @@ static Value *checkForNegativeOperand(BinaryOperator &I,
   return nullptr;
 }
 
+static Instruction *foldAddWithConstant(BinaryOperator &Add,
+                                        InstCombiner::BuilderTy &Builder) {
+  Value *Op0 = Add.getOperand(0), *Op1 = Add.getOperand(1);
+  const APInt *C;
+  if (!match(Op1, m_APInt(C)))
+    return nullptr;
+
+  if (C->isSignMask()) {
+    // If wrapping is not allowed, then the addition must set the sign bit:
+    // X + (signmask) --> X | signmask
+    if (Add.hasNoSignedWrap() || Add.hasNoUnsignedWrap())
+      return BinaryOperator::CreateOr(Op0, Op1);
+
+    // If wrapping is allowed, then the addition flips the sign bit of LHS:
+    // X + (signmask) --> X ^ signmask
+    return BinaryOperator::CreateXor(Op0, Op1);
+  }
+
+  Value *X;
+  const APInt *C2;
+  Type *Ty = Add.getType();
+
+  // Is this add the last step in a convoluted sext?
+  // add(zext(xor i16 X, -32768), -32768) --> sext X
+  if (match(Op0, m_ZExt(m_Xor(m_Value(X), m_APInt(C2)))) &&
+      C2->isMinSignedValue() && C2->sext(Ty->getScalarSizeInBits()) == *C)
+    return CastInst::Create(Instruction::SExt, X, Ty);
+
+  // (add (zext (add nuw X, C2)), C) --> (zext (add nuw X, C2 + C))
+  // FIXME: This should check hasOneUse to not increase the instruction count?
+  if (C->isNegative() &&
+      match(Op0, m_ZExt(m_NUWAdd(m_Value(X), m_APInt(C2)))) &&
+      C->sge(-C2->sext(C->getBitWidth()))) {
+    Constant *NewC =
+        ConstantInt::get(X->getType(), *C2 + C->trunc(C2->getBitWidth()));
+    return new ZExtInst(Builder.CreateNUWAdd(X, NewC), Ty);
+  }
+
+  // Shifts and add used to flip and mask off the low bit:
+  // add (ashr (shl i32 X, 31), 31), 1 --> and (not X), 1
+  const APInt *C3;
+  if (*C == 1 && match(Op0, m_OneUse(m_AShr(m_Shl(m_Value(X), m_APInt(C2)),
+                                            m_APInt(C3)))) &&
+      C2 == C3 && *C2 == Ty->getScalarSizeInBits() - 1) {
+    Value *NotX = Builder.CreateNot(X);
+    return BinaryOperator::CreateAnd(NotX, ConstantInt::get(Ty, 1));
+  }
+
+  return nullptr;
+}
+
 Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
   bool Changed = SimplifyAssociativeOrCommutative(I);
   Value *LHS = I.getOperand(0), *RHS = I.getOperand(1);
@@ -1044,41 +1107,11 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
   if (Value *V = SimplifyUsingDistributiveLaws(I))
     return replaceInstUsesWith(I, V);
 
-  const APInt *RHSC;
-  if (match(RHS, m_APInt(RHSC))) {
-    if (RHSC->isSignMask()) {
-      // If wrapping is not allowed, then the addition must set the sign bit:
-      // X + (signmask) --> X | signmask
-      if (I.hasNoSignedWrap() || I.hasNoUnsignedWrap())
-        return BinaryOperator::CreateOr(LHS, RHS);
+  if (Instruction *X = foldAddWithConstant(I, *Builder))
+    return X;
 
-      // If wrapping is allowed, then the addition flips the sign bit of LHS:
-      // X + (signmask) --> X ^ signmask
-      return BinaryOperator::CreateXor(LHS, RHS);
-    }
-
-    // Is this add the last step in a convoluted sext?
-    Value *X;
-    const APInt *C;
-    if (match(LHS, m_ZExt(m_Xor(m_Value(X), m_APInt(C)))) &&
-        C->isMinSignedValue() &&
-        C->sext(LHS->getType()->getScalarSizeInBits()) == *RHSC) {
-      // add(zext(xor i16 X, -32768), -32768) --> sext X
-      return CastInst::Create(Instruction::SExt, X, LHS->getType());
-    }
-
-    if (RHSC->isNegative() &&
-        match(LHS, m_ZExt(m_NUWAdd(m_Value(X), m_APInt(C)))) &&
-        RHSC->sge(-C->sext(RHSC->getBitWidth()))) {
-      // (add (zext (add nuw X, C)), Val) -> (zext (add nuw X, C+Val))
-      Constant *NewC =
-          ConstantInt::get(X->getType(), *C + RHSC->trunc(C->getBitWidth()));
-      return new ZExtInst(Builder->CreateNUWAdd(X, NewC), I.getType());
-    }
-  }
-
-  // FIXME: Use the match above instead of dyn_cast to allow these transforms
-  // for splat vectors.
+  // FIXME: This should be moved into the above helper function to allow these
+  // transforms for splat vectors.
   if (ConstantInt *CI = dyn_cast<ConstantInt>(RHS)) {
     // zext(bool) + C -> bool ? C + 1 : C
     if (ZExtInst *ZI = dyn_cast<ZExtInst>(LHS))

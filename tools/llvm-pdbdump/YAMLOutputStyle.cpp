@@ -17,6 +17,7 @@
 #include "llvm/DebugInfo/CodeView/ModuleDebugFileChecksumFragment.h"
 #include "llvm/DebugInfo/CodeView/ModuleDebugFragment.h"
 #include "llvm/DebugInfo/CodeView/ModuleDebugFragmentVisitor.h"
+#include "llvm/DebugInfo/CodeView/ModuleDebugInlineeLinesFragment.h"
 #include "llvm/DebugInfo/CodeView/ModuleDebugLineFragment.h"
 #include "llvm/DebugInfo/CodeView/ModuleDebugUnknownFragment.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
@@ -150,6 +151,35 @@ public:
     return Error::success();
   }
 
+  Error handleInlineeLines() override {
+    for (const auto &ILF : InlineeLines) {
+      Info.Inlinees.emplace_back();
+      auto &Inlinee = Info.Inlinees.back();
+
+      Inlinee.HasExtraFiles = ILF.hasExtraFiles();
+      for (const auto &IL : ILF) {
+        Inlinee.Sites.emplace_back();
+        auto &Site = Inlinee.Sites.back();
+        if (auto Result = getNameFromChecksumsBuffer(IL.Header->FileID))
+          Site.FileName = *Result;
+        else
+          return Result.takeError();
+
+        Site.Inlinee = IL.Header->Inlinee;
+        Site.SourceLineNum = IL.Header->SourceLineNum;
+        if (ILF.hasExtraFiles()) {
+          for (const auto &EF : IL.ExtraFiles) {
+            if (auto Result = getNameFromChecksumsBuffer(EF))
+              Site.ExtraFiles.push_back(*Result);
+            else
+              return Result.takeError();
+          }
+        }
+      }
+    }
+    return Error::success();
+  }
+
 private:
 
   llvm::pdb::yaml::PdbSourceFileInfo &Info;
@@ -157,7 +187,7 @@ private:
 }
 
 Expected<Optional<llvm::pdb::yaml::PdbSourceFileInfo>>
-YAMLOutputStyle::getFileLineInfo(const pdb::ModuleDebugStream &ModS) {
+YAMLOutputStyle::getFileLineInfo(const pdb::ModuleDebugStreamRef &ModS) {
   if (!ModS.hasLineInfo())
     return None;
 
@@ -203,9 +233,12 @@ Error YAMLOutputStyle::dumpStringTable() {
 
   const auto &ST = ExpectedST.get();
   for (auto ID : ST.name_ids()) {
-    StringRef S = ST.getStringForID(ID);
-    if (!S.empty())
-      Obj.StringTable->push_back(S);
+    auto S = ST.getStringForID(ID);
+    if (!S)
+      return S.takeError();
+    if (S->empty())
+      continue;
+    Obj.StringTable->push_back(*S);
   }
   return Error::success();
 }
@@ -272,23 +305,28 @@ Error YAMLOutputStyle::dumpDbiStream() {
   Obj.DbiStream->PdbDllVersion = DS.getPdbDllVersion();
   Obj.DbiStream->VerHeader = DS.getDbiVersion();
   if (opts::pdb2yaml::DbiModuleInfo) {
-    for (const auto &MI : DS.modules()) {
+    const auto &Modules = DS.modules();
+    for (uint32_t I = 0; I < Modules.getModuleCount(); ++I) {
+      DbiModuleDescriptor MI = Modules.getModuleDescriptor(I);
+
       Obj.DbiStream->ModInfos.emplace_back();
       yaml::PdbDbiModuleInfo &DMI = Obj.DbiStream->ModInfos.back();
 
-      DMI.Mod = MI.Info.getModuleName();
-      DMI.Obj = MI.Info.getObjFileName();
-      if (opts::pdb2yaml::DbiModuleSourceFileInfo)
-        DMI.SourceFiles = MI.SourceFiles;
+      DMI.Mod = MI.getModuleName();
+      DMI.Obj = MI.getObjFileName();
+      if (opts::pdb2yaml::DbiModuleSourceFileInfo) {
+        auto Files = Modules.source_files(I);
+        DMI.SourceFiles.assign(Files.begin(), Files.end());
+      }
 
-      uint16_t ModiStream = MI.Info.getModuleStreamIndex();
+      uint16_t ModiStream = MI.getModuleStreamIndex();
       if (ModiStream == kInvalidStreamIndex)
         continue;
 
       auto ModStreamData = msf::MappedBlockStream::createIndexedStream(
           File.getMsfLayout(), File.getMsfBuffer(), ModiStream);
 
-      pdb::ModuleDebugStream ModS(MI.Info, std::move(ModStreamData));
+      pdb::ModuleDebugStreamRef ModS(MI, std::move(ModStreamData));
       if (auto EC = ModS.reload())
         return EC;
 

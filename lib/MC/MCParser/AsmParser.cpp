@@ -287,6 +287,8 @@ public:
   /// }
 
 private:
+  bool isAltmacroString(SMLoc &StrLoc, SMLoc &EndLoc);
+  void altMacroString(StringRef AltMacroStr, std::string &Res);
   bool parseStatement(ParseStatementInfo &Info,
                       MCAsmParserSemaCallback *SI);
   bool parseCurlyBlockScope(SmallVectorImpl<AsmRewrite>& AsmStrRewrites);
@@ -1190,6 +1192,42 @@ AsmParser::applyModifierToExpr(const MCExpr *E,
   }
 
   llvm_unreachable("Invalid expression kind!");
+}
+
+/// This function checks if the next token is <string> type or arithmetic.
+/// string that begin with character '<' must end with character '>'.
+/// otherwise it is arithmetics.
+/// If the function returns a 'true' value,
+/// the End argument will be filled with the last location pointed to the '>'
+/// character.
+
+/// There is a gap between the AltMacro's documentation and the single quote implementation. 
+/// GCC does not fully support this feature and so we will not support it.
+/// TODO: Adding single quote as a string.
+bool AsmParser::isAltmacroString(SMLoc &StrLoc, SMLoc &EndLoc) {
+  assert((StrLoc.getPointer() != NULL) &&
+         "Argument to the function cannot be a NULL value");
+  const char *CharPtr = StrLoc.getPointer();
+  while ((*CharPtr != '>') && (*CharPtr != '\n') &&
+         (*CharPtr != '\r') && (*CharPtr != '\0')){
+	  if(*CharPtr == '!')
+		  CharPtr++;
+    CharPtr++;
+  }
+  if (*CharPtr == '>') {
+    EndLoc = StrLoc.getFromPointer(CharPtr + 1);
+    return true;
+  }
+  return false;
+}
+
+/// \brief creating a string without the escape characters '!'.
+void AsmParser::altMacroString(StringRef AltMacroStr,std::string &Res) {
+  for (size_t Pos = 0; Pos < AltMacroStr.size(); Pos++) {
+    if (AltMacroStr[Pos] == '!')
+      Pos++;
+    Res += AltMacroStr[Pos];
+  }
 }
 
 /// \brief Parse an expression and return it.
@@ -2283,6 +2321,15 @@ bool AsmParser::expandMacro(raw_svector_ostream &OS, StringRef Body,
                  (*(Token.getString().begin()) == '%') && Token.is(AsmToken::Integer))
               // Emit an integer value to the buffer.
               OS << Token.getIntVal();
+            // Only Token that was validated as a string and begins with '<'
+            // is considered altMacroString!!!
+            else if ((Lexer.IsaAltMacroMode()) &&
+                     (*(Token.getString().begin()) == '<') &&
+                     Token.is(AsmToken::String)) {
+              std::string Res;
+              altMacroString(Token.getStringContents(), Res);
+              OS << Res;
+            }
             // We expect no quotes around the string's contents when
             // parsing for varargs.
             else if (Token.isNot(AsmToken::String) || VarargParameter)
@@ -2461,9 +2508,9 @@ bool AsmParser::parseMacroArguments(const MCAsmMacro *M,
     if (NamedParametersFound && FA.Name.empty())
       return Error(IDLoc, "cannot mix positional and keyword arguments");
 
+    SMLoc StrLoc = Lexer.getLoc();
+    SMLoc EndLoc;
     if (Lexer.IsaAltMacroMode() && Lexer.is(AsmToken::Percent)) {
-        SMLoc StrLoc = Lexer.getLoc();
-        SMLoc EndLoc;
         const MCExpr *AbsoluteExp;
         int64_t Value;
         /// Eat '%'
@@ -2476,8 +2523,16 @@ bool AsmParser::parseMacroArguments(const MCAsmMacro *M,
         const char *EndChar = EndLoc.getPointer();
         AsmToken newToken(AsmToken::Integer, StringRef(StrChar , EndChar - StrChar), Value);
         FA.Value.push_back(newToken);
-    }
-    else if(parseMacroArgument(FA.Value, Vararg))
+    } else if (Lexer.IsaAltMacroMode() && Lexer.is(AsmToken::Less) &&
+               isAltmacroString(StrLoc, EndLoc)) {
+        const char *StrChar = StrLoc.getPointer();
+        const char *EndChar = EndLoc.getPointer();
+        jumpToLoc(EndLoc, CurBuffer);
+        /// Eat from '<' to '>'
+        Lex();
+        AsmToken newToken(AsmToken::String, StringRef(StrChar, EndChar - StrChar));
+        FA.Value.push_back(newToken);
+    } else if(parseMacroArgument(FA.Value, Vararg))
         return true;
 
     unsigned PI = Parameter;

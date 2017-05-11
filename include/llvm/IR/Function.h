@@ -1,4 +1,4 @@
-//===-- llvm/Function.h - Class to represent a single function --*- C++ -*-===//
+//===- llvm/Function.h - Class to represent a single function ---*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -22,15 +22,19 @@
 #include "llvm/ADT/ilist_node.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallingConv.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalObject.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/OperandTraits.h"
 #include "llvm/IR/SymbolTableListTraits.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 #include <cassert>
 #include <cstddef>
@@ -40,27 +44,31 @@
 
 namespace llvm {
 
-template <typename T> class Optional;
 class AssemblyAnnotationWriter;
-class FunctionType;
-class LLVMContext;
+class Constant;
 class DISubprogram;
+class LLVMContext;
+class Module;
+template <typename T> class Optional;
+class raw_ostream;
+class Type;
+class User;
 
 class Function : public GlobalObject, public ilist_node<Function> {
 public:
-  typedef SymbolTableList<BasicBlock> BasicBlockListType;
+  using BasicBlockListType = SymbolTableList<BasicBlock>;
 
   // BasicBlock iterators...
-  typedef BasicBlockListType::iterator iterator;
-  typedef BasicBlockListType::const_iterator const_iterator;
+  using iterator = BasicBlockListType::iterator;
+  using const_iterator = BasicBlockListType::const_iterator;
 
-  typedef Argument *arg_iterator;
-  typedef const Argument *const_arg_iterator;
+  using arg_iterator = Argument *;
+  using const_arg_iterator = const Argument *;
 
 private:
   // Important things that make up a function!
-  BasicBlockListType  BasicBlocks;        ///< The basic blocks
-  mutable Argument *Arguments;            ///< The formal arguments
+  BasicBlockListType BasicBlocks;         ///< The basic blocks
+  mutable Argument *Arguments = nullptr;  ///< The formal arguments
   size_t NumArgs;
   std::unique_ptr<ValueSymbolTable>
       SymTab;                             ///< Symbol table of args/instructions
@@ -124,10 +132,12 @@ public:
 
   // Provide fast operand accessors.
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+
   /// Returns the FunctionType for me.
   FunctionType *getFunctionType() const {
     return cast<FunctionType>(getValueType());
   }
+
   /// Returns the type of the ret val.
   Type *getReturnType() const { return getFunctionType()->getReturnType(); }
 
@@ -204,6 +214,10 @@ public:
     addAttribute(AttributeList::FunctionIndex, Attr);
   }
 
+  void addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
+    addAttribute(ArgNo + AttributeList::FirstArgIndex, Kind);
+  }
+
   /// @brief Remove function attributes from this function.
   void removeFnAttr(Attribute::AttrKind Kind) {
     removeAttribute(AttributeList::FunctionIndex, Kind);
@@ -211,8 +225,12 @@ public:
 
   /// @brief Remove function attribute from this function.
   void removeFnAttr(StringRef Kind) {
-    setAttributes(AttributeSets.removeAttribute(
+    setAttributes(getAttributes().removeAttribute(
         getContext(), AttributeList::FunctionIndex, Kind));
+  }
+
+  void removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
+    removeAttribute(ArgNo + AttributeList::FirstArgIndex, Kind);
   }
 
   /// \brief Set the entry count for this function.
@@ -279,7 +297,7 @@ public:
   void addAttribute(unsigned i, Attribute Attr);
 
   /// @brief adds the attributes to the list of attributes.
-  void addAttributes(unsigned i, AttributeList Attrs);
+  void addAttributes(unsigned i, const AttrBuilder &Attrs);
 
   /// @brief removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute::AttrKind Kind);
@@ -288,7 +306,7 @@ public:
   void removeAttribute(unsigned i, StringRef Kind);
 
   /// @brief removes the attributes from the list of attributes.
-  void removeAttributes(unsigned i, AttributeList Attrs);
+  void removeAttributes(unsigned i, const AttrBuilder &Attrs);
 
   /// @brief check if an attributes is in the list of attributes.
   bool hasAttribute(unsigned i, Attribute::AttrKind Kind) const {
@@ -458,36 +476,12 @@ public:
 
   /// @brief Determine if the parameter or return value is marked with NoAlias
   /// attribute.
-  /// @param n The parameter to check. 1 is the first parameter, 0 is the return
-  bool doesNotAlias(unsigned n) const {
-    return AttributeSets.hasAttribute(n, Attribute::NoAlias);
+  bool returnDoesNotAlias() const {
+    return AttributeSets.hasAttribute(AttributeList::ReturnIndex,
+                                      Attribute::NoAlias);
   }
-  void setDoesNotAlias(unsigned n) {
-    addAttribute(n, Attribute::NoAlias);
-  }
-
-  /// @brief Determine if the parameter can be captured.
-  /// @param n The parameter to check. 1 is the first parameter, 0 is the return
-  bool doesNotCapture(unsigned n) const {
-    return AttributeSets.hasAttribute(n, Attribute::NoCapture);
-  }
-  void setDoesNotCapture(unsigned n) {
-    addAttribute(n, Attribute::NoCapture);
-  }
-
-  bool doesNotAccessMemory(unsigned n) const {
-    return AttributeSets.hasAttribute(n, Attribute::ReadNone);
-  }
-  void setDoesNotAccessMemory(unsigned n) {
-    addAttribute(n, Attribute::ReadNone);
-  }
-
-  bool onlyReadsMemory(unsigned n) const {
-    return doesNotAccessMemory(n) ||
-      AttributeSets.hasAttribute(n, Attribute::ReadOnly);
-  }
-  void setOnlyReadsMemory(unsigned n) {
-    addAttribute(n, Attribute::ReadOnly);
+  void setReturnDoesNotAlias() {
+    addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
   }
 
   /// Optimize this function for minimum size (-Oz).

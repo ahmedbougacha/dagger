@@ -332,6 +332,7 @@ static void PrintCallingConv(unsigned cc, raw_ostream &Out) {
   case CallingConv::HHVM:          Out << "hhvmcc"; break;
   case CallingConv::HHVM_C:        Out << "hhvm_ccc"; break;
   case CallingConv::AMDGPU_VS:     Out << "amdgpu_vs"; break;
+  case CallingConv::AMDGPU_HS:     Out << "amdgpu_hs"; break;
   case CallingConv::AMDGPU_GS:     Out << "amdgpu_gs"; break;
   case CallingConv::AMDGPU_PS:     Out << "amdgpu_ps"; break;
   case CallingConv::AMDGPU_CS:     Out << "amdgpu_cs"; break;
@@ -804,6 +805,9 @@ void SlotTracker::processModule() {
     if (!Var.hasName())
       CreateModuleSlot(&Var);
     processGlobalObjectMetadata(Var);
+    auto Attrs = Var.getAttributes();
+    if (Attrs.hasAttributes())
+      CreateAttributeSetSlot(Attrs);
   }
 
   for (const GlobalAlias &A : TheModule->aliases()) {
@@ -2500,6 +2504,10 @@ void AssemblyWriter::printGlobal(const GlobalVariable *GV) {
   SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
   GV->getAllMetadata(MDs);
   printMetadataAttachments(MDs, ", ");
+
+  auto Attrs = GV->getAttributes();
+  if (Attrs.hasAttributes())
+    Out << " #" << Machine.getAttributeGroupSlot(Attrs);
 
   printInfoComment(*GV);
 }

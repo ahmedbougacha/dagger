@@ -1493,7 +1493,7 @@ void SelectionDAGLegalize::ExpandDYNAMIC_STACKALLOC(SDNode* Node,
 
   // Chain the dynamic stack allocation so that it doesn't modify the stack
   // pointer when other instructions are using the stack.
-  Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(0, dl, true), dl);
+  Chain = DAG.getCALLSEQ_START(Chain, 0, 0, dl);
 
   SDValue Size  = Tmp2.getOperand(1);
   SDValue SP = DAG.getCopyFromReg(Chain, dl, SPReg, VT);
@@ -3253,7 +3253,7 @@ bool SelectionDAGLegalize::ExpandNode(SDNode *Node) {
     EVT VT = Node->getValueType(0);
     if (TLI.isOperationLegalOrCustom(ISD::FADD, VT) &&
         TLI.isOperationLegalOrCustom(ISD::FNEG, VT)) {
-      const SDNodeFlags *Flags = &cast<BinaryWithFlagsSDNode>(Node)->Flags;
+      const SDNodeFlags Flags = Node->getFlags();
       Tmp1 = DAG.getNode(ISD::FNEG, dl, VT, Node->getOperand(1));
       Tmp1 = DAG.getNode(ISD::FADD, dl, VT, Node->getOperand(0), Tmp1, Flags);
       Results.push_back(Tmp1);

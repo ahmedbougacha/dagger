@@ -562,7 +562,7 @@ void llvm::RemovePredecessorAndSimplify(BasicBlock *BB, BasicBlock *Pred) {
   // that can be removed.
   BB->removePredecessor(Pred, true);
 
-  WeakVH PhiIt = &BB->front();
+  WeakTrackingVH PhiIt = &BB->front();
   while (PHINode *PN = dyn_cast<PHINode>(PhiIt)) {
     PhiIt = &*++BasicBlock::iterator(cast<Instruction>(PhiIt));
     Value *OldPhiIt = PhiIt;
@@ -1476,7 +1476,7 @@ BasicBlock *llvm::changeToInvokeAndSplitBasicBlock(CallInst *CI,
   II->setAttributes(CI->getAttributes());
 
   // Make sure that anything using the call now uses the invoke!  This also
-  // updates the CallGraph if present, because it uses a WeakVH.
+  // updates the CallGraph if present, because it uses a WeakTrackingVH.
   CI->replaceAllUsesWith(II);
 
   // Delete the original call
@@ -1781,44 +1781,43 @@ void llvm::combineMetadataForCSE(Instruction *K, const Instruction *J) {
   combineMetadata(K, J, KnownIDs);
 }
 
-unsigned llvm::replaceDominatedUsesWith(Value *From, Value *To,
-                                        DominatorTree &DT,
-                                        const BasicBlockEdge &Root) {
-  assert(From->getType() == To->getType());
-  
-  unsigned Count = 0;
-  for (Value::use_iterator UI = From->use_begin(), UE = From->use_end();
-       UI != UE; ) {
-    Use &U = *UI++;
-    if (DT.dominates(Root, U)) {
-      U.set(To);
-      DEBUG(dbgs() << "Replace dominated use of '"
-            << From->getName() << "' as "
-            << *To << " in " << *U << "\n");
-      ++Count;
-    }
-  }
-  return Count;
-}
-
-unsigned llvm::replaceDominatedUsesWith(Value *From, Value *To,
-                                        DominatorTree &DT,
-                                        const BasicBlock *BB) {
+template <typename RootType, typename DominatesFn>
+static unsigned replaceDominatedUsesWith(Value *From, Value *To,
+                                         const RootType &Root,
+                                         const DominatesFn &Dominates) {
   assert(From->getType() == To->getType());
 
   unsigned Count = 0;
   for (Value::use_iterator UI = From->use_begin(), UE = From->use_end();
        UI != UE;) {
     Use &U = *UI++;
-    auto *I = cast<Instruction>(U.getUser());
-    if (DT.properlyDominates(BB, I->getParent())) {
-      U.set(To);
-      DEBUG(dbgs() << "Replace dominated use of '" << From->getName() << "' as "
-                   << *To << " in " << *U << "\n");
-      ++Count;
-    }
+    if (!Dominates(Root, U))
+      continue;
+    U.set(To);
+    DEBUG(dbgs() << "Replace dominated use of '" << From->getName() << "' as "
+                 << *To << " in " << *U << "\n");
+    ++Count;
   }
   return Count;
+}
+
+unsigned llvm::replaceDominatedUsesWith(Value *From, Value *To,
+                                        DominatorTree &DT,
+                                        const BasicBlockEdge &Root) {
+  auto Dominates = [&DT](const BasicBlockEdge &Root, const Use &U) {
+    return DT.dominates(Root, U);
+  };
+  return ::replaceDominatedUsesWith(From, To, Root, Dominates);
+}
+
+unsigned llvm::replaceDominatedUsesWith(Value *From, Value *To,
+                                        DominatorTree &DT,
+                                        const BasicBlock *BB) {
+  auto ProperlyDominates = [&DT](const BasicBlock *BB, const Use &U) {
+    auto *I = cast<Instruction>(U.getUser())->getParent();
+    return DT.properlyDominates(BB, I);
+  };
+  return ::replaceDominatedUsesWith(From, To, BB, ProperlyDominates);
 }
 
 bool llvm::callsGCLeafFunction(ImmutableCallSite CS) {

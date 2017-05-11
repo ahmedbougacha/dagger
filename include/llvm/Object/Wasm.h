@@ -41,10 +41,14 @@ public:
     DEBUG_FUNCTION_NAME,
   };
 
-  WasmSymbol(StringRef Name, SymbolType Type) : Name(Name), Type(Type) {}
+  WasmSymbol(StringRef Name, SymbolType Type, uint32_t Section,
+             uint32_t ElementIndex)
+      : Name(Name), Type(Type), Section(Section), ElementIndex(ElementIndex) {}
 
   StringRef Name;
   SymbolType Type;
+  uint32_t Section;
+  uint32_t ElementIndex;
 };
 
 class WasmSection {
@@ -63,7 +67,8 @@ public:
   WasmObjectFile(MemoryBufferRef Object, Error &Err);
 
   const wasm::WasmObjectHeader &getHeader() const;
-  const WasmSymbol &getWasmSymbol(DataRefImpl Symb) const;
+  const WasmSymbol &getWasmSymbol(const DataRefImpl &Symb) const;
+  const WasmSymbol &getWasmSymbol(const SymbolRef &Symbol) const;
   const WasmSection &getWasmSection(const SectionRef &Section) const;
   const wasm::WasmRelocation &getWasmRelocation(const RelocationRef& Ref) const;
 
@@ -76,6 +81,10 @@ public:
   const std::vector<wasm::WasmLimits>& memories() const { return Memories; }
   const std::vector<wasm::WasmGlobal>& globals() const { return Globals; }
   const std::vector<wasm::WasmExport>& exports() const { return Exports; }
+
+  uint32_t getNumberOfSymbols() const {
+    return Symbols.size();
+  }
 
   const std::vector<wasm::WasmElemSegment>& elements() const {
     return ElemSegments;

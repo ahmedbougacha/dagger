@@ -10,6 +10,7 @@
 #include "llvm/DebugInfo/CodeView/ModuleDebugFileChecksumFragment.h"
 
 #include "llvm/DebugInfo/CodeView/CodeViewError.h"
+#include "llvm/DebugInfo/CodeView/StringTable.h"
 #include "llvm/Support/BinaryStreamReader.h"
 
 using namespace llvm;
@@ -25,7 +26,7 @@ struct FileChecksumEntryHeader {
 };
 
 Error llvm::VarStreamArrayExtractor<FileChecksumEntry>::extract(
-    BinaryStreamRef Stream, uint32_t &Len, FileChecksumEntry &Item, void *Ctx) {
+    BinaryStreamRef Stream, uint32_t &Len, FileChecksumEntry &Item) {
   BinaryStreamReader Reader(Stream);
 
   const FileChecksumEntryHeader *Header;
@@ -41,9 +42,66 @@ Error llvm::VarStreamArrayExtractor<FileChecksumEntry>::extract(
   return Error::success();
 }
 
-Error ModuleDebugFileChecksumFragment::initialize(BinaryStreamReader Reader) {
+Error ModuleDebugFileChecksumFragmentRef::initialize(
+    BinaryStreamReader Reader) {
   if (auto EC = Reader.readArray(Checksums, Reader.bytesRemaining()))
     return EC;
 
   return Error::success();
+}
+
+ModuleDebugFileChecksumFragment::ModuleDebugFileChecksumFragment(
+    StringTable &Strings)
+    : ModuleDebugFragment(ModuleDebugFragmentKind::FileChecksums),
+      Strings(Strings) {}
+
+void ModuleDebugFileChecksumFragment::addChecksum(StringRef FileName,
+                                                  FileChecksumKind Kind,
+                                                  ArrayRef<uint8_t> Bytes) {
+  FileChecksumEntry Entry;
+  if (!Bytes.empty()) {
+    uint8_t *Copy = Storage.Allocate<uint8_t>(Bytes.size());
+    ::memcpy(Copy, Bytes.data(), Bytes.size());
+    Entry.Checksum = makeArrayRef(Copy, Bytes.size());
+  }
+
+  Entry.FileNameOffset = Strings.insert(FileName);
+  Entry.Kind = Kind;
+  Checksums.push_back(Entry);
+
+  // This maps the offset of this string in the string table to the offset
+  // of this checksum entry in the checksum buffer.
+  OffsetMap[Entry.FileNameOffset] = SerializedSize;
+  assert(SerializedSize % 4 == 0);
+
+  uint32_t Len = alignTo(sizeof(FileChecksumEntryHeader) + Bytes.size(), 4);
+  SerializedSize += Len;
+}
+
+uint32_t ModuleDebugFileChecksumFragment::calculateSerializedLength() {
+  return SerializedSize;
+}
+
+Error ModuleDebugFileChecksumFragment::commit(BinaryStreamWriter &Writer) {
+  for (const auto &FC : Checksums) {
+    FileChecksumEntryHeader Header;
+    Header.ChecksumKind = uint8_t(FC.Kind);
+    Header.ChecksumSize = FC.Checksum.size();
+    Header.FileNameOffset = FC.FileNameOffset;
+    if (auto EC = Writer.writeObject(Header))
+      return EC;
+    if (auto EC = Writer.writeArray(makeArrayRef(FC.Checksum)))
+      return EC;
+    if (auto EC = Writer.padToAlignment(4))
+      return EC;
+  }
+  return Error::success();
+}
+
+uint32_t
+ModuleDebugFileChecksumFragment::mapChecksumOffset(StringRef FileName) const {
+  uint32_t Offset = Strings.getStringId(FileName);
+  auto Iter = OffsetMap.find(Offset);
+  assert(Iter != OffsetMap.end());
+  return Iter->second;
 }

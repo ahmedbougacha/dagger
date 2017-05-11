@@ -406,7 +406,7 @@ public:
   /// certain types of nodes together, or eliminating superfluous nodes.  The
   /// Level argument controls whether Combine is allowed to produce nodes and
   /// types that are illegal on the target.
-  void Combine(CombineLevel Level, AliasAnalysis &AA,
+  void Combine(CombineLevel Level, AliasAnalysis *AA,
                CodeGenOpt::Level OptLevel);
 
   /// This transforms the SelectionDAG into a SelectionDAG that
@@ -688,6 +688,10 @@ public:
   /// Example: shuffle A, B, <0,5,2,7> -> shuffle B, A, <4,1,6,3>
   SDValue getCommutedVectorShuffle(const ShuffleVectorSDNode &SV);
 
+  /// Convert Op, which must be of float type, to the
+  /// float type VT, by either extending or rounding (by truncation).
+  SDValue getFPExtendOrRound(SDValue Op, const SDLoc &DL, EVT VT);
+
   /// Convert Op, which must be of integer type, to the
   /// integer type VT, by either any-extending or truncating it.
   SDValue getAnyExtOrTrunc(SDValue Op, const SDLoc &DL, EVT VT);
@@ -733,11 +737,15 @@ public:
   /// \brief Create a logical NOT operation as (XOR Val, BooleanOne).
   SDValue getLogicalNOT(const SDLoc &DL, SDValue Val, EVT VT);
 
-  /// Return a new CALLSEQ_START node, which always must have a glue result
-  /// (to ensure it's not CSE'd).  CALLSEQ_START does not have a useful SDLoc.
-  SDValue getCALLSEQ_START(SDValue Chain, SDValue Op, const SDLoc &DL) {
+  /// Return a new CALLSEQ_START node, that starts new call frame, in which
+  /// InSize bytes are set up inside CALLSEQ_START..CALLSEQ_END sequence and
+  /// OutSize specifies part of the frame set up prior to the sequence.
+  SDValue getCALLSEQ_START(SDValue Chain, uint64_t InSize, uint64_t OutSize,
+                           const SDLoc &DL) {
     SDVTList VTs = getVTList(MVT::Other, MVT::Glue);
-    SDValue Ops[] = { Chain,  Op };
+    SDValue Ops[] = { Chain,
+                      getIntPtrConstant(InSize, DL, true),
+                      getIntPtrConstant(OutSize, DL, true) };
     return getNode(ISD::CALLSEQ_START, DL, VTs, Ops);
   }
 
@@ -774,7 +782,7 @@ public:
   SDValue getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
                   ArrayRef<SDUse> Ops);
   SDValue getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
-                  ArrayRef<SDValue> Ops, const SDNodeFlags *Flags = nullptr);
+                  ArrayRef<SDValue> Ops, const SDNodeFlags Flags = SDNodeFlags());
   SDValue getNode(unsigned Opcode, const SDLoc &DL, ArrayRef<EVT> ResultTys,
                   ArrayRef<SDValue> Ops);
   SDValue getNode(unsigned Opcode, const SDLoc &DL, SDVTList VTs,
@@ -782,9 +790,10 @@ public:
 
   // Specialize based on number of operands.
   SDValue getNode(unsigned Opcode, const SDLoc &DL, EVT VT);
-  SDValue getNode(unsigned Opcode, const SDLoc &DL, EVT VT, SDValue N);
+  SDValue getNode(unsigned Opcode, const SDLoc &DL, EVT VT, SDValue N,
+                  const SDNodeFlags Flags = SDNodeFlags());
   SDValue getNode(unsigned Opcode, const SDLoc &DL, EVT VT, SDValue N1,
-                  SDValue N2, const SDNodeFlags *Flags = nullptr);
+                  SDValue N2, const SDNodeFlags Flags = SDNodeFlags());
   SDValue getNode(unsigned Opcode, const SDLoc &DL, EVT VT, SDValue N1,
                   SDValue N2, SDValue N3);
   SDValue getNode(unsigned Opcode, const SDLoc &DL, EVT VT, SDValue N1,
@@ -1104,7 +1113,7 @@ public:
 
   /// Get the specified node if it's already available, or else return NULL.
   SDNode *getNodeIfExists(unsigned Opcode, SDVTList VTs, ArrayRef<SDValue> Ops,
-                          const SDNodeFlags *Flags = nullptr);
+                          const SDNodeFlags Flags = SDNodeFlags());
 
   /// Creates a SDDbgValue node.
   SDDbgValue *getDbgValue(MDNode *Var, MDNode *Expr, SDNode *N, unsigned R,
@@ -1267,7 +1276,7 @@ public:
 
   SDValue FoldConstantVectorArithmetic(unsigned Opcode, const SDLoc &DL, EVT VT,
                                        ArrayRef<SDValue> Ops,
-                                       const SDNodeFlags *Flags = nullptr);
+                                       const SDNodeFlags Flags = SDNodeFlags());
 
   /// Constant fold a setcc to true or false.
   SDValue FoldSetCC(EVT VT, SDValue N1, SDValue N2, ISD::CondCode Cond,
@@ -1437,10 +1446,6 @@ private:
   void DeallocateNode(SDNode *N);
 
   void allnodes_clear();
-
-  SDNode *GetBinarySDNode(unsigned Opcode, const SDLoc &DL, SDVTList VTs,
-                          SDValue N1, SDValue N2,
-                          const SDNodeFlags *Flags = nullptr);
 
   /// Look up the node specified by ID in CSEMap.  If it exists, return it.  If
   /// not, return the insertion token that will make insertion faster.  This

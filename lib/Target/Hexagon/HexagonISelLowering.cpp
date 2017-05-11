@@ -848,8 +848,7 @@ HexagonTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   SDValue Glue;
   if (!IsTailCall) {
-    SDValue C = DAG.getConstant(NumBytes, dl, PtrVT, true);
-    Chain = DAG.getCALLSEQ_START(Chain, C, dl);
+    Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
     Glue = Chain.getValue(1);
   }
 
@@ -1720,8 +1719,13 @@ HexagonTargetLowering::LowerToTLSGeneralDynamicModel(GlobalAddressSDNode *GA,
   Chain = DAG.getCopyToReg(DAG.getEntryNode(), dl, Hexagon::R0, Chain, InFlag);
   InFlag = Chain.getValue(1);
 
+  unsigned Flags =
+      static_cast<const HexagonSubtarget &>(DAG.getSubtarget()).useLongCalls()
+          ? HexagonII::MO_GDPLT | HexagonII::HMOTF_ConstExtended
+          : HexagonII::MO_GDPLT;
+
   return GetDynamicTLSAddr(DAG, Chain, GA, InFlag, PtrVT,
-                           Hexagon::R0, HexagonII::MO_GDPLT);
+                           Hexagon::R0, Flags);
 }
 
 //

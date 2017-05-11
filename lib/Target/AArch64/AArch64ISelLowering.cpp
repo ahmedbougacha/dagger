@@ -553,7 +553,6 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
   setTargetDAGCombine(ISD::INTRINSIC_VOID);
   setTargetDAGCombine(ISD::INTRINSIC_W_CHAIN);
   setTargetDAGCombine(ISD::INSERT_VECTOR_ELT);
-  setTargetDAGCombine(ISD::EXTRACT_VECTOR_ELT);
 
   MaxStoresPerMemset = MaxStoresPerMemsetOptSize = 8;
   MaxStoresPerMemcpy = MaxStoresPerMemcpyOptSize = 4;
@@ -659,6 +658,19 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::MUL, MVT::v4i32, Custom);
     setOperationAction(ISD::MUL, MVT::v2i64, Custom);
 
+    // Vector reductions
+    for (MVT VT : MVT::integer_valuetypes()) {
+      setOperationAction(ISD::VECREDUCE_ADD, VT, Custom);
+      setOperationAction(ISD::VECREDUCE_SMAX, VT, Custom);
+      setOperationAction(ISD::VECREDUCE_SMIN, VT, Custom);
+      setOperationAction(ISD::VECREDUCE_UMAX, VT, Custom);
+      setOperationAction(ISD::VECREDUCE_UMIN, VT, Custom);
+    }
+    for (MVT VT : MVT::fp_valuetypes()) {
+      setOperationAction(ISD::VECREDUCE_FMAX, VT, Custom);
+      setOperationAction(ISD::VECREDUCE_FMIN, VT, Custom);
+    }
+
     setOperationAction(ISD::ANY_EXTEND, MVT::v4i32, Legal);
     setTruncStoreAction(MVT::v2i32, MVT::v2i16, Expand);
     // Likewise, narrowing and extending vector loads/stores aren't handled
@@ -757,6 +769,9 @@ void AArch64TargetLowering::addTypeForNEON(MVT VT, MVT PromotedBitwiseVT) {
 
   setOperationAction(ISD::FP_TO_SINT, VT, Custom);
   setOperationAction(ISD::FP_TO_UINT, VT, Custom);
+
+  if (!VT.isFloatingPoint())
+    setOperationAction(ISD::ABS, VT, Legal);
 
   // [SU][MIN|MAX] are available for all NEON types apart from i64.
   if (!VT.isFloatingPoint() && VT != MVT::v2i64 && VT != MVT::v1i64)
@@ -2262,7 +2277,7 @@ SDValue AArch64TargetLowering::LowerFSINCOS(SDValue Op,
   SDValue Callee =
       DAG.getExternalSymbol(LibcallName, getPointerTy(DAG.getDataLayout()));
 
-  StructType *RetTy = StructType::get(ArgTy, ArgTy, nullptr);
+  StructType *RetTy = StructType::get(ArgTy, ArgTy);
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl)
       .setChain(DAG.getEntryNode())
@@ -2482,6 +2497,9 @@ SDValue AArch64TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     EVT PtrVT = getPointerTy(DAG.getDataLayout());
     return DAG.getNode(AArch64ISD::THREAD_POINTER, dl, PtrVT);
   }
+  case Intrinsic::aarch64_neon_abs:
+    return DAG.getNode(ISD::ABS, dl, Op.getValueType(),
+                       Op.getOperand(1));
   case Intrinsic::aarch64_neon_smax:
     return DAG.getNode(ISD::SMAX, dl, Op.getValueType(),
                        Op.getOperand(1), Op.getOperand(2));
@@ -2600,6 +2618,14 @@ SDValue AArch64TargetLowering::LowerOperation(SDValue Op,
     return LowerMUL(Op, DAG);
   case ISD::INTRINSIC_WO_CHAIN:
     return LowerINTRINSIC_WO_CHAIN(Op, DAG);
+  case ISD::VECREDUCE_ADD:
+  case ISD::VECREDUCE_SMAX:
+  case ISD::VECREDUCE_SMIN:
+  case ISD::VECREDUCE_UMAX:
+  case ISD::VECREDUCE_UMIN:
+  case ISD::VECREDUCE_FMAX:
+  case ISD::VECREDUCE_FMIN:
+    return LowerVECREDUCE(Op, DAG);
   }
 }
 
@@ -3243,9 +3269,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
   if (!IsSibCall)
-    Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, DL,
-                                                              true),
-                                 DL);
+    Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, DL);
 
   SDValue StackPtr = DAG.getCopyFromReg(Chain, DL, AArch64::SP,
                                         getPointerTy(DAG.getDataLayout()));
@@ -4847,9 +4871,9 @@ SDValue AArch64TargetLowering::getSqrtEstimate(SDValue Operand,
       // AArch64 reciprocal square root iteration instruction: 0.5 * (3 - M * N)
       for (int i = ExtraSteps; i > 0; --i) {
         SDValue Step = DAG.getNode(ISD::FMUL, DL, VT, Estimate, Estimate,
-                                   &Flags);
-        Step = DAG.getNode(AArch64ISD::FRSQRTS, DL, VT, Operand, Step, &Flags);
-        Estimate = DAG.getNode(ISD::FMUL, DL, VT, Estimate, Step, &Flags);
+                                   Flags);
+        Step = DAG.getNode(AArch64ISD::FRSQRTS, DL, VT, Operand, Step, Flags);
+        Estimate = DAG.getNode(ISD::FMUL, DL, VT, Estimate, Step, Flags);
       }
 
       if (!Reciprocal) {
@@ -4858,7 +4882,7 @@ SDValue AArch64TargetLowering::getSqrtEstimate(SDValue Operand,
         SDValue FPZero = DAG.getConstantFP(0.0, DL, VT);
         SDValue Eq = DAG.getSetCC(DL, CCVT, Operand, FPZero, ISD::SETEQ);
 
-        Estimate = DAG.getNode(ISD::FMUL, DL, VT, Operand, Estimate, &Flags);
+        Estimate = DAG.getNode(ISD::FMUL, DL, VT, Operand, Estimate, Flags);
         // Correct the result if the operand is 0.0.
         Estimate = DAG.getNode(VT.isVector() ? ISD::VSELECT : ISD::SELECT, DL,
                                VT, Eq, Operand, Estimate);
@@ -4887,8 +4911,8 @@ SDValue AArch64TargetLowering::getRecipEstimate(SDValue Operand,
       // AArch64 reciprocal iteration instruction: (2 - M * N)
       for (int i = ExtraSteps; i > 0; --i) {
         SDValue Step = DAG.getNode(AArch64ISD::FRECPS, DL, VT, Operand,
-                                   Estimate, &Flags);
-        Estimate = DAG.getNode(ISD::FMUL, DL, VT, Estimate, Step, &Flags);
+                                   Estimate, Flags);
+        Estimate = DAG.getNode(ISD::FMUL, DL, VT, Estimate, Step, Flags);
       }
 
       ExtraSteps = 0;
@@ -7122,6 +7146,47 @@ SDValue AArch64TargetLowering::LowerVSETCC(SDValue Op,
     return Cmp = DAG.getNOT(dl, Cmp, Cmp.getValueType());
 
   return Cmp;
+}
+
+static SDValue getReductionSDNode(unsigned Op, SDLoc DL, SDValue ScalarOp,
+                                  SelectionDAG &DAG) {
+  SDValue VecOp = ScalarOp.getOperand(0);
+  auto Rdx = DAG.getNode(Op, DL, VecOp.getSimpleValueType(), VecOp);
+  return DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, ScalarOp.getValueType(), Rdx,
+                     DAG.getConstant(0, DL, MVT::i64));
+}
+
+SDValue AArch64TargetLowering::LowerVECREDUCE(SDValue Op,
+                                              SelectionDAG &DAG) const {
+  SDLoc dl(Op);
+  switch (Op.getOpcode()) {
+  case ISD::VECREDUCE_ADD:
+    return getReductionSDNode(AArch64ISD::UADDV, dl, Op, DAG);
+  case ISD::VECREDUCE_SMAX:
+    return getReductionSDNode(AArch64ISD::SMAXV, dl, Op, DAG);
+  case ISD::VECREDUCE_SMIN:
+    return getReductionSDNode(AArch64ISD::SMINV, dl, Op, DAG);
+  case ISD::VECREDUCE_UMAX:
+    return getReductionSDNode(AArch64ISD::UMAXV, dl, Op, DAG);
+  case ISD::VECREDUCE_UMIN:
+    return getReductionSDNode(AArch64ISD::UMINV, dl, Op, DAG);
+  case ISD::VECREDUCE_FMAX: {
+    assert(Op->getFlags().hasNoNaNs() && "fmax vector reduction needs NoNaN flag");
+    return DAG.getNode(
+        ISD::INTRINSIC_WO_CHAIN, dl, Op.getValueType(),
+        DAG.getConstant(Intrinsic::aarch64_neon_fmaxnmv, dl, MVT::i32),
+        Op.getOperand(0));
+  }
+  case ISD::VECREDUCE_FMIN: {
+    assert(Op->getFlags().hasNoNaNs() && "fmin vector reduction needs NoNaN flag");
+    return DAG.getNode(
+        ISD::INTRINSIC_WO_CHAIN, dl, Op.getValueType(),
+        DAG.getConstant(Intrinsic::aarch64_neon_fminnmv, dl, MVT::i32),
+        Op.getOperand(0));
+  }
+  default:
+    llvm_unreachable("Unhandled reduction");
+  }
 }
 
 /// getTgtMemIntrinsic - Represent NEON load and store intrinsics as
@@ -9486,266 +9551,6 @@ static SDValue performSTORECombine(SDNode *N,
   return SDValue();
 }
 
-/// This function handles the log2-shuffle pattern produced by the
-/// LoopVectorizer for the across vector reduction. It consists of
-/// log2(NumVectorElements) steps and, in each step, 2^(s) elements
-/// are reduced, where s is an induction variable from 0 to
-/// log2(NumVectorElements).
-static SDValue tryMatchAcrossLaneShuffleForReduction(SDNode *N, SDValue OpV,
-                                                     unsigned Op,
-                                                     SelectionDAG &DAG) {
-  EVT VTy = OpV->getOperand(0).getValueType();
-  if (!VTy.isVector())
-    return SDValue();
-
-  int NumVecElts = VTy.getVectorNumElements();
-  if (Op == ISD::FMAXNUM || Op == ISD::FMINNUM) {
-    if (NumVecElts != 4)
-      return SDValue();
-  } else {
-    if (NumVecElts != 4 && NumVecElts != 8 && NumVecElts != 16)
-      return SDValue();
-  }
-
-  int NumExpectedSteps = APInt(8, NumVecElts).logBase2();
-  SDValue PreOp = OpV;
-  // Iterate over each step of the across vector reduction.
-  for (int CurStep = 0; CurStep != NumExpectedSteps; ++CurStep) {
-    SDValue CurOp = PreOp.getOperand(0);
-    SDValue Shuffle = PreOp.getOperand(1);
-    if (Shuffle.getOpcode() != ISD::VECTOR_SHUFFLE) {
-      // Try to swap the 1st and 2nd operand as add and min/max instructions
-      // are commutative.
-      CurOp = PreOp.getOperand(1);
-      Shuffle = PreOp.getOperand(0);
-      if (Shuffle.getOpcode() != ISD::VECTOR_SHUFFLE)
-        return SDValue();
-    }
-
-    // Check if the input vector is fed by the operator we want to handle,
-    // except the last step; the very first input vector is not necessarily
-    // the same operator we are handling.
-    if (CurOp.getOpcode() != Op && (CurStep != (NumExpectedSteps - 1)))
-      return SDValue();
-
-    // Check if it forms one step of the across vector reduction.
-    // E.g.,
-    //   %cur = add %1, %0
-    //   %shuffle = vector_shuffle %cur, <2, 3, u, u>
-    //   %pre = add %cur, %shuffle
-    if (Shuffle.getOperand(0) != CurOp)
-      return SDValue();
-
-    int NumMaskElts = 1 << CurStep;
-    ArrayRef<int> Mask = cast<ShuffleVectorSDNode>(Shuffle)->getMask();
-    // Check mask values in each step.
-    // We expect the shuffle mask in each step follows a specific pattern
-    // denoted here by the <M, U> form, where M is a sequence of integers
-    // starting from NumMaskElts, increasing by 1, and the number integers
-    // in M should be NumMaskElts. U is a sequence of UNDEFs and the number
-    // of undef in U should be NumVecElts - NumMaskElts.
-    // E.g., for <8 x i16>, mask values in each step should be :
-    //   step 0 : <1,u,u,u,u,u,u,u>
-    //   step 1 : <2,3,u,u,u,u,u,u>
-    //   step 2 : <4,5,6,7,u,u,u,u>
-    for (int i = 0; i < NumVecElts; ++i)
-      if ((i < NumMaskElts && Mask[i] != (NumMaskElts + i)) ||
-          (i >= NumMaskElts && !(Mask[i] < 0)))
-        return SDValue();
-
-    PreOp = CurOp;
-  }
-  unsigned Opcode;
-  bool IsIntrinsic = false;
-
-  switch (Op) {
-  default:
-    llvm_unreachable("Unexpected operator for across vector reduction");
-  case ISD::ADD:
-    Opcode = AArch64ISD::UADDV;
-    break;
-  case ISD::SMAX:
-    Opcode = AArch64ISD::SMAXV;
-    break;
-  case ISD::UMAX:
-    Opcode = AArch64ISD::UMAXV;
-    break;
-  case ISD::SMIN:
-    Opcode = AArch64ISD::SMINV;
-    break;
-  case ISD::UMIN:
-    Opcode = AArch64ISD::UMINV;
-    break;
-  case ISD::FMAXNUM:
-    Opcode = Intrinsic::aarch64_neon_fmaxnmv;
-    IsIntrinsic = true;
-    break;
-  case ISD::FMINNUM:
-    Opcode = Intrinsic::aarch64_neon_fminnmv;
-    IsIntrinsic = true;
-    break;
-  }
-  SDLoc DL(N);
-
-  return IsIntrinsic
-             ? DAG.getNode(ISD::INTRINSIC_WO_CHAIN, DL, N->getValueType(0),
-                           DAG.getConstant(Opcode, DL, MVT::i32), PreOp)
-             : DAG.getNode(
-                   ISD::EXTRACT_VECTOR_ELT, DL, N->getValueType(0),
-                   DAG.getNode(Opcode, DL, PreOp.getSimpleValueType(), PreOp),
-                   DAG.getConstant(0, DL, MVT::i64));
-}
-
-/// Target-specific DAG combine for the across vector min/max reductions.
-/// This function specifically handles the final clean-up step of the vector
-/// min/max reductions produced by the LoopVectorizer. It is the log2-shuffle
-/// pattern, which narrows down and finds the final min/max value from all
-/// elements of the vector.
-/// For example, for a <16 x i8> vector :
-///   svn0 = vector_shuffle %0, undef<8,9,10,11,12,13,14,15,u,u,u,u,u,u,u,u>
-///   %smax0 = smax %arr, svn0
-///   %svn1 = vector_shuffle %smax0, undef<4,5,6,7,u,u,u,u,u,u,u,u,u,u,u,u>
-///   %smax1 = smax %smax0, %svn1
-///   %svn2 = vector_shuffle %smax1, undef<2,3,u,u,u,u,u,u,u,u,u,u,u,u,u,u>
-///   %smax2 = smax %smax1, svn2
-///   %svn3 = vector_shuffle %smax2, undef<1,u,u,u,u,u,u,u,u,u,u,u,u,u,u,u>
-///   %sc = setcc %smax2, %svn3, gt
-///   %n0 = extract_vector_elt %sc, #0
-///   %n1 = extract_vector_elt %smax2, #0
-///   %n2 = extract_vector_elt $smax2, #1
-///   %result = select %n0, %n1, n2
-///     becomes :
-///   %1 = smaxv %0
-///   %result = extract_vector_elt %1, 0
-static SDValue
-performAcrossLaneMinMaxReductionCombine(SDNode *N, SelectionDAG &DAG,
-                                        const AArch64Subtarget *Subtarget) {
-  if (!Subtarget->hasNEON())
-    return SDValue();
-
-  SDValue N0 = N->getOperand(0);
-  SDValue IfTrue = N->getOperand(1);
-  SDValue IfFalse = N->getOperand(2);
-
-  // Check if the SELECT merges up the final result of the min/max
-  // from a vector.
-  if (N0.getOpcode() != ISD::EXTRACT_VECTOR_ELT ||
-      IfTrue.getOpcode() != ISD::EXTRACT_VECTOR_ELT ||
-      IfFalse.getOpcode() != ISD::EXTRACT_VECTOR_ELT)
-    return SDValue();
-
-  // Expect N0 is fed by SETCC.
-  SDValue SetCC = N0.getOperand(0);
-  EVT SetCCVT = SetCC.getValueType();
-  if (SetCC.getOpcode() != ISD::SETCC || !SetCCVT.isVector() ||
-      SetCCVT.getVectorElementType() != MVT::i1)
-    return SDValue();
-
-  SDValue VectorOp = SetCC.getOperand(0);
-  unsigned Op = VectorOp->getOpcode();
-  // Check if the input vector is fed by the operator we want to handle.
-  if (Op != ISD::SMAX && Op != ISD::UMAX && Op != ISD::SMIN &&
-      Op != ISD::UMIN && Op != ISD::FMAXNUM && Op != ISD::FMINNUM)
-    return SDValue();
-
-  EVT VTy = VectorOp.getValueType();
-  if (!VTy.isVector())
-    return SDValue();
-
-  if (VTy.getSizeInBits() < 64)
-    return SDValue();
-
-  EVT EltTy = VTy.getVectorElementType();
-  if (Op == ISD::FMAXNUM || Op == ISD::FMINNUM) {
-    if (EltTy != MVT::f32)
-      return SDValue();
-  } else {
-    if (EltTy != MVT::i32 && EltTy != MVT::i16 && EltTy != MVT::i8)
-      return SDValue();
-  }
-
-  // Check if extracting from the same vector.
-  // For example,
-  //   %sc = setcc %vector, %svn1, gt
-  //   %n0 = extract_vector_elt %sc, #0
-  //   %n1 = extract_vector_elt %vector, #0
-  //   %n2 = extract_vector_elt $vector, #1
-  if (!(VectorOp == IfTrue->getOperand(0) &&
-        VectorOp == IfFalse->getOperand(0)))
-    return SDValue();
-
-  // Check if the condition code is matched with the operator type.
-  ISD::CondCode CC = cast<CondCodeSDNode>(SetCC->getOperand(2))->get();
-  if ((Op == ISD::SMAX && CC != ISD::SETGT && CC != ISD::SETGE) ||
-      (Op == ISD::UMAX && CC != ISD::SETUGT && CC != ISD::SETUGE) ||
-      (Op == ISD::SMIN && CC != ISD::SETLT && CC != ISD::SETLE) ||
-      (Op == ISD::UMIN && CC != ISD::SETULT && CC != ISD::SETULE) ||
-      (Op == ISD::FMAXNUM && CC != ISD::SETOGT && CC != ISD::SETOGE &&
-       CC != ISD::SETUGT && CC != ISD::SETUGE && CC != ISD::SETGT &&
-       CC != ISD::SETGE) ||
-      (Op == ISD::FMINNUM && CC != ISD::SETOLT && CC != ISD::SETOLE &&
-       CC != ISD::SETULT && CC != ISD::SETULE && CC != ISD::SETLT &&
-       CC != ISD::SETLE))
-    return SDValue();
-
-  // Expect to check only lane 0 from the vector SETCC.
-  if (!isNullConstant(N0.getOperand(1)))
-    return SDValue();
-
-  // Expect to extract the true value from lane 0.
-  if (!isNullConstant(IfTrue.getOperand(1)))
-    return SDValue();
-
-  // Expect to extract the false value from lane 1.
-  if (!isOneConstant(IfFalse.getOperand(1)))
-    return SDValue();
-
-  return tryMatchAcrossLaneShuffleForReduction(N, SetCC, Op, DAG);
-}
-
-/// Target-specific DAG combine for the across vector add reduction.
-/// This function specifically handles the final clean-up step of the vector
-/// add reduction produced by the LoopVectorizer. It is the log2-shuffle
-/// pattern, which adds all elements of a vector together.
-/// For example, for a <4 x i32> vector :
-///   %1 = vector_shuffle %0, <2,3,u,u>
-///   %2 = add %0, %1
-///   %3 = vector_shuffle %2, <1,u,u,u>
-///   %4 = add %2, %3
-///   %result = extract_vector_elt %4, 0
-/// becomes :
-///   %0 = uaddv %0
-///   %result = extract_vector_elt %0, 0
-static SDValue
-performAcrossLaneAddReductionCombine(SDNode *N, SelectionDAG &DAG,
-                                     const AArch64Subtarget *Subtarget) {
-  if (!Subtarget->hasNEON())
-    return SDValue();
-  SDValue N0 = N->getOperand(0);
-  SDValue N1 = N->getOperand(1);
-
-  // Check if the input vector is fed by the ADD.
-  if (N0->getOpcode() != ISD::ADD)
-    return SDValue();
-
-  // The vector extract idx must constant zero because we only expect the final
-  // result of the reduction is placed in lane 0.
-  if (!isNullConstant(N1))
-    return SDValue();
-
-  EVT VTy = N0.getValueType();
-  if (!VTy.isVector())
-    return SDValue();
-
-  EVT EltTy = VTy.getVectorElementType();
-  if (EltTy != MVT::i32 && EltTy != MVT::i16 && EltTy != MVT::i8)
-    return SDValue();
-
-  if (VTy.getSizeInBits() < 64)
-    return SDValue();
-
-  return tryMatchAcrossLaneShuffleForReduction(N, N0, ISD::ADD, DAG);
-}
 
 /// Target-specific DAG combine function for NEON load/store intrinsics
 /// to merge base address updates.
@@ -10424,12 +10229,8 @@ SDValue AArch64TargetLowering::PerformDAGCombine(SDNode *N,
     return performBitcastCombine(N, DCI, DAG);
   case ISD::CONCAT_VECTORS:
     return performConcatVectorsCombine(N, DCI, DAG);
-  case ISD::SELECT: {
-    SDValue RV = performSelectCombine(N, DCI);
-    if (!RV.getNode())
-      RV = performAcrossLaneMinMaxReductionCombine(N, DAG, Subtarget);
-    return RV;
-  }
+  case ISD::SELECT:
+    return performSelectCombine(N, DCI);
   case ISD::VSELECT:
     return performVSelectCombine(N, DCI.DAG);
   case ISD::LOAD:
@@ -10451,8 +10252,6 @@ SDValue AArch64TargetLowering::PerformDAGCombine(SDNode *N,
     return performNVCASTCombine(N);
   case ISD::INSERT_VECTOR_ELT:
     return performPostLD1Combine(N, DCI, true);
-  case ISD::EXTRACT_VECTOR_ELT:
-    return performAcrossLaneAddReductionCombine(N, DAG, Subtarget);
   case ISD::INTRINSIC_VOID:
   case ISD::INTRINSIC_W_CHAIN:
     switch (cast<ConstantSDNode>(N->getOperand(1))->getZExtValue()) {
@@ -10672,6 +10471,14 @@ void AArch64TargetLowering::ReplaceNodeResults(
   case ISD::BITCAST:
     ReplaceBITCASTResults(N, Results, DAG);
     return;
+  case ISD::VECREDUCE_ADD:
+  case ISD::VECREDUCE_SMAX:
+  case ISD::VECREDUCE_SMIN:
+  case ISD::VECREDUCE_UMAX:
+  case ISD::VECREDUCE_UMIN:
+    Results.push_back(LowerVECREDUCE(SDValue(N, 0), DAG));
+    return;
+
   case AArch64ISD::SADDV:
     ReplaceReductionResults(N, Results, DAG, ISD::ADD, AArch64ISD::SADDV);
     return;

@@ -537,7 +537,7 @@ Value *LibCallSimplifier::optimizeStrTo(CallInst *CI, IRBuilder<> &B) {
   if (isa<ConstantPointerNull>(EndPtr)) {
     // With a null EndPtr, this function won't capture the main argument.
     // It would be readonly too, except that it still may write to errno.
-    CI->addAttribute(1, Attribute::NoCapture);
+    CI->addParamAttr(0, Attribute::NoCapture);
   }
 
   return nullptr;
@@ -1450,11 +1450,11 @@ static void insertSinCosCall(IRBuilder<> &B, Function *OrigCallee, Value *Arg,
     // x86_64 can't use {float, float} since that would be returned in both
     // xmm0 and xmm1, which isn't what a real struct would do.
     ResTy = T.getArch() == Triple::x86_64
-    ? static_cast<Type *>(VectorType::get(ArgTy, 2))
-    : static_cast<Type *>(StructType::get(ArgTy, ArgTy, nullptr));
+                ? static_cast<Type *>(VectorType::get(ArgTy, 2))
+                : static_cast<Type *>(StructType::get(ArgTy, ArgTy));
   } else {
     Name = "__sincospi_stret";
-    ResTy = StructType::get(ArgTy, ArgTy, nullptr);
+    ResTy = StructType::get(ArgTy, ArgTy);
   }
 
   Module *M = OrigCallee->getParent();

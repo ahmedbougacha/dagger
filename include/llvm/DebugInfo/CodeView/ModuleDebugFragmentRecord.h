@@ -13,11 +13,14 @@
 #include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/Support/BinaryStreamArray.h"
 #include "llvm/Support/BinaryStreamRef.h"
+#include "llvm/Support/BinaryStreamWriter.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 
 namespace llvm {
 namespace codeview {
+
+class ModuleDebugFragment;
 
 // Corresponds to the `CV_DebugSSubsectionHeader_t` structure.
 struct ModuleDebugFragmentHeader {
@@ -32,6 +35,7 @@ public:
 
   static Error initialize(BinaryStreamRef Stream,
                           ModuleDebugFragmentRecord &Info);
+
   uint32_t getRecordLength() const;
   ModuleDebugFragmentKind kind() const;
   BinaryStreamRef getRecordData() const;
@@ -41,7 +45,17 @@ private:
   BinaryStreamRef Data;
 };
 
-typedef VarStreamArray<ModuleDebugFragmentRecord> ModuleDebugFragmentArray;
+class ModuleDebugFragmentRecordBuilder {
+public:
+  ModuleDebugFragmentRecordBuilder(ModuleDebugFragmentKind Kind,
+                                   ModuleDebugFragment &Frag);
+  uint32_t calculateSerializedLength();
+  Error commit(BinaryStreamWriter &Writer);
+
+private:
+  ModuleDebugFragmentKind Kind;
+  ModuleDebugFragment &Frag;
+};
 
 } // namespace codeview
 
@@ -50,13 +64,17 @@ struct VarStreamArrayExtractor<codeview::ModuleDebugFragmentRecord> {
   typedef void ContextType;
 
   static Error extract(BinaryStreamRef Stream, uint32_t &Length,
-                       codeview::ModuleDebugFragmentRecord &Info, void *Ctx) {
+                       codeview::ModuleDebugFragmentRecord &Info) {
     if (auto EC = codeview::ModuleDebugFragmentRecord::initialize(Stream, Info))
       return EC;
     Length = Info.getRecordLength();
     return Error::success();
   }
 };
+
+namespace codeview {
+typedef VarStreamArray<ModuleDebugFragmentRecord> ModuleDebugFragmentArray;
+}
 } // namespace llvm
 
 #endif // LLVM_DEBUGINFO_CODEVIEW_MODULEDEBUGFRAGMENTRECORD_H

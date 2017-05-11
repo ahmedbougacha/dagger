@@ -4949,8 +4949,7 @@ SDValue PPCTargetLowering::LowerCall_32SVR4(
 
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
-  Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, dl, true),
-                               dl);
+  Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
   SDValue CallSeqStart = Chain;
 
   // Load the return address and frame pointer so it can be moved somewhere else
@@ -5000,9 +4999,8 @@ SDValue PPCTargetLowering::LowerCall_32SVR4(
                                   Flags, DAG, dl);
 
       // This must go outside the CALLSEQ_START..END.
-      SDValue NewCallSeqStart = DAG.getCALLSEQ_START(MemcpyCall,
-                           CallSeqStart.getNode()->getOperand(1),
-                           SDLoc(MemcpyCall));
+      SDValue NewCallSeqStart = DAG.getCALLSEQ_START(MemcpyCall, NumBytes, 0,
+                                                     SDLoc(MemcpyCall));
       DAG.ReplaceAllUsesWith(CallSeqStart.getNode(),
                              NewCallSeqStart.getNode());
       Chain = CallSeqStart = NewCallSeqStart;
@@ -5083,9 +5081,9 @@ SDValue PPCTargetLowering::createMemcpyOutsideCallSeq(
                         CallSeqStart.getNode()->getOperand(0),
                         Flags, DAG, dl);
   // The MEMCPY must go outside the CALLSEQ_START..END.
-  SDValue NewCallSeqStart = DAG.getCALLSEQ_START(MemcpyCall,
-                             CallSeqStart.getNode()->getOperand(1),
-                             SDLoc(MemcpyCall));
+  int64_t FrameSize = CallSeqStart.getConstantOperandVal(1);
+  SDValue NewCallSeqStart = DAG.getCALLSEQ_START(MemcpyCall, FrameSize, 0,
+                                                 SDLoc(MemcpyCall));
   DAG.ReplaceAllUsesWith(CallSeqStart.getNode(),
                          NewCallSeqStart.getNode());
   return NewCallSeqStart;
@@ -5268,8 +5266,7 @@ SDValue PPCTargetLowering::LowerCall_64SVR4(
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
   if (!IsSibCall)
-    Chain = DAG.getCALLSEQ_START(Chain,
-                                 DAG.getIntPtrConstant(NumBytes, dl, true), dl);
+    Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
   SDValue CallSeqStart = Chain;
 
   // Load the return address and frame pointer so it can be move somewhere else
@@ -5828,8 +5825,7 @@ SDValue PPCTargetLowering::LowerCall_Darwin(
 
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
-  Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, dl, true),
-                               dl);
+  Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
   SDValue CallSeqStart = Chain;
 
   // Load the return address and frame pointer so it can be move somewhere else
@@ -6464,7 +6460,7 @@ SDValue PPCTargetLowering::LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const {
   case ISD::SETNE:
     std::swap(TV, FV);
   case ISD::SETEQ:
-    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, LHS, RHS, &Flags);
+    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, LHS, RHS, Flags);
     if (Cmp.getValueType() == MVT::f32)   // Comparison is always 64-bits
       Cmp = DAG.getNode(ISD::FP_EXTEND, dl, MVT::f64, Cmp);
     Sel1 = DAG.getNode(PPCISD::FSEL, dl, ResVT, Cmp, TV, FV);
@@ -6474,25 +6470,25 @@ SDValue PPCTargetLowering::LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const {
                        DAG.getNode(ISD::FNEG, dl, MVT::f64, Cmp), Sel1, FV);
   case ISD::SETULT:
   case ISD::SETLT:
-    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, LHS, RHS, &Flags);
+    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, LHS, RHS, Flags);
     if (Cmp.getValueType() == MVT::f32)   // Comparison is always 64-bits
       Cmp = DAG.getNode(ISD::FP_EXTEND, dl, MVT::f64, Cmp);
     return DAG.getNode(PPCISD::FSEL, dl, ResVT, Cmp, FV, TV);
   case ISD::SETOGE:
   case ISD::SETGE:
-    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, LHS, RHS, &Flags);
+    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, LHS, RHS, Flags);
     if (Cmp.getValueType() == MVT::f32)   // Comparison is always 64-bits
       Cmp = DAG.getNode(ISD::FP_EXTEND, dl, MVT::f64, Cmp);
     return DAG.getNode(PPCISD::FSEL, dl, ResVT, Cmp, TV, FV);
   case ISD::SETUGT:
   case ISD::SETGT:
-    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, RHS, LHS, &Flags);
+    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, RHS, LHS, Flags);
     if (Cmp.getValueType() == MVT::f32)   // Comparison is always 64-bits
       Cmp = DAG.getNode(ISD::FP_EXTEND, dl, MVT::f64, Cmp);
     return DAG.getNode(PPCISD::FSEL, dl, ResVT, Cmp, FV, TV);
   case ISD::SETOLE:
   case ISD::SETLE:
-    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, RHS, LHS, &Flags);
+    Cmp = DAG.getNode(ISD::FSUB, dl, CmpVT, RHS, LHS, Flags);
     if (Cmp.getValueType() == MVT::f32)   // Comparison is always 64-bits
       Cmp = DAG.getNode(ISD::FP_EXTEND, dl, MVT::f64, Cmp);
     return DAG.getNode(PPCISD::FSEL, dl, ResVT, Cmp, TV, FV);
@@ -8741,9 +8737,9 @@ static Instruction* callIntrinsic(IRBuilder<> &Builder, Intrinsic::ID Id) {
 
 // The mappings for emitLeading/TrailingFence is taken from
 // http://www.cl.cam.ac.uk/~pes20/cpp/cpp0xmappings.html
-Instruction* PPCTargetLowering::emitLeadingFence(IRBuilder<> &Builder,
-                                         AtomicOrdering Ord, bool IsStore,
-                                         bool IsLoad) const {
+Instruction *PPCTargetLowering::emitLeadingFence(IRBuilder<> &Builder,
+                                                 Instruction *Inst,
+                                                 AtomicOrdering Ord) const {
   if (Ord == AtomicOrdering::SequentiallyConsistent)
     return callIntrinsic(Builder, Intrinsic::ppc_sync);
   if (isReleaseOrStronger(Ord))
@@ -8751,10 +8747,10 @@ Instruction* PPCTargetLowering::emitLeadingFence(IRBuilder<> &Builder,
   return nullptr;
 }
 
-Instruction* PPCTargetLowering::emitTrailingFence(IRBuilder<> &Builder,
-                                          AtomicOrdering Ord, bool IsStore,
-                                          bool IsLoad) const {
-  if (IsLoad && isAcquireOrStronger(Ord))
+Instruction *PPCTargetLowering::emitTrailingFence(IRBuilder<> &Builder,
+                                                  Instruction *Inst,
+                                                  AtomicOrdering Ord) const {
+  if (Inst->hasAtomicLoad() && isAcquireOrStronger(Ord))
     return callIntrinsic(Builder, Intrinsic::ppc_lwsync);
   // FIXME: this is too conservative, a dependent branch + isync is enough.
   // See http://www.cl.cam.ac.uk/~pes20/cpp/cpp0xmappings.html and
@@ -11213,6 +11209,14 @@ SDValue PPCTargetLowering::expandVSXLoadForLE(SDNode *N,
   }
 
   MVT VecTy = N->getValueType(0).getSimpleVT();
+
+  // Do not expand to PPCISD::LXVD2X + PPCISD::XXSWAPD when the load is
+  // aligned and the type is a vector with elements up to 4 bytes
+  if (Subtarget.needsSwapsForVSXMemOps() && !(MMO->getAlignment()%16)
+      && VecTy.getScalarSizeInBits() <= 32 ) {
+    return SDValue();
+  }
+
   SDValue LoadOps[] = { Chain, Base };
   SDValue Load = DAG.getMemIntrinsicNode(PPCISD::LXVD2X, dl,
                                          DAG.getVTList(MVT::v2f64, MVT::Other),
@@ -11276,6 +11280,13 @@ SDValue PPCTargetLowering::expandVSXStoreForLE(SDNode *N,
 
   SDValue Src = N->getOperand(SrcOpnd);
   MVT VecTy = Src.getValueType().getSimpleVT();
+
+  // Do not expand to PPCISD::XXSWAPD and PPCISD::STXVD2X when the load is
+  // aligned and the type is a vector with elements up to 4 bytes
+  if (Subtarget.needsSwapsForVSXMemOps() && !(MMO->getAlignment()%16)
+      && VecTy.getScalarSizeInBits() <= 32 ) {
+    return SDValue();
+  }
 
   // All stores are done as v2f64 and possible bit cast.
   if (VecTy != MVT::v2f64) {
@@ -12016,7 +12027,7 @@ void PPCTargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
                                                       const APInt &DemandedElts,
                                                       const SelectionDAG &DAG,
                                                       unsigned Depth) const {
-  Known.Zero.clearAllBits(); Known.One.clearAllBits();
+  Known.resetAll();
   switch (Op.getOpcode()) {
   default: break;
   case PPCISD::LBRX: {

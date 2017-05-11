@@ -28,24 +28,29 @@ public:
   C13DebugFragmentVisitor(PDBFile &F);
   ~C13DebugFragmentVisitor();
 
-  Error visitUnknown(codeview::ModuleDebugUnknownFragment &Fragment) final;
+  Error visitUnknown(codeview::ModuleDebugUnknownFragmentRef &Fragment) final;
 
   Error visitFileChecksums(
-      codeview::ModuleDebugFileChecksumFragment &Checksums) final;
+      codeview::ModuleDebugFileChecksumFragmentRef &Checksums) final;
 
-  Error visitLines(codeview::ModuleDebugLineFragment &Lines) final;
+  Error visitLines(codeview::ModuleDebugLineFragmentRef &Lines) final;
+
+  Error
+  visitInlineeLines(codeview::ModuleDebugInlineeLineFragmentRef &Lines) final;
 
   Error finished() final;
 
 protected:
   virtual Error handleFileChecksums() { return Error::success(); }
   virtual Error handleLines() { return Error::success(); }
+  virtual Error handleInlineeLines() { return Error::success(); }
 
   Expected<StringRef> getNameFromStringTable(uint32_t Offset);
   Expected<StringRef> getNameFromChecksumsBuffer(uint32_t Offset);
 
-  Optional<codeview::ModuleDebugFileChecksumFragment> Checksums;
-  std::vector<codeview::ModuleDebugLineFragment> Lines;
+  Optional<codeview::ModuleDebugFileChecksumFragmentRef> Checksums;
+  std::vector<codeview::ModuleDebugInlineeLineFragmentRef> InlineeLines;
+  std::vector<codeview::ModuleDebugLineFragmentRef> Lines;
 
   PDBFile &F;
 };

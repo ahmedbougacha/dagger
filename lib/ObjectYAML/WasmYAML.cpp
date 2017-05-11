@@ -50,7 +50,11 @@ static void commonSectionMapping(IO &IO, WasmYAML::Section &Section) {
 static void sectionMapping(IO &IO, WasmYAML::CustomSection &Section) {
   commonSectionMapping(IO, Section);
   IO.mapRequired("Name", Section.Name);
-  IO.mapRequired("Payload", Section.Payload);
+  if (Section.Name == "name") {
+    IO.mapOptional("FunctionNames", Section.FunctionNames);
+  } else {
+    IO.mapRequired("Payload", Section.Payload);
+  }
 }
 
 static void sectionMapping(IO &IO, WasmYAML::TypeSection &Section) {
@@ -226,6 +230,12 @@ void MappingTraits<WasmYAML::Relocation>::mapping(
   IO.mapOptional("Addend", Relocation.Addend, 0);
 }
 
+void MappingTraits<WasmYAML::NameEntry>::mapping(
+    IO &IO, WasmYAML::NameEntry &NameEntry) {
+  IO.mapRequired("Index", NameEntry.Index);
+  IO.mapRequired("Name", NameEntry.Name);
+}
+
 void MappingTraits<WasmYAML::LocalDecl>::mapping(
     IO &IO, WasmYAML::LocalDecl &LocalDecl) {
   IO.mapRequired("Type", LocalDecl.Type);
@@ -255,8 +265,12 @@ void MappingTraits<WasmYAML::Import>::mapping(IO &IO,
   if (Import.Kind == wasm::WASM_EXTERNAL_FUNCTION) {
     IO.mapRequired("SigIndex", Import.SigIndex);
   } else if (Import.Kind == wasm::WASM_EXTERNAL_GLOBAL) {
-    IO.mapRequired("GlobalType", Import.GlobalType);
-    IO.mapRequired("GlobalMutable", Import.GlobalMutable);
+    IO.mapRequired("GlobalType", Import.GlobalImport.Type);
+    IO.mapRequired("GlobalMutable", Import.GlobalImport.Mutable);
+  } else if (Import.Kind == wasm::WASM_EXTERNAL_TABLE) {
+    IO.mapRequired("Table", Import.TableImport);
+  } else if (Import.Kind == wasm::WASM_EXTERNAL_MEMORY ) {
+    IO.mapRequired("Memory", Import.Memory);
   } else {
     llvm_unreachable("unhandled import type");
   }

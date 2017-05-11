@@ -86,7 +86,7 @@ private:
   union {
     uint64_t VAL;   ///< Used to store the <= 64 bits integer value.
     uint64_t *pVal; ///< Used to store the >64 bits integer value.
-  };
+  } U;
 
   unsigned BitWidth; ///< The number of bits in this APInt.
 
@@ -98,7 +98,9 @@ private:
   ///
   /// This constructor is used only internally for speed of construction of
   /// temporaries. It is unsafe for general use so it is not public.
-  APInt(uint64_t *val, unsigned bits) : pVal(val), BitWidth(bits) {}
+  APInt(uint64_t *val, unsigned bits) : BitWidth(bits) {
+    U.pVal = val;
+  }
 
   /// \brief Determine if this APInt just has one word to store value.
   ///
@@ -143,16 +145,16 @@ private:
     // Mask out the high bits.
     uint64_t mask = WORD_MAX >> (APINT_BITS_PER_WORD - WordBits);
     if (isSingleWord())
-      VAL &= mask;
+      U.VAL &= mask;
     else
-      pVal[getNumWords() - 1] &= mask;
+      U.pVal[getNumWords() - 1] &= mask;
     return *this;
   }
 
   /// \brief Get the word corresponding to a bit position
   /// \returns the corresponding word for the specified bit position.
   uint64_t getWord(unsigned bitPosition) const {
-    return isSingleWord() ? VAL : pVal[whichWord(bitPosition)];
+    return isSingleWord() ? U.VAL : U.pVal[whichWord(bitPosition)];
   }
 
   /// \brief Convert a char array into an APInt
@@ -258,7 +260,7 @@ public:
       : BitWidth(numBits) {
     assert(BitWidth && "bitwidth too small");
     if (isSingleWord()) {
-      VAL = val;
+      U.VAL = val;
       clearUnusedBits();
     } else {
       initSlowCase(val, isSigned);
@@ -300,20 +302,21 @@ public:
   /// @brief Copy Constructor.
   APInt(const APInt &that) : BitWidth(that.BitWidth) {
     if (isSingleWord())
-      VAL = that.VAL;
+      U.VAL = that.U.VAL;
     else
       initSlowCase(that);
   }
 
   /// \brief Move Constructor.
-  APInt(APInt &&that) : VAL(that.VAL), BitWidth(that.BitWidth) {
+  APInt(APInt &&that) : BitWidth(that.BitWidth) {
+    memcpy(&U, &that.U, sizeof(U));
     that.BitWidth = 0;
   }
 
   /// \brief Destructor.
   ~APInt() {
     if (needsCleanup())
-      delete[] pVal;
+      delete[] U.pVal;
   }
 
   /// \brief Default constructor that creates an uninteresting APInt
@@ -321,7 +324,7 @@ public:
   ///
   /// This is useful for object deserialization (pair this with the static
   ///  method Read).
-  explicit APInt() : VAL(0), BitWidth(1) {}
+  explicit APInt() : BitWidth(1) { U.VAL = 0; }
 
   /// \brief Returns whether this instance allocated memory.
   bool needsCleanup() const { return !isSingleWord(); }
@@ -373,13 +376,14 @@ public:
   /// This checks to see if the value has all bits of the APInt are set or not.
   bool isAllOnesValue() const {
     if (isSingleWord())
-      return VAL == WORD_MAX >> (APINT_BITS_PER_WORD - BitWidth);
+      return U.VAL == WORD_MAX >> (APINT_BITS_PER_WORD - BitWidth);
     return countPopulationSlowCase() == BitWidth;
   }
 
-  /// \brief Determine if all bits are set
+  /// \brief Determine if all bits are clear
   ///
-  /// This checks to see if the value has all bits of the APInt are set or not.
+  /// This checks to see if the value has all bits of the APInt are clear or
+  /// not.
   bool isNullValue() const { return !*this; }
 
   /// \brief Determine if this is the largest unsigned value.
@@ -427,7 +431,7 @@ public:
   /// \returns true if the argument APInt value is a power of two > 0.
   bool isPowerOf2() const {
     if (isSingleWord())
-      return isPowerOf2_64(VAL);
+      return isPowerOf2_64(U.VAL);
     return countPopulationSlowCase() == 1;
   }
 
@@ -460,7 +464,7 @@ public:
     assert(numBits != 0 && "numBits must be non-zero");
     assert(numBits <= BitWidth && "numBits out of range");
     if (isSingleWord())
-      return VAL == (WORD_MAX >> (APINT_BITS_PER_WORD - numBits));
+      return U.VAL == (WORD_MAX >> (APINT_BITS_PER_WORD - numBits));
     unsigned Ones = countTrailingOnesSlowCase();
     return (numBits == Ones) &&
            ((Ones + countLeadingZerosSlowCase()) == BitWidth);
@@ -471,7 +475,7 @@ public:
   /// Ex. isMask(0x0000FFFFU) == true.
   bool isMask() const {
     if (isSingleWord())
-      return isMask_64(VAL);
+      return isMask_64(U.VAL);
     unsigned Ones = countTrailingOnesSlowCase();
     return (Ones > 0) && ((Ones + countLeadingZerosSlowCase()) == BitWidth);
   }
@@ -480,7 +484,7 @@ public:
   /// the remainder zero.
   bool isShiftedMask() const {
     if (isSingleWord())
-      return isShiftedMask_64(VAL);
+      return isShiftedMask_64(U.VAL);
     unsigned Ones = countPopulationSlowCase();
     unsigned LeadZ = countLeadingZerosSlowCase();
     return (Ones + LeadZ + countTrailingZeros()) == BitWidth;
@@ -616,15 +620,7 @@ public:
   }
 
   /// \brief Return a value containing V broadcasted over NewLen bits.
-  static APInt getSplat(unsigned NewLen, const APInt &V) {
-    assert(NewLen >= V.getBitWidth() && "Can't splat to smaller bit width!");
-
-    APInt Val = V.zextOrSelf(NewLen);
-    for (unsigned I = V.getBitWidth(); I < NewLen; I <<= 1)
-      Val |= Val << I;
-
-    return Val;
-  }
+  static APInt getSplat(unsigned NewLen, const APInt &V);
 
   /// \brief Determine if two APInts have the same value, after zero-extending
   /// one of them (if needed!) to ensure that the bit-widths match.
@@ -646,8 +642,8 @@ public:
   /// conversions.
   const uint64_t *getRawData() const {
     if (isSingleWord())
-      return &VAL;
-    return &pVal[0];
+      return &U.VAL;
+    return &U.pVal[0];
   }
 
   /// @}
@@ -692,7 +688,9 @@ public:
   ///
   /// \returns true if *this is zero, false otherwise.
   bool operator!() const {
-    return *this == 0;
+    if (isSingleWord())
+      return U.VAL == 0;
+    return countLeadingZerosSlowCase() == BitWidth;
   }
 
   /// @}
@@ -705,7 +703,7 @@ public:
   APInt &operator=(const APInt &RHS) {
     // If the bitwidths are the same, we can avoid mucking with memory
     if (isSingleWord() && RHS.isSingleWord()) {
-      VAL = RHS.VAL;
+      U.VAL = RHS.U.VAL;
       BitWidth = RHS.BitWidth;
       return clearUnusedBits();
     }
@@ -718,11 +716,11 @@ public:
   APInt &operator=(APInt &&that) {
     assert(this != &that && "Self-move not supported");
     if (!isSingleWord())
-      delete[] pVal;
+      delete[] U.pVal;
 
     // Use memcpy so that type based alias analysis sees both VAL and pVal
     // as modified.
-    memcpy(&VAL, &that.VAL, sizeof(uint64_t));
+    memcpy(&U, &that.U, sizeof(U));
 
     BitWidth = that.BitWidth;
     that.BitWidth = 0;
@@ -739,11 +737,11 @@ public:
   /// \returns *this after assignment of RHS value.
   APInt &operator=(uint64_t RHS) {
     if (isSingleWord()) {
-      VAL = RHS;
+      U.VAL = RHS;
       clearUnusedBits();
     } else {
-      pVal[0] = RHS;
-      memset(pVal+1, 0, (getNumWords() - 1) * APINT_WORD_SIZE);
+      U.pVal[0] = RHS;
+      memset(U.pVal+1, 0, (getNumWords() - 1) * APINT_WORD_SIZE);
     }
     return *this;
   }
@@ -757,7 +755,7 @@ public:
   APInt &operator&=(const APInt &RHS) {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
     if (isSingleWord())
-      VAL &= RHS.VAL;
+      U.VAL &= RHS.U.VAL;
     else
       AndAssignSlowCase(RHS);
     return *this;
@@ -770,11 +768,11 @@ public:
   /// the LHS.
   APInt &operator&=(uint64_t RHS) {
     if (isSingleWord()) {
-      VAL &= RHS;
+      U.VAL &= RHS;
       return *this;
     }
-    pVal[0] &= RHS;
-    memset(pVal+1, 0, (getNumWords() - 1) * APINT_WORD_SIZE);
+    U.pVal[0] &= RHS;
+    memset(U.pVal+1, 0, (getNumWords() - 1) * APINT_WORD_SIZE);
     return *this;
   }
 
@@ -787,7 +785,7 @@ public:
   APInt &operator|=(const APInt &RHS) {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
     if (isSingleWord())
-      VAL |= RHS.VAL;
+      U.VAL |= RHS.U.VAL;
     else
       OrAssignSlowCase(RHS);
     return *this;
@@ -800,10 +798,10 @@ public:
   /// the LHS.
   APInt &operator|=(uint64_t RHS) {
     if (isSingleWord()) {
-      VAL |= RHS;
+      U.VAL |= RHS;
       clearUnusedBits();
     } else {
-      pVal[0] |= RHS;
+      U.pVal[0] |= RHS;
     }
     return *this;
   }
@@ -817,7 +815,7 @@ public:
   APInt &operator^=(const APInt &RHS) {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
     if (isSingleWord())
-      VAL ^= RHS.VAL;
+      U.VAL ^= RHS.U.VAL;
     else
       XorAssignSlowCase(RHS);
     return *this;
@@ -830,10 +828,10 @@ public:
   /// the LHS.
   APInt &operator^=(uint64_t RHS) {
     if (isSingleWord()) {
-      VAL ^= RHS;
+      U.VAL ^= RHS;
       clearUnusedBits();
     } else {
-      pVal[0] ^= RHS;
+      U.pVal[0] ^= RHS;
     }
     return *this;
   }
@@ -844,6 +842,7 @@ public:
   ///
   /// \returns *this
   APInt &operator*=(const APInt &RHS);
+  APInt &operator*=(uint64_t RHS);
 
   /// \brief Addition assignment operator.
   ///
@@ -870,9 +869,9 @@ public:
     assert(ShiftAmt <= BitWidth && "Invalid shift amount");
     if (isSingleWord()) {
       if (ShiftAmt == BitWidth)
-        VAL = 0;
+        U.VAL = 0;
       else
-        VAL <<= ShiftAmt;
+        U.VAL <<= ShiftAmt;
       return clearUnusedBits();
     }
     shlSlowCase(ShiftAmt);
@@ -918,11 +917,11 @@ public:
   void ashrInPlace(unsigned ShiftAmt) {
     assert(ShiftAmt <= BitWidth && "Invalid shift amount");
     if (isSingleWord()) {
-      int64_t SExtVAL = SignExtend64(VAL, BitWidth);
+      int64_t SExtVAL = SignExtend64(U.VAL, BitWidth);
       if (ShiftAmt == BitWidth)
-        VAL = SExtVAL >> (APINT_BITS_PER_WORD - 1); // Fill with sign bit.
+        U.VAL = SExtVAL >> (APINT_BITS_PER_WORD - 1); // Fill with sign bit.
       else
-        VAL = SExtVAL >> ShiftAmt;
+        U.VAL = SExtVAL >> ShiftAmt;
       clearUnusedBits();
       return;
     }
@@ -943,9 +942,9 @@ public:
     assert(ShiftAmt <= BitWidth && "Invalid shift amount");
     if (isSingleWord()) {
       if (ShiftAmt == BitWidth)
-        VAL = 0;
+        U.VAL = 0;
       else
-        VAL >>= ShiftAmt;
+        U.VAL >>= ShiftAmt;
       return;
     }
     lshrSlowCase(ShiftAmt);
@@ -1064,7 +1063,7 @@ public:
   bool operator[](unsigned bitPosition) const {
     assert(bitPosition < getBitWidth() && "Bit position out of bounds!");
     return (maskBit(bitPosition) &
-            (isSingleWord() ? VAL : pVal[whichWord(bitPosition)])) !=
+            (isSingleWord() ? U.VAL : U.pVal[whichWord(bitPosition)])) !=
            0;
   }
 
@@ -1079,7 +1078,7 @@ public:
   bool operator==(const APInt &RHS) const {
     assert(BitWidth == RHS.BitWidth && "Comparison requires equal bit widths");
     if (isSingleWord())
-      return VAL == RHS.VAL;
+      return U.VAL == RHS.U.VAL;
     return EqualSlowCase(RHS);
   }
 
@@ -1270,7 +1269,7 @@ public:
   bool intersects(const APInt &RHS) const {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
     if (isSingleWord())
-      return (VAL & RHS.VAL) != 0;
+      return (U.VAL & RHS.U.VAL) != 0;
     return intersectsSlowCase(RHS);
   }
 
@@ -1278,7 +1277,7 @@ public:
   bool isSubsetOf(const APInt &RHS) const {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
     if (isSingleWord())
-      return (VAL & ~RHS.VAL) == 0;
+      return (U.VAL & ~RHS.U.VAL) == 0;
     return isSubsetOfSlowCase(RHS);
   }
 
@@ -1338,10 +1337,10 @@ public:
   /// \brief Set every bit to 1.
   void setAllBits() {
     if (isSingleWord())
-      VAL = WORD_MAX;
+      U.VAL = WORD_MAX;
     else
       // Set all the bits in all the words.
-      memset(pVal, -1, getNumWords() * APINT_WORD_SIZE);
+      memset(U.pVal, -1, getNumWords() * APINT_WORD_SIZE);
     // Clear the unused ones
     clearUnusedBits();
   }
@@ -1349,7 +1348,14 @@ public:
   /// \brief Set a given bit to 1.
   ///
   /// Set the given bit to 1 whose position is given as "bitPosition".
-  void setBit(unsigned bitPosition);
+  void setBit(unsigned BitPosition) {
+    assert(BitPosition <= BitWidth && "BitPosition out of range");
+    WordType Mask = maskBit(BitPosition);
+    if (isSingleWord())
+      U.VAL |= Mask;
+    else
+      U.pVal[whichWord(BitPosition)] |= Mask;
+  }
 
   /// Set the sign bit to 1.
   void setSignBit() {
@@ -1367,9 +1373,9 @@ public:
       uint64_t mask = WORD_MAX >> (APINT_BITS_PER_WORD - (hiBit - loBit));
       mask <<= loBit;
       if (isSingleWord())
-        VAL |= mask;
+        U.VAL |= mask;
       else
-        pVal[0] |= mask;
+        U.pVal[0] |= mask;
     } else {
       setBitsSlowCase(loBit, hiBit);
     }
@@ -1393,15 +1399,22 @@ public:
   /// \brief Set every bit to 0.
   void clearAllBits() {
     if (isSingleWord())
-      VAL = 0;
+      U.VAL = 0;
     else
-      memset(pVal, 0, getNumWords() * APINT_WORD_SIZE);
+      memset(U.pVal, 0, getNumWords() * APINT_WORD_SIZE);
   }
 
   /// \brief Set a given bit to 0.
   ///
   /// Set the given bit to 0 whose position is given as "bitPosition".
-  void clearBit(unsigned bitPosition);
+  void clearBit(unsigned BitPosition) {
+    assert(BitPosition <= BitWidth && "BitPosition out of range");
+    WordType Mask = ~maskBit(BitPosition);
+    if (isSingleWord())
+      U.VAL &= Mask;
+    else
+      U.pVal[whichWord(BitPosition)] &= Mask;
+  }
 
   /// Set the sign bit to 0.
   void clearSignBit() {
@@ -1411,7 +1424,7 @@ public:
   /// \brief Toggle every bit to its opposite value.
   void flipAllBits() {
     if (isSingleWord()) {
-      VAL ^= WORD_MAX;
+      U.VAL ^= WORD_MAX;
       clearUnusedBits();
     } else {
       flipAllBitsSlowCase();
@@ -1423,6 +1436,12 @@ public:
   /// Toggle a given bit to its opposite value whose position is given
   /// as "bitPosition".
   void flipBit(unsigned bitPosition);
+
+  /// Negate this APInt in place.
+  void negate() {
+    flipAllBits();
+    ++(*this);
+  }
 
   /// Insert the bits from a smaller APInt starting at bitPosition.
   void insertBits(const APInt &SubBits, unsigned bitPosition);
@@ -1491,9 +1510,9 @@ public:
   /// uint64_t. Otherwise an assertion will result.
   uint64_t getZExtValue() const {
     if (isSingleWord())
-      return VAL;
+      return U.VAL;
     assert(getActiveBits() <= 64 && "Too many bits for uint64_t");
-    return pVal[0];
+    return U.pVal[0];
   }
 
   /// \brief Get sign extended value
@@ -1503,9 +1522,9 @@ public:
   /// int64_t. Otherwise an assertion will result.
   int64_t getSExtValue() const {
     if (isSingleWord())
-      return SignExtend64(VAL, BitWidth);
+      return SignExtend64(U.VAL, BitWidth);
     assert(getMinSignedBits() <= 64 && "Too many bits for int64_t");
-    return int64_t(pVal[0]);
+    return int64_t(U.pVal[0]);
   }
 
   /// \brief Get bits required for string value.
@@ -1525,7 +1544,7 @@ public:
   unsigned countLeadingZeros() const {
     if (isSingleWord()) {
       unsigned unusedBits = APINT_BITS_PER_WORD - BitWidth;
-      return llvm::countLeadingZeros(VAL) - unusedBits;
+      return llvm::countLeadingZeros(U.VAL) - unusedBits;
     }
     return countLeadingZerosSlowCase();
   }
@@ -1566,7 +1585,7 @@ public:
   /// of ones from the least significant bit to the first zero bit.
   unsigned countTrailingOnes() const {
     if (isSingleWord())
-      return llvm::countTrailingOnes(VAL);
+      return llvm::countTrailingOnes(U.VAL);
     return countTrailingOnesSlowCase();
   }
 
@@ -1578,7 +1597,7 @@ public:
   /// \returns 0 if the value is zero, otherwise returns the number of set bits.
   unsigned countPopulation() const {
     if (isSingleWord())
-      return llvm::countPopulation(VAL);
+      return llvm::countPopulation(U.VAL);
     return countPopulationSlowCase();
   }
 
@@ -1637,7 +1656,7 @@ public:
       uint64_t I;
       double D;
     } T;
-    T.I = (isSingleWord() ? VAL : pVal[0]);
+    T.I = (isSingleWord() ? U.VAL : U.pVal[0]);
     return T.D;
   }
 
@@ -1651,7 +1670,7 @@ public:
       unsigned I;
       float F;
     } T;
-    T.I = unsigned((isSingleWord() ? VAL : pVal[0]));
+    T.I = unsigned((isSingleWord() ? U.VAL : U.pVal[0]));
     return T.F;
   }
 
@@ -1709,7 +1728,7 @@ public:
     // get 0. If VAL is 0, we get WORD_MAX which gets truncated to
     // UINT32_MAX.
     if (BitWidth == 1)
-      return VAL - 1;
+      return U.VAL - 1;
 
     // Handle the zero case.
     if (isNullValue())
@@ -1839,10 +1858,9 @@ public:
                         unsigned);
 
   /// DST = LHS * RHS, where DST has width the sum of the widths of the
-  /// operands.  No overflow occurs.  DST must be disjoint from both
-  /// operands. Returns the number of parts required to hold the result.
-  static unsigned tcFullMultiply(WordType *, const WordType *,
-                                 const WordType *, unsigned, unsigned);
+  /// operands. No overflow occurs. DST must be disjoint from both operands.
+  static void tcFullMultiply(WordType *, const WordType *,
+                             const WordType *, unsigned, unsigned);
 
   /// If RHS is zero LHS and REMAINDER are left unchanged, return one.
   /// Otherwise set LHS to LHS / RHS with the fractional part discarded, set
@@ -1984,8 +2002,7 @@ inline raw_ostream &operator<<(raw_ostream &OS, const APInt &I) {
 }
 
 inline APInt operator-(APInt v) {
-  v.flipAllBits();
-  ++v;
+  v.negate();
   return v;
 }
 
@@ -2028,6 +2045,16 @@ inline APInt operator-(APInt a, uint64_t RHS) {
 inline APInt operator-(uint64_t LHS, APInt b) {
   b = -std::move(b);
   b += LHS;
+  return b;
+}
+
+inline APInt operator*(APInt a, uint64_t RHS) {
+  a *= RHS;
+  return a;
+}
+
+inline APInt operator*(uint64_t LHS, APInt b) {
+  b *= LHS;
   return b;
 }
 

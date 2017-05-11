@@ -162,6 +162,10 @@ bool LLParser::ValidateEndOfModule() {
       AS = AS.addAttributes(Context, AttributeList::FunctionIndex,
                             AttributeSet::get(Context, FnAttrs));
       II->setAttributes(AS);
+    } else if (auto *GV = dyn_cast<GlobalVariable>(V)) {
+      AttrBuilder Attrs(GV->getAttributes());
+      Attrs.merge(B);
+      GV->setAttributes(AttributeSet::get(Context,Attrs));
     } else {
       llvm_unreachable("invalid object with forward attribute group reference");
     }
@@ -832,10 +836,10 @@ bool LLParser::parseIndirectSymbol(
 /// ParseGlobal
 ///   ::= GlobalVar '=' OptionalLinkage OptionalVisibility OptionalDLLStorageClass
 ///       OptionalThreadLocal OptionalUnnamedAddr OptionalAddrSpace
-///       OptionalExternallyInitialized GlobalType Type Const
+///       OptionalExternallyInitialized GlobalType Type Const OptionalAttrs
 ///   ::= OptionalLinkage OptionalVisibility OptionalDLLStorageClass
 ///       OptionalThreadLocal OptionalUnnamedAddr OptionalAddrSpace
-///       OptionalExternallyInitialized GlobalType Type Const
+///       OptionalExternallyInitialized GlobalType Type Const OptionalAttrs
 ///
 /// Everything up to and including OptionalUnnamedAddr has been parsed
 /// already.
@@ -948,6 +952,16 @@ bool LLParser::ParseGlobal(const std::string &Name, LocTy NameLoc,
       else
         return TokError("unknown global variable property!");
     }
+  }
+
+  AttrBuilder Attrs;
+  LocTy BuiltinLoc;
+  std::vector<unsigned> FwdRefAttrGrps;
+  if (ParseFnAttributeValuePairs(Attrs, FwdRefAttrGrps, false, BuiltinLoc))
+    return true;
+  if (Attrs.hasAttributes() || !FwdRefAttrGrps.empty()) {
+    GV->setAttributes(AttributeSet::get(Context, Attrs));
+    ForwardRefAttrGroups[GV] = FwdRefAttrGrps;
   }
 
   return false;
@@ -1668,8 +1682,7 @@ void LLParser::ParseOptionalDLLStorageClass(unsigned &Res) {
 ///   ::= 'hhvm_ccc'
 ///   ::= 'cxx_fast_tlscc'
 ///   ::= 'amdgpu_vs'
-///   ::= 'amdgpu_tcs'
-///   ::= 'amdgpu_tes'
+///   ::= 'amdgpu_hs'
 ///   ::= 'amdgpu_gs'
 ///   ::= 'amdgpu_ps'
 ///   ::= 'amdgpu_cs'
@@ -1711,6 +1724,7 @@ bool LLParser::ParseOptionalCallingConv(unsigned &CC) {
   case lltok::kw_hhvm_ccc:       CC = CallingConv::HHVM_C; break;
   case lltok::kw_cxx_fast_tlscc: CC = CallingConv::CXX_FAST_TLS; break;
   case lltok::kw_amdgpu_vs:      CC = CallingConv::AMDGPU_VS; break;
+  case lltok::kw_amdgpu_hs:      CC = CallingConv::AMDGPU_HS; break;
   case lltok::kw_amdgpu_gs:      CC = CallingConv::AMDGPU_GS; break;
   case lltok::kw_amdgpu_ps:      CC = CallingConv::AMDGPU_PS; break;
   case lltok::kw_amdgpu_cs:      CC = CallingConv::AMDGPU_CS; break;

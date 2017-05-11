@@ -11,12 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AArch64.h"
-#include "AArch64CallLowering.h"
-#include "AArch64LegalizerInfo.h"
 #include "AArch64MacroFusion.h"
-#ifdef LLVM_BUILD_GLOBAL_ISEL
-#include "AArch64RegisterBankInfo.h"
-#endif
 #include "AArch64Subtarget.h"
 #include "AArch64TargetMachine.h"
 #include "AArch64TargetObjectFile.h"
@@ -25,7 +20,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/CodeGen/GlobalISel/GISelAccessor.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/GlobalISel/Legalizer.h"
@@ -115,11 +109,6 @@ EnableA53Fix835769("aarch64-fix-cortex-a53-835769", cl::Hidden,
                 cl::init(false));
 
 static cl::opt<bool>
-    EnableAddressTypePromotion("aarch64-enable-type-promotion", cl::Hidden,
-                               cl::desc("Enable the type promotion pass"),
-                               cl::init(false));
-
-static cl::opt<bool>
     EnableGEPOpt("aarch64-enable-gep-opt", cl::Hidden,
                  cl::desc("Enable optimizations on complex GEPs"),
                  cl::init(false));
@@ -152,7 +141,6 @@ extern "C" void LLVMInitializeAArch64Target() {
   initializeGlobalISel(*PR);
   initializeAArch64A53Fix835769Pass(*PR);
   initializeAArch64A57FPLoadBalancingPass(*PR);
-  initializeAArch64AddressTypePromotionPass(*PR);
   initializeAArch64AdvSIMDScalarPass(*PR);
   initializeAArch64CollectLOHPass(*PR);
   initializeAArch64ConditionalComparesPass(*PR);
@@ -222,35 +210,6 @@ AArch64TargetMachine::AArch64TargetMachine(
 
 AArch64TargetMachine::~AArch64TargetMachine() = default;
 
-#ifdef LLVM_BUILD_GLOBAL_ISEL
-namespace {
-
-struct AArch64GISelActualAccessor : public GISelAccessor {
-  std::unique_ptr<CallLowering> CallLoweringInfo;
-  std::unique_ptr<InstructionSelector> InstSelector;
-  std::unique_ptr<LegalizerInfo> Legalizer;
-  std::unique_ptr<RegisterBankInfo> RegBankInfo;
-
-  const CallLowering *getCallLowering() const override {
-    return CallLoweringInfo.get();
-  }
-
-  const InstructionSelector *getInstructionSelector() const override {
-    return InstSelector.get();
-  }
-
-  const LegalizerInfo *getLegalizerInfo() const override {
-    return Legalizer.get();
-  }
-
-  const RegisterBankInfo *getRegBankInfo() const override {
-    return RegBankInfo.get();
-  }
-};
-
-} // end anonymous namespace
-#endif
-
 const AArch64Subtarget *
 AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
   Attribute CPUAttr = F.getFnAttribute("target-cpu");
@@ -274,26 +233,6 @@ AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
     resetTargetOptions(F);
     I = llvm::make_unique<AArch64Subtarget>(TargetTriple, CPU, FS, *this,
                                             isLittle, ForCodeSize);
-#ifndef LLVM_BUILD_GLOBAL_ISEL
-    GISelAccessor *GISel = new GISelAccessor();
-#else
-    AArch64GISelActualAccessor *GISel =
-        new AArch64GISelActualAccessor();
-    GISel->CallLoweringInfo.reset(
-        new AArch64CallLowering(*I->getTargetLowering()));
-    GISel->Legalizer.reset(new AArch64LegalizerInfo());
-
-    auto *RBI = new AArch64RegisterBankInfo(*I->getRegisterInfo());
-
-    // FIXME: At this point, we can't rely on Subtarget having RBI.
-    // It's awkward to mix passing RBI and the Subtarget; should we pass
-    // TII/TRI as well?
-    GISel->InstSelector.reset(
-        createAArch64InstructionSelector(*this, *I, *RBI));
-
-    GISel->RegBankInfo.reset(RBI);
-#endif
-    I->setGISelAccessor(*GISel);
   }
   return I.get();
 }
@@ -436,9 +375,6 @@ bool AArch64PassConfig::addPreISel() {
                                (EnableGlobalMerge == cl::BOU_UNSET);
     addPass(createGlobalMergePass(TM, 4095, OnlyOptimizeForSize));
   }
-
-  if (TM->getOptLevel() != CodeGenOpt::None && EnableAddressTypePromotion)
-    addPass(createAArch64AddressTypePromotionPass());
 
   return false;
 }

@@ -16,8 +16,12 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
+#include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/OptimizationDiagnosticInfo.h"
+#include "llvm/Analysis/ProfileSummaryInfo.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Dominators.h"
@@ -31,7 +35,8 @@ using namespace llvm;
 
 #define DEBUG_TYPE "partial-inlining"
 
-STATISTIC(NumPartialInlined, "Number of functions partially inlined");
+STATISTIC(NumPartialInlined,
+          "Number of callsites functions partially inlined into.");
 
 // Command line option to disable partial-inlining. The default is false:
 static cl::opt<bool>
@@ -70,16 +75,25 @@ struct FunctionOutliningInfo {
 };
 
 struct PartialInlinerImpl {
-  PartialInlinerImpl(InlineFunctionInfo IFI) : IFI(std::move(IFI)) {}
+  PartialInlinerImpl(
+      std::function<AssumptionCache &(Function &)> *GetAC,
+      std::function<TargetTransformInfo &(Function &)> *GTTI,
+      Optional<function_ref<BlockFrequencyInfo &(Function &)>> GBFI,
+      ProfileSummaryInfo *ProfSI)
+      : GetAssumptionCache(GetAC), GetTTI(GTTI), GetBFI(GBFI), PSI(ProfSI) {}
   bool run(Module &M);
   Function *unswitchFunction(Function *F);
 
   std::unique_ptr<FunctionOutliningInfo> computeOutliningInfo(Function *F);
 
 private:
-  InlineFunctionInfo IFI;
   int NumPartialInlining = 0;
+  std::function<AssumptionCache &(Function &)> *GetAssumptionCache;
+  std::function<TargetTransformInfo &(Function &)> *GetTTI;
+  Optional<function_ref<BlockFrequencyInfo &(Function &)>> GetBFI;
+  ProfileSummaryInfo *PSI;
 
+  bool shouldPartialInline(CallSite CS, OptimizationRemarkEmitter &ORE);
   bool IsLimitReached() {
     return (MaxNumPartialInlining != -1 &&
             NumPartialInlining >= MaxNumPartialInlining);
@@ -94,18 +108,30 @@ struct PartialInlinerLegacyPass : public ModulePass {
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AssumptionCacheTracker>();
+    AU.addRequired<ProfileSummaryInfoWrapperPass>();
+    AU.addRequired<TargetTransformInfoWrapperPass>();
   }
   bool runOnModule(Module &M) override {
     if (skipModule(M))
       return false;
 
     AssumptionCacheTracker *ACT = &getAnalysis<AssumptionCacheTracker>();
+    TargetTransformInfoWrapperPass *TTIWP =
+        &getAnalysis<TargetTransformInfoWrapperPass>();
+    ProfileSummaryInfo *PSI =
+        getAnalysis<ProfileSummaryInfoWrapperPass>().getPSI();
+
     std::function<AssumptionCache &(Function &)> GetAssumptionCache =
         [&ACT](Function &F) -> AssumptionCache & {
       return ACT->getAssumptionCache(F);
     };
-    InlineFunctionInfo IFI(nullptr, &GetAssumptionCache);
-    return PartialInlinerImpl(IFI).run(M);
+
+    std::function<TargetTransformInfo &(Function &)> GetTTI =
+        [&TTIWP](Function &F) -> TargetTransformInfo & {
+      return TTIWP->getTTI(F);
+    };
+
+    return PartialInlinerImpl(&GetAssumptionCache, &GetTTI, None, PSI).run(M);
   }
 };
 }
@@ -131,7 +157,7 @@ PartialInlinerImpl::computeOutliningInfo(Function *F) {
     return isa<ReturnInst>(TI);
   };
 
-  auto GetReturnBlock = [=](BasicBlock *Succ1, BasicBlock *Succ2) {
+  auto GetReturnBlock = [&](BasicBlock *Succ1, BasicBlock *Succ2) {
     if (IsReturnBlock(Succ1))
       return std::make_tuple(Succ1, Succ2);
     if (IsReturnBlock(Succ2))
@@ -141,7 +167,7 @@ PartialInlinerImpl::computeOutliningInfo(Function *F) {
   };
 
   // Detect a triangular shape:
-  auto GetCommonSucc = [=](BasicBlock *Succ1, BasicBlock *Succ2) {
+  auto GetCommonSucc = [&](BasicBlock *Succ1, BasicBlock *Succ2) {
     if (IsSuccessor(Succ1, Succ2))
       return std::make_tuple(Succ1, Succ2);
     if (IsSuccessor(Succ2, Succ1))
@@ -263,9 +289,62 @@ PartialInlinerImpl::computeOutliningInfo(Function *F) {
   return OutliningInfo;
 }
 
+bool PartialInlinerImpl::shouldPartialInline(CallSite CS,
+                                             OptimizationRemarkEmitter &ORE) {
+  // TODO : more sharing with shouldInline in Inliner.cpp
+  using namespace ore;
+  Instruction *Call = CS.getInstruction();
+  Function *Callee = CS.getCalledFunction();
+  Function *Caller = CS.getCaller();
+  auto &CalleeTTI = (*GetTTI)(*Callee);
+  InlineCost IC = getInlineCost(CS, getInlineParams(), CalleeTTI,
+                                *GetAssumptionCache, GetBFI, PSI);
+
+  if (IC.isAlways()) {
+    ORE.emit(OptimizationRemarkAnalysis(DEBUG_TYPE, "AlwaysInline", Call)
+             << NV("Callee", Callee)
+             << " should always be fully inlined, not partially");
+    return false;
+  }
+
+  if (IC.isNever()) {
+    ORE.emit(OptimizationRemarkMissed(DEBUG_TYPE, "NeverInline", Call)
+             << NV("Callee", Callee) << " not partially inlined into "
+             << NV("Caller", Caller)
+             << " because it should never be inlined (cost=never)");
+    return false;
+  }
+
+  if (!IC) {
+    ORE.emit(OptimizationRemarkMissed(DEBUG_TYPE, "TooCostly", Call)
+             << NV("Callee", Callee) << " not partially inlined into "
+             << NV("Caller", Caller) << " because too costly to inline (cost="
+             << NV("Cost", IC.getCost()) << ", threshold="
+             << NV("Threshold", IC.getCostDelta() + IC.getCost()) << ")");
+    return false;
+  }
+
+  ORE.emit(OptimizationRemarkAnalysis(DEBUG_TYPE, "CanBePartiallyInlined", Call)
+           << NV("Callee", Callee) << " can be partially inlined into "
+           << NV("Caller", Caller) << " with cost=" << NV("Cost", IC.getCost())
+           << " (threshold="
+           << NV("Threshold", IC.getCostDelta() + IC.getCost()) << ")");
+  return true;
+}
+
 Function *PartialInlinerImpl::unswitchFunction(Function *F) {
 
   if (F->hasAddressTaken())
+    return nullptr;
+
+  // Let inliner handle it
+  if (F->hasFnAttribute(Attribute::AlwaysInline))
+    return nullptr;
+
+  if (F->hasFnAttribute(Attribute::NoInline))
+    return nullptr;
+
+  if (PSI->isFunctionEntryCold(F))
     return nullptr;
 
   std::unique_ptr<FunctionOutliningInfo> OutliningInfo =
@@ -277,7 +356,6 @@ Function *PartialInlinerImpl::unswitchFunction(Function *F) {
   // Clone the function, so that we can hack away on it.
   ValueToValueMapTy VMap;
   Function *DuplicateFunction = CloneFunction(F, VMap);
-  DuplicateFunction->setLinkage(GlobalValue::InternalLinkage);
   BasicBlock *NewReturnBlock =
       cast<BasicBlock>(VMap[OutliningInfo->ReturnBlock]);
   BasicBlock *NewNonReturnBlock =
@@ -345,7 +423,7 @@ Function *PartialInlinerImpl::unswitchFunction(Function *F) {
 
   // Returns true if the block is to be partial inlined into the caller
   // (i.e. not to be extracted to the out of line function)
-  auto ToBeInlined = [=](BasicBlock *BB) {
+  auto ToBeInlined = [&](BasicBlock *BB) {
     return BB == NewReturnBlock || NewEntries.count(BB);
   };
   // Gather up the blocks that we're going to extract.
@@ -385,16 +463,21 @@ Function *PartialInlinerImpl::unswitchFunction(Function *F) {
     if (IsLimitReached())
       continue;
 
-    NumPartialInlining++;
-
     OptimizationRemarkEmitter ORE(CS.getCaller());
+    if (!shouldPartialInline(CS, ORE))
+      continue;
+
     DebugLoc DLoc = CS.getInstruction()->getDebugLoc();
     BasicBlock *Block = CS.getParent();
     ORE.emit(OptimizationRemark(DEBUG_TYPE, "PartiallyInlined", DLoc, Block)
              << ore::NV("Callee", F) << " partially inlined into "
              << ore::NV("Caller", CS.getCaller()));
 
+    InlineFunctionInfo IFI(nullptr, GetAssumptionCache, PSI);
     InlineFunction(CS, IFI);
+    NumPartialInlining++;
+    // update stats
+    NumPartialInlined++;
   }
 
   // Ditch the duplicate, since we're done with it, and rewrite all remaining
@@ -402,7 +485,6 @@ Function *PartialInlinerImpl::unswitchFunction(Function *F) {
   DuplicateFunction->replaceAllUsesWith(F);
   DuplicateFunction->eraseFromParent();
 
-  ++NumPartialInlined;
 
   return ExtractedFunction;
 }
@@ -448,6 +530,8 @@ char PartialInlinerLegacyPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PartialInlinerLegacyPass, "partial-inliner",
                       "Partial Inliner", false, false)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
+INITIALIZE_PASS_DEPENDENCY(ProfileSummaryInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
 INITIALIZE_PASS_END(PartialInlinerLegacyPass, "partial-inliner",
                     "Partial Inliner", false, false)
 
@@ -458,12 +542,25 @@ ModulePass *llvm::createPartialInliningPass() {
 PreservedAnalyses PartialInlinerPass::run(Module &M,
                                           ModuleAnalysisManager &AM) {
   auto &FAM = AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+
   std::function<AssumptionCache &(Function &)> GetAssumptionCache =
       [&FAM](Function &F) -> AssumptionCache & {
     return FAM.getResult<AssumptionAnalysis>(F);
   };
-  InlineFunctionInfo IFI(nullptr, &GetAssumptionCache);
-  if (PartialInlinerImpl(IFI).run(M))
+
+  std::function<BlockFrequencyInfo &(Function &)> GetBFI =
+      [&FAM](Function &F) -> BlockFrequencyInfo & {
+    return FAM.getResult<BlockFrequencyAnalysis>(F);
+  };
+
+  std::function<TargetTransformInfo &(Function &)> GetTTI =
+      [&FAM](Function &F) -> TargetTransformInfo & {
+    return FAM.getResult<TargetIRAnalysis>(F);
+  };
+
+  ProfileSummaryInfo *PSI = &AM.getResult<ProfileSummaryAnalysis>(M);
+
+  if (PartialInlinerImpl(&GetAssumptionCache, &GetTTI, {GetBFI}, PSI).run(M))
     return PreservedAnalyses::none();
   return PreservedAnalyses::all();
 }

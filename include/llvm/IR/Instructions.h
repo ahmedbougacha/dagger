@@ -1658,11 +1658,17 @@ public:
   /// adds the attribute to the list of attributes.
   void addAttribute(unsigned i, Attribute Attr);
 
+  /// Adds the attribute to the indicated argument
+  void addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind);
+
   /// removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute::AttrKind Kind);
 
   /// removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, StringRef Kind);
+
+  /// Removes the attribute from the given argument
+  void removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind);
 
   /// adds the dereferenceable attribute to the list of attributes.
   void addDereferenceableAttr(unsigned i, uint64_t Bytes);
@@ -1734,11 +1740,9 @@ public:
     return Attrs.getDereferenceableOrNullBytes(i);
   }
 
-  /// @brief Determine if the parameter or return value is marked with NoAlias
-  /// attribute.
-  /// @param n The parameter to check. 1 is the first parameter, 0 is the return
-  bool doesNotAlias(unsigned n) const {
-    return Attrs.hasAttribute(n, Attribute::NoAlias);
+  /// @brief Determine if the return value is marked with NoAlias attribute.
+  bool returnDoesNotAlias() const {
+    return Attrs.hasAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
   }
 
   /// Return true if the call should not be treated as a call to a
@@ -2255,6 +2259,19 @@ public:
     SmallVector<int, 16> Mask;
     getShuffleMask(Mask);
     return Mask;
+  }
+
+  /// Change values in a shuffle permute mask assuming the two vector operands
+  /// of length InVecNumElts have swapped position.
+  static void commuteShuffleMask(MutableArrayRef<int> Mask,
+                                 unsigned InVecNumElts) {
+    for (int &Idx : Mask) {
+      if (Idx == -1)
+        continue;
+      Idx = Idx < (int)InVecNumElts ? Idx + InVecNumElts : Idx - InVecNumElts;
+      assert(Idx >= 0 && Idx < (int)InVecNumElts * 2 &&
+             "shufflevector mask index out of range");
+    }
   }
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
@@ -3750,11 +3767,17 @@ public:
   /// adds the attribute to the list of attributes.
   void addAttribute(unsigned i, Attribute Attr);
 
+  /// Adds the attribute to the indicated argument
+  void addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind);
+
   /// removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute::AttrKind Kind);
 
   /// removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, StringRef Kind);
+
+  /// Removes the attribute from the given argument
+  void removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind);
 
   /// adds the dereferenceable attribute to the list of attributes.
   void addDereferenceableAttr(unsigned i, uint64_t Bytes);
@@ -3827,11 +3850,9 @@ public:
     return Attrs.getDereferenceableOrNullBytes(i);
   }
 
-  /// @brief Determine if the parameter or return value is marked with NoAlias
-  /// attribute.
-  /// @param n The parameter to check. 1 is the first parameter, 0 is the return
-  bool doesNotAlias(unsigned n) const {
-    return Attrs.hasAttribute(n, Attribute::NoAlias);
+  /// @brief Determine if the return value is marked with NoAlias attribute.
+  bool returnDoesNotAlias() const {
+    return Attrs.hasAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
   }
 
   /// Return true if the call should not be treated as a call to a

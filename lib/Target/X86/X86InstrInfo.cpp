@@ -821,6 +821,12 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::VPSHLQrr,           X86::VPSHLQmr,         0 },
     { X86::VPSHLWrr,           X86::VPSHLWmr,         0 },
 
+    // LWP foldable instructions
+    { X86::LWPINS32rri,        X86::LWPINS32rmi,      0 },
+    { X86::LWPINS64rri,        X86::LWPINS64rmi,      0 },
+    { X86::LWPVAL32rri,        X86::LWPVAL32rmi,      0 },
+    { X86::LWPVAL64rri,        X86::LWPVAL64rmi,      0 },
+
     // BMI/BMI2/LZCNT/POPCNT/TBM foldable instructions
     { X86::BEXTR32rr,       X86::BEXTR32rm,           0 },
     { X86::BEXTR64rr,       X86::BEXTR64rm,           0 },
@@ -5721,6 +5727,44 @@ static X86::CondCode getSwappedCondition(X86::CondCode CC) {
   case X86::COND_A:  return X86::COND_B;
   case X86::COND_AE: return X86::COND_BE;
   }
+}
+
+std::pair<X86::CondCode, bool>
+X86::getX86ConditionCode(CmpInst::Predicate Predicate) {
+  X86::CondCode CC = X86::COND_INVALID;
+  bool NeedSwap = false;
+  switch (Predicate) {
+  default: break;
+  // Floating-point Predicates
+  case CmpInst::FCMP_UEQ: CC = X86::COND_E;       break;
+  case CmpInst::FCMP_OLT: NeedSwap = true;        LLVM_FALLTHROUGH;
+  case CmpInst::FCMP_OGT: CC = X86::COND_A;       break;
+  case CmpInst::FCMP_OLE: NeedSwap = true;        LLVM_FALLTHROUGH;
+  case CmpInst::FCMP_OGE: CC = X86::COND_AE;      break;
+  case CmpInst::FCMP_UGT: NeedSwap = true;        LLVM_FALLTHROUGH;
+  case CmpInst::FCMP_ULT: CC = X86::COND_B;       break;
+  case CmpInst::FCMP_UGE: NeedSwap = true;        LLVM_FALLTHROUGH;
+  case CmpInst::FCMP_ULE: CC = X86::COND_BE;      break;
+  case CmpInst::FCMP_ONE: CC = X86::COND_NE;      break;
+  case CmpInst::FCMP_UNO: CC = X86::COND_P;       break;
+  case CmpInst::FCMP_ORD: CC = X86::COND_NP;      break;
+  case CmpInst::FCMP_OEQ:                         LLVM_FALLTHROUGH;
+  case CmpInst::FCMP_UNE: CC = X86::COND_INVALID; break;
+
+  // Integer Predicates
+  case CmpInst::ICMP_EQ:  CC = X86::COND_E;       break;
+  case CmpInst::ICMP_NE:  CC = X86::COND_NE;      break;
+  case CmpInst::ICMP_UGT: CC = X86::COND_A;       break;
+  case CmpInst::ICMP_UGE: CC = X86::COND_AE;      break;
+  case CmpInst::ICMP_ULT: CC = X86::COND_B;       break;
+  case CmpInst::ICMP_ULE: CC = X86::COND_BE;      break;
+  case CmpInst::ICMP_SGT: CC = X86::COND_G;       break;
+  case CmpInst::ICMP_SGE: CC = X86::COND_GE;      break;
+  case CmpInst::ICMP_SLT: CC = X86::COND_L;       break;
+  case CmpInst::ICMP_SLE: CC = X86::COND_LE;      break;
+  }
+
+  return std::make_pair(CC, NeedSwap);
 }
 
 /// Return a set opcode for the given condition and

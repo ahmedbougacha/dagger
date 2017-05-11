@@ -207,7 +207,7 @@ public:
 
   /// The type of iterator to use when looping over actual arguments at this
   /// call site.
-  typedef IterTy arg_iterator;
+  using arg_iterator = IterTy;
 
   iterator_range<IterTy> args() const {
     return make_range(arg_begin(), arg_end());
@@ -231,7 +231,7 @@ public:
 
   /// Type of iterator to use when looping over data operands at this call site
   /// (see below).
-  typedef IterTy data_operand_iterator;
+  using data_operand_iterator = IterTy;
 
   /// data_operands_begin/data_operands_end - Return iterators iterating over
   /// the call / invoke argument list and bundle operands.  For invokes, this is
@@ -339,12 +339,20 @@ public:
     CALLSITE_DELEGATE_SETTER(addAttribute(i, Attr));
   }
 
+  void addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
+    CALLSITE_DELEGATE_SETTER(addParamAttr(ArgNo, Kind));
+  }
+
   void removeAttribute(unsigned i, Attribute::AttrKind Kind) {
     CALLSITE_DELEGATE_SETTER(removeAttribute(i, Kind));
   }
 
   void removeAttribute(unsigned i, StringRef Kind) {
     CALLSITE_DELEGATE_SETTER(removeAttribute(i, Kind));
+  }
+
+  void removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
+    CALLSITE_DELEGATE_SETTER(removeParamAttr(ArgNo, Kind));
   }
 
   /// Return true if this function has the given attribute.
@@ -408,11 +416,9 @@ public:
     CALLSITE_DELEGATE_GETTER(getDereferenceableOrNullBytes(i));
   }
 
-  /// Determine if the parameter or return value is marked with NoAlias
-  /// attribute.
-  /// @param n The parameter to check. 1 is the first parameter, 0 is the return
-  bool doesNotAlias(unsigned n) const {
-    CALLSITE_DELEGATE_GETTER(doesNotAlias(n));
+  /// Determine if the return value is marked with NoAlias attribute.
+  bool returnDoesNotAlias() const {
+    CALLSITE_DELEGATE_GETTER(returnDoesNotAlias());
   }
 
   /// Return true if the call should not be treated as a call to a builtin.

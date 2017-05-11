@@ -221,20 +221,8 @@ void RuntimeDyldELF::registerEHFrames() {
     uint64_t EHFrameLoadAddr = Sections[EHFrameSID].getLoadAddress();
     size_t EHFrameSize = Sections[EHFrameSID].getSize();
     MemMgr.registerEHFrames(EHFrameAddr, EHFrameLoadAddr, EHFrameSize);
-    RegisteredEHFrameSections.push_back(EHFrameSID);
   }
   UnregisteredEHFrameSections.clear();
-}
-
-void RuntimeDyldELF::deregisterEHFrames() {
-  for (int i = 0, e = RegisteredEHFrameSections.size(); i != e; ++i) {
-    SID EHFrameSID = RegisteredEHFrameSections[i];
-    uint8_t *EHFrameAddr = Sections[EHFrameSID].getAddress();
-    uint64_t EHFrameLoadAddr = Sections[EHFrameSID].getLoadAddress();
-    size_t EHFrameSize = Sections[EHFrameSID].getSize();
-    MemMgr.deregisterEHFrames(EHFrameAddr, EHFrameLoadAddr, EHFrameSize);
-  }
-  RegisteredEHFrameSections.clear();
 }
 
 std::unique_ptr<RuntimeDyldELF>
@@ -802,18 +790,61 @@ void RuntimeDyldELF::resolveSystemZRelocation(const SectionEntry &Section,
     writeInt32BE(LocalAddress, Delta / 2);
     break;
   }
+  case ELF::R_390_PC16: {
+    int64_t Delta = (Value + Addend) - Section.getLoadAddressWithOffset(Offset);
+    assert(int16_t(Delta) == Delta && "R_390_PC16 overflow");
+    writeInt16BE(LocalAddress, Delta);
+    break;
+  }
   case ELF::R_390_PC32: {
     int64_t Delta = (Value + Addend) - Section.getLoadAddressWithOffset(Offset);
     assert(int32_t(Delta) == Delta && "R_390_PC32 overflow");
     writeInt32BE(LocalAddress, Delta);
     break;
   }
-  case ELF::R_390_64:
-    writeInt64BE(LocalAddress, Value + Addend);
-    break;
   case ELF::R_390_PC64: {
     int64_t Delta = (Value + Addend) - Section.getLoadAddressWithOffset(Offset);
     writeInt64BE(LocalAddress, Delta);
+    break;
+  }
+  case ELF::R_390_8:
+    *LocalAddress = (uint8_t)(Value + Addend);
+    break;
+  case ELF::R_390_16:
+    writeInt16BE(LocalAddress, Value + Addend);
+    break;
+  case ELF::R_390_32:
+    writeInt32BE(LocalAddress, Value + Addend);
+    break;
+  case ELF::R_390_64:
+    writeInt64BE(LocalAddress, Value + Addend);
+    break;
+  }
+}
+
+void RuntimeDyldELF::resolveBPFRelocation(const SectionEntry &Section,
+                                          uint64_t Offset, uint64_t Value,
+                                          uint32_t Type, int64_t Addend) {
+  bool isBE = Arch == Triple::bpfeb;
+
+  switch (Type) {
+  default:
+    llvm_unreachable("Relocation type not implemented yet!");
+    break;
+  case ELF::R_BPF_NONE:
+    break;
+  case ELF::R_BPF_64_64: {
+    write(isBE, Section.getAddressWithOffset(Offset), Value + Addend);
+    DEBUG(dbgs() << "Writing " << format("%p", (Value + Addend)) << " at "
+                 << format("%p\n", Section.getAddressWithOffset(Offset)));
+    break;
+  }
+  case ELF::R_BPF_64_32: {
+    Value += Addend;
+    assert(Value <= UINT32_MAX);
+    write(isBE, Section.getAddressWithOffset(Offset), static_cast<uint32_t>(Value));
+    DEBUG(dbgs() << "Writing " << format("%p", Value) << " at "
+                 << format("%p\n", Section.getAddressWithOffset(Offset)));
     break;
   }
   }
@@ -878,6 +909,10 @@ void RuntimeDyldELF::resolveRelocation(const SectionEntry &Section,
     break;
   case Triple::systemz:
     resolveSystemZRelocation(Section, Offset, Value, Type, Addend);
+    break;
+  case Triple::bpfel:
+  case Triple::bpfeb:
+    resolveBPFRelocation(Section, Offset, Value, Type, Addend);
     break;
   default:
     llvm_unreachable("Unsupported CPU type!");

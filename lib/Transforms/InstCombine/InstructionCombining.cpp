@@ -1948,9 +1948,9 @@ static bool isNeverEqualToUnescapedAlloc(Value *V, const TargetLibraryInfo *TLI,
   return isAllocLikeFn(V, TLI) && V != AI;
 }
 
-static bool
-isAllocSiteRemovable(Instruction *AI, SmallVectorImpl<WeakVH> &Users,
-                     const TargetLibraryInfo *TLI) {
+static bool isAllocSiteRemovable(Instruction *AI,
+                                 SmallVectorImpl<WeakTrackingVH> &Users,
+                                 const TargetLibraryInfo *TLI) {
   SmallVector<Instruction*, 4> Worklist;
   Worklist.push_back(AI);
 
@@ -2034,7 +2034,7 @@ Instruction *InstCombiner::visitAllocSite(Instruction &MI) {
   // If we have a malloc call which is only used in any amount of comparisons
   // to null and free calls, delete the calls and replace the comparisons with
   // true or false as appropriate.
-  SmallVector<WeakVH, 64> Users;
+  SmallVector<WeakTrackingVH, 64> Users;
   if (isAllocSiteRemovable(&MI, Users, &TLI)) {
     for (unsigned i = 0, e = Users.size(); i != e; ++i) {
       // Lowering all @llvm.objectsize calls first because they may
@@ -2182,8 +2182,8 @@ Instruction *InstCombiner::visitReturnInst(ReturnInst &RI) {
   // determine the value. If so, constant fold it.
   KnownBits Known(VTy->getPrimitiveSizeInBits());
   computeKnownBits(ResultOp, Known, 0, &RI);
-  if ((Known.Zero|Known.One).isAllOnesValue())
-    RI.setOperand(0, Constant::getIntegerValue(VTy, Known.One));
+  if (Known.isConstant())
+    RI.setOperand(0, Constant::getIntegerValue(VTy, Known.getConstant()));
 
   return nullptr;
 }
@@ -2863,8 +2863,8 @@ bool InstCombiner::run() {
       unsigned BitWidth = Ty->getScalarSizeInBits();
       KnownBits Known(BitWidth);
       computeKnownBits(I, Known, /*Depth*/0, I);
-      if ((Known.Zero | Known.One).isAllOnesValue()) {
-        Constant *C = ConstantInt::get(Ty, Known.One);
+      if (Known.isConstant()) {
+        Constant *C = ConstantInt::get(Ty, Known.getConstant());
         DEBUG(dbgs() << "IC: ConstFold (all bits known) to: " << *C <<
                         " from: " << *I << '\n');
 

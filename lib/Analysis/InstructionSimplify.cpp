@@ -1495,36 +1495,87 @@ static Value *simplifyAndOfICmpsWithSameOperands(ICmpInst *Op0, ICmpInst *Op1) {
 
 /// Commuted variants are assumed to be handled by calling this function again
 /// with the parameters swapped.
-static Value *SimplifyAndOfICmps(ICmpInst *Op0, ICmpInst *Op1) {
+static Value *simplifyOrOfICmpsWithSameOperands(ICmpInst *Op0, ICmpInst *Op1) {
+  ICmpInst::Predicate Pred0, Pred1;
+  Value *A ,*B;
+  if (!match(Op0, m_ICmp(Pred0, m_Value(A), m_Value(B))) ||
+      !match(Op1, m_ICmp(Pred1, m_Specific(A), m_Specific(B))))
+    return nullptr;
+
+  // We have (icmp Pred0, A, B) | (icmp Pred1, A, B).
+  // If Op1 is always implied true by Op0, then Op0 is a subset of Op1, and we
+  // can eliminate Op0 from this 'or'.
+  if (ICmpInst::isImpliedTrueByMatchingCmp(Pred0, Pred1))
+    return Op1;
+
+  // Check for any combination of predicates that cover the entire range of
+  // possibilities.
+  if ((Pred0 == ICmpInst::getInversePredicate(Pred1)) ||
+      (Pred0 == ICmpInst::ICMP_NE && ICmpInst::isTrueWhenEqual(Pred1)) ||
+      (Pred0 == ICmpInst::ICMP_SLE && Pred1 == ICmpInst::ICMP_SGE) ||
+      (Pred0 == ICmpInst::ICMP_ULE && Pred1 == ICmpInst::ICMP_UGE))
+    return getTrue(Op0->getType());
+
+  return nullptr;
+}
+
+/// Test if a pair of compares with a shared operand and 2 constants has an
+/// empty set intersection, full set union, or if one compare is a superset of
+/// the other.
+static Value *simplifyAndOrOfICmpsWithConstants(ICmpInst *Cmp0, ICmpInst *Cmp1,
+                                                bool IsAnd) {
+  // Look for this pattern: {and/or} (icmp X, C0), (icmp X, C1)).
+  if (Cmp0->getOperand(0) != Cmp1->getOperand(0))
+    return nullptr;
+
+  const APInt *C0, *C1;
+  if (!match(Cmp0->getOperand(1), m_APInt(C0)) ||
+      !match(Cmp1->getOperand(1), m_APInt(C1)))
+    return nullptr;
+
+  auto Range0 = ConstantRange::makeExactICmpRegion(Cmp0->getPredicate(), *C0);
+  auto Range1 = ConstantRange::makeExactICmpRegion(Cmp1->getPredicate(), *C1);
+
+  // For and-of-compares, check if the intersection is empty:
+  // (icmp X, C0) && (icmp X, C1) --> empty set --> false
+  if (IsAnd && Range0.intersectWith(Range1).isEmptySet())
+    return getFalse(Cmp0->getType());
+
+  // For or-of-compares, check if the union is full:
+  // (icmp X, C0) || (icmp X, C1) --> full set --> true
+  if (!IsAnd && Range0.unionWith(Range1).isFullSet())
+    return getTrue(Cmp0->getType());
+
+  // Is one range a superset of the other?
+  // If this is and-of-compares, take the smaller set:
+  // (icmp sgt X, 4) && (icmp sgt X, 42) --> icmp sgt X, 42
+  // If this is or-of-compares, take the larger set:
+  // (icmp sgt X, 4) || (icmp sgt X, 42) --> icmp sgt X, 4
+  if (Range0.contains(Range1))
+    return IsAnd ? Cmp1 : Cmp0;
+  if (Range1.contains(Range0))
+    return IsAnd ? Cmp0 : Cmp1;
+
+  return nullptr;
+}
+
+/// Commuted variants are assumed to be handled by calling this function again
+/// with the parameters swapped.
+static Value *simplifyAndOfICmps(ICmpInst *Op0, ICmpInst *Op1) {
   if (Value *X = simplifyUnsignedRangeCheck(Op0, Op1, /*IsAnd=*/true))
     return X;
 
   if (Value *X = simplifyAndOfICmpsWithSameOperands(Op0, Op1))
     return X;
 
-  // FIXME: This should be shared with or-of-icmps.
-  // Look for this pattern: (icmp V, C0) & (icmp V, C1)).
+  if (Value *X = simplifyAndOrOfICmpsWithConstants(Op0, Op1, true))
+    return X;
+
+  // (icmp (add V, C0), C1) & (icmp V, C0)
   Type *ITy = Op0->getType();
   ICmpInst::Predicate Pred0, Pred1;
   const APInt *C0, *C1;
   Value *V;
-  if (match(Op0, m_ICmp(Pred0, m_Value(V), m_APInt(C0))) &&
-      match(Op1, m_ICmp(Pred1, m_Specific(V), m_APInt(C1)))) {
-    // Make a constant range that's the intersection of the two icmp ranges.
-    // If the intersection is empty, we know that the result is false.
-    auto Range0 = ConstantRange::makeExactICmpRegion(Pred0, *C0);
-    auto Range1 = ConstantRange::makeExactICmpRegion(Pred1, *C1);
-    if (Range0.intersectWith(Range1).isEmptySet())
-      return getFalse(ITy);
-
-    // If a range is a superset of the other, the smaller set is all we need.
-    if (Range0.contains(Range1))
-      return Op1;
-    if (Range1.contains(Range0))
-      return Op0;
-  }
-
-  // (icmp (add V, C0), C1) & (icmp V, C0)
   if (!match(Op0, m_ICmp(Pred0, m_Add(m_Value(V), m_APInt(C0)), m_APInt(C1))))
     return nullptr;
 
@@ -1561,6 +1612,103 @@ static Value *SimplifyAndOfICmps(ICmpInst *Op0, ICmpInst *Op1) {
       if (Pred0 == ICmpInst::ICMP_ULE && Pred1 == ICmpInst::ICMP_UGT)
         return getFalse(ITy);
   }
+
+  return nullptr;
+}
+
+/// Commuted variants are assumed to be handled by calling this function again
+/// with the parameters swapped.
+static Value *simplifyOrOfICmps(ICmpInst *Op0, ICmpInst *Op1) {
+  if (Value *X = simplifyUnsignedRangeCheck(Op0, Op1, /*IsAnd=*/false))
+    return X;
+
+  if (Value *X = simplifyOrOfICmpsWithSameOperands(Op0, Op1))
+    return X;
+
+  if (Value *X = simplifyAndOrOfICmpsWithConstants(Op0, Op1, false))
+    return X;
+
+  // (icmp (add V, C0), C1) | (icmp V, C0)
+  ICmpInst::Predicate Pred0, Pred1;
+  const APInt *C0, *C1;
+  Value *V;
+  if (!match(Op0, m_ICmp(Pred0, m_Add(m_Value(V), m_APInt(C0)), m_APInt(C1))))
+    return nullptr;
+
+  if (!match(Op1, m_ICmp(Pred1, m_Specific(V), m_Value())))
+    return nullptr;
+
+  auto *AddInst = cast<BinaryOperator>(Op0->getOperand(0));
+  if (AddInst->getOperand(1) != Op1->getOperand(1))
+    return nullptr;
+
+  Type *ITy = Op0->getType();
+  bool isNSW = AddInst->hasNoSignedWrap();
+  bool isNUW = AddInst->hasNoUnsignedWrap();
+
+  const APInt Delta = *C1 - *C0;
+  if (C0->isStrictlyPositive()) {
+    if (Delta == 2) {
+      if (Pred0 == ICmpInst::ICMP_UGE && Pred1 == ICmpInst::ICMP_SLE)
+        return getTrue(ITy);
+      if (Pred0 == ICmpInst::ICMP_SGE && Pred1 == ICmpInst::ICMP_SLE && isNSW)
+        return getTrue(ITy);
+    }
+    if (Delta == 1) {
+      if (Pred0 == ICmpInst::ICMP_UGT && Pred1 == ICmpInst::ICMP_SLE)
+        return getTrue(ITy);
+      if (Pred0 == ICmpInst::ICMP_SGT && Pred1 == ICmpInst::ICMP_SLE && isNSW)
+        return getTrue(ITy);
+    }
+  }
+  if (C0->getBoolValue() && isNUW) {
+    if (Delta == 2)
+      if (Pred0 == ICmpInst::ICMP_UGE && Pred1 == ICmpInst::ICMP_ULE)
+        return getTrue(ITy);
+    if (Delta == 1)
+      if (Pred0 == ICmpInst::ICMP_UGT && Pred1 == ICmpInst::ICMP_ULE)
+        return getTrue(ITy);
+  }
+
+  return nullptr;
+}
+
+static Value *simplifyPossiblyCastedAndOrOfICmps(ICmpInst *Cmp0, ICmpInst *Cmp1,
+                                                 bool IsAnd, CastInst *Cast) {
+  Value *V =
+      IsAnd ? simplifyAndOfICmps(Cmp0, Cmp1) : simplifyOrOfICmps(Cmp0, Cmp1);
+  if (!V)
+    return nullptr;
+  if (!Cast)
+    return V;
+
+  // If we looked through casts, we can only handle a constant simplification
+  // because we are not allowed to create a cast instruction here.
+  if (auto *C = dyn_cast<Constant>(V))
+    return ConstantExpr::getCast(Cast->getOpcode(), C, Cast->getType());
+
+  return nullptr;
+}
+
+static Value *simplifyAndOrOfICmps(Value *Op0, Value *Op1, bool IsAnd) {
+  // Look through casts of the 'and' operands to find compares.
+  auto *Cast0 = dyn_cast<CastInst>(Op0);
+  auto *Cast1 = dyn_cast<CastInst>(Op1);
+  if (Cast0 && Cast1 && Cast0->getOpcode() == Cast1->getOpcode() &&
+      Cast0->getSrcTy() == Cast1->getSrcTy()) {
+    Op0 = Cast0->getOperand(0);
+    Op1 = Cast1->getOperand(0);
+  }
+
+  auto *Cmp0 = dyn_cast<ICmpInst>(Op0);
+  auto *Cmp1 = dyn_cast<ICmpInst>(Op1);
+  if (!Cmp0 || !Cmp1)
+    return nullptr;
+
+  if (Value *V = simplifyPossiblyCastedAndOrOfICmps(Cmp0, Cmp1, IsAnd, Cast0))
+    return V;
+  if (Value *V = simplifyPossiblyCastedAndOrOfICmps(Cmp1, Cmp0, IsAnd, Cast0))
+    return V;
 
   return nullptr;
 }
@@ -1615,32 +1763,8 @@ static Value *SimplifyAndInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
       return Op1;
   }
 
-  if (auto *ICILHS = dyn_cast<ICmpInst>(Op0)) {
-    if (auto *ICIRHS = dyn_cast<ICmpInst>(Op1)) {
-      if (Value *V = SimplifyAndOfICmps(ICILHS, ICIRHS))
-        return V;
-      if (Value *V = SimplifyAndOfICmps(ICIRHS, ICILHS))
-        return V;
-    }
-  }
-
-  // The compares may be hidden behind casts. Look through those and try the
-  // same folds as above.
-  auto *Cast0 = dyn_cast<CastInst>(Op0);
-  auto *Cast1 = dyn_cast<CastInst>(Op1);
-  if (Cast0 && Cast1 && Cast0->getOpcode() == Cast1->getOpcode() &&
-      Cast0->getSrcTy() == Cast1->getSrcTy()) {
-    auto *Cmp0 = dyn_cast<ICmpInst>(Cast0->getOperand(0));
-    auto *Cmp1 = dyn_cast<ICmpInst>(Cast1->getOperand(0));
-    if (Cmp0 && Cmp1) {
-      Instruction::CastOps CastOpc = Cast0->getOpcode();
-      Type *ResultType = Cast0->getType();
-      if (auto *V = dyn_cast_or_null<Constant>(SimplifyAndOfICmps(Cmp0, Cmp1)))
-        return ConstantExpr::getCast(CastOpc, V, ResultType);
-      if (auto *V = dyn_cast_or_null<Constant>(SimplifyAndOfICmps(Cmp1, Cmp0)))
-        return ConstantExpr::getCast(CastOpc, V, ResultType);
-    }
-  }
+  if (Value *V = simplifyAndOrOfICmps(Op0, Op1, true))
+    return V;
 
   // Try some generic simplifications for associative operations.
   if (Value *V = SimplifyAssociativeBinOp(Instruction::And, Op0, Op1, Q,
@@ -1676,86 +1800,6 @@ static Value *SimplifyAndInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
 
 Value *llvm::SimplifyAndInst(Value *Op0, Value *Op1, const SimplifyQuery &Q) {
   return ::SimplifyAndInst(Op0, Op1, Q, RecursionLimit);
-}
-
-/// Commuted variants are assumed to be handled by calling this function again
-/// with the parameters swapped.
-static Value *simplifyOrOfICmpsWithSameOperands(ICmpInst *Op0, ICmpInst *Op1) {
-  ICmpInst::Predicate Pred0, Pred1;
-  Value *A ,*B;
-  if (!match(Op0, m_ICmp(Pred0, m_Value(A), m_Value(B))) ||
-      !match(Op1, m_ICmp(Pred1, m_Specific(A), m_Specific(B))))
-    return nullptr;
-
-  // We have (icmp Pred0, A, B) | (icmp Pred1, A, B).
-  // If Op1 is always implied true by Op0, then Op0 is a subset of Op1, and we
-  // can eliminate Op0 from this 'or'.
-  if (ICmpInst::isImpliedTrueByMatchingCmp(Pred0, Pred1))
-    return Op1;
-
-  // Check for any combination of predicates that cover the entire range of
-  // possibilities.
-  if ((Pred0 == ICmpInst::getInversePredicate(Pred1)) ||
-      (Pred0 == ICmpInst::ICMP_NE && ICmpInst::isTrueWhenEqual(Pred1)) ||
-      (Pred0 == ICmpInst::ICMP_SLE && Pred1 == ICmpInst::ICMP_SGE) ||
-      (Pred0 == ICmpInst::ICMP_ULE && Pred1 == ICmpInst::ICMP_UGE))
-    return getTrue(Op0->getType());
-
-  return nullptr;
-}
-
-/// Commuted variants are assumed to be handled by calling this function again
-/// with the parameters swapped.
-static Value *SimplifyOrOfICmps(ICmpInst *Op0, ICmpInst *Op1) {
-  if (Value *X = simplifyUnsignedRangeCheck(Op0, Op1, /*IsAnd=*/false))
-    return X;
-
-  if (Value *X = simplifyOrOfICmpsWithSameOperands(Op0, Op1))
-    return X;
-
-  // (icmp (add V, C0), C1) | (icmp V, C0)
-  ICmpInst::Predicate Pred0, Pred1;
-  const APInt *C0, *C1;
-  Value *V;
-  if (!match(Op0, m_ICmp(Pred0, m_Add(m_Value(V), m_APInt(C0)), m_APInt(C1))))
-    return nullptr;
-
-  if (!match(Op1, m_ICmp(Pred1, m_Specific(V), m_Value())))
-    return nullptr;
-
-  auto *AddInst = cast<BinaryOperator>(Op0->getOperand(0));
-  if (AddInst->getOperand(1) != Op1->getOperand(1))
-    return nullptr;
-
-  Type *ITy = Op0->getType();
-  bool isNSW = AddInst->hasNoSignedWrap();
-  bool isNUW = AddInst->hasNoUnsignedWrap();
-
-  const APInt Delta = *C1 - *C0;
-  if (C0->isStrictlyPositive()) {
-    if (Delta == 2) {
-      if (Pred0 == ICmpInst::ICMP_UGE && Pred1 == ICmpInst::ICMP_SLE)
-        return getTrue(ITy);
-      if (Pred0 == ICmpInst::ICMP_SGE && Pred1 == ICmpInst::ICMP_SLE && isNSW)
-        return getTrue(ITy);
-    }
-    if (Delta == 1) {
-      if (Pred0 == ICmpInst::ICMP_UGT && Pred1 == ICmpInst::ICMP_SLE)
-        return getTrue(ITy);
-      if (Pred0 == ICmpInst::ICMP_SGT && Pred1 == ICmpInst::ICMP_SLE && isNSW)
-        return getTrue(ITy);
-    }
-  }
-  if (C0->getBoolValue() && isNUW) {
-    if (Delta == 2)
-      if (Pred0 == ICmpInst::ICMP_UGE && Pred1 == ICmpInst::ICMP_ULE)
-        return getTrue(ITy);
-    if (Delta == 1)
-      if (Pred0 == ICmpInst::ICMP_UGT && Pred1 == ICmpInst::ICMP_ULE)
-        return getTrue(ITy);
-  }
-
-  return nullptr;
 }
 
 /// Given operands for an Or, see if we can fold the result.
@@ -1826,14 +1870,8 @@ static Value *SimplifyOrInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
        match(Op1, m_c_And(m_Not(m_Specific(A)), m_Specific(B)))))
     return Op0;
 
-  if (auto *ICILHS = dyn_cast<ICmpInst>(Op0)) {
-    if (auto *ICIRHS = dyn_cast<ICmpInst>(Op1)) {
-      if (Value *V = SimplifyOrOfICmps(ICILHS, ICIRHS))
-        return V;
-      if (Value *V = SimplifyOrOfICmps(ICIRHS, ICILHS))
-        return V;
-    }
-  }
+  if (Value *V = simplifyAndOrOfICmps(Op0, Op1, false))
+    return V;
 
   // Try some generic simplifications for associative operations.
   if (Value *V = SimplifyAssociativeBinOp(Instruction::Or, Op0, Op1, Q,
@@ -2497,6 +2535,9 @@ static Value *simplifyICmpWithConstant(CmpInst::Predicate Pred, Value *LHS,
   return nullptr;
 }
 
+/// TODO: A large part of this logic is duplicated in InstCombine's
+/// foldICmpBinOp(). We should be able to share that and avoid the code
+/// duplication.
 static Value *simplifyICmpWithBinOp(CmpInst::Predicate Pred, Value *LHS,
                                     Value *RHS, const SimplifyQuery &Q,
                                     unsigned MaxRecurse) {
@@ -3996,24 +4037,21 @@ Value *llvm::SimplifyCastInst(unsigned CastOpc, Value *Op, Type *Ty,
 /// match a root vector source operand that contains that element in the same
 /// vector lane (ie, the same mask index), so we can eliminate the shuffle(s).
 static Value *foldIdentityShuffles(int DestElt, Value *Op0, Value *Op1,
-                                   Constant *Mask, Value *RootVec, int RootElt,
+                                   int MaskVal, Value *RootVec,
                                    unsigned MaxRecurse) {
   if (!MaxRecurse--)
     return nullptr;
 
   // Bail out if any mask value is undefined. That kind of shuffle may be
   // simplified further based on demanded bits or other folds.
-  int MaskVal = ShuffleVectorInst::getMaskValue(Mask, RootElt);
   if (MaskVal == -1)
     return nullptr;
 
   // The mask value chooses which source operand we need to look at next.
-  Value *SourceOp;
   int InVecNumElts = Op0->getType()->getVectorNumElements();
-  if (MaskVal < InVecNumElts) {
-    RootElt = MaskVal;
-    SourceOp = Op0;
-  } else {
+  int RootElt = MaskVal;
+  Value *SourceOp = Op0;
+  if (MaskVal >= InVecNumElts) {
     RootElt = MaskVal - InVecNumElts;
     SourceOp = Op1;
   }
@@ -4023,7 +4061,7 @@ static Value *foldIdentityShuffles(int DestElt, Value *Op0, Value *Op1,
   if (auto *SourceShuf = dyn_cast<ShuffleVectorInst>(SourceOp)) {
     return foldIdentityShuffles(
         DestElt, SourceShuf->getOperand(0), SourceShuf->getOperand(1),
-        SourceShuf->getMask(), RootVec, RootElt, MaxRecurse);
+        SourceShuf->getMaskValue(RootElt), RootVec, MaxRecurse);
   }
 
   // TODO: Look through bitcasts? What if the bitcast changes the vector element
@@ -4088,15 +4126,7 @@ static Value *SimplifyShuffleVectorInst(Value *Op0, Value *Op1, Constant *Mask,
   // second one.
   if (Op0Const && !Op1Const) {
     std::swap(Op0, Op1);
-    for (auto &Idx : Indices) {
-      if (Idx == -1)
-        continue;
-      Idx = Idx < (int)MaskNumElts ? Idx + MaskNumElts : Idx - MaskNumElts;
-    }
-    Mask = ConstantDataVector::get(
-        Mask->getContext(),
-        makeArrayRef(reinterpret_cast<uint32_t *>(Indices.data()),
-                     MaskNumElts));
+    ShuffleVectorInst::commuteShuffleMask(Indices, InVecNumElts);
   }
 
   // A shuffle of a splat is always the splat itself. Legal if the shuffle's
@@ -4120,7 +4150,8 @@ static Value *SimplifyShuffleVectorInst(Value *Op0, Value *Op1, Constant *Mask,
   for (unsigned i = 0; i != MaskNumElts; ++i) {
     // Note that recursion is limited for each vector element, so if any element
     // exceeds the limit, this will fail to simplify.
-    RootVec = foldIdentityShuffles(i, Op0, Op1, Mask, RootVec, i, MaxRecurse);
+    RootVec =
+        foldIdentityShuffles(i, Op0, Op1, Indices[i], RootVec, MaxRecurse);
 
     // We can't replace a widening/narrowing shuffle with one of its operands.
     if (!RootVec || RootVec->getType() != RetTy)
@@ -4604,8 +4635,8 @@ Value *llvm::SimplifyInstruction(Instruction *I, const SimplifyQuery &SQ,
     unsigned BitWidth = I->getType()->getScalarSizeInBits();
     KnownBits Known(BitWidth);
     computeKnownBits(I, Known, Q.DL, /*Depth*/ 0, Q.AC, I, Q.DT, ORE);
-    if ((Known.Zero | Known.One).isAllOnesValue())
-      Result = ConstantInt::get(I->getType(), Known.One);
+    if (Known.isConstant())
+      Result = ConstantInt::get(I->getType(), Known.getConstant());
   }
 
   /// If called on unreachable code, the above logic may report that the
