@@ -661,7 +661,7 @@ SDValue RegsForValue::getCopyFromRegs(SelectionDAG &DAG,
 
       unsigned RegSize = RegisterVT.getSizeInBits();
       unsigned NumSignBits = LOI->NumSignBits;
-      unsigned NumZeroBits = LOI->Known.Zero.countLeadingOnes();
+      unsigned NumZeroBits = LOI->Known.countMinLeadingZeros();
 
       if (NumZeroBits == RegSize) {
         // The current value is a zero.
@@ -5645,7 +5645,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
       int FI = FuncInfo.StaticAllocaMap[Slot];
       MCSymbol *FrameAllocSym =
           MF.getMMI().getContext().getOrCreateFrameAllocSymbol(
-              GlobalValue::getRealLinkageName(MF.getName()), Idx);
+              GlobalValue::dropLLVMManglingEscape(MF.getName()), Idx);
       BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, dl,
               TII->get(TargetOpcode::LOCAL_ESCAPE))
           .addSym(FrameAllocSym)
@@ -5666,7 +5666,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     unsigned IdxVal = unsigned(Idx->getLimitedValue(INT_MAX));
     MCSymbol *FrameAllocSym =
         MF.getMMI().getContext().getOrCreateFrameAllocSymbol(
-            GlobalValue::getRealLinkageName(Fn->getName()), IdxVal);
+            GlobalValue::dropLLVMManglingEscape(Fn->getName()), IdxVal);
 
     // Create a MCSymbol for the label to avoid any target lowering
     // that would make this PC relative.

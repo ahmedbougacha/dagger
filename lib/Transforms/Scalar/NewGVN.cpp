@@ -283,7 +283,6 @@ public:
 
   // Forward propagation info
   const Expression *getDefiningExpr() const { return DefiningExpr; }
-  void setDefiningExpr(const Expression *E) { DefiningExpr = E; }
 
   // Value member set
   bool empty() const { return Members.empty(); }
@@ -665,7 +664,7 @@ private:
                ? InstrToDFSNum(cast<MemoryUseOrDef>(MA)->getMemoryInst())
                : InstrDFS.lookup(MA);
   }
-  bool isCycleFree(const PHINode *PN) const ;
+  bool isCycleFree(const PHINode *PN) const;
   template <class T, class Range> T *getMinDFSOfRange(const Range &) const;
   // Debug counter info.  When verifying, we have to reset the value numbering
   // debug counter to the same state it started in to get the same results.
@@ -1046,9 +1045,8 @@ Value *NewGVN::lookupOperandLeader(Value *V) const {
 const MemoryAccess *NewGVN::lookupMemoryLeader(const MemoryAccess *MA) const {
   auto *CC = getMemoryClass(MA);
   assert(CC->getMemoryLeader() &&
-         "Every MemoryAccess should be mapped to a "
-         "congruence class with a represenative memory "
-         "access");
+         "Every MemoryAccess should be mapped to a congruence class with a "
+         "representative memory access");
   return CC->getMemoryLeader();
 }
 
@@ -1313,7 +1311,7 @@ NewGVN::performSymbolicPredicateInfoEvaluation(Instruction *I) const {
     return nullptr;
 
   if (CopyOf != Cmp->getOperand(0) && CopyOf != Cmp->getOperand(1)) {
-    DEBUG(dbgs() << "Copy is not of any condition operands!");
+    DEBUG(dbgs() << "Copy is not of any condition operands!\n");
     return nullptr;
   }
   Value *FirstOp = lookupOperandLeader(Cmp->getOperand(0));
@@ -1409,7 +1407,7 @@ bool NewGVN::setMemoryClass(const MemoryAccess *From,
         NewClass->memory_insert(MP);
         // This may have killed the class if it had no non-memory members
         if (OldClass->getMemoryLeader() == From) {
-          if (OldClass->memory_empty()) {
+          if (OldClass->definesNoMemory()) {
             OldClass->setMemoryLeader(nullptr);
           } else {
             OldClass->setMemoryLeader(getNextMemoryLeader(OldClass));
@@ -1473,7 +1471,8 @@ const Expression *NewGVN::performSymbolicPHIEvaluation(Instruction *I) const {
   // not to later change the value of the phi.
   // IE it can't be v = phi(undef, v+1)
   bool AllConstant = true;
-  auto *E = cast<PHIExpression>(createPHIExpression(I, HasBackedge, AllConstant));
+  auto *E =
+      cast<PHIExpression>(createPHIExpression(I, HasBackedge, AllConstant));
   // We match the semantics of SimplifyPhiNode from InstructionSimplify here.
   // See if all arguments are the same.
   // We track if any were undef because they need special handling.
@@ -1983,10 +1982,9 @@ void NewGVN::moveValueToNewCongruenceClass(Instruction *I, const Expression *E,
     if (NewClass->getStoreCount() == 0 && !NewClass->getStoredValue()) {
       // If it's a store expression we are using, it means we are not equivalent
       // to something earlier.
-      if (isa<StoreExpression>(E)) {
-        assert(lookupOperandLeader(SI->getValueOperand()) !=
-               NewClass->getLeader());
-        NewClass->setStoredValue(lookupOperandLeader(SI->getValueOperand()));
+      if (auto *SE = dyn_cast<StoreExpression>(E)) {
+        assert(SE->getStoredValue() != NewClass->getLeader());
+        NewClass->setStoredValue(SE->getStoredValue());
         markValueLeaderChangeTouched(NewClass);
         // Shift the new class leader to be the store
         DEBUG(dbgs() << "Changing leader of congruence class "
@@ -2012,7 +2010,7 @@ void NewGVN::moveValueToNewCongruenceClass(Instruction *I, const Expression *E,
   // See if we destroyed the class or need to swap leaders.
   if (OldClass->empty() && OldClass != TOPClass) {
     if (OldClass->getDefiningExpr()) {
-      DEBUG(dbgs() << "Erasing expression " << OldClass->getDefiningExpr()
+      DEBUG(dbgs() << "Erasing expression " << *OldClass->getDefiningExpr()
                    << " from table\n");
       ExpressionToClass.erase(OldClass->getDefiningExpr());
     }
@@ -2091,7 +2089,7 @@ void NewGVN::performCongruenceFinding(Instruction *I, const Expression *E) {
       } else if (const auto *SE = dyn_cast<StoreExpression>(E)) {
         StoreInst *SI = SE->getStoreInst();
         NewClass->setLeader(SI);
-        NewClass->setStoredValue(lookupOperandLeader(SI->getValueOperand()));
+        NewClass->setStoredValue(SE->getStoredValue());
         // The RepMemoryAccess field will be filled in properly by the
         // moveValueToNewCongruenceClass call.
       } else {
@@ -2550,6 +2548,19 @@ void NewGVN::verifyMemoryCongruency() const {
           return false;
         if (auto *MemDef = dyn_cast<MemoryDef>(Pair.first))
           return !isInstructionTriviallyDead(MemDef->getMemoryInst());
+
+        // We could have phi nodes which operands are all trivially dead,
+        // so we don't process them.
+        if (auto *MemPHI = dyn_cast<MemoryPhi>(Pair.first)) {
+          for (auto &U : MemPHI->incoming_values()) {
+            if (Instruction *I = dyn_cast<Instruction>(U.get())) {
+              if (!isInstructionTriviallyDead(I))
+                return true;
+            }
+          }
+          return false;
+        }
+
         return true;
       };
 
