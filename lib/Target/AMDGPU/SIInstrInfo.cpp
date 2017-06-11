@@ -20,10 +20,10 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/CodeGen/ScheduleDAG.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
-#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/MC/MCInstrDesc.h"
 #include "llvm/Support/Debug.h"
 
@@ -765,7 +765,7 @@ void SIInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
       .addFrameIndex(FrameIndex)               // addr
       .addMemOperand(MMO)
       .addReg(MFI->getScratchRSrcReg(), RegState::Implicit)
-      .addReg(MFI->getScratchWaveOffsetReg(), RegState::Implicit);
+      .addReg(MFI->getFrameOffsetReg(), RegState::Implicit);
     // Add the scratch resource registers as implicit uses because we may end up
     // needing them, and need to ensure that the reserved registers are
     // correctly handled.
@@ -796,7 +796,7 @@ void SIInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
     .addReg(SrcReg, getKillRegState(isKill)) // data
     .addFrameIndex(FrameIndex)               // addr
     .addReg(MFI->getScratchRSrcReg())        // scratch_rsrc
-    .addReg(MFI->getScratchWaveOffsetReg())  // scratch_offset
+    .addReg(MFI->getFrameOffsetReg())        // scratch_offset
     .addImm(0)                               // offset
     .addMemOperand(MMO);
 }
@@ -869,7 +869,7 @@ void SIInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
       .addFrameIndex(FrameIndex) // addr
       .addMemOperand(MMO)
       .addReg(MFI->getScratchRSrcReg(), RegState::Implicit)
-      .addReg(MFI->getScratchWaveOffsetReg(), RegState::Implicit);
+      .addReg(MFI->getFrameOffsetReg(), RegState::Implicit);
 
     if (ST.hasScalarStores()) {
       // m0 is used for offset to scalar stores if used to spill.
@@ -892,10 +892,10 @@ void SIInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
 
   unsigned Opcode = getVGPRSpillRestoreOpcode(SpillSize);
   BuildMI(MBB, MI, DL, get(Opcode), DestReg)
-    .addFrameIndex(FrameIndex)              // vaddr
-    .addReg(MFI->getScratchRSrcReg())       // scratch_rsrc
-    .addReg(MFI->getScratchWaveOffsetReg()) // scratch_offset
-    .addImm(0)                              // offset
+    .addFrameIndex(FrameIndex)        // vaddr
+    .addReg(MFI->getScratchRSrcReg()) // scratch_rsrc
+    .addReg(MFI->getFrameOffsetReg()) // scratch_offset
+    .addImm(0)                        // offset
     .addMemOperand(MMO);
 }
 
@@ -2331,6 +2331,10 @@ static bool isSubRegOf(const SIRegisterInfo &TRI,
 bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
                                     StringRef &ErrInfo) const {
   uint16_t Opcode = MI.getOpcode();
+
+  if (SIInstrInfo::isGenericOpcode(MI.getOpcode()))
+    return true;
+
   const MachineRegisterInfo &MRI = MI.getParent()->getParent()->getRegInfo();
   int Src0Idx = AMDGPU::getNamedOperandIdx(Opcode, AMDGPU::OpName::src0);
   int Src1Idx = AMDGPU::getNamedOperandIdx(Opcode, AMDGPU::OpName::src1);

@@ -17,13 +17,13 @@
 #define LLVM_IR_INSTRTYPES_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instruction.h"
@@ -61,9 +61,6 @@ protected:
   TerminatorInst(Type *Ty, Instruction::TermOps iType,
                  Use *Ops, unsigned NumOps, BasicBlock *InsertAtEnd)
     : Instruction(Ty, iType, Ops, NumOps, InsertAtEnd) {}
-
-  // Out of line virtual method, so the vtable, etc has a home.
-  ~TerminatorInst() override;
 
 public:
   /// Return the number of successors that this terminator has.
@@ -298,9 +295,6 @@ public:
   }
 
   void *operator new(size_t, unsigned) = delete;
-
-  // Out of line virtual method, so the vtable, etc has a home.
-  ~UnaryInstruction() override;
 
   /// Transparently provide more efficient getOperand methods.
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
@@ -568,8 +562,6 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(BinaryOperator, Value)
 /// if (isa<CastInst>(Instr)) { ... }
 /// @brief Base class of casting instructions.
 class CastInst : public UnaryInstruction {
-  void anchor() override;
-
 protected:
   /// @brief Constructor with insert-before-instruction semantics for subclasses
   CastInst(Type *Ty, unsigned iType, Value *S,
@@ -913,8 +905,6 @@ protected:
   CmpInst(Type *ty, Instruction::OtherOps op, Predicate pred,
           Value *LHS, Value *RHS, const Twine &Name,
           BasicBlock *InsertAtEnd);
-
-  void anchor() override; // Out of line virtual method.
 
 public:
   CmpInst() = delete;

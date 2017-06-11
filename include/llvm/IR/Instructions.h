@@ -17,13 +17,13 @@
 #define LLVM_IR_INSTRUCTIONS_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/iterator.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/None.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallingConv.h"
@@ -88,9 +88,6 @@ public:
              const Twine &Name = "", Instruction *InsertBefore = nullptr);
   AllocaInst(Type *Ty, unsigned AddrSpace, Value *ArraySize, unsigned Align,
              const Twine &Name, BasicBlock *InsertAtEnd);
-
-  // Out of line virtual method, so the vtable, etc. has a home.
-  ~AllocaInst() override;
 
   /// Return true if there is an allocation size parameter to the allocation
   /// instruction that is not 1.
@@ -856,7 +853,6 @@ class GetElementPtrInst : public Instruction {
                            ArrayRef<Value *> IdxList, unsigned Values,
                            const Twine &NameStr, BasicBlock *InsertAtEnd);
 
-  void anchor() override;
   void init(Value *Ptr, ArrayRef<Value *> IdxList, const Twine &NameStr);
 
 protected:
@@ -1112,8 +1108,6 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(GetElementPtrInst, Value)
 /// must be identical types.
 /// Represent an integer comparison operator.
 class ICmpInst: public CmpInst {
-  void anchor() override;
-
   void AssertOK() {
     assert(getPredicate() >= CmpInst::FIRST_ICMP_PREDICATE &&
            getPredicate() <= CmpInst::LAST_ICMP_PREDICATE &&
@@ -1426,8 +1420,6 @@ protected:
   CallInst *cloneImpl() const;
 
 public:
-  ~CallInst() override;
-
   static CallInst *Create(Value *Func, ArrayRef<Value *> Args,
                           ArrayRef<OperandBundleDef> Bundles = None,
                           const Twine &NameStr = "",
@@ -1668,6 +1660,9 @@ public:
   /// Adds the attribute to the indicated argument
   void addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind);
 
+  /// Adds the attribute to the indicated argument
+  void addParamAttr(unsigned ArgNo, Attribute Attr);
+
   /// removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute::AttrKind Kind);
 
@@ -1676,6 +1671,9 @@ public:
 
   /// Removes the attribute from the given argument
   void removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind);
+
+  /// Removes the attribute from the given argument
+  void removeParamAttr(unsigned ArgNo, StringRef Kind);
 
   /// adds the dereferenceable attribute to the list of attributes.
   void addDereferenceableAttr(unsigned i, uint64_t Bytes);
@@ -1710,6 +1708,18 @@ public:
   /// Get the attribute of a given kind at a position.
   Attribute getAttribute(unsigned i, StringRef Kind) const {
     return getAttributes().getAttribute(i, Kind);
+  }
+
+  /// Get the attribute of a given kind from a given arg
+  Attribute getParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) const {
+    assert(ArgNo < getNumArgOperands() && "Out of bounds");
+    return getAttributes().getParamAttr(ArgNo, Kind);
+  }
+
+  /// Get the attribute of a given kind from a given arg
+  Attribute getParamAttr(unsigned ArgNo, StringRef Kind) const {
+    assert(ArgNo < getNumArgOperands() && "Out of bounds");
+    return getAttributes().getParamAttr(ArgNo, Kind);
   }
 
   /// Return true if the data operand at index \p i has the attribute \p
@@ -2224,6 +2234,8 @@ public:
     return User::operator new(s, 3);
   }
 
+  void *operator new(size_t, unsigned) = delete;
+
   /// Return true if a shufflevector instruction can be
   /// formed with the specified operands.
   static bool isValidOperands(const Value *V1, const Value *V2,
@@ -2320,9 +2332,6 @@ class ExtractValueInst : public UnaryInstruction {
   inline ExtractValueInst(Value *Agg,
                           ArrayRef<unsigned> Idxs,
                           const Twine &NameStr, BasicBlock *InsertAtEnd);
-
-  // allocate space for exactly one operand
-  void *operator new(size_t s) { return User::operator new(s, 1); }
 
   void init(ArrayRef<unsigned> Idxs, const Twine &NameStr);
 
@@ -2569,7 +2578,6 @@ class PHINode : public Instruction {
   unsigned ReservedSpace;
 
   PHINode(const PHINode &PN);
-  // allocate space for exactly zero operands
 
   explicit PHINode(Type *Ty, unsigned NumReservedValues,
                    const Twine &NameStr = "",
@@ -2588,11 +2596,10 @@ class PHINode : public Instruction {
     allocHungoffUses(ReservedSpace);
   }
 
+  // allocate space for exactly zero operands
   void *operator new(size_t s) {
     return User::operator new(s);
   }
-
-  void anchor() override;
 
 protected:
   // Note: Instruction needs to be a friend here to call cloneImpl.
@@ -2927,8 +2934,6 @@ protected:
   ReturnInst *cloneImpl() const;
 
 public:
-  ~ReturnInst() override;
-
   static ReturnInst* Create(LLVMContext &C, Value *retVal = nullptr,
                             Instruction *InsertBefore = nullptr) {
     return new(!!retVal) ReturnInst(C, retVal, InsertBefore);
@@ -2964,9 +2969,13 @@ public:
 private:
   friend TerminatorInst;
 
-  BasicBlock *getSuccessorV(unsigned idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned idx, BasicBlock *B);
+  BasicBlock *getSuccessor(unsigned idx) const {
+    llvm_unreachable("ReturnInst has no successors!");
+  }
+
+  void setSuccessor(unsigned idx, BasicBlock *B) {
+    llvm_unreachable("ReturnInst has no successors!");
+  }
 };
 
 template <>
@@ -3072,13 +3081,6 @@ public:
   static inline bool classof(const Value *V) {
     return isa<Instruction>(V) && classof(cast<Instruction>(V));
   }
-
-private:
-  friend TerminatorInst;
-
-  BasicBlock *getSuccessorV(unsigned idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned idx, BasicBlock *B);
 };
 
 template <>
@@ -3438,13 +3440,6 @@ public:
   static inline bool classof(const Value *V) {
     return isa<Instruction>(V) && classof(cast<Instruction>(V));
   }
-
-private:
-  friend TerminatorInst;
-
-  BasicBlock *getSuccessorV(unsigned idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned idx, BasicBlock *B);
 };
 
 template <>
@@ -3545,13 +3540,6 @@ public:
   static inline bool classof(const Value *V) {
     return isa<Instruction>(V) && classof(cast<Instruction>(V));
   }
-
-private:
-  friend TerminatorInst;
-
-  BasicBlock *getSuccessorV(unsigned idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned idx, BasicBlock *B);
 };
 
 template <>
@@ -4030,12 +4018,6 @@ public:
   }
 
 private:
-  friend TerminatorInst;
-
-  BasicBlock *getSuccessorV(unsigned idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned idx, BasicBlock *B);
-
   template <typename AttrKind> bool hasFnAttrImpl(AttrKind Kind) const {
     if (Attrs.hasAttribute(AttributeList::FunctionIndex, Kind))
       return true;
@@ -4133,9 +4115,13 @@ public:
 private:
   friend TerminatorInst;
 
-  BasicBlock *getSuccessorV(unsigned idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned idx, BasicBlock *B);
+  BasicBlock *getSuccessor(unsigned idx) const {
+    llvm_unreachable("ResumeInst has no successors!");
+  }
+
+  void setSuccessor(unsigned idx, BasicBlock *NewSucc) {
+    llvm_unreachable("ResumeInst has no successors!");
+  }
 };
 
 template <>
@@ -4315,13 +4301,6 @@ public:
   static inline bool classof(const Value *V) {
     return isa<Instruction>(V) && classof(cast<Instruction>(V));
   }
-
-private:
-  friend TerminatorInst;
-
-  BasicBlock *getSuccessorV(unsigned Idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned Idx, BasicBlock *B);
 };
 
 template <>
@@ -4486,9 +4465,15 @@ public:
 private:
   friend TerminatorInst;
 
-  BasicBlock *getSuccessorV(unsigned Idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned Idx, BasicBlock *B);
+  BasicBlock *getSuccessor(unsigned Idx) const {
+    assert(Idx < getNumSuccessors() && "Successor # out of range for catchret!");
+    return getSuccessor();
+  }
+
+  void setSuccessor(unsigned Idx, BasicBlock *B) {
+    assert(Idx < getNumSuccessors() && "Successor # out of range for catchret!");
+    setSuccessor(B);
+  }
 };
 
 template <>
@@ -4576,9 +4561,15 @@ public:
 private:
   friend TerminatorInst;
 
-  BasicBlock *getSuccessorV(unsigned Idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned Idx, BasicBlock *B);
+  BasicBlock *getSuccessor(unsigned Idx) const {
+    assert(Idx == 0);
+    return getUnwindDest();
+  }
+
+  void setSuccessor(unsigned Idx, BasicBlock *B) {
+    assert(Idx == 0);
+    setUnwindDest(B);
+  }
 
   // Shadow Instruction::setInstructionSubclassData with a private forwarding
   // method so that subclasses cannot accidentally use it.
@@ -4633,9 +4624,13 @@ public:
 private:
   friend TerminatorInst;
 
-  BasicBlock *getSuccessorV(unsigned idx) const;
-  unsigned getNumSuccessorsV() const;
-  void setSuccessorV(unsigned idx, BasicBlock *B);
+  BasicBlock *getSuccessor(unsigned idx) const {
+    llvm_unreachable("UnreachableInst has no successors!");
+  }
+
+  void setSuccessor(unsigned idx, BasicBlock *B) {
+    llvm_unreachable("UnreachableInst has no successors!");
+  }
 };
 
 //===----------------------------------------------------------------------===//

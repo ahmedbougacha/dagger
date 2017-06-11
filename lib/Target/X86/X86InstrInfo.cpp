@@ -914,6 +914,8 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::VPMOVZXDQZrr,     X86::VPMOVZXDQZrm,       0 },
     { X86::VPMOVZXWDZrr,     X86::VPMOVZXWDZrm,       0 },
     { X86::VPMOVZXWQZrr,     X86::VPMOVZXWQZrm,       0 },
+    { X86::VPOPCNTDZrr,      X86::VPOPCNTDZrm,        0 },
+    { X86::VPOPCNTQZrr,      X86::VPOPCNTQZrm,        0 },
     { X86::VPSHUFDZri,       X86::VPSHUFDZmi,         0 },
     { X86::VPSHUFHWZri,      X86::VPSHUFHWZmi,        0 },
     { X86::VPSHUFLWZri,      X86::VPSHUFLWZmi,        0 },
@@ -2326,6 +2328,8 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::VPMOVZXDQZrrkz,    X86::VPMOVZXDQZrmkz,      0 },
     { X86::VPMOVZXWDZrrkz,    X86::VPMOVZXWDZrmkz,      0 },
     { X86::VPMOVZXWQZrrkz,    X86::VPMOVZXWQZrmkz,      0 },
+    { X86::VPOPCNTDZrrkz,     X86::VPOPCNTDZrmkz,       0 },
+    { X86::VPOPCNTQZrrkz,     X86::VPOPCNTQZrmkz,       0 },
     { X86::VPSHUFDZrikz,      X86::VPSHUFDZmikz,        0 },
     { X86::VPSHUFHWZrikz,     X86::VPSHUFHWZmikz,       0 },
     { X86::VPSHUFLWZrikz,     X86::VPSHUFLWZmikz,       0 },
@@ -2947,6 +2951,8 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::VPMOVZXDQZrrk,         X86::VPMOVZXDQZrmk,         0 },
     { X86::VPMOVZXWDZrrk,         X86::VPMOVZXWDZrmk,         0 },
     { X86::VPMOVZXWQZrrk,         X86::VPMOVZXWQZrmk,         0 },
+    { X86::VPOPCNTDZrrk,          X86::VPOPCNTDZrmk,          0 },
+    { X86::VPOPCNTQZrrk,          X86::VPOPCNTQZrmk,          0 },
     { X86::VPSHUFDZrik,           X86::VPSHUFDZmik,           0 },
     { X86::VPSHUFHWZrik,          X86::VPSHUFHWZmik,          0 },
     { X86::VPSHUFLWZrik,          X86::VPSHUFLWZmik,          0 },
@@ -3585,6 +3591,7 @@ X86InstrInfo::isCoalescableExtInstr(const MachineInstr &MI,
       // It's not always legal to reference the low 8-bit of the larger
       // register in 32-bit mode.
       return false;
+    LLVM_FALLTHROUGH;
   case X86::MOVSX32rr16:
   case X86::MOVZX32rr16:
   case X86::MOVSX64rr16:
@@ -5930,7 +5937,7 @@ void X86InstrInfo::replaceBranchWithTailCall(
 
   // Add implicit uses and defs of all live regs potentially clobbered by the
   // call. This way they still appear live across the call.
-  LivePhysRegs LiveRegs(&getRegisterInfo());
+  LivePhysRegs LiveRegs(getRegisterInfo());
   LiveRegs.addLiveOuts(MBB);
   SmallVector<std::pair<unsigned, const MachineOperand *>, 8> Clobbers;
   LiveRegs.stepForward(*MIB, Clobbers);
@@ -6545,9 +6552,9 @@ void X86InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     // first frame index.
     // See X86ISelLowering.cpp - X86::hasCopyImplyingStackAdjustment.
 
-    const TargetRegisterInfo *TRI = &getRegisterInfo();
+    const TargetRegisterInfo &TRI = getRegisterInfo();
     MachineBasicBlock::LivenessQueryResult LQR =
-        MBB.computeRegisterLiveness(TRI, AX, MI);
+        MBB.computeRegisterLiveness(&TRI, AX, MI);
     // We do not want to save and restore AX if we do not have to.
     // Moreover, if we do so whereas AX is dead, we would need to set
     // an undef flag on the use of AX, otherwise the verifier will
@@ -6564,7 +6571,7 @@ void X86InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
       }
       // AX contains the top most register in the aliasing hierarchy.
       // It may not be live, but one of its aliases may be.
-      for (MCRegAliasIterator AI(AX, TRI, true);
+      for (MCRegAliasIterator AI(AX, &TRI, true);
            AI.isValid() && LQR != MachineBasicBlock::LQR_Live; ++AI)
         LQR = LPR.contains(*AI) ? MachineBasicBlock::LQR_Live
                                 : MachineBasicBlock::LQR_Dead;
@@ -8374,7 +8381,7 @@ static bool isNonFoldablePartialRegisterLoad(const MachineInstr &LoadMI,
   unsigned Opc = LoadMI.getOpcode();
   unsigned UserOpc = UserMI.getOpcode();
   const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
-  const TargetRegisterClass *RC = 
+  const TargetRegisterClass *RC =
       MF.getRegInfo().getRegClass(LoadMI.getOperand(0).getReg());
   unsigned RegSize = TRI.getRegSizeInBits(*RC);
 
@@ -10473,7 +10480,7 @@ X86InstrInfo::getOutliningType(MachineInstr &MI) const {
   // catch it.
   if (MI.modifiesRegister(X86::RSP, &RI) || MI.readsRegister(X86::RSP, &RI) ||
       MI.getDesc().hasImplicitUseOfPhysReg(X86::RSP) ||
-      MI.getDesc().hasImplicitDefOfPhysReg(X86::RSP)) 
+      MI.getDesc().hasImplicitDefOfPhysReg(X86::RSP))
     return MachineOutlinerInstrType::Illegal;
 
   // Outlined calls change the instruction pointer, so don't read from it.
@@ -10511,9 +10518,7 @@ void X86InstrInfo::insertOutlinerEpilogue(MachineBasicBlock &MBB,
 
 void X86InstrInfo::insertOutlinerPrologue(MachineBasicBlock &MBB,
                                           MachineFunction &MF,
-                                          bool IsTailCall) const {
-  return;
-}
+                                          bool IsTailCall) const {}
 
 MachineBasicBlock::iterator
 X86InstrInfo::insertOutlinedCall(Module &M, MachineBasicBlock &MBB,

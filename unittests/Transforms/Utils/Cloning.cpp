@@ -41,13 +41,18 @@ protected:
   }
 
   void eraseClones() {
-    DeleteContainerPointers(Clones);
+    for (Value *V : Clones)
+      V->deleteValue();
+    Clones.clear();
   }
 
   void TearDown() override {
     eraseClones();
-    DeleteContainerPointers(Orig);
-    delete V;
+    for (Value *V : Orig)
+      V->deleteValue();
+    Orig.clear();
+    if (V)
+      V->deleteValue();
   }
 
   SmallPtrSet<Value *, 4> Orig;   // Erase on exit
@@ -356,7 +361,7 @@ TEST_F(CloneFunc, NewFunctionCreated) {
 // Test that a new subprogram entry was added and is pointing to the new
 // function, while the original subprogram still points to the old one.
 TEST_F(CloneFunc, Subprogram) {
-  EXPECT_FALSE(verifyModule(*M));
+  EXPECT_FALSE(verifyModule(*M, &errs()));
   EXPECT_EQ(3U, Finder->subprogram_count());
   EXPECT_NE(NewFunc->getSubprogram(), OldFunc->getSubprogram());
 }

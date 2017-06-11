@@ -16,9 +16,9 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/None.h"
-#include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
@@ -393,7 +393,7 @@ static Value *simplifyX86immShift(const IntrinsicInst &II,
   unsigned BitWidth = SVT->getPrimitiveSizeInBits();
 
   // If shift-by-zero then just return the original value.
-  if (Count == 0)
+  if (Count.isNullValue())
     return Vec;
 
   // Handle cases when Shift >= BitWidth.
@@ -1373,14 +1373,8 @@ static Instruction *foldCttzCtlz(IntrinsicInst &II, InstCombiner &IC) {
           II.getIntrinsicID() == Intrinsic::ctlz) &&
          "Expected cttz or ctlz intrinsic");
   Value *Op0 = II.getArgOperand(0);
-  // FIXME: Try to simplify vectors of integers.
-  auto *IT = dyn_cast<IntegerType>(Op0->getType());
-  if (!IT)
-    return nullptr;
 
-  unsigned BitWidth = IT->getBitWidth();
-  KnownBits Known(BitWidth);
-  IC.computeKnownBits(Op0, Known, 0, &II);
+  KnownBits Known = IC.computeKnownBits(Op0, 0, &II);
 
   // Create a mask for bits above (ctlz) or below (cttz) the first known one.
   bool IsTZ = II.getIntrinsicID() == Intrinsic::cttz;
@@ -1394,14 +1388,16 @@ static Instruction *foldCttzCtlz(IntrinsicInst &II, InstCombiner &IC) {
   // FIXME: This should be in InstSimplify because we're replacing an
   // instruction with a constant.
   if (PossibleZeros == DefiniteZeros) {
-    auto *C = ConstantInt::get(IT, DefiniteZeros);
+    auto *C = ConstantInt::get(Op0->getType(), DefiniteZeros);
     return IC.replaceInstUsesWith(II, C);
   }
 
   // If the input to cttz/ctlz is known to be non-zero,
   // then change the 'ZeroIsUndef' parameter to 'true'
   // because we know the zero behavior can't affect the result.
-  if (Known.One != 0 || isKnownNonZero(Op0, IC.getDataLayout())) {
+  if (!Known.One.isNullValue() ||
+      isKnownNonZero(Op0, IC.getDataLayout(), 0, &IC.getAssumptionCache(), &II,
+                     &IC.getDominatorTree())) {
     if (!match(II.getArgOperand(1), m_One())) {
       II.setOperand(1, IC.Builder->getTrue());
       return &II;
@@ -1818,8 +1814,8 @@ Instruction *InstCombiner::visitVACopyInst(VACopyInst &I) {
 /// lifting.
 Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   auto Args = CI.arg_operands();
-  if (Value *V =
-          SimplifyCall(CI.getCalledValue(), Args.begin(), Args.end(), SQ))
+  if (Value *V = SimplifyCall(&CI, CI.getCalledValue(), Args.begin(),
+                              Args.end(), SQ.getWithInstruction(&CI)))
     return replaceInstUsesWith(CI, V);
 
   if (isFreeCall(&CI, &TLI))
@@ -3838,24 +3834,24 @@ Instruction *InstCombiner::visitCallSite(CallSite CS) {
   // Mark any parameters that are known to be non-null with the nonnull
   // attribute.  This is helpful for inlining calls to functions with null
   // checks on their arguments.
-  SmallVector<unsigned, 4> Indices;
+  SmallVector<unsigned, 4> ArgNos;
   unsigned ArgNo = 0;
 
   for (Value *V : CS.args()) {
     if (V->getType()->isPointerTy() &&
         !CS.paramHasAttr(ArgNo, Attribute::NonNull) &&
         isKnownNonNullAt(V, CS.getInstruction(), &DT))
-      Indices.push_back(ArgNo + AttributeList::FirstArgIndex);
+      ArgNos.push_back(ArgNo);
     ArgNo++;
   }
 
   assert(ArgNo == CS.arg_size() && "sanity check");
 
-  if (!Indices.empty()) {
+  if (!ArgNos.empty()) {
     AttributeList AS = CS.getAttributes();
     LLVMContext &Ctx = CS.getInstruction()->getContext();
-    AS = AS.addAttribute(Ctx, Indices,
-                         Attribute::get(Ctx, Attribute::NonNull));
+    AS = AS.addParamAttribute(Ctx, ArgNos,
+                              Attribute::get(Ctx, Attribute::NonNull));
     CS.setAttributes(AS);
     Changed = true;
   }

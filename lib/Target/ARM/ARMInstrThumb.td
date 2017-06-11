@@ -1402,7 +1402,7 @@ def tADR : T1I<(outs tGPR:$Rd), (ins t_adrlabel:$addr, pred:$p),
   let DecoderMethod = "DecodeThumbAddSpecialReg";
 }
 
-let hasSideEffects = 0, isReMaterializable = 1, isAsCheapAsAMove = 1 in
+let hasSideEffects = 0, isReMaterializable = 1 in
 def tLEApcrel   : tPseudoInst<(outs tGPR:$Rd), (ins i32imm:$label, pred:$p),
                               2, IIC_iALUi, []>, Sched<[WriteALU]>;
 
@@ -1413,7 +1413,8 @@ def tLEApcrelJT : tPseudoInst<(outs tGPR:$Rd),
 
 // Thumb-1 doesn't have the TBB or TBH instructions, but we can synthesize them
 // and make use of the same compressed jump table format as Thumb-2.
-let Size = 2 in {
+let Size = 2, isBranch = 1, isTerminator = 1, isBarrier = 1,
+    isIndirectBranch = 1 in {
 def tTBB_JT : tPseudoInst<(outs),
         (ins tGPR:$base, tGPR:$index, i32imm:$jt, i32imm:$pclbl), 0, IIC_Br, []>,
         Sched<[WriteBr]>;

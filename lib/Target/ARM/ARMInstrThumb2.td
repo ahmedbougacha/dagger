@@ -1227,7 +1227,7 @@ def t2ADR : T2PCOneRegImm<(outs rGPR:$Rd),
   let DecoderMethod = "DecodeT2Adr";
 }
 
-let hasSideEffects = 0, isReMaterializable = 1, isAsCheapAsAMove = 1 in
+let hasSideEffects = 0, isReMaterializable = 1 in
 def t2LEApcrel   : t2PseudoInst<(outs rGPR:$Rd), (ins i32imm:$label, pred:$p),
                                 4, IIC_iALUi, []>, Sched<[WriteALU, ReadALU]>;
 let hasSideEffects = 1 in
@@ -3494,7 +3494,8 @@ def t2B   : T2I<(outs), (ins thumb_br_target:$target), IIC_Br,
   let AsmMatchConverter = "cvtThumbBranches";
 }
 
-let Size = 4, isNotDuplicable = 1, isIndirectBranch = 1 in {
+let Size = 4, isNotDuplicable = 1, isBranch = 1, isTerminator = 1,
+    isBarrier = 1, isIndirectBranch = 1 in {
 
 // available in both v8-M.Baseline and Thumb2 targets
 def t2BR_JT : t2basePseudoInst<(outs),

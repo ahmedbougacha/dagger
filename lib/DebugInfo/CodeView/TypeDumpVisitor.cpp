@@ -10,15 +10,13 @@
 #include "llvm/DebugInfo/CodeView/TypeDumpVisitor.h"
 
 #include "llvm/ADT/SmallString.h"
-#include "llvm/DebugInfo/CodeView/CVTypeDumper.h"
 #include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
 #include "llvm/DebugInfo/CodeView/Formatters.h"
+#include "llvm/DebugInfo/CodeView/TypeCollection.h"
 #include "llvm/DebugInfo/CodeView/TypeDatabase.h"
 #include "llvm/DebugInfo/CodeView/TypeDatabaseVisitor.h"
-#include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
-#include "llvm/DebugInfo/CodeView/TypeVisitorCallbackPipeline.h"
 #include "llvm/Support/BinaryByteStream.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/ScopedPrinter.h"
@@ -28,7 +26,7 @@ using namespace llvm::codeview;
 
 static const EnumEntry<TypeLeafKind> LeafTypeNames[] = {
 #define CV_TYPE(enum, val) {#enum, enum},
-#include "llvm/DebugInfo/CodeView/TypeRecords.def"
+#include "llvm/DebugInfo/CodeView/CodeViewTypes.def"
 };
 
 #define ENUM_ENTRY(enum_class, enum)                                           \
@@ -157,7 +155,7 @@ static StringRef getLeafTypeName(TypeLeafKind LT) {
 #define TYPE_RECORD(ename, value, name)                                        \
   case ename:                                                                  \
     return #name;
-#include "llvm/DebugInfo/CodeView/TypeRecords.def"
+#include "llvm/DebugInfo/CodeView/CodeViewTypes.def"
   default:
     break;
   }
@@ -165,16 +163,15 @@ static StringRef getLeafTypeName(TypeLeafKind LT) {
 }
 
 void TypeDumpVisitor::printTypeIndex(StringRef FieldName, TypeIndex TI) const {
-  CVTypeDumper::printTypeIndex(*W, FieldName, TI, TypeDB);
+  codeview::printTypeIndex(*W, FieldName, TI, TpiTypes);
 }
 
 void TypeDumpVisitor::printItemIndex(StringRef FieldName, TypeIndex TI) const {
-  CVTypeDumper::printTypeIndex(*W, FieldName, TI, getSourceDB());
+  codeview::printTypeIndex(*W, FieldName, TI, getSourceTypes());
 }
 
 Error TypeDumpVisitor::visitTypeBegin(CVType &Record) {
-  TypeIndex TI = getSourceDB().getAppendIndex();
-  return visitTypeBegin(Record, TI);
+  return visitTypeBegin(Record, TypeIndex::fromArrayIndex(TpiTypes.size()));
 }
 
 Error TypeDumpVisitor::visitTypeBegin(CVType &Record, TypeIndex Index) {
@@ -216,8 +213,7 @@ Error TypeDumpVisitor::visitMemberEnd(CVMemberRecord &Record) {
 
 Error TypeDumpVisitor::visitKnownRecord(CVType &CVR,
                                         FieldListRecord &FieldList) {
-  CVTypeVisitor Visitor(*this);
-  if (auto EC = Visitor.visitFieldListMemberStream(FieldList.Data))
+  if (auto EC = codeview::visitMemberRecordStream(FieldList.Data, *this))
     return EC;
 
   return Error::success();
@@ -246,7 +242,7 @@ Error TypeDumpVisitor::visitKnownRecord(CVType &CVR, StringListRecord &Strs) {
   W->printNumber("NumStrings", Size);
   ListScope Arguments(*W, "Strings");
   for (uint32_t I = 0; I < Size; ++I) {
-    printTypeIndex("String", Indices[I]);
+    printItemIndex("String", Indices[I]);
   }
   return Error::success();
 }

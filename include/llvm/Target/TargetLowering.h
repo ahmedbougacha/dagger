@@ -405,7 +405,9 @@ public:
   }
 
   /// Returns if it's reasonable to merge stores to MemVT size.
-  virtual bool canMergeStoresTo(EVT MemVT) const { return true; }
+  virtual bool canMergeStoresTo(unsigned AddressSpace, EVT MemVT) const {
+    return true;
+  }
 
   /// \brief Return true if it is cheap to speculate a call to intrinsic cttz.
   virtual bool isCheapToSpeculateCttz() const {
@@ -675,6 +677,16 @@ public:
                                   unsigned &NumIntermediates,
                                   MVT &RegisterVT) const;
 
+  /// Certain targets such as MIPS require that some types such as vectors are
+  /// always broken down into scalars in some contexts. This occurs even if the
+  /// vector type is legal.
+  virtual unsigned getVectorTypeBreakdownForCallingConv(
+      LLVMContext &Context, EVT VT, EVT &IntermediateVT,
+      unsigned &NumIntermediates, MVT &RegisterVT) const {
+    return getVectorTypeBreakdown(Context, VT, IntermediateVT, NumIntermediates,
+                                  RegisterVT);
+  }
+
   struct IntrinsicInfo {
     unsigned     opc = 0;          // target opcode
     EVT          memVT;            // memory VT
@@ -736,7 +748,7 @@ public:
     if (VT.isExtended()) return Expand;
     // If a target-specific SDNode requires legalization, require the target
     // to provide custom legalization for it.
-    if (Op > array_lengthof(OpActions[0])) return Custom;
+    if (Op >= array_lengthof(OpActions[0])) return Custom;
     return OpActions[(unsigned)VT.getSimpleVT().SimpleTy][Op];
   }
 
@@ -1083,6 +1095,33 @@ public:
     llvm_unreachable("Unsupported extended type!");
   }
 
+  /// Certain combinations of ABIs, Targets and features require that types
+  /// are legal for some operations and not for other operations.
+  /// For MIPS all vector types must be passed through the integer register set.
+  virtual MVT getRegisterTypeForCallingConv(MVT VT) const {
+    return getRegisterType(VT);
+  }
+
+  virtual MVT getRegisterTypeForCallingConv(LLVMContext &Context,
+                                            EVT VT) const {
+    return getRegisterType(Context, VT);
+  }
+
+  /// Certain targets require unusual breakdowns of certain types. For MIPS,
+  /// this occurs when a vector type is used, as vector are passed through the
+  /// integer register set.
+  virtual unsigned getNumRegistersForCallingConv(LLVMContext &Context,
+                                                 EVT VT) const {
+    return getNumRegisters(Context, VT);
+  }
+
+  /// Certain targets have context senstive alignment requirements, where one
+  /// type has the alignment requirement of another type.
+  virtual unsigned getABIAlignmentForCallingConv(Type *ArgTy,
+                                                 DataLayout DL) const {
+    return DL.getABITypeAlignment(ArgTy);
+  }
+
   /// If true, then instruction selection should seek to shrink the FP constant
   /// of the specified type to a smaller type in order to save space and / or
   /// reduce runtime.
@@ -1139,6 +1178,16 @@ public:
   /// return the limit for functions that have OptSize attribute.
   unsigned getMaxStoresPerMemcpy(bool OptSize) const {
     return OptSize ? MaxStoresPerMemcpyOptSize : MaxStoresPerMemcpy;
+  }
+
+  /// Get maximum # of load operations permitted for memcmp
+  ///
+  /// This function returns the maximum number of load operations permitted
+  /// to replace a call to memcmp. The value is set by the target at the
+  /// performance threshold for such a replacement. If OptSize is true,
+  /// return the limit for functions that have OptSize attribute.
+  unsigned getMaxExpandSizeMemcmp(bool OptSize) const {
+    return OptSize ? MaxLoadsPerMemcmpOptSize : MaxLoadsPerMemcmp;
   }
 
   /// \brief Get maximum # of store operations permitted for llvm.memmove
@@ -1864,6 +1913,38 @@ public:
     return false;
   }
 
+  /// Returns true if the opcode is a commutative binary operation.
+  virtual bool isCommutativeBinOp(unsigned Opcode) const {
+    // FIXME: This should get its info from the td file.
+    switch (Opcode) {
+    case ISD::ADD:
+    case ISD::SMIN:
+    case ISD::SMAX:
+    case ISD::UMIN:
+    case ISD::UMAX:
+    case ISD::MUL:
+    case ISD::MULHU:
+    case ISD::MULHS:
+    case ISD::SMUL_LOHI:
+    case ISD::UMUL_LOHI:
+    case ISD::FADD:
+    case ISD::FMUL:
+    case ISD::AND:
+    case ISD::OR:
+    case ISD::XOR:
+    case ISD::SADDO:
+    case ISD::UADDO:
+    case ISD::ADDC:
+    case ISD::ADDE:
+    case ISD::FMINNUM:
+    case ISD::FMAXNUM:
+    case ISD::FMINNAN:
+    case ISD::FMAXNAN:
+      return true;
+    default: return false;
+    }
+  }
+
   /// Return true if it's free to truncate a value of type FromTy to type
   /// ToTy. e.g. On x86 it's free to truncate a i32 value in register EAX to i16
   /// by referencing its sub-register AX.
@@ -2328,6 +2409,8 @@ protected:
   /// Maximum number of store operations that may be substituted for a call to
   /// memcpy, used for functions with OptSize attribute.
   unsigned MaxStoresPerMemcpyOptSize;
+  unsigned MaxLoadsPerMemcmp;
+  unsigned MaxLoadsPerMemcmpOptSize;
 
   /// \brief Specify maximum bytes of store instructions per memmove call.
   ///

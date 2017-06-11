@@ -34,6 +34,9 @@ private:
   /// compare.
   SDValue getFFBH_U32(SelectionDAG &DAG, SDValue Op, const SDLoc &DL) const;
 
+public:
+  static bool isOrEquivalentToAdd(SelectionDAG &DAG, SDValue Op);
+
 protected:
   const AMDGPUSubtarget *Subtarget;
   AMDGPUAS AMDGPUASI;
@@ -115,9 +118,6 @@ protected:
                                     SmallVectorImpl<SDValue> &Results) const;
   void analyzeFormalArgumentsCompute(CCState &State,
                               const SmallVectorImpl<ISD::InputArg> &Ins) const;
-  void AnalyzeReturn(CCState &State,
-                     const SmallVectorImpl<ISD::OutputArg> &Outs) const;
-
 public:
   AMDGPUTargetLowering(const TargetMachine &TM, const AMDGPUSubtarget &STI);
 
@@ -164,6 +164,8 @@ public:
   bool isCheapToSpeculateCtlz() const override;
 
   static CCAssignFn *CCAssignFnForCall(CallingConv::ID CC, bool IsVarArg);
+  static CCAssignFn *CCAssignFnForReturn(CallingConv::ID CC, bool IsVarArg);
+
   SDValue LowerReturn(SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
                       const SmallVectorImpl<ISD::OutputArg> &Outs,
                       const SmallVectorImpl<SDValue> &OutVals, const SDLoc &DL,

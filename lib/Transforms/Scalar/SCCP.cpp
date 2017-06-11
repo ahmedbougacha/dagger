@@ -1117,7 +1117,7 @@ CallOverdefined:
     // Otherwise, if we have a single return value case, and if the function is
     // a declaration, maybe we can constant fold it.
     if (F && F->isDeclaration() && !I->getType()->isStructTy() &&
-        canConstantFoldCallTo(F)) {
+        canConstantFoldCallTo(CS, F)) {
 
       SmallVector<Constant*, 8> Operands;
       for (CallSite::arg_iterator AI = CS.arg_begin(), E = CS.arg_end();
@@ -1137,7 +1137,7 @@ CallOverdefined:
 
       // If we can constant fold this, mark the result of the call as a
       // constant.
-      if (Constant *C = ConstantFoldCall(F, Operands, TLI)) {
+      if (Constant *C = ConstantFoldCall(CS, F, Operands, TLI)) {
         // call -> undef.
         if (isa<UndefValue>(C))
           return;
@@ -1779,8 +1779,9 @@ static bool runIPSCCP(Module &M, const DataLayout &DL,
     // arguments and return value aggressively, and can assume it is not called
     // unless we see evidence to the contrary.
     if (F.hasLocalLinkage()) {
-      if (AddressIsTaken(&F))
+      if (F.hasAddressTaken()) {
         AddressTakenFunctions.insert(&F);
+      }
       else {
         Solver.AddArgumentTrackedFunction(&F);
         continue;

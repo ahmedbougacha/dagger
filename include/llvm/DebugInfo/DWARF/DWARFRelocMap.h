@@ -16,16 +16,18 @@
 
 namespace llvm {
 
+/// RelocAddrEntry contains relocated value and section index.
+/// Section index is -1LL if relocation points to absolute symbol.
 struct RelocAddrEntry {
-  uint8_t Width;
-  int64_t Value;
+  uint64_t SectionIndex;
+  uint64_t Value;
 };
 
-// In place of applying the relocations to the data we've read from disk we use
-// a separate mapping table to the side and checking that at locations in the
-// dwarf where we expect relocated values. This adds a bit of complexity to the
-// dwarf parsing/extraction at the benefit of not allocating memory for the
-// entire size of the debug info sections.
+/// In place of applying the relocations to the data we've read from disk we use
+/// a separate mapping table to the side and checking that at locations in the
+/// dwarf where we expect relocated values. This adds a bit of complexity to the
+/// dwarf parsing/extraction at the benefit of not allocating memory for the
+/// entire size of the debug info sections.
 typedef DenseMap<uint64_t, RelocAddrEntry> RelocAddrMap;
 
 } // end namespace llvm

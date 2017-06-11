@@ -72,14 +72,6 @@ Error DbiStream::reload() {
     return make_error<RawError>(raw_error_code::feature_unsupported,
                                 "Unsupported DBI version.");
 
-  auto IS = Pdb.getPDBInfoStream();
-  if (!IS)
-    return IS.takeError();
-
-  if (Header->Age != IS->getAge())
-    return make_error<RawError>(raw_error_code::corrupt_file,
-                                "DBI Age does not match PDB Age.");
-
   if (Stream->getLength() !=
       sizeof(DbiStreamHeader) + Header->ModiSubstreamSize +
           Header->SecContrSubstreamSize + Header->SectionMapSize +
@@ -224,10 +216,12 @@ FixedStreamArray<SecMapEntry> DbiStream::getSectionMap() const {
 
 void DbiStream::visitSectionContributions(
     ISectionContribVisitor &Visitor) const {
-  if (SectionContribVersion == DbiSecContribVer60) {
+  if (!SectionContribs.empty()) {
+    assert(SectionContribVersion == DbiSecContribVer60);
     for (auto &SC : SectionContribs)
       Visitor.visit(SC);
-  } else if (SectionContribVersion == DbiSecContribV2) {
+  } else if (!SectionContribs2.empty()) {
+    assert(SectionContribVersion == DbiSecContribV2);
     for (auto &SC : SectionContribs2)
       Visitor.visit(SC);
   }
@@ -260,7 +254,7 @@ Error DbiStream::initializeSectionHeadersData() {
     return make_error<RawError>(raw_error_code::no_stream);
 
   auto SHS = MappedBlockStream::createIndexedStream(
-      Pdb.getMsfLayout(), Pdb.getMsfBuffer(), StreamNum);
+      Pdb.getMsfLayout(), Pdb.getMsfBuffer(), StreamNum, Pdb.getAllocator());
 
   size_t StreamLen = SHS->getLength();
   if (StreamLen % sizeof(object::coff_section))
@@ -292,7 +286,7 @@ Error DbiStream::initializeFpoRecords() {
     return make_error<RawError>(raw_error_code::no_stream);
 
   auto FS = MappedBlockStream::createIndexedStream(
-      Pdb.getMsfLayout(), Pdb.getMsfBuffer(), StreamNum);
+      Pdb.getMsfLayout(), Pdb.getMsfBuffer(), StreamNum, Pdb.getAllocator());
 
   size_t StreamLen = FS->getLength();
   if (StreamLen % sizeof(object::FpoData))

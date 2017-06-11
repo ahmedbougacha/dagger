@@ -414,6 +414,8 @@ bool X86FastISel::X86FastEmitLoad(EVT VT, X86AddressMode &AM,
     assert(HasAVX);
     if (IsNonTemporal && Alignment >= 32 && HasAVX2)
       Opc = HasVLX ? X86::VMOVNTDQAZ256rm : X86::VMOVNTDQAYrm;
+    else if (IsNonTemporal && Alignment >= 16)
+      return false; // Force split for X86::VMOVNTDQArm
     else if (Alignment >= 32)
       Opc = HasVLX ? X86::VMOVAPSZ256rm : X86::VMOVAPSYrm;
     else
@@ -424,6 +426,8 @@ bool X86FastISel::X86FastEmitLoad(EVT VT, X86AddressMode &AM,
     assert(HasAVX);
     if (IsNonTemporal && Alignment >= 32 && HasAVX2)
       Opc = X86::VMOVNTDQAYrm;
+    else if (IsNonTemporal && Alignment >= 16)
+      return false; // Force split for X86::VMOVNTDQArm
     else if (Alignment >= 32)
       Opc = HasVLX ? X86::VMOVAPDZ256rm : X86::VMOVAPDYrm;
     else
@@ -437,6 +441,8 @@ bool X86FastISel::X86FastEmitLoad(EVT VT, X86AddressMode &AM,
     assert(HasAVX);
     if (IsNonTemporal && Alignment >= 32 && HasAVX2)
       Opc = X86::VMOVNTDQAYrm;
+    else if (IsNonTemporal && Alignment >= 16)
+      return false; // Force split for X86::VMOVNTDQArm
     else if (Alignment >= 32)
       Opc = HasVLX ? X86::VMOVDQA64Z256rm : X86::VMOVDQAYrm;
     else
@@ -3647,13 +3653,6 @@ unsigned X86FastISel::X86MaterializeInt(const ConstantInt *CI, MVT VT) {
     switch (VT.SimpleTy) {
     default: llvm_unreachable("Unexpected value type");
     case MVT::i1:
-      if (Subtarget->hasAVX512()) {
-        // Need to copy to a VK1 register.
-        unsigned ResultReg = createResultReg(&X86::VK1RegClass);
-        BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc,
-                TII.get(TargetOpcode::COPY), ResultReg).addReg(SrcReg);
-        return ResultReg;
-      }
     case MVT::i8:
       return fastEmitInst_extractsubreg(MVT::i8, SrcReg, /*Kill=*/true,
                                         X86::sub_8bit);

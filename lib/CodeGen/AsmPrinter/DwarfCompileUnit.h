@@ -15,8 +15,8 @@
 #define LLVM_LIB_CODEGEN_ASMPRINTER_DWARFCOMPILEUNIT_H
 
 #include "DwarfUnit.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/DebugInfo.h"
-#include "llvm/Support/Dwarf.h"
 
 namespace llvm {
 
@@ -77,8 +77,6 @@ class DwarfCompileUnit final : public DwarfUnit {
 
   bool isDwoUnit() const override;
 
-  bool includeMinimalInlineScopes() const;
-
   DenseMap<const MDNode *, DIE *> &getAbstractSPDies() {
     if (isDwoUnit() && !DD->shareAcrossDWOCUs())
       return AbstractSPDies;
@@ -100,6 +98,8 @@ public:
   DwarfCompileUnit *getSkeleton() const {
     return Skeleton;
   }
+
+  bool includeMinimalInlineScopes() const;
 
   void initStmtList();
 

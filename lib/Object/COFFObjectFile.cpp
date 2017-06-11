@@ -15,12 +15,12 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Object/Error.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/BinaryStreamReader.h"
-#include "llvm/Support/COFF.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -291,6 +291,10 @@ uint64_t COFFObjectFile::getSectionAddress(DataRefImpl Ref) const {
   // return virtual addresses.
   Result += getImageBase();
   return Result;
+}
+
+uint64_t COFFObjectFile::getSectionIndex(DataRefImpl Sec) const {
+  return toSec(Sec) - SectionTable;
 }
 
 uint64_t COFFObjectFile::getSectionSize(DataRefImpl Ref) const {

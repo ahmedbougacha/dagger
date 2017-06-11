@@ -21,6 +21,9 @@
 #include "llvm/Support/Error.h"
 
 namespace llvm {
+namespace codeview {
+class LazyRandomTypeCollection;
+}
 namespace msf {
 class MappedBlockStream;
 }
@@ -31,8 +34,7 @@ class TpiStream {
   friend class TpiStreamBuilder;
 
 public:
-  TpiStream(const PDBFile &File,
-            std::unique_ptr<msf::MappedBlockStream> Stream);
+  TpiStream(PDBFile &File, std::unique_ptr<msf::MappedBlockStream> Stream);
   ~TpiStream();
   Error reload();
 
@@ -51,12 +53,17 @@ public:
   HashTable &getHashAdjusters();
 
   codeview::CVTypeRange types(bool *HadError) const;
+  const codeview::CVTypeArray &typeArray() const { return TypeRecords; }
+
+  codeview::LazyRandomTypeCollection &typeCollection() { return *Types; }
 
   Error commit();
 
 private:
-  const PDBFile &Pdb;
+  PDBFile &Pdb;
   std::unique_ptr<msf::MappedBlockStream> Stream;
+
+  std::unique_ptr<codeview::LazyRandomTypeCollection> Types;
 
   codeview::CVTypeArray TypeRecords;
 

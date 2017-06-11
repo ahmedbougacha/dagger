@@ -15,9 +15,10 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/AsmParser/SlotMapping.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/AutoUpgrade.h"
 #include "llvm/IR/BasicBlock.h"
@@ -41,7 +42,6 @@
 #include "llvm/IR/Value.h"
 #include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/Dwarf.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/SaveAndRestore.h"
@@ -2502,7 +2502,7 @@ LLParser::PerFunctionState::~PerFunctionState() {
       continue;
     P.second.first->replaceAllUsesWith(
         UndefValue::get(P.second.first->getType()));
-    delete P.second.first;
+    P.second.first->deleteValue();
   }
 
   for (const auto &P : ForwardRefValIDs) {
@@ -2510,7 +2510,7 @@ LLParser::PerFunctionState::~PerFunctionState() {
       continue;
     P.second.first->replaceAllUsesWith(
         UndefValue::get(P.second.first->getType()));
-    delete P.second.first;
+    P.second.first->deleteValue();
   }
 }
 
@@ -2642,7 +2642,7 @@ bool LLParser::PerFunctionState::SetInstName(int NameID,
                        getTypeString(FI->second.first->getType()) + "'");
 
       Sentinel->replaceAllUsesWith(Inst);
-      delete Sentinel;
+      Sentinel->deleteValue();
       ForwardRefValIDs.erase(FI);
     }
 
@@ -2659,7 +2659,7 @@ bool LLParser::PerFunctionState::SetInstName(int NameID,
                      getTypeString(FI->second.first->getType()) + "'");
 
     Sentinel->replaceAllUsesWith(Inst);
-    delete Sentinel;
+    Sentinel->deleteValue();
     ForwardRefVals.erase(FI);
   }
 

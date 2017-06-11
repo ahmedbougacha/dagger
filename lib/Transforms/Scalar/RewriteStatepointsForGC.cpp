@@ -7,20 +7,19 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Rewrite an existing set of gc.statepoints such that they make potential
-// relocations performed by the garbage collector explicit in the IR.
+// Rewrite call/invoke instructions so as to make potential relocations
+// performed by the garbage collector explicit in the IR.
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Pass.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SetOperations.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/ADT/SetOperations.h"
-#include "llvm/ADT/Statistic.h"
-#include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/MapVector.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Dominators.h"
@@ -28,15 +27,16 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/Module.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Statepoint.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -2094,9 +2094,9 @@ static bool insertParsePoints(Function &F, DominatorTree &DT,
   // live in the IR.  We'll remove all of these when done.
   SmallVector<CallInst *, 64> Holders;
 
-  // Insert a dummy call with all of the arguments to the vm_state we'll need
-  // for the actual safepoint insertion.  This ensures reference arguments in
-  // the deopt argument list are considered live through the safepoint (and
+  // Insert a dummy call with all of the deopt operands we'll need for the
+  // actual safepoint insertion as arguments.  This ensures reference operands
+  // in the deopt argument list are considered live through the safepoint (and
   // thus makes sure they get relocated.)
   for (CallSite CS : ToUpdate) {
     SmallVector<Value *, 64> DeoptValues;

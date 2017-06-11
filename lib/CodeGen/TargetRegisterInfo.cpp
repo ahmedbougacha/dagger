@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -21,7 +22,6 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetFrameLowering.h"
-#include "llvm/Target/TargetRegisterInfo.h"
 
 #define DEBUG_TYPE "target-reg-info"
 
@@ -50,8 +50,7 @@ bool TargetRegisterInfo::checkAllSuperRegsMarked(const BitVector &RegisterSet,
     ArrayRef<MCPhysReg> Exceptions) const {
   // Check that all super registers of reserved regs are reserved as well.
   BitVector Checked(getNumRegs());
-  for (int Reg = RegisterSet.find_first(); Reg>=0;
-       Reg = RegisterSet.find_next(Reg)) {
+  for (unsigned Reg : RegisterSet.set_bits()) {
     if (Checked[Reg])
       continue;
     for (MCSuperRegIterator SR(Reg, this); SR.isValid(); ++SR) {

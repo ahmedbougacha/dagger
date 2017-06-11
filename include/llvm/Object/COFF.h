@@ -15,13 +15,13 @@
 #define LLVM_OBJECT_COFF_H
 
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/DebugInfo/CodeView/CVDebugRecord.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/Error.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/BinaryByteStream.h"
-#include "llvm/Support/COFF.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -646,6 +646,13 @@ struct coff_resource_dir_entry {
   } Offset;
 };
 
+struct coff_resource_data_entry {
+  support::ulittle32_t DataRVA;
+  support::ulittle32_t DataSize;
+  support::ulittle32_t Codepage;
+  support::ulittle32_t Reserved;
+};
+
 struct coff_resource_dir_table {
   support::ulittle32_t Characteristics;
   support::ulittle32_t TimeDateStamp;
@@ -782,6 +789,7 @@ protected:
   std::error_code getSectionName(DataRefImpl Sec,
                                  StringRef &Res) const override;
   uint64_t getSectionAddress(DataRefImpl Sec) const override;
+  uint64_t getSectionIndex(DataRefImpl Sec) const override;
   uint64_t getSectionSize(DataRefImpl Sec) const override;
   std::error_code getSectionContents(DataRefImpl Sec,
                                      StringRef &Res) const override;

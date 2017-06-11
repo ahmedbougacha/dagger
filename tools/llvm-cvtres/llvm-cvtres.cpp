@@ -14,17 +14,23 @@
 
 #include "llvm-cvtres.h"
 
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/Object/Binary.h"
+#include "llvm/Object/WindowsResource.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
+#include "llvm/Support/BinaryStreamError.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ManagedStatic.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
+using namespace object;
 
 namespace {
 
@@ -61,6 +67,28 @@ public:
 static ExitOnError ExitOnErr;
 }
 
+LLVM_ATTRIBUTE_NORETURN void reportError(Twine Msg) {
+  errs() << Msg;
+  exit(1);
+}
+
+static void reportError(StringRef Input, std::error_code EC) {
+  reportError(Twine(Input) + ": " + EC.message() + ".\n");
+}
+
+void error(std::error_code EC) {
+  if (!EC)
+    return;
+  reportError(EC.message() + ".\n");
+}
+
+void error(Error EC) {
+  if (!EC)
+    return;
+  handleAllErrors(std::move(EC),
+                  [&](const ErrorInfoBase &EI) { reportError(EI.message()); });
+}
+
 int main(int argc_, const char *argv_[]) {
   sys::PrintStackTraceOnErrorSignal(argv_[0]);
   PrettyStackTraceProgram X(argc_, argv_);
@@ -76,11 +104,98 @@ int main(int argc_, const char *argv_[]) {
 
   CvtResOptTable T;
   unsigned MAI, MAC;
-  ArrayRef<const char *> ArgsArr = makeArrayRef(argv_, argc_);
+  ArrayRef<const char *> ArgsArr = makeArrayRef(argv_ + 1, argc_);
   opt::InputArgList InputArgs = T.ParseArgs(ArgsArr, MAI, MAC);
 
-  if (InputArgs.hasArg(OPT_HELP))
+  if (InputArgs.hasArg(OPT_HELP)) {
     T.PrintHelp(outs(), "cvtres", "Resource Converter", false);
+    return 0;
+  }
+
+  bool Verbose = InputArgs.hasArg(OPT_VERBOSE);
+
+  Machine MachineType;
+
+  if (InputArgs.hasArg(OPT_MACHINE)) {
+    std::string MachineString = InputArgs.getLastArgValue(OPT_MACHINE).upper();
+    MachineType = StringSwitch<Machine>(MachineString)
+                      .Case("ARM", Machine::ARM)
+                      .Case("X64", Machine::X64)
+                      .Case("X86", Machine::X86)
+                      .Default(Machine::UNKNOWN);
+    if (MachineType == Machine::UNKNOWN)
+      reportError("Unsupported machine architecture");
+  } else {
+    if (Verbose)
+      outs() << "Machine architecture not specified; assumed X64.\n";
+    MachineType = Machine::X64;
+  }
+
+  std::vector<std::string> InputFiles = InputArgs.getAllArgValues(OPT_INPUT);
+
+  if (InputFiles.size() == 0) {
+    reportError("No input file specified.\n");
+  }
+
+  SmallString<128> OutputFile;
+
+  if (InputArgs.hasArg(OPT_OUT)) {
+    OutputFile = InputArgs.getLastArgValue(OPT_OUT);
+  } else {
+    OutputFile = llvm::sys::path::filename(StringRef(InputFiles[0]));
+    llvm::sys::path::replace_extension(OutputFile, ".obj");
+  }
+
+  if (Verbose) {
+    outs() << "Machine: ";
+    switch (MachineType) {
+    case Machine::ARM:
+      outs() << "ARM\n";
+      break;
+    case Machine::X86:
+      outs() << "X86\n";
+      break;
+    default:
+      outs() << "X64\n";
+    }
+  }
+
+  WindowsResourceParser Parser;
+
+  for (const auto &File : InputFiles) {
+    Expected<object::OwningBinary<object::Binary>> BinaryOrErr =
+        object::createBinary(File);
+    if (!BinaryOrErr)
+      reportError(File, errorToErrorCode(BinaryOrErr.takeError()));
+
+    Binary &Binary = *BinaryOrErr.get().getBinary();
+
+    WindowsResource *RF = dyn_cast<WindowsResource>(&Binary);
+    if (!RF)
+      reportError(File + ": unrecognized file format.\n");
+
+    if (Verbose) {
+      int EntryNumber = 0;
+      Expected<ResourceEntryRef> EntryOrErr = RF->getHeadEntry();
+      if (!EntryOrErr)
+        error(EntryOrErr.takeError());
+      ResourceEntryRef Entry = EntryOrErr.get();
+      bool End = false;
+      while (!End) {
+        error(Entry.moveNext(End));
+        EntryNumber++;
+      }
+      outs() << "Number of resources: " << EntryNumber << "\n";
+    }
+
+    error(Parser.parse(RF));
+  }
+
+  if (Verbose)
+    Parser.printTree();
+
+  error(
+      llvm::object::writeWindowsResourceCOFF(OutputFile, MachineType, Parser));
 
   return 0;
 }

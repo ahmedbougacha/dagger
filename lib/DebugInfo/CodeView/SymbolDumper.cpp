@@ -11,9 +11,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/DebugInfo/CodeView/CVSymbolVisitor.h"
-#include "llvm/DebugInfo/CodeView/CVTypeDumper.h"
+#include "llvm/DebugInfo/CodeView/DebugStringTableSubsection.h"
 #include "llvm/DebugInfo/CodeView/EnumTables.h"
-#include "llvm/DebugInfo/CodeView/StringTable.h"
 #include "llvm/DebugInfo/CodeView/SymbolDeserializer.h"
 #include "llvm/DebugInfo/CodeView/SymbolDumpDelegate.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
@@ -33,16 +32,16 @@ namespace {
 /// the visitor out of SymbolDumper.h.
 class CVSymbolDumperImpl : public SymbolVisitorCallbacks {
 public:
-  CVSymbolDumperImpl(TypeDatabase &TypeDB, SymbolDumpDelegate *ObjDelegate,
+  CVSymbolDumperImpl(TypeCollection &Types, SymbolDumpDelegate *ObjDelegate,
                      ScopedPrinter &W, bool PrintRecordBytes)
-      : TypeDB(TypeDB), ObjDelegate(ObjDelegate), W(W),
+      : Types(Types), ObjDelegate(ObjDelegate), W(W),
         PrintRecordBytes(PrintRecordBytes), InFunctionScope(false) {}
 
 /// CVSymbolVisitor overrides.
 #define SYMBOL_RECORD(EnumName, EnumVal, Name)                                 \
   Error visitKnownRecord(CVSymbol &CVR, Name &Record) override;
 #define SYMBOL_RECORD_ALIAS(EnumName, EnumVal, Name, AliasName)
-#include "llvm/DebugInfo/CodeView/CVSymbolTypes.def"
+#include "llvm/DebugInfo/CodeView/CodeViewSymbols.def"
 
   Error visitSymbolBegin(CVSymbol &Record) override;
   Error visitSymbolEnd(CVSymbol &Record) override;
@@ -54,7 +53,7 @@ private:
   void printLocalVariableAddrGap(ArrayRef<LocalVariableAddrGap> Gaps);
   void printTypeIndex(StringRef FieldName, TypeIndex TI);
 
-  TypeDatabase &TypeDB;
+  TypeCollection &Types;
   SymbolDumpDelegate *ObjDelegate;
   ScopedPrinter &W;
 
@@ -83,7 +82,7 @@ void CVSymbolDumperImpl::printLocalVariableAddrGap(
 }
 
 void CVSymbolDumperImpl::printTypeIndex(StringRef FieldName, TypeIndex TI) {
-  CVTypeDumper::printTypeIndex(W, FieldName, TI, TypeDB);
+  codeview::printTypeIndex(W, FieldName, TI, Types);
 }
 
 Error CVSymbolDumperImpl::visitSymbolBegin(CVSymbol &CVR) {
@@ -370,7 +369,7 @@ Error CVSymbolDumperImpl::visitKnownRecord(
   DictScope S(W, "DefRangeSubfield");
 
   if (ObjDelegate) {
-    StringTableRef Strings = ObjDelegate->getStringTable();
+    DebugStringTableSubsectionRef Strings = ObjDelegate->getStringTable();
     auto ExpectedProgram = Strings.getString(DefRangeSubfield.Program);
     if (!ExpectedProgram) {
       consumeError(ExpectedProgram.takeError());
@@ -391,7 +390,7 @@ Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
   DictScope S(W, "DefRange");
 
   if (ObjDelegate) {
-    StringTableRef Strings = ObjDelegate->getStringTable();
+    DebugStringTableSubsectionRef Strings = ObjDelegate->getStringTable();
     auto ExpectedProgram = Strings.getString(DefRange.Program);
     if (!ExpectedProgram) {
       consumeError(ExpectedProgram.takeError());
@@ -669,8 +668,8 @@ Error CVSymbolDumperImpl::visitUnknownSymbol(CVSymbol &CVR) {
 
 Error CVSymbolDumper::dump(CVRecord<SymbolKind> &Record) {
   SymbolVisitorCallbackPipeline Pipeline;
-  SymbolDeserializer Deserializer(ObjDelegate.get());
-  CVSymbolDumperImpl Dumper(TypeDB, ObjDelegate.get(), W, PrintRecordBytes);
+  SymbolDeserializer Deserializer(ObjDelegate.get(), Container);
+  CVSymbolDumperImpl Dumper(Types, ObjDelegate.get(), W, PrintRecordBytes);
 
   Pipeline.addCallbackToPipeline(Deserializer);
   Pipeline.addCallbackToPipeline(Dumper);
@@ -680,8 +679,8 @@ Error CVSymbolDumper::dump(CVRecord<SymbolKind> &Record) {
 
 Error CVSymbolDumper::dump(const CVSymbolArray &Symbols) {
   SymbolVisitorCallbackPipeline Pipeline;
-  SymbolDeserializer Deserializer(ObjDelegate.get());
-  CVSymbolDumperImpl Dumper(TypeDB, ObjDelegate.get(), W, PrintRecordBytes);
+  SymbolDeserializer Deserializer(ObjDelegate.get(), Container);
+  CVSymbolDumperImpl Dumper(Types, ObjDelegate.get(), W, PrintRecordBytes);
 
   Pipeline.addCallbackToPipeline(Deserializer);
   Pipeline.addCallbackToPipeline(Dumper);

@@ -12,11 +12,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ARMISelLowering.h"
 #include "ARMBaseInstrInfo.h"
 #include "ARMBaseRegisterInfo.h"
 #include "ARMCallingConv.h"
 #include "ARMConstantPoolValue.h"
-#include "ARMISelLowering.h"
 #include "ARMMachineFunctionInfo.h"
 #include "ARMPerfectShuffle.h"
 #include "ARMRegisterInfo.h"
@@ -29,13 +29,13 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/VectorUtils.h"
@@ -61,7 +61,6 @@
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
-#include "llvm/IR/Function.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -103,8 +102,8 @@
 #include <cstdlib>
 #include <iterator>
 #include <limits>
-#include <tuple>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -127,7 +126,7 @@ static cl::opt<bool> EnableConstpoolPromotion(
     "arm-promote-constant", cl::Hidden,
     cl::desc("Enable / disable promotion of unnamed_addr constants into "
              "constant pools"),
-    cl::init(true));
+    cl::init(false)); // FIXME: set to true by default once PR32780 is fixed
 static cl::opt<unsigned> ConstpoolPromotionMaxSize(
     "arm-promote-constant-max-size", cl::Hidden,
     cl::desc("Maximum size of constant to promote into a constant pool"),
@@ -585,7 +584,6 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FSQRT, MVT::v2f64, Expand);
     setOperationAction(ISD::FSIN, MVT::v2f64, Expand);
     setOperationAction(ISD::FCOS, MVT::v2f64, Expand);
-    setOperationAction(ISD::FPOWI, MVT::v2f64, Expand);
     setOperationAction(ISD::FPOW, MVT::v2f64, Expand);
     setOperationAction(ISD::FLOG, MVT::v2f64, Expand);
     setOperationAction(ISD::FLOG2, MVT::v2f64, Expand);
@@ -603,7 +601,6 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FSQRT, MVT::v4f32, Expand);
     setOperationAction(ISD::FSIN, MVT::v4f32, Expand);
     setOperationAction(ISD::FCOS, MVT::v4f32, Expand);
-    setOperationAction(ISD::FPOWI, MVT::v4f32, Expand);
     setOperationAction(ISD::FPOW, MVT::v4f32, Expand);
     setOperationAction(ISD::FLOG, MVT::v4f32, Expand);
     setOperationAction(ISD::FLOG2, MVT::v4f32, Expand);
@@ -620,7 +617,6 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FSQRT, MVT::v2f32, Expand);
     setOperationAction(ISD::FSIN, MVT::v2f32, Expand);
     setOperationAction(ISD::FCOS, MVT::v2f32, Expand);
-    setOperationAction(ISD::FPOWI, MVT::v2f32, Expand);
     setOperationAction(ISD::FPOW, MVT::v2f32, Expand);
     setOperationAction(ISD::FLOG, MVT::v2f32, Expand);
     setOperationAction(ISD::FLOG2, MVT::v2f32, Expand);
@@ -743,7 +739,6 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FSQRT,      MVT::f64, Expand);
     setOperationAction(ISD::FSIN,       MVT::f64, Expand);
     setOperationAction(ISD::FCOS,       MVT::f64, Expand);
-    setOperationAction(ISD::FPOWI,      MVT::f64, Expand);
     setOperationAction(ISD::FPOW,       MVT::f64, Expand);
     setOperationAction(ISD::FLOG,       MVT::f64, Expand);
     setOperationAction(ISD::FLOG2,      MVT::f64, Expand);
@@ -12146,12 +12141,6 @@ EVT ARMTargetLowering::getOptimalMemOpType(uint64_t Size,
       return MVT::f64;
     }
   }
-
-  // Lowering to i32/i16 if the size permits.
-  if (Size >= 4)
-    return MVT::i32;
-  else if (Size >= 2)
-    return MVT::i16;
 
   // Let the target-independent logic figure it out.
   return MVT::Other;

@@ -44,6 +44,13 @@ if (NOT PACKAGE_VERSION)
     "${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}${LLVM_VERSION_SUFFIX}")
 endif()
 
+if ((CMAKE_GENERATOR MATCHES "Visual Studio") AND (CMAKE_GENERATOR_TOOLSET STREQUAL ""))
+  message(WARNING "Visual Studio generators use the x86 host compiler by "
+                  "default, even for 64-bit targets. This can result in linker "
+                  "instability and out of memory errors. To use the 64-bit "
+                  "host compiler, pass -Thost=x64 on the CMake command line.")
+endif()
+
 project(LLVM
   ${cmake_3_0_PROJ_VERSION}
   ${cmake_3_0_LANGUAGES}
@@ -378,6 +385,7 @@ else()
   option(LLVM_ENABLE_LOCAL_SUBMODULE_VISIBILITY "Compile with -fmodules-local-submodule-visibility." ON)
 endif()
 option(LLVM_ENABLE_CXX1Y "Compile with C++1y enabled." OFF)
+option(LLVM_ENABLE_CXX1Z "Compile with C++1z enabled." OFF)
 option(LLVM_ENABLE_LIBCXX "Use libc++ if available." OFF)
 option(LLVM_ENABLE_LLD "Use lld as C and C++ linker." OFF)
 option(LLVM_ENABLE_PEDANTIC "Compile with pedantic enabled." ON)
@@ -855,7 +863,6 @@ if( LLVM_INCLUDE_UTILS )
   add_subdirectory(utils/not)
   add_subdirectory(utils/llvm-lit)
   add_subdirectory(utils/yaml-bench)
-  add_subdirectory(utils/unittest)
 else()
   if ( LLVM_INCLUDE_TESTS )
     message(FATAL_ERROR "Including tests when not building utils will not work.
@@ -899,6 +906,10 @@ if( LLVM_INCLUDE_TESTS )
   endif()
   add_subdirectory(test)
   add_subdirectory(unittests)
+  if( LLVM_INCLUDE_UTILS )
+    add_subdirectory(utils/unittest)
+  endif()
+
   if (WIN32)
     # This utility is used to prevent crashing tests from calling Dr. Watson on
     # Windows.

@@ -895,7 +895,7 @@ private:
   void visitInlineAsm(ImmutableCallSite CS);
   const char *visitIntrinsicCall(const CallInst &I, unsigned Intrinsic);
   void visitTargetIntrinsic(const CallInst &I, unsigned Intrinsic);
-  void visitConstrainedFPIntrinsic(const CallInst &I, unsigned Intrinsic);
+  void visitConstrainedFPIntrinsic(const ConstrainedFPIntrinsic &FPI);
 
   void visitVAStart(const CallInst &I);
   void visitVAArg(const VAArgInst &I);
@@ -975,18 +975,28 @@ struct RegsForValue {
   /// expanded value requires multiple registers.
   SmallVector<unsigned, 4> Regs;
 
+  /// This list holds the number of registers for each value.
+  SmallVector<unsigned, 4> RegCount;
+
+  /// Records if this value needs to be treated in an ABI dependant manner,
+  /// different to normal type legalization.
+  bool IsABIMangled;
+
   RegsForValue();
 
-  RegsForValue(const SmallVector<unsigned, 4> &regs, MVT regvt, EVT valuevt);
+  RegsForValue(const SmallVector<unsigned, 4> &regs, MVT regvt, EVT valuevt,
+               bool IsABIMangledValue = false);
 
   RegsForValue(LLVMContext &Context, const TargetLowering &TLI,
-               const DataLayout &DL, unsigned Reg, Type *Ty);
+               const DataLayout &DL, unsigned Reg, Type *Ty,
+               bool IsABIMangledValue = false);
 
   /// Add the specified values to this one.
   void append(const RegsForValue &RHS) {
     ValueVTs.append(RHS.ValueVTs.begin(), RHS.ValueVTs.end());
     RegVTs.append(RHS.RegVTs.begin(), RHS.RegVTs.end());
     Regs.append(RHS.Regs.begin(), RHS.Regs.end());
+    RegCount.push_back(RHS.Regs.size());
   }
 
   /// Emit a series of CopyFromReg nodes that copies from this value and returns

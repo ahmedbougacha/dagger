@@ -671,7 +671,7 @@ public:
 /// [AL, AH, CL] - Represent a list of defs
 ///
 class ListInit final : public TypedInit, public FoldingSetNode,
-                       public TrailingObjects<BitsInit, Init *> {
+                       public TrailingObjects<ListInit, Init *> {
   unsigned NumValues;
 
 public:
@@ -1137,17 +1137,19 @@ public:
 /// to have at least one value then a (possibly empty) list of arguments.  Each
 /// argument can have a name associated with it.
 ///
-class DagInit : public TypedInit, public FoldingSetNode {
+class DagInit final : public TypedInit, public FoldingSetNode,
+                      public TrailingObjects<DagInit, Init *, StringInit *> {
   Init *Val;
   StringInit *ValName;
-  SmallVector<Init*, 4> Args;
-  SmallVector<StringInit*, 4> ArgNames;
+  unsigned NumArgs;
+  unsigned NumArgNames;
 
-  DagInit(Init *V, StringInit *VN, ArrayRef<Init *> ArgRange,
-          ArrayRef<StringInit *> NameRange)
+  DagInit(Init *V, StringInit *VN, unsigned NumArgs, unsigned NumArgNames)
       : TypedInit(IK_DagInit, DagRecTy::get()), Val(V), ValName(VN),
-          Args(ArgRange.begin(), ArgRange.end()),
-          ArgNames(NameRange.begin(), NameRange.end()) {}
+        NumArgs(NumArgs), NumArgNames(NumArgNames) {}
+
+  friend TrailingObjects;
+  size_t numTrailingObjects(OverloadToken<Init *>) const { return NumArgs; }
 
 public:
   DagInit(const DagInit &Other) = delete;
@@ -1173,18 +1175,25 @@ public:
     return ValName ? ValName->getValue() : StringRef();
   }
 
-  unsigned getNumArgs() const { return Args.size(); }
+  unsigned getNumArgs() const { return NumArgs; }
   Init *getArg(unsigned Num) const {
-    assert(Num < Args.size() && "Arg number out of range!");
-    return Args[Num];
+    assert(Num < NumArgs && "Arg number out of range!");
+    return getTrailingObjects<Init *>()[Num];
   }
   StringInit *getArgName(unsigned Num) const {
-    assert(Num < ArgNames.size() && "Arg number out of range!");
-    return ArgNames[Num];
+    assert(Num < NumArgNames && "Arg number out of range!");
+    return getTrailingObjects<StringInit *>()[Num];
   }
   StringRef getArgNameStr(unsigned Num) const {
     StringInit *Init = getArgName(Num);
     return Init ? Init->getValue() : StringRef();
+  }
+
+  ArrayRef<Init *> getArgs() const {
+    return makeArrayRef(getTrailingObjects<Init *>(), NumArgs);
+  }
+  ArrayRef<StringInit *> getArgNames() const {
+    return makeArrayRef(getTrailingObjects<StringInit *>(), NumArgNames);
   }
 
   Init *resolveReferences(Record &R, const RecordVal *RV) const override;
@@ -1194,20 +1203,17 @@ public:
   typedef SmallVectorImpl<Init*>::const_iterator       const_arg_iterator;
   typedef SmallVectorImpl<StringInit*>::const_iterator const_name_iterator;
 
-  inline const_arg_iterator  arg_begin() const { return Args.begin(); }
-  inline const_arg_iterator  arg_end  () const { return Args.end();   }
-  inline iterator_range<const_arg_iterator> args() const {
-    return llvm::make_range(arg_begin(), arg_end());
-  }
+  inline const_arg_iterator  arg_begin() const { return getArgs().begin(); }
+  inline const_arg_iterator  arg_end  () const { return getArgs().end(); }
 
-  inline size_t              arg_size () const { return Args.size();  }
-  inline bool                arg_empty() const { return Args.empty(); }
+  inline size_t              arg_size () const { return NumArgs; }
+  inline bool                arg_empty() const { return NumArgs == 0; }
 
-  inline const_name_iterator name_begin() const { return ArgNames.begin(); }
-  inline const_name_iterator name_end  () const { return ArgNames.end();   }
+  inline const_name_iterator name_begin() const { return getArgNames().begin();}
+  inline const_name_iterator name_end  () const { return getArgNames().end(); }
 
-  inline size_t              name_size () const { return ArgNames.size();  }
-  inline bool                name_empty() const { return ArgNames.empty(); }
+  inline size_t              name_size () const { return NumArgNames; }
+  inline bool                name_empty() const { return NumArgNames == 0; }
 
   Init *getBit(unsigned Bit) const override {
     llvm_unreachable("Illegal bit reference off dag");
@@ -1231,7 +1237,6 @@ class RecordVal {
 
 public:
   RecordVal(Init *N, RecTy *T, bool P);
-  RecordVal(StringRef N, RecTy *T, bool P);
 
   StringRef getName() const;
   Init *getNameInit() const { return Name; }
@@ -1334,7 +1339,6 @@ public:
   }
 
   void setName(Init *Name);      // Also updates RecordKeeper.
-  void setName(StringRef Name);  // Also updates RecordKeeper.
 
   ArrayRef<SMLoc> getLoc() const { return Locs; }
 
@@ -1357,10 +1361,6 @@ public:
     return false;
   }
 
-  bool isTemplateArg(StringRef Name) const {
-    return isTemplateArg(StringInit::get(Name));
-  }
-
   const RecordVal *getValue(const Init *Name) const {
     for (const RecordVal &Val : Values)
       if (Val.Name == Name) return &Val;
@@ -1372,22 +1372,16 @@ public:
   }
 
   RecordVal *getValue(const Init *Name) {
-    for (RecordVal &Val : Values)
-      if (Val.Name == Name) return &Val;
-    return nullptr;
+    return const_cast<RecordVal *>(static_cast<const Record *>(this)->getValue(Name));
   }
 
   RecordVal *getValue(StringRef Name) {
-    return getValue(StringInit::get(Name));
+    return const_cast<RecordVal *>(static_cast<const Record *>(this)->getValue(Name));
   }
 
   void addTemplateArg(Init *Name) {
     assert(!isTemplateArg(Name) && "Template arg already defined!");
     TemplateArgs.push_back(Name);
-  }
-
-  void addTemplateArg(StringRef Name) {
-    addTemplateArg(StringInit::get(Name));
   }
 
   void addValue(const RecordVal &RV) {
@@ -1486,7 +1480,7 @@ public:
   /// its value as a string, throwing an exception if the field does not exist
   /// or if the value is not a string.
   ///
-  std::string getValueAsString(StringRef FieldName) const;
+  StringRef getValueAsString(StringRef FieldName) const;
 
   /// This method looks up the specified field and returns
   /// its value as a BitsInit, throwing an exception if the field does not exist
@@ -1516,7 +1510,7 @@ public:
   /// returns its value as a vector of strings, throwing an exception if the
   /// field does not exist or if the value is not the right type.
   ///
-  std::vector<std::string> getValueAsListOfStrings(StringRef FieldName) const;
+  std::vector<StringRef> getValueAsListOfStrings(StringRef FieldName) const;
 
   /// This method looks up the specified field and returns its
   /// value as a Record, throwing an exception if the field does not exist or if

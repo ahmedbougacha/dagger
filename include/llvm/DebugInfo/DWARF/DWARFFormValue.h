@@ -13,8 +13,8 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/Support/DataExtractor.h"
-#include "llvm/Support/Dwarf.h"
 #include <cstdint>
 
 namespace llvm {
@@ -47,17 +47,19 @@ private:
       const char *cstr;
     };
     const uint8_t *data = nullptr;
+    uint64_t SectionIndex;      /// Section index for reference forms.
   };
 
-  dwarf::Form Form;             // Form for this value.
-  ValueType Value;              // Contains all data for the form.
-  const DWARFUnit *U = nullptr; // Remember the DWARFUnit at extract time.
+  dwarf::Form Form;             /// Form for this value.
+  ValueType Value;              /// Contains all data for the form.
+  const DWARFUnit *U = nullptr; /// Remember the DWARFUnit at extract time.
 
 public:
   DWARFFormValue(dwarf::Form F = dwarf::Form(0)) : Form(F) {}
 
   dwarf::Form getForm() const { return Form; }
   uint64_t getRawUValue() const { return Value.uval; }
+  uint64_t getSectionIndex() const { return Value.SectionIndex; }
   void setForm(dwarf::Form F) { Form = F; }
   void setUValue(uint64_t V) { Value.uval = V; }
   void setSValue(int64_t V) { Value.sval = V; }
@@ -72,11 +74,14 @@ public:
   const DWARFUnit *getUnit() const { return U; }
   void dump(raw_ostream &OS) const;
 
-  /// \brief extracts a value in data at offset *offset_ptr.
+  /// Extracts a value in \p Data at offset \p *OffsetPtr.
   ///
   /// The passed DWARFUnit is allowed to be nullptr, in which
   /// case no relocation processing will be performed and some
   /// kind of forms that depend on Unit information are disallowed.
+  /// \param Data The DataExtractor to use.
+  /// \param OffsetPtr The offset within DataExtractor where the data starts.
+  /// \param U The optional DWARFUnit supplying information for some forms.
   /// \returns whether the extraction succeeded.
   bool extractValue(const DataExtractor &Data, uint32_t *OffsetPtr,
                     const DWARFUnit *U);

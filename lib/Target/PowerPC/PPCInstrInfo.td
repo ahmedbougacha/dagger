@@ -46,10 +46,14 @@ def SDT_PPCVecSplat : SDTypeProfile<1, 2, [ SDTCisVec<0>,
 ]>;
 
 def SDT_PPCVecShift : SDTypeProfile<1, 3, [ SDTCisVec<0>,
-  SDTCisVec<1>, SDTCisVec<2>, SDTCisInt<3>
+  SDTCisVec<1>, SDTCisVec<2>, SDTCisPtrTy<3>
 ]>;
 
 def SDT_PPCVecInsert : SDTypeProfile<1, 3, [ SDTCisVec<0>,
+  SDTCisVec<1>, SDTCisVec<2>, SDTCisInt<3>
+]>;
+
+def SDT_PPCxxpermdi: SDTypeProfile<1, 3, [ SDTCisVec<0>,
   SDTCisVec<1>, SDTCisVec<2>, SDTCisInt<3>
 ]>;
 
@@ -170,6 +174,7 @@ def PPCaddiDtprelL   : SDNode<"PPCISD::ADDI_DTPREL_L", SDTIntBinOp>;
 def PPCvperm     : SDNode<"PPCISD::VPERM", SDT_PPCvperm, []>;
 def PPCxxsplt    : SDNode<"PPCISD::XXSPLT", SDT_PPCVecSplat, []>;
 def PPCxxinsert  : SDNode<"PPCISD::XXINSERT", SDT_PPCVecInsert, []>;
+def PPCxxpermdi  : SDNode<"PPCISD::XXPERMDI", SDT_PPCxxpermdi, []>;
 def PPCvecshl    : SDNode<"PPCISD::VECSHL", SDT_PPCVecShift, []>;
 
 def PPCqvfperm   : SDNode<"PPCISD::QVFPERM", SDT_PPCqvfperm, []>;
@@ -1223,9 +1228,15 @@ let isBranch = 1, isTerminator = 1, hasCtrlDep = 1, PPC970_Unit = 7 in {
   // FIXME: should be able to write a pattern for PPCcondbranch, but can't use
   // a two-value operand where a dag node expects two operands. :(
   let isCodeGenOnly = 1 in {
-    def BCC : BForm<16, 0, 0, (outs), (ins pred:$cond, condbrtarget:$dst),
-                    "b${cond:cc}${cond:pm} ${cond:reg}, $dst"
-                    /*[(PPCcondbranch crrc:$crS, imm:$opc, bb:$dst)]*/>;
+    class BCC_class : BForm<16, 0, 0, (outs), (ins pred:$cond, condbrtarget:$dst),
+                            "b${cond:cc}${cond:pm} ${cond:reg}, $dst"
+                            /*[(PPCcondbranch crrc:$crS, imm:$opc, bb:$dst)]*/>;
+    def BCC : BCC_class;
+
+    // The same as BCC, except that it's not a terminator. Used for introducing
+    // control flow dependency without creating new blocks.
+    let isTerminator = 0 in def CTRL_DEP : BCC_class;
+
     def BCCA : BForm<16, 1, 0, (outs), (ins pred:$cond, abscondbrtarget:$dst),
                      "b${cond:cc}a${cond:pm} ${cond:reg}, $dst">;
 

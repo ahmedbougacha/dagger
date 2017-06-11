@@ -1383,6 +1383,8 @@ int X86TTIImpl::getCmpSelInstrCost(unsigned Opcode, Type *ValTy, Type *CondTy,
   return BaseT::getCmpSelInstrCost(Opcode, ValTy, CondTy, I);
 }
 
+unsigned X86TTIImpl::getAtomicMemIntrinsicMaxElementSize() const { return 16; }
+
 int X86TTIImpl::getIntrinsicInstrCost(Intrinsic::ID IID, Type *RetTy,
                                       ArrayRef<Type *> Tys, FastMathFlags FMF,
                                       unsigned ScalarizationCostPassed) {
@@ -1392,6 +1394,48 @@ int X86TTIImpl::getIntrinsicInstrCost(Intrinsic::ID IID, Type *RetTy,
   // CTLZ: llvm\test\CodeGen\X86\vector-lzcnt-*.ll
   // CTPOP: llvm\test\CodeGen\X86\vector-popcnt-*.ll
   // CTTZ: llvm\test\CodeGen\X86\vector-tzcnt-*.ll
+  static const CostTblEntry AVX512CDCostTbl[] = {
+    { ISD::CTLZ,       MVT::v8i64,   1 },
+    { ISD::CTLZ,       MVT::v16i32,  1 },
+    { ISD::CTLZ,       MVT::v32i16,  8 },
+    { ISD::CTLZ,       MVT::v64i8,  20 },
+    { ISD::CTLZ,       MVT::v4i64,   1 },
+    { ISD::CTLZ,       MVT::v8i32,   1 },
+    { ISD::CTLZ,       MVT::v16i16,  4 },
+    { ISD::CTLZ,       MVT::v32i8,  10 },
+    { ISD::CTLZ,       MVT::v2i64,   1 },
+    { ISD::CTLZ,       MVT::v4i32,   1 },
+    { ISD::CTLZ,       MVT::v8i16,   4 },
+    { ISD::CTLZ,       MVT::v16i8,   4 },
+  };
+  static const CostTblEntry AVX512BWCostTbl[] = {
+    { ISD::BITREVERSE, MVT::v8i64,   5 },
+    { ISD::BITREVERSE, MVT::v16i32,  5 },
+    { ISD::BITREVERSE, MVT::v32i16,  5 },
+    { ISD::BITREVERSE, MVT::v64i8,   5 },
+    { ISD::CTLZ,       MVT::v8i64,  23 },
+    { ISD::CTLZ,       MVT::v16i32, 22 },
+    { ISD::CTLZ,       MVT::v32i16, 18 },
+    { ISD::CTLZ,       MVT::v64i8,  17 },
+    { ISD::CTPOP,      MVT::v8i64,   7 },
+    { ISD::CTPOP,      MVT::v16i32, 11 },
+    { ISD::CTPOP,      MVT::v32i16,  9 },
+    { ISD::CTPOP,      MVT::v64i8,   6 },
+    { ISD::CTTZ,       MVT::v8i64,  10 },
+    { ISD::CTTZ,       MVT::v16i32, 14 },
+    { ISD::CTTZ,       MVT::v32i16, 12 },
+    { ISD::CTTZ,       MVT::v64i8,   9 },
+  };
+  static const CostTblEntry AVX512CostTbl[] = {
+    { ISD::BITREVERSE, MVT::v8i64,  36 },
+    { ISD::BITREVERSE, MVT::v16i32, 24 },
+    { ISD::CTLZ,       MVT::v8i64,  29 },
+    { ISD::CTLZ,       MVT::v16i32, 35 },
+    { ISD::CTPOP,      MVT::v8i64,  16 },
+    { ISD::CTPOP,      MVT::v16i32, 24 },
+    { ISD::CTTZ,       MVT::v8i64,  20 },
+    { ISD::CTTZ,       MVT::v16i32, 28 },
+  };
   static const CostTblEntry XOPCostTbl[] = {
     { ISD::BITREVERSE, MVT::v4i64,   4 },
     { ISD::BITREVERSE, MVT::v8i32,   4 },
@@ -1550,6 +1594,18 @@ int X86TTIImpl::getIntrinsicInstrCost(Intrinsic::ID IID, Type *RetTy,
   MVT MTy = LT.second;
 
   // Attempt to lookup cost.
+  if (ST->hasCDI())
+    if (const auto *Entry = CostTableLookup(AVX512CDCostTbl, ISD, MTy))
+      return LT.first * Entry->Cost;
+
+  if (ST->hasBWI())
+    if (const auto *Entry = CostTableLookup(AVX512BWCostTbl, ISD, MTy))
+      return LT.first * Entry->Cost;
+
+  if (ST->hasAVX512())
+    if (const auto *Entry = CostTableLookup(AVX512CostTbl, ISD, MTy))
+      return LT.first * Entry->Cost;
+
   if (ST->hasXOP())
     if (const auto *Entry = CostTableLookup(XOPCostTbl, ISD, MTy))
       return LT.first * Entry->Cost;
@@ -2120,6 +2176,17 @@ int X86TTIImpl::getGatherScatterOpCost(unsigned Opcode, Type *SrcVTy,
                            AddressSpace);
 
   return getGSVectorCost(Opcode, SrcVTy, Ptr, Alignment, AddressSpace);
+}
+
+bool X86TTIImpl::isLSRCostLess(TargetTransformInfo::LSRCost &C1,
+                               TargetTransformInfo::LSRCost &C2) {
+    // X86 specific here are "instruction number 1st priority".
+    return std::tie(C1.Insns, C1.NumRegs, C1.AddRecCost,
+                    C1.NumIVMuls, C1.NumBaseAdds,
+                    C1.ScaleCost, C1.ImmCost, C1.SetupCost) <
+           std::tie(C2.Insns, C2.NumRegs, C2.AddRecCost,
+                    C2.NumIVMuls, C2.NumBaseAdds,
+                    C2.ScaleCost, C2.ImmCost, C2.SetupCost);
 }
 
 bool X86TTIImpl::isLegalMaskedLoad(Type *DataTy) {

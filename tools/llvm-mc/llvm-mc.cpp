@@ -63,17 +63,15 @@ static cl::opt<unsigned> ListNumOpc("list-num-opc", cl::init(~0U));
 static cl::opt<uint64_t> ListImmVal("list-imm-val", cl::init(2));
 static cl::opt<uint64_t> ListUnknownImmVal("list-unknown-imm-val", cl::init(2));
 
-static cl::opt<DebugCompressionType>
-CompressDebugSections("compress-debug-sections", cl::ValueOptional,
-  cl::init(DebugCompressionType::DCT_None),
-  cl::desc("Choose DWARF debug sections compression:"),
-  cl::values(
-    clEnumValN(DebugCompressionType::DCT_None, "none",
-      "No compression"),
-    clEnumValN(DebugCompressionType::DCT_Zlib, "zlib",
-      "Use zlib compression"),
-    clEnumValN(DebugCompressionType::DCT_ZlibGnu, "zlib-gnu",
-      "Use zlib-gnu compression (deprecated)")));
+static cl::opt<DebugCompressionType> CompressDebugSections(
+    "compress-debug-sections", cl::ValueOptional,
+    cl::init(DebugCompressionType::None),
+    cl::desc("Choose DWARF debug sections compression:"),
+    cl::values(clEnumValN(DebugCompressionType::None, "none", "No compression"),
+               clEnumValN(DebugCompressionType::Z, "zlib",
+                          "Use zlib compression"),
+               clEnumValN(DebugCompressionType::GNU, "zlib-gnu",
+                          "Use zlib-gnu compression (deprecated)")));
 
 static cl::opt<bool>
 ShowInst("show-inst", cl::desc("Show internal instruction representation"));
@@ -503,7 +501,7 @@ int main(int argc, char **argv) {
 
   MAI->setRelaxELFRelocations(RelaxELFRel);
 
-  if (CompressDebugSections != DebugCompressionType::DCT_None) {
+  if (CompressDebugSections != DebugCompressionType::None) {
     if (!zlib::isAvailable()) {
       errs() << ProgName
              << ": build tools with zlib to enable -compress-debug-sections";

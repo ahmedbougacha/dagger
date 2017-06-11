@@ -603,11 +603,11 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
 
     if (SimplifyDemandedBits(Op.getOperand(1), NewMask, Known, TLO, Depth+1))
       return true;
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
     if (SimplifyDemandedBits(Op.getOperand(0), ~Known.Zero & NewMask,
                              Known2, TLO, Depth+1))
       return true;
-    assert((Known2.Zero & Known2.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known2.hasConflict() && "Bits known to be one AND zero?");
 
     // If all of the demanded bits are known one on one side, return the other.
     // These bits cannot contribute to the result of the 'and'.
@@ -633,11 +633,11 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
   case ISD::OR:
     if (SimplifyDemandedBits(Op.getOperand(1), NewMask, Known, TLO, Depth+1))
       return true;
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
     if (SimplifyDemandedBits(Op.getOperand(0), ~Known.One & NewMask,
                              Known2, TLO, Depth+1))
       return true;
-    assert((Known2.Zero & Known2.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known2.hasConflict() && "Bits known to be one AND zero?");
 
     // If all of the demanded bits are known zero on one side, return the other.
     // These bits cannot contribute to the result of the 'or'.
@@ -660,10 +660,10 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
   case ISD::XOR: {
     if (SimplifyDemandedBits(Op.getOperand(1), NewMask, Known, TLO, Depth+1))
       return true;
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
     if (SimplifyDemandedBits(Op.getOperand(0), NewMask, Known2, TLO, Depth+1))
       return true;
-    assert((Known2.Zero & Known2.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known2.hasConflict() && "Bits known to be one AND zero?");
 
     // If all of the demanded bits are known zero on one side, return the other.
     // These bits cannot contribute to the result of the 'xor'.
@@ -725,8 +725,8 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
       return true;
     if (SimplifyDemandedBits(Op.getOperand(1), NewMask, Known2, TLO, Depth+1))
       return true;
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
-    assert((Known2.Zero & Known2.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
+    assert(!Known2.hasConflict() && "Bits known to be one AND zero?");
 
     // If the operands are constants, see if we can simplify them.
     if (ShrinkDemandedConstant(Op, NewMask, TLO))
@@ -741,8 +741,8 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
       return true;
     if (SimplifyDemandedBits(Op.getOperand(2), NewMask, Known2, TLO, Depth+1))
       return true;
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
-    assert((Known2.Zero & Known2.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
+    assert(!Known2.hasConflict() && "Bits known to be one AND zero?");
 
     // If the operands are constants, see if we can simplify them.
     if (ShrinkDemandedConstant(Op, NewMask, TLO))
@@ -907,7 +907,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
       // Compute the new bits that are at the top now.
       if (SimplifyDemandedBits(InOp, InDemandedMask, Known, TLO, Depth+1))
         return true;
-      assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+      assert(!Known.hasConflict() && "Bits known to be one AND zero?");
       Known.Zero.lshrInPlace(ShAmt);
       Known.One.lshrInPlace(ShAmt);
 
@@ -947,7 +947,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
       if (SimplifyDemandedBits(Op.getOperand(0), InDemandedMask, Known, TLO,
                                Depth+1))
         return true;
-      assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+      assert(!Known.hasConflict() && "Bits known to be one AND zero?");
       Known.Zero.lshrInPlace(ShAmt);
       Known.One.lshrInPlace(ShAmt);
 
@@ -1029,7 +1029,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     if (SimplifyDemandedBits(Op.getOperand(0), InputDemandedBits,
                              Known, TLO, Depth+1))
       return true;
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
 
     // If the sign bit of the input is known set or clear, then we know the
     // top bits of the result.
@@ -1084,7 +1084,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
 
     if (SimplifyDemandedBits(Op.getOperand(0), InMask, Known, TLO, Depth+1))
       return true;
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
     Known = Known.zext(BitWidth);
     Known.Zero |= NewBits;
     break;
@@ -1134,7 +1134,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     APInt InMask = NewMask.trunc(OperandBitWidth);
     if (SimplifyDemandedBits(Op.getOperand(0), InMask, Known, TLO, Depth+1))
       return true;
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
     Known = Known.zext(BitWidth);
     break;
   }
@@ -1193,7 +1193,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
       }
     }
 
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
     break;
   }
   case ISD::AssertZext: {
@@ -1205,7 +1205,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     if (SimplifyDemandedBits(Op.getOperand(0), ~InMask | NewMask,
                              Known, TLO, Depth+1))
       return true;
-    assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+    assert(!Known.hasConflict() && "Bits known to be one AND zero?");
 
     Known.Zero |= ~InMask;
     break;
@@ -1493,8 +1493,7 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
   }
   }
 
-  // Ensure that the constant occurs on the RHS, and fold constant
-  // comparisons.
+  // Ensure that the constant occurs on the RHS and fold constant comparisons.
   ISD::CondCode SwappedCC = ISD::getSetCCSwappedOperands(Cond);
   if (isa<ConstantSDNode>(N0.getNode()) &&
       (DCI.isBeforeLegalizeOps() ||
@@ -1638,14 +1637,13 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
           return DAG.getSetCC(dl, VT, TopSetCC.getOperand(0),
                                       TopSetCC.getOperand(1),
                                       InvCond);
-
         }
       }
     }
 
-    // If the LHS is '(and load, const)', the RHS is 0,
-    // the test is for equality or unsigned, and all 1 bits of the const are
-    // in the same partial word, see if we can shorten the load.
+    // If the LHS is '(and load, const)', the RHS is 0, the test is for
+    // equality or unsigned, and all 1 bits of the const are in the same
+    // partial word, see if we can shorten the load.
     if (DCI.isBeforeLegalize() &&
         !ISD::isSignedIntSetCC(Cond) &&
         N0.getOpcode() == ISD::AND && C1 == 0 &&
@@ -1669,10 +1667,10 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
           APInt newMask = APInt::getLowBitsSet(maskWidth, width);
           for (unsigned offset=0; offset<origWidth/width; offset++) {
             if ((newMask & Mask) == Mask) {
-              if (!DAG.getDataLayout().isLittleEndian())
-                bestOffset = (origWidth/width - offset - 1) * (width/8);
-              else
+              if (DAG.getDataLayout().isLittleEndian())
                 bestOffset = (uint64_t)offset * (width/8);
+              else
+                bestOffset = (origWidth/width - offset - 1) * (width/8);
               bestMask = Mask.lshr(offset * (width/8) * 8);
               bestWidth = width;
               break;
@@ -1713,10 +1711,12 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
         switch (Cond) {
         case ISD::SETUGT:
         case ISD::SETUGE:
-        case ISD::SETEQ: return DAG.getConstant(0, dl, VT);
+        case ISD::SETEQ:
+          return DAG.getConstant(0, dl, VT);
         case ISD::SETULT:
         case ISD::SETULE:
-        case ISD::SETNE: return DAG.getConstant(1, dl, VT);
+        case ISD::SETNE:
+          return DAG.getConstant(1, dl, VT);
         case ISD::SETGT:
         case ISD::SETGE:
           // True if the sign bit of C1 is set.
@@ -1816,9 +1816,9 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
                                                         BitWidth-1))) {
           // Okay, get the un-inverted input value.
           SDValue Val;
-          if (N0.getOpcode() == ISD::XOR)
+          if (N0.getOpcode() == ISD::XOR) {
             Val = N0.getOperand(0);
-          else {
+          } else {
             assert(N0.getOpcode() == ISD::AND &&
                     N0.getOperand(0).getOpcode() == ISD::XOR);
             // ((X^1)&1)^1 -> X & 1
@@ -1883,7 +1883,10 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
 
     // Canonicalize GE/LE comparisons to use GT/LT comparisons.
     if (Cond == ISD::SETGE || Cond == ISD::SETUGE) {
-      if (C1 == MinVal) return DAG.getConstant(1, dl, VT);  // X >= MIN --> true
+      // X >= MIN --> true
+      if (C1 == MinVal)
+        return DAG.getConstant(1, dl, VT);
+
       // X >= C0 --> X > (C0 - 1)
       APInt C = C1 - 1;
       ISD::CondCode NewCC = (Cond == ISD::SETGE) ? ISD::SETGT : ISD::SETUGT;
@@ -1898,7 +1901,10 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
     }
 
     if (Cond == ISD::SETLE || Cond == ISD::SETULE) {
-      if (C1 == MaxVal) return DAG.getConstant(1, dl, VT);  // X <= MAX --> true
+      // X <= MAX --> true
+      if (C1 == MaxVal)
+          return DAG.getConstant(1, dl, VT);
+
       // X <= C0 --> X < (C0 + 1)
       APInt C = C1 + 1;
       ISD::CondCode NewCC = (Cond == ISD::SETLE) ? ISD::SETLT : ISD::SETULT;
@@ -2160,7 +2166,7 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
           return DAG.getSetCC(dl, VT, N0.getOperand(1), N1.getOperand(1), Cond);
         if (N0.getOperand(1) == N1.getOperand(1))
           return DAG.getSetCC(dl, VT, N0.getOperand(0), N1.getOperand(0), Cond);
-        if (DAG.isCommutativeBinOp(N0.getOpcode())) {
+        if (isCommutativeBinOp(N0.getOpcode())) {
           // If X op Y == Y op X, try other combinations.
           if (N0.getOperand(0) == N1.getOperand(1))
             return DAG.getSetCC(dl, VT, N0.getOperand(1), N1.getOperand(0),
@@ -2224,7 +2230,7 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
           return DAG.getSetCC(dl, VT, N0.getOperand(1),
                               DAG.getConstant(0, dl, N0.getValueType()), Cond);
         if (N0.getOperand(1) == N1) {
-          if (DAG.isCommutativeBinOp(N0.getOpcode()))
+          if (isCommutativeBinOp(N0.getOpcode()))
             return DAG.getSetCC(dl, VT, N0.getOperand(0),
                                 DAG.getConstant(0, dl, N0.getValueType()),
                                 Cond);
@@ -2251,7 +2257,7 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
         return DAG.getSetCC(dl, VT, N1.getOperand(1),
                         DAG.getConstant(0, dl, N1.getValueType()), Cond);
       if (N1.getOperand(1) == N0) {
-        if (DAG.isCommutativeBinOp(N1.getOpcode()))
+        if (isCommutativeBinOp(N1.getOpcode()))
           return DAG.getSetCC(dl, VT, N1.getOperand(0),
                           DAG.getConstant(0, dl, N1.getValueType()), Cond);
         if (N1.getNode()->hasOneUse()) {

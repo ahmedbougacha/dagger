@@ -23,9 +23,9 @@
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/MD5.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MD5.h"
 #include <cassert>
 #include <cstdint>
 #include <string>
@@ -161,6 +161,10 @@ protected:
     Parent = parent;
   }
 
+  ~GlobalValue() {
+    removeDeadConstantUsers();   // remove any dead constants using this.
+  }
+
 public:
   enum ThreadLocalMode {
     NotThreadLocal = 0,
@@ -171,10 +175,6 @@ public:
   };
 
   GlobalValue(const GlobalValue &) = delete;
-
-  ~GlobalValue() override {
-    removeDeadConstantUsers();   // remove any dead constants using this.
-  }
 
   unsigned getAlignment() const;
 

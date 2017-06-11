@@ -342,9 +342,8 @@ define <4 x float> @test14(<4 x float> %A, <4 x float> %B) {
 ; SSE-NEXT:    movhlps {{.*#+}} xmm0 = xmm0[1,1]
 ; SSE-NEXT:    movhlps {{.*#+}} xmm1 = xmm1[1,1]
 ; SSE-NEXT:    subss %xmm1, %xmm0
-; SSE-NEXT:    unpcklps {{.*#+}} xmm2 = xmm2[0],xmm0[0],xmm2[1],xmm0[1]
-; SSE-NEXT:    shufps {{.*#+}} xmm2 = xmm2[0,1,1,3]
-; SSE-NEXT:    movaps %xmm2, %xmm0
+; SSE-NEXT:    unpcklpd {{.*#+}} xmm2 = xmm2[0],xmm0[0]
+; SSE-NEXT:    movapd %xmm2, %xmm0
 ; SSE-NEXT:    retq
 ;
 ; AVX-LABEL: test14:
@@ -375,8 +374,7 @@ define <4 x float> @test15(<4 x float> %A, <4 x float> %B) {
 ; SSE-NEXT:    shufps {{.*#+}} xmm0 = xmm0[3,1,2,3]
 ; SSE-NEXT:    shufps {{.*#+}} xmm1 = xmm1[3,1,2,3]
 ; SSE-NEXT:    addss %xmm0, %xmm1
-; SSE-NEXT:    unpcklps {{.*#+}} xmm2 = xmm2[0],xmm1[0],xmm2[1],xmm1[1]
-; SSE-NEXT:    shufps {{.*#+}} xmm2 = xmm2[0,0,2,1]
+; SSE-NEXT:    shufps {{.*#+}} xmm2 = xmm2[0,0],xmm1[0,0]
 ; SSE-NEXT:    movaps %xmm2, %xmm0
 ; SSE-NEXT:    retq
 ;
@@ -412,15 +410,15 @@ define <4 x float> @test16(<4 x float> %A, <4 x float> %B) {
 ; SSE-NEXT:    movaps %xmm1, %xmm4
 ; SSE-NEXT:    movhlps {{.*#+}} xmm4 = xmm4[1,1]
 ; SSE-NEXT:    subss %xmm4, %xmm3
-; SSE-NEXT:    unpcklps {{.*#+}} xmm2 = xmm2[0],xmm3[0],xmm2[1],xmm3[1]
-; SSE-NEXT:    movshdup {{.*#+}} xmm3 = xmm0[1,1,3,3]
-; SSE-NEXT:    addss %xmm0, %xmm3
+; SSE-NEXT:    movshdup {{.*#+}} xmm4 = xmm0[1,1,3,3]
+; SSE-NEXT:    addss %xmm0, %xmm4
 ; SSE-NEXT:    shufps {{.*#+}} xmm0 = xmm0[3,1,2,3]
 ; SSE-NEXT:    shufps {{.*#+}} xmm1 = xmm1[3,1,2,3]
 ; SSE-NEXT:    addss %xmm0, %xmm1
 ; SSE-NEXT:    unpcklps {{.*#+}} xmm3 = xmm3[0],xmm1[0],xmm3[1],xmm1[1]
-; SSE-NEXT:    unpcklps {{.*#+}} xmm2 = xmm2[0],xmm3[0],xmm2[1],xmm3[1]
-; SSE-NEXT:    movaps %xmm2, %xmm0
+; SSE-NEXT:    unpcklps {{.*#+}} xmm2 = xmm2[0],xmm4[0],xmm2[1],xmm4[1]
+; SSE-NEXT:    unpcklpd {{.*#+}} xmm2 = xmm2[0],xmm3[0]
+; SSE-NEXT:    movapd %xmm2, %xmm0
 ; SSE-NEXT:    retq
 ;
 ; AVX-LABEL: test16:
@@ -431,12 +429,12 @@ define <4 x float> @test16(<4 x float> %A, <4 x float> %B) {
 ; AVX-NEXT:    vsubss %xmm4, %xmm3, %xmm3
 ; AVX-NEXT:    vmovshdup {{.*#+}} xmm4 = xmm0[1,1,3,3]
 ; AVX-NEXT:    vaddss %xmm0, %xmm4, %xmm4
-; AVX-NEXT:    vinsertps {{.*#+}} xmm2 = xmm2[0],xmm4[0],xmm2[2,3]
-; AVX-NEXT:    vinsertps {{.*#+}} xmm2 = xmm2[0,1],xmm3[0],xmm2[3]
 ; AVX-NEXT:    vpermilps {{.*#+}} xmm0 = xmm0[3,1,2,3]
 ; AVX-NEXT:    vpermilps {{.*#+}} xmm1 = xmm1[3,1,2,3]
 ; AVX-NEXT:    vaddss %xmm1, %xmm0, %xmm0
-; AVX-NEXT:    vinsertps {{.*#+}} xmm0 = xmm2[0,1,2],xmm0[0]
+; AVX-NEXT:    vinsertps {{.*#+}} xmm1 = xmm2[0],xmm4[0],xmm2[2,3]
+; AVX-NEXT:    vinsertps {{.*#+}} xmm1 = xmm1[0,1],xmm3[0],xmm1[3]
+; AVX-NEXT:    vinsertps {{.*#+}} xmm0 = xmm1[0,1,2],xmm0[0]
 ; AVX-NEXT:    retq
   %1 = extractelement <4 x float> %A, i32 0
   %2 = extractelement <4 x float> %B, i32 0

@@ -11,13 +11,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/Type.h"
 using namespace llvm;
@@ -43,8 +43,6 @@ Instruction::Instruction(Type *ty, unsigned it, Use *Ops, unsigned NumOps,
   InsertAtEnd->getInstList().push_back(this);
 }
 
-
-// Out of line virtual method, so the vtable, etc has a home.
 Instruction::~Instruction() {
   assert(!Parent && "Instruction still linked in the program!");
   if (hasMetadataHashEntry())
@@ -218,10 +216,10 @@ void Instruction::copyFastMathFlags(const Instruction *I) {
   copyFastMathFlags(I->getFastMathFlags());
 }
 
-void Instruction::copyIRFlags(const Value *V) {
+void Instruction::copyIRFlags(const Value *V, bool IncludeWrapFlags) {
   // Copy the wrapping flags.
-  if (auto *OB = dyn_cast<OverflowingBinaryOperator>(V)) {
-    if (isa<OverflowingBinaryOperator>(this)) {
+  if (IncludeWrapFlags && isa<OverflowingBinaryOperator>(this)) {
+    if (auto *OB = dyn_cast<OverflowingBinaryOperator>(V)) {
       setHasNoSignedWrap(OB->hasNoSignedWrap());
       setHasNoUnsignedWrap(OB->hasNoUnsignedWrap());
     }

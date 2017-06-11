@@ -37,10 +37,6 @@ using namespace llvm;
 //                              Constant Class
 //===----------------------------------------------------------------------===//
 
-void Constant::anchor() { }
-
-void ConstantData::anchor() {}
-
 bool Constant::isNegativeZeroValue() const {
   // Floating point values have an explicit -0.0 value.
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(this))
@@ -131,7 +127,7 @@ bool Constant::isOneValue() const {
 
   // Check for FP which are bitcasted from 1 integers
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(this))
-    return CFP->getValueAPF().bitcastToAPInt() == 1;
+    return CFP->getValueAPF().bitcastToAPInt().isOneValue();
 
   // Check for constant vectors which are splats of 1 values.
   if (const ConstantVector *CV = dyn_cast<ConstantVector>(this))
@@ -496,8 +492,6 @@ void Constant::removeDeadConstantUsers() const {
 //                                ConstantInt
 //===----------------------------------------------------------------------===//
 
-void ConstantInt::anchor() { }
-
 ConstantInt::ConstantInt(IntegerType *Ty, const APInt &V)
     : ConstantData(Ty, ConstantIntVal), Val(V) {
   assert(V.getBitWidth() == Ty->getBitWidth() && "Invalid constant for type");
@@ -609,8 +603,6 @@ static const fltSemantics *TypeToFloatSemantics(Type *Ty) {
   assert(Ty->isPPC_FP128Ty() && "Unknown FP format");
   return &APFloat::PPCDoubleDouble();
 }
-
-void ConstantFP::anchor() { }
 
 Constant *ConstantFP::get(Type *Ty, double V) {
   LLVMContext &Context = Ty->getContext();
@@ -1165,21 +1157,14 @@ bool ConstantInt::isValueValidForType(Type *Ty, uint64_t Val) {
   unsigned NumBits = Ty->getIntegerBitWidth(); // assert okay
   if (Ty->isIntegerTy(1))
     return Val == 0 || Val == 1;
-  if (NumBits >= 64)
-    return true; // always true, has to fit in largest type
-  uint64_t Max = (1ll << NumBits) - 1;
-  return Val <= Max;
+  return isUIntN(NumBits, Val);
 }
 
 bool ConstantInt::isValueValidForType(Type *Ty, int64_t Val) {
   unsigned NumBits = Ty->getIntegerBitWidth();
   if (Ty->isIntegerTy(1))
     return Val == 0 || Val == 1 || Val == -1;
-  if (NumBits >= 64)
-    return true; // always true, has to fit in largest type
-  int64_t Min = -(1ll << (NumBits-1));
-  int64_t Max = (1ll << (NumBits-1)) - 1;
-  return (Val >= Min && Val <= Max);
+  return isIntN(NumBits, Val);
 }
 
 bool ConstantFP::isValueValidForType(Type *Ty, const APFloat& Val) {
@@ -2266,9 +2251,6 @@ Type *GetElementPtrConstantExpr::getResultElementType() const {
 //===----------------------------------------------------------------------===//
 //                       ConstantData* implementations
 
-void ConstantDataArray::anchor() {}
-void ConstantDataVector::anchor() {}
-
 Type *ConstantDataSequential::getElementType() const {
   return getType()->getElementType();
 }
@@ -2627,8 +2609,8 @@ Constant *ConstantDataSequential::getElementAsConstant(unsigned Elt) const {
   return ConstantInt::get(getElementType(), getElementAsInteger(Elt));
 }
 
-bool ConstantDataSequential::isString() const {
-  return isa<ArrayType>(getType()) && getElementType()->isIntegerTy(8);
+bool ConstantDataSequential::isString(unsigned CharSize) const {
+  return isa<ArrayType>(getType()) && getElementType()->isIntegerTy(CharSize);
 }
 
 bool ConstantDataSequential::isCString() const {

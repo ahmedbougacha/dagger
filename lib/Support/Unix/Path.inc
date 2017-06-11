@@ -75,8 +75,8 @@
 #define STATVFS_F_FRSIZE(vfs) vfs.f_frsize
 #else
 #if defined(__OpenBSD__) || defined(__FreeBSD__)
-#include <sys/param.h>
 #include <sys/mount.h>
+#include <sys/param.h>
 #elif defined(__linux__)
 #if defined(HAVE_LINUX_MAGIC_H)
 #include <linux/magic.h>
@@ -103,16 +103,13 @@
 #define STATVFS_F_FLAG(vfs) (vfs).f_flags
 #endif
 
-#if defined(__FreeBSD__) || defined(__NetBSD__)
-#include <sys/sysctl.h>
-#endif
-
 using namespace llvm;
 
 namespace llvm {
 namespace sys  {
 namespace fs {
-#if defined(__Bitrig__) || defined(__OpenBSD__) || defined(__minix) || \
+#if defined(__FreeBSD__) || defined (__NetBSD__) || defined(__Bitrig__) || \
+    defined(__OpenBSD__) || defined(__minix) || defined(__FreeBSD_kernel__) || \
     defined(__linux__) || defined(__CYGWIN__) || defined(__DragonFly__) || \
     defined(_AIX)
 static int
@@ -167,7 +164,7 @@ getprogpath(char ret[PATH_MAX], const char *bin)
   free(pv);
   return nullptr;
 }
-#endif // Bitrig || OpenBSD || minix || linux || CYGWIN || DragonFly || AIX
+#endif // __FreeBSD__ || __NetBSD__ || __FreeBSD_kernel__
 
 /// GetMainExecutable - Return the path to the main executable, given the
 /// value of argv[0] from program startup.
@@ -183,24 +180,9 @@ std::string getMainExecutable(const char *argv0, void *MainAddr) {
     if (realpath(exe_path, link_path))
       return link_path;
   }
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__)
-  int mib[4];
-  mib[0] = CTL_KERN;
-#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
-  mib[1] = KERN_PROC;
-  mib[2] = KERN_PROC_PATHNAME;
-  mib[3] = -1;
-#else
-  mib[1] = KERN_PROC_ARGS;
-  mib[2] = -1;
-  mib[3] = KERN_PROC_PATHNAME;
-#endif
-  char exe_path[PATH_MAX];
-  size_t cb = sizeof(exe_path);
-  if (sysctl(mib, 4, exe_path, &cb, NULL, 0) == 0)
-    return exe_path;
-#elif defined(__Bitrig__) || defined(__OpenBSD__) || defined(__minix) || \
-      defined(__DragonFly__) || defined(_AIX)
+#elif defined(__FreeBSD__) || defined (__NetBSD__) || defined(__Bitrig__) || \
+      defined(__OpenBSD__) || defined(__minix) || defined(__DragonFly__) || \
+      defined(__FreeBSD_kernel__) || defined(_AIX)
   char exe_path[PATH_MAX];
 
   if (getprogpath(exe_path, argv0) != NULL)
@@ -399,6 +381,11 @@ static bool is_local_impl(struct STATVFS &Vfs) {
 #elif defined(__CYGWIN__)
   // Cygwin doesn't expose this information; would need to use Win32 API.
   return false;
+#elif defined(__sun)
+  // statvfs::f_basetype contains a null-terminated FSType name of the mounted target
+  StringRef fstype(Vfs.f_basetype);
+  // NFS is the only non-local fstype??
+  return !fstype.equals("nfs");
 #else
   return !!(STATVFS_F_FLAG(Vfs) & MNT_LOCAL);
 #endif

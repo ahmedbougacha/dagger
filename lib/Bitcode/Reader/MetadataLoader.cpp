@@ -53,8 +53,8 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ModuleSummaryIndex.h"
@@ -500,7 +500,7 @@ class MetadataLoader::MetadataLoaderImpl {
 
     // Upgrade variables attached to globals.
     for (auto &GV : TheModule.globals()) {
-      SmallVector<MDNode *, 1> MDs, NewMDs;
+      SmallVector<MDNode *, 1> MDs;
       GV.getMetadata(LLVMContext::MD_dbg, MDs);
       GV.eraseMetadata(LLVMContext::MD_dbg);
       for (auto *MD : MDs)

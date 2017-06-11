@@ -182,8 +182,9 @@ private:
   /// provides a more convenient form of divide for internal use since KnuthDiv
   /// has specific constraints on its inputs. If those constraints are not met
   /// then it provides a simpler form of divide.
-  static void divide(const APInt &LHS, unsigned lhsWords, const APInt &RHS,
-                     unsigned rhsWords, APInt *Quotient, APInt *Remainder);
+  static void divide(const WordType *LHS, unsigned lhsWords,
+                     const WordType *RHS, unsigned rhsWords, WordType *Quotient,
+                     WordType *Remainder);
 
   /// out-of-line slow case for inline constructor
   void initSlowCase(uint64_t val, bool isSigned);
@@ -390,6 +391,11 @@ public:
   /// This checks to see if the value has all bits of the APInt are clear or
   /// not.
   bool isNullValue() const { return !*this; }
+
+  /// \brief Determine if this is a value of 1.
+  ///
+  /// This checks to see if the value of this APInt is one.
+  bool isOneValue() const { return getActiveBits() == 1; }
 
   /// \brief Determine if this is the largest unsigned value.
   ///
@@ -1016,11 +1022,13 @@ public:
   ///
   /// \returns a new APInt value containing the division result
   APInt udiv(const APInt &RHS) const;
+  APInt udiv(uint64_t RHS) const;
 
   /// \brief Signed division function for APInt.
   ///
   /// Signed divide this APInt by APInt RHS.
   APInt sdiv(const APInt &RHS) const;
+  APInt sdiv(int64_t RHS) const;
 
   /// \brief Unsigned remainder operation.
   ///
@@ -1032,11 +1040,13 @@ public:
   ///
   /// \returns a new APInt value containing the remainder result
   APInt urem(const APInt &RHS) const;
+  uint64_t urem(uint64_t RHS) const;
 
   /// \brief Function for signed remainder operation.
   ///
   /// Signed remainder operation on APInt.
   APInt srem(const APInt &RHS) const;
+  int64_t srem(int64_t RHS) const;
 
   /// \brief Dual division/remainder interface.
   ///
@@ -1047,9 +1057,13 @@ public:
   /// udivrem(X, Y, X, Y), for example.
   static void udivrem(const APInt &LHS, const APInt &RHS, APInt &Quotient,
                       APInt &Remainder);
+  static void udivrem(const APInt &LHS, uint64_t RHS, APInt &Quotient,
+                      uint64_t &Remainder);
 
   static void sdivrem(const APInt &LHS, const APInt &RHS, APInt &Quotient,
                       APInt &Remainder);
+  static void sdivrem(const APInt &LHS, int64_t RHS, APInt &Quotient,
+                      int64_t &Remainder);
 
   // Operations that return overflow indicators.
   APInt sadd_ov(const APInt &RHS, bool &Overflow) const;
@@ -1067,9 +1081,7 @@ public:
   /// \returns the bit value at bitPosition
   bool operator[](unsigned bitPosition) const {
     assert(bitPosition < getBitWidth() && "Bit position out of bounds!");
-    return (maskBit(bitPosition) &
-            (isSingleWord() ? U.VAL : U.pVal[whichWord(bitPosition)])) !=
-           0;
+    return (maskBit(bitPosition) & getWord(bitPosition)) != 0;
   }
 
   /// @}
@@ -2017,7 +2029,7 @@ inline APInt operator-(APInt a, const APInt &b) {
 }
 
 inline APInt operator-(const APInt &a, APInt &&b) {
-  b = -std::move(b);
+  b.negate();
   b += a;
   return std::move(b);
 }
@@ -2028,7 +2040,7 @@ inline APInt operator-(APInt a, uint64_t RHS) {
 }
 
 inline APInt operator-(uint64_t LHS, APInt b) {
-  b = -std::move(b);
+  b.negate();
   b += LHS;
   return b;
 }

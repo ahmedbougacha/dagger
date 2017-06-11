@@ -10,4 +10,8 @@
 #ifndef LLVM_TOOLS_LLVMCVTRES_LLVMCVTRES_H
 #define LLVM_TOOLS_LLVMCVTRES_LLVMCVTRES_H
 
+#include <system_error>
+
+void error(std::error_code EC);
+
 #endif

@@ -9,8 +9,8 @@
 
 #include "AArch64TargetTransformInfo.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Target/CostTable.h"
@@ -768,4 +768,29 @@ unsigned AArch64TTIImpl::getMinPrefetchStride() {
 
 unsigned AArch64TTIImpl::getMaxPrefetchIterationsAhead() {
   return ST->getMaxPrefetchIterationsAhead();
+}
+
+bool AArch64TTIImpl::useReductionIntrinsic(unsigned Opcode, Type *Ty,
+                                           TTI::ReductionFlags Flags) const {
+  assert(isa<VectorType>(Ty) && "Expected Ty to be a vector type");
+  unsigned ScalarBits = Ty->getScalarSizeInBits();
+  switch (Opcode) {
+  case Instruction::FAdd:
+  case Instruction::FMul:
+  case Instruction::And:
+  case Instruction::Or:
+  case Instruction::Xor:
+  case Instruction::Mul:
+    return false;
+  case Instruction::Add:
+    return ScalarBits * Ty->getVectorNumElements() >= 128;
+  case Instruction::ICmp:
+    return (ScalarBits < 64) &&
+           (ScalarBits * Ty->getVectorNumElements() >= 128);
+  case Instruction::FCmp:
+    return Flags.NoNaN;
+  default:
+    llvm_unreachable("Unhandled reduction opcode");
+  }
+  return false;
 }

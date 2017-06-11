@@ -10,7 +10,7 @@
 #ifndef LLVM_DEBUGINFO_PDB_RAW_PDBDBISTREAM_H
 #define LLVM_DEBUGINFO_PDB_RAW_PDBDBISTREAM_H
 
-#include "llvm/DebugInfo/CodeView/ModuleDebugFragment.h"
+#include "llvm/DebugInfo/CodeView/DebugSubsection.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptor.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleList.h"
@@ -19,8 +19,6 @@
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 #include "llvm/DebugInfo/PDB/PDBTypes.h"
 #include "llvm/Support/BinaryStreamArray.h"
-#include "llvm/Support/BinaryStreamArray.h"
-#include "llvm/Support/BinaryStreamRef.h"
 #include "llvm/Support/BinaryStreamRef.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
@@ -98,7 +96,8 @@ private:
 
   FixedStreamArray<support::ulittle16_t> DbgStreams;
 
-  PdbRaw_DbiSecContribVer SectionContribVersion;
+  PdbRaw_DbiSecContribVer SectionContribVersion =
+      PdbRaw_DbiSecContribVer::DbiSecContribVer60;
   FixedStreamArray<SectionContrib> SectionContribs;
   FixedStreamArray<SectionContrib2> SectionContribs2;
   FixedStreamArray<SecMapEntry> SectionMap;

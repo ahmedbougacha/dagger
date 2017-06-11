@@ -11,7 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Target/TargetLowering.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -34,6 +33,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
@@ -842,9 +842,10 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm) : TM(tm) {
   initActions();
 
   // Perform these initializations only once.
-  MaxStoresPerMemset = MaxStoresPerMemcpy = MaxStoresPerMemmove = 8;
-  MaxStoresPerMemsetOptSize = MaxStoresPerMemcpyOptSize
-    = MaxStoresPerMemmoveOptSize = 4;
+  MaxStoresPerMemset = MaxStoresPerMemcpy = MaxStoresPerMemmove =
+      MaxLoadsPerMemcmp = 8;
+  MaxStoresPerMemsetOptSize = MaxStoresPerMemcpyOptSize =
+      MaxStoresPerMemmoveOptSize = MaxLoadsPerMemcmpOptSize = 4;
   UseUnderscoreSetJmp = false;
   UseUnderscoreLongJmp = false;
   HasMultipleConditionRegisters = false;
@@ -926,6 +927,7 @@ void TargetLoweringBase::initActions() {
     // ADDCARRY operations default to expand
     setOperationAction(ISD::ADDCARRY, VT, Expand);
     setOperationAction(ISD::SUBCARRY, VT, Expand);
+    setOperationAction(ISD::SETCCCARRY, VT, Expand);
 
     // These default to Expand so they will be expanded to CTLZ/CTTZ by default.
     setOperationAction(ISD::CTLZ_ZERO_UNDEF, VT, Expand);
@@ -935,6 +937,7 @@ void TargetLoweringBase::initActions() {
     
     // These library functions default to expand.
     setOperationAction(ISD::FROUND, VT, Expand);
+    setOperationAction(ISD::FPOWI, VT, Expand);
 
     // These operations default to expand for vector types.
     if (VT.isVector()) {
@@ -1312,7 +1315,7 @@ TargetLoweringBase::findRepresentativeClass(const TargetRegisterInfo *TRI,
 
   // Find the first legal register class with the largest spill size.
   const TargetRegisterClass *BestRC = RC;
-  for (int i = SuperRegRC.find_first(); i >= 0; i = SuperRegRC.find_next(i)) {
+  for (unsigned i : SuperRegRC.set_bits()) {
     const TargetRegisterClass *SuperRC = TRI->getRegClass(i);
     // We want the largest possible spill size.
     if (TRI->getSpillSize(*SuperRC) <= TRI->getSpillSize(*BestRC))
@@ -1453,6 +1456,7 @@ void TargetLoweringBase::computeRegisterProperties(
       }
       if (IsLegalWiderType)
         break;
+      LLVM_FALLTHROUGH;
     }
     case TypeWidenVector: {
       // Try to widen the vector.
@@ -1470,6 +1474,7 @@ void TargetLoweringBase::computeRegisterProperties(
       }
       if (IsLegalWiderType)
         break;
+      LLVM_FALLTHROUGH;
     }
     case TypeSplitVector:
     case TypeScalarizeVector: {
@@ -1632,8 +1637,10 @@ void llvm::GetReturnInfo(Type *ReturnType, AttributeList attr,
         VT = MinVT;
     }
 
-    unsigned NumParts = TLI.getNumRegisters(ReturnType->getContext(), VT);
-    MVT PartVT = TLI.getRegisterType(ReturnType->getContext(), VT);
+    unsigned NumParts =
+        TLI.getNumRegistersForCallingConv(ReturnType->getContext(), VT);
+    MVT PartVT =
+        TLI.getRegisterTypeForCallingConv(ReturnType->getContext(), VT);
 
     // 'inreg' on function refers to return value
     ISD::ArgFlagsTy Flags = ISD::ArgFlagsTy();

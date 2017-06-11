@@ -16,12 +16,12 @@
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUSUBTARGET_H
 
 #include "AMDGPU.h"
-#include "R600InstrInfo.h"
-#include "R600ISelLowering.h"
 #include "R600FrameLowering.h"
-#include "SIInstrInfo.h"
-#include "SIISelLowering.h"
+#include "R600ISelLowering.h"
+#include "R600InstrInfo.h"
 #include "SIFrameLowering.h"
+#include "SIISelLowering.h"
+#include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/ADT/Triple.h"
@@ -57,9 +57,12 @@ public:
 
   enum {
     ISAVersion0_0_0,
+    ISAVersion6_0_0,
+    ISAVersion6_0_1,
     ISAVersion7_0_0,
     ISAVersion7_0_1,
     ISAVersion7_0_2,
+    ISAVersion7_0_3,
     ISAVersion8_0_0,
     ISAVersion8_0_1,
     ISAVersion8_0_2,
@@ -67,7 +70,9 @@ public:
     ISAVersion8_0_4,
     ISAVersion8_1_0,
     ISAVersion9_0_0,
-    ISAVersion9_0_1
+    ISAVersion9_0_1,
+    ISAVersion9_0_2,
+    ISAVersion9_0_3
   };
 
   enum TrapHandlerAbi {
@@ -110,6 +115,7 @@ protected:
   bool FPExceptions;
   bool DX10Clamp;
   bool FlatForGlobal;
+  bool AutoWaitcntBeforeBarrier;
   bool UnalignedScratchAccess;
   bool UnalignedBufferAccess;
   bool HasApertureRegs;
@@ -195,7 +201,8 @@ public:
   }
 
   bool isOpenCLEnv() const {
-    return TargetTriple.getEnvironment() == Triple::OpenCL;
+    return TargetTriple.getEnvironment() == Triple::OpenCL ||
+           TargetTriple.getEnvironmentName() == "amdgizcl";
   }
 
   Generation getGeneration() const {
@@ -289,6 +296,10 @@ public:
     return getGeneration() >= GFX9;
   }
 
+  bool hasMin3Max3_16() const {
+    return getGeneration() >= GFX9;
+  }
+
   bool hasCARRY() const {
     return (getGeneration() >= EVERGREEN);
   }
@@ -359,6 +370,10 @@ public:
     return FlatForGlobal;
   }
 
+  bool hasAutoWaitcntBeforeBarrier() const {
+    return AutoWaitcntBeforeBarrier;
+  }
+
   bool hasUnalignedBufferAccess() const {
     return UnalignedBufferAccess;
   }
@@ -410,6 +425,10 @@ public:
 
   bool hasFminFmaxLegacy() const {
     return getGeneration() < AMDGPUSubtarget::VOLCANIC_ISLANDS;
+  }
+
+  bool hasSDWA() const {
+    return HasSDWA;
   }
 
   /// \brief Returns the offset in bytes from the start of the input buffer
@@ -666,10 +685,6 @@ public:
     return HasInv2PiInlineImm;
   }
 
-  bool hasSDWA() const {
-    return HasSDWA;
-  }
-
   bool hasDPP() const {
     return HasDPP;
   }
@@ -722,12 +737,6 @@ public:
 
   /// Return the maximum number of waves per SIMD for kernels using \p VGPRs VGPRs
   unsigned getOccupancyWithNumVGPRs(unsigned VGPRs) const;
-
-  /// \returns True if waitcnt instruction is needed before barrier instruction,
-  /// false otherwise.
-  bool needWaitcntBeforeBarrier() const {
-    return getGeneration() < GFX9;
-  }
 
   /// \returns true if the flat_scratch register should be initialized with the
   /// pointer to the wave's scratch memory rather than a size and offset.
@@ -783,7 +792,7 @@ public:
 
   /// \returns VGPR allocation granularity supported by the subtarget.
   unsigned getVGPRAllocGranule() const {
-    return AMDGPU::IsaInfo::getVGPRAllocGranule(getFeatureBits());;
+    return AMDGPU::IsaInfo::getVGPRAllocGranule(getFeatureBits());
   }
 
   /// \returns VGPR encoding granularity supported by the subtarget.

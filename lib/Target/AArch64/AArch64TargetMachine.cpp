@@ -10,10 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "AArch64TargetMachine.h"
 #include "AArch64.h"
 #include "AArch64MacroFusion.h"
 #include "AArch64Subtarget.h"
-#include "AArch64TargetMachine.h"
 #include "AArch64TargetObjectFile.h"
 #include "AArch64TargetTransformInfo.h"
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
@@ -23,6 +23,7 @@
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/GlobalISel/Legalizer.h"
+#include "llvm/CodeGen/GlobalISel/Localizer.h"
 #include "llvm/CodeGen/GlobalISel/RegBankSelect.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/CodeGen/Passes.h"
@@ -214,7 +215,6 @@ const AArch64Subtarget *
 AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
   Attribute CPUAttr = F.getFnAttribute("target-cpu");
   Attribute FSAttr = F.getFnAttribute("target-features");
-  bool ForCodeSize = F.optForSize();
 
   std::string CPU = !CPUAttr.hasAttribute(Attribute::None)
                         ? CPUAttr.getValueAsString().str()
@@ -222,17 +222,15 @@ AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
   std::string FS = !FSAttr.hasAttribute(Attribute::None)
                        ? FSAttr.getValueAsString().str()
                        : TargetFS;
-  std::string ForCodeSizeStr =
-      std::string(ForCodeSize ? "+" : "-") + "forcodesize";
 
-  auto &I = SubtargetMap[CPU + FS + ForCodeSizeStr];
+  auto &I = SubtargetMap[CPU + FS];
   if (!I) {
     // This needs to be done before we create a new subtarget since any
     // creation will depend on the TM and the code generation flags on the
     // function that reside in TargetOptions.
     resetTargetOptions(F);
     I = llvm::make_unique<AArch64Subtarget>(TargetTriple, CPU, FS, *this,
-                                            isLittle, ForCodeSize);
+                                            isLittle);
   }
   return I.get();
 }
@@ -258,9 +256,9 @@ namespace {
 /// AArch64 Code Generator Pass Configuration Options.
 class AArch64PassConfig : public TargetPassConfig {
 public:
-  AArch64PassConfig(AArch64TargetMachine *TM, PassManagerBase &PM)
+  AArch64PassConfig(AArch64TargetMachine &TM, PassManagerBase &PM)
       : TargetPassConfig(TM, PM) {
-    if (TM->getOptLevel() != CodeGenOpt::None)
+    if (TM.getOptLevel() != CodeGenOpt::None)
       substitutePass(&PostRASchedulerID, &PostMachineSchedulerID);
   }
 
@@ -280,7 +278,7 @@ public:
   ScheduleDAGInstrs *
   createPostMachineScheduler(MachineSchedContext *C) const override {
     const AArch64Subtarget &ST = C->MF->getSubtarget<AArch64Subtarget>();
-    if (ST.hasFuseLiterals()) {
+    if (ST.hasFuseAES() || ST.hasFuseLiterals()) {
       // Run the Macro Fusion after RA again since literals are expanded from
       // pseudos then (v. addPreSched2()).
       ScheduleDAGMI *DAG = createGenericSchedPostRA(C);
@@ -298,6 +296,7 @@ public:
   bool addIRTranslator() override;
   bool addLegalizeMachineIR() override;
   bool addRegBankSelect() override;
+  void addPreGlobalInstructionSelect() override;
   bool addGlobalInstructionSelect() override;
 #endif
   bool addILPOpts() override;
@@ -318,13 +317,13 @@ TargetIRAnalysis AArch64TargetMachine::getTargetIRAnalysis() {
 }
 
 TargetPassConfig *AArch64TargetMachine::createPassConfig(PassManagerBase &PM) {
-  return new AArch64PassConfig(this, PM);
+  return new AArch64PassConfig(*this, PM);
 }
 
 void AArch64PassConfig::addIRPasses() {
   // Always expand atomic operations, we don't deal with atomicrmw or cmpxchg
   // ourselves.
-  addPass(createAtomicExpandPass(TM));
+  addPass(createAtomicExpandPass());
 
   // Cmpxchg instructions are often used with a subsequent comparison to
   // determine whether it succeeded. We can exploit existing control-flow in
@@ -343,7 +342,7 @@ void AArch64PassConfig::addIRPasses() {
 
   // Match interleaved memory accesses to ldN/stN intrinsics.
   if (TM->getOptLevel() != CodeGenOpt::None)
-    addPass(createInterleavedAccessPass(TM));
+    addPass(createInterleavedAccessPass());
 
   if (TM->getOptLevel() == CodeGenOpt::Aggressive && EnableGEPOpt) {
     // Call SeparateConstOffsetFromGEP pass to extract constants within indices
@@ -405,6 +404,12 @@ bool AArch64PassConfig::addLegalizeMachineIR() {
 bool AArch64PassConfig::addRegBankSelect() {
   addPass(new RegBankSelect());
   return false;
+}
+
+void AArch64PassConfig::addPreGlobalInstructionSelect() {
+  // Workaround the deficiency of the fast register allocator.
+  if (TM->getOptLevel() == CodeGenOpt::None)
+    addPass(new Localizer());
 }
 
 bool AArch64PassConfig::addGlobalInstructionSelect() {

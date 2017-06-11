@@ -219,7 +219,6 @@ ProfileBitsInit(FoldingSetNodeID &ID, ArrayRef<Init *> Range) {
 
 BitsInit *BitsInit::get(ArrayRef<Init *> Range) {
   static FoldingSet<BitsInit> ThePool;
-  static std::vector<BitsInit*> TheActualPool;
 
   FoldingSetNodeID ID;
   ProfileBitsInit(ID, Range);
@@ -234,7 +233,6 @@ BitsInit *BitsInit::get(ArrayRef<Init *> Range) {
   std::uninitialized_copy(Range.begin(), Range.end(),
                           I->getTrailingObjects<Init *>());
   ThePool.InsertNode(I, IP);
-  TheActualPool.push_back(I);
   return I;
 }
 
@@ -407,27 +405,21 @@ IntInit::convertInitializerBitRange(ArrayRef<unsigned> Bits) const {
 }
 
 CodeInit *CodeInit::get(StringRef V) {
-  static DenseMap<StringRef, CodeInit*> ThePool;
+  static StringMap<CodeInit*, BumpPtrAllocator &> ThePool(Allocator);
 
-  auto I = ThePool.insert(std::make_pair(V, nullptr));
-  if (I.second) {
-    StringRef VCopy = V.copy(Allocator);
-    I.first->first = VCopy;
-    I.first->second = new(Allocator) CodeInit(VCopy);
-  }
-  return I.first->second;
+  auto &Entry = *ThePool.insert(std::make_pair(V, nullptr)).first;
+  if (!Entry.second)
+    Entry.second = new(Allocator) CodeInit(Entry.getKey());
+  return Entry.second;
 }
 
 StringInit *StringInit::get(StringRef V) {
-  static DenseMap<StringRef, StringInit*> ThePool;
+  static StringMap<StringInit*, BumpPtrAllocator &> ThePool(Allocator);
 
-  auto I = ThePool.insert(std::make_pair(V, nullptr));
-  if (I.second) {
-    StringRef VCopy = V.copy(Allocator);
-    I.first->first = VCopy;
-    I.first->second = new(Allocator) StringInit(VCopy);
-  }
-  return I.first->second;
+  auto &Entry = *ThePool.insert(std::make_pair(V, nullptr)).first;
+  if (!Entry.second)
+    Entry.second = new(Allocator) StringInit(Entry.getKey());
+  return Entry.second;
 }
 
 Init *StringInit::convertInitializerTo(RecTy *Ty) const {
@@ -456,7 +448,6 @@ static void ProfileListInit(FoldingSetNodeID &ID,
 
 ListInit *ListInit::get(ArrayRef<Init *> Range, RecTy *EltTy) {
   static FoldingSet<ListInit> ThePool;
-  static std::vector<ListInit*> TheActualPool;
 
   FoldingSetNodeID ID;
   ProfileListInit(ID, Range, EltTy);
@@ -471,7 +462,6 @@ ListInit *ListInit::get(ArrayRef<Init *> Range, RecTy *EltTy) {
   std::uninitialized_copy(Range.begin(), Range.end(),
                           I->getTrailingObjects<Init *>());
   ThePool.InsertNode(I, IP);
-  TheActualPool.push_back(I);
   return I;
 }
 
@@ -606,7 +596,6 @@ ProfileUnOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *Op, RecTy *Type) {
 
 UnOpInit *UnOpInit::get(UnaryOp Opc, Init *LHS, RecTy *Type) {
   static FoldingSet<UnOpInit> ThePool;
-  static std::vector<UnOpInit*> TheActualPool;
 
   FoldingSetNodeID ID;
   ProfileUnOpInit(ID, Opc, LHS, Type);
@@ -617,7 +606,6 @@ UnOpInit *UnOpInit::get(UnaryOp Opc, Init *LHS, RecTy *Type) {
 
   UnOpInit *I = new(Allocator) UnOpInit(Opc, LHS, Type);
   ThePool.InsertNode(I, IP);
-  TheActualPool.push_back(I);
   return I;
 }
 
@@ -752,7 +740,6 @@ ProfileBinOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *LHS, Init *RHS,
 BinOpInit *BinOpInit::get(BinaryOp Opc, Init *LHS,
                           Init *RHS, RecTy *Type) {
   static FoldingSet<BinOpInit> ThePool;
-  static std::vector<BinOpInit*> TheActualPool;
 
   FoldingSetNodeID ID;
   ProfileBinOpInit(ID, Opc, LHS, RHS, Type);
@@ -763,7 +750,6 @@ BinOpInit *BinOpInit::get(BinaryOp Opc, Init *LHS,
 
   BinOpInit *I = new(Allocator) BinOpInit(Opc, LHS, RHS, Type);
   ThePool.InsertNode(I, IP);
-  TheActualPool.push_back(I);
   return I;
 }
 
@@ -910,7 +896,6 @@ ProfileTernOpInit(FoldingSetNodeID &ID, unsigned Opcode, Init *LHS, Init *MHS,
 TernOpInit *TernOpInit::get(TernaryOp Opc, Init *LHS, Init *MHS, Init *RHS,
                             RecTy *Type) {
   static FoldingSet<TernOpInit> ThePool;
-  static std::vector<TernOpInit*> TheActualPool;
 
   FoldingSetNodeID ID;
   ProfileTernOpInit(ID, Opc, LHS, MHS, RHS, Type);
@@ -921,7 +906,6 @@ TernOpInit *TernOpInit::get(TernaryOp Opc, Init *LHS, Init *MHS, Init *RHS,
 
   TernOpInit *I = new(Allocator) TernOpInit(Opc, LHS, MHS, RHS, Type);
   ThePool.InsertNode(I, IP);
-  TheActualPool.push_back(I);
   return I;
 }
 
@@ -1503,7 +1487,6 @@ DagInit *
 DagInit::get(Init *V, StringInit *VN, ArrayRef<Init *> ArgRange,
              ArrayRef<StringInit *> NameRange) {
   static FoldingSet<DagInit> ThePool;
-  static std::vector<DagInit*> TheActualPool;
 
   FoldingSetNodeID ID;
   ProfileDagInit(ID, V, VN, ArgRange, NameRange);
@@ -1512,9 +1495,13 @@ DagInit::get(Init *V, StringInit *VN, ArrayRef<Init *> ArgRange,
   if (DagInit *I = ThePool.FindNodeOrInsertPos(ID, IP))
     return I;
 
-  DagInit *I = new(Allocator) DagInit(V, VN, ArgRange, NameRange);
+  void *Mem = Allocator.Allocate(totalSizeToAlloc<Init *, StringInit *>(ArgRange.size(), NameRange.size()), alignof(BitsInit));
+  DagInit *I = new(Mem) DagInit(V, VN, ArgRange.size(), NameRange.size());
+  std::uninitialized_copy(ArgRange.begin(), ArgRange.end(),
+                          I->getTrailingObjects<Init *>());
+  std::uninitialized_copy(NameRange.begin(), NameRange.end(),
+                          I->getTrailingObjects<StringInit *>());
   ThePool.InsertNode(I, IP);
-  TheActualPool.push_back(I);
   return I;
 }
 
@@ -1533,7 +1520,7 @@ DagInit::get(Init *V, StringInit *VN,
 }
 
 void DagInit::Profile(FoldingSetNodeID &ID) const {
-  ProfileDagInit(ID, Val, ValName, Args, ArgNames);
+  ProfileDagInit(ID, Val, ValName, makeArrayRef(getTrailingObjects<Init *>(), NumArgs), makeArrayRef(getTrailingObjects<StringInit *>(), NumArgNames));
 }
 
 Init *DagInit::convertInitializerTo(RecTy *Ty) const {
@@ -1545,9 +1532,9 @@ Init *DagInit::convertInitializerTo(RecTy *Ty) const {
 
 Init *DagInit::resolveReferences(Record &R, const RecordVal *RV) const {
   SmallVector<Init*, 8> NewArgs;
-  NewArgs.reserve(Args.size());
+  NewArgs.reserve(arg_size());
   bool ArgsChanged = false;
-  for (const Init *Arg : Args) {
+  for (const Init *Arg : getArgs()) {
     Init *NewArg = Arg->resolveReferences(R, RV);
     NewArgs.push_back(NewArg);
     ArgsChanged |= NewArg != Arg;
@@ -1555,7 +1542,7 @@ Init *DagInit::resolveReferences(Record &R, const RecordVal *RV) const {
 
   Init *Op = Val->resolveReferences(R, RV);
   if (Op != Val || ArgsChanged)
-    return DagInit::get(Op, ValName, NewArgs, ArgNames);
+    return DagInit::get(Op, ValName, NewArgs, getArgNames());
 
   return const_cast<DagInit *>(this);
 }
@@ -1564,12 +1551,12 @@ std::string DagInit::getAsString() const {
   std::string Result = "(" + Val->getAsString();
   if (ValName)
     Result += ":" + ValName->getAsUnquotedString();
-  if (!Args.empty()) {
-    Result += " " + Args[0]->getAsString();
-    if (ArgNames[0]) Result += ":$" + ArgNames[0]->getAsUnquotedString();
-    for (unsigned i = 1, e = Args.size(); i != e; ++i) {
-      Result += ", " + Args[i]->getAsString();
-      if (ArgNames[i]) Result += ":$" + ArgNames[i]->getAsUnquotedString();
+  if (!arg_empty()) {
+    Result += " " + getArg(0)->getAsString();
+    if (getArgName(0)) Result += ":$" + getArgName(0)->getAsUnquotedString();
+    for (unsigned i = 1, e = getNumArgs(); i != e; ++i) {
+      Result += ", " + getArg(i)->getAsString();
+      if (getArgName(i)) Result += ":$" + getArgName(i)->getAsUnquotedString();
     }
   }
   return Result + ")";
@@ -1581,12 +1568,6 @@ std::string DagInit::getAsString() const {
 
 RecordVal::RecordVal(Init *N, RecTy *T, bool P)
   : Name(N), TyAndPrefix(T, P) {
-  Value = UnsetInit::get()->convertInitializerTo(T);
-  assert(Value && "Cannot create unset value for current type!");
-}
-
-RecordVal::RecordVal(StringRef N, RecTy *T, bool P)
-  : Name(StringInit::get(N)), TyAndPrefix(T, P) {
   Value = UnsetInit::get()->convertInitializerTo(T);
   assert(Value && "Cannot create unset value for current type!");
 }
@@ -1616,8 +1597,7 @@ void Record::init() {
 
   // Every record potentially has a def at the top.  This value is
   // replaced with the top-level def name at instantiation time.
-  RecordVal DN("NAME", StringRecTy::get(), false);
-  addValue(DN);
+  addValue(RecordVal(StringInit::get("NAME"), StringRecTy::get(), false));
 }
 
 void Record::checkName() {
@@ -1651,10 +1631,6 @@ void Record::setName(Init *NewName) {
   // record name be an Init is to provide this flexibility.  The extra
   // resolve steps after completely instantiating defs takes care of
   // this.  See TGParser::ParseDef and TGParser::ParseDefm.
-}
-
-void Record::setName(StringRef Name) {
-  setName(StringInit::get(Name));
 }
 
 void Record::resolveReferencesTo(const RecordVal *RV) {
@@ -1727,7 +1703,7 @@ Init *Record::getValueInit(StringRef FieldName) const {
   return R->getValue();
 }
 
-std::string Record::getValueAsString(StringRef FieldName) const {
+StringRef Record::getValueAsString(StringRef FieldName) const {
   const RecordVal *R = getValue(FieldName);
   if (!R || !R->getValue())
     PrintFatalError(getLoc(), "Record `" + getName() +
@@ -1806,10 +1782,10 @@ Record::getValueAsListOfInts(StringRef FieldName) const {
   return Ints;
 }
 
-std::vector<std::string>
+std::vector<StringRef>
 Record::getValueAsListOfStrings(StringRef FieldName) const {
   ListInit *List = getValueAsListInit(FieldName);
-  std::vector<std::string> Strings;
+  std::vector<StringRef> Strings;
   for (Init *I : List->getValues()) {
     if (StringInit *SI = dyn_cast<StringInit>(I))
       Strings.push_back(SI->getValue());

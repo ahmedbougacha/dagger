@@ -68,6 +68,10 @@ static cl::opt<int>
                              cl::desc("Relative frequency of outline region to "
                                       "the entry block"));
 
+static cl::opt<unsigned> ExtraOutliningPenalty(
+    "partial-inlining-extra-penalty", cl::init(0), cl::Hidden,
+    cl::desc("A debug option to add additional penalty to the computed one."));
+
 namespace {
 
 struct FunctionOutliningInfo {
@@ -83,7 +87,7 @@ struct FunctionOutliningInfo {
   SmallVector<BasicBlock *, 4> Entries;
   // The return block that is not included in the outlined region.
   BasicBlock *ReturnBlock;
-  // The dominating block of the region ot be outlined.
+  // The dominating block of the region to be outlined.
   BasicBlock *NonReturnBlock;
   // The set of blocks in Entries that that are predecessors to ReturnBlock
   SmallVector<BasicBlock *, 4> ReturnBlockPreds;
@@ -407,11 +411,23 @@ BranchProbability PartialInlinerImpl::getOutliningCallBBRelativeFreq(
   if (hasProfileData(F, OI))
     return OutlineRegionRelFreq;
 
-  // When profile data is not available, we need to be very
-  // conservative in estimating the overall savings. We need to make sure
-  // the outline region relative frequency is not below the threshold
-  // specified by the option.
-  OutlineRegionRelFreq = std::max(OutlineRegionRelFreq, BranchProbability(OutlineRegionFreqPercent, 100));
+  // When profile data is not available, we need to be conservative in
+  // estimating the overall savings. Static branch prediction can usually
+  // guess the branch direction right (taken/non-taken), but the guessed
+  // branch probability is usually not biased enough. In case when the
+  // outlined region is predicted to be likely, its probability needs
+  // to be made higher (more biased) to not under-estimate the cost of
+  // function outlining. On the other hand, if the outlined region
+  // is predicted to be less likely, the predicted probablity is usually
+  // higher than the actual. For instance, the actual probability of the
+  // less likely target is only 5%, but the guessed probablity can be
+  // 40%. In the latter case, there is no need for further adjustement.
+  // FIXME: add an option for this.
+  if (OutlineRegionRelFreq < BranchProbability(45, 100))
+    return OutlineRegionRelFreq;
+
+  OutlineRegionRelFreq = std::max(
+      OutlineRegionRelFreq, BranchProbability(OutlineRegionFreqPercent, 100));
 
   return OutlineRegionRelFreq;
 }
@@ -496,6 +512,26 @@ int PartialInlinerImpl::computeBBInlineCost(BasicBlock *BB) {
     if (isa<DbgInfoIntrinsic>(I))
       continue;
 
+    switch (I->getOpcode()) {
+    case Instruction::BitCast:
+    case Instruction::PtrToInt:
+    case Instruction::IntToPtr:
+    case Instruction::Alloca:
+      continue;
+    case Instruction::GetElementPtr:
+      if (cast<GetElementPtrInst>(I)->hasAllZeroIndices())
+        continue;
+    default:
+      break;
+    }
+
+    IntrinsicInst *IntrInst = dyn_cast<IntrinsicInst>(I);
+    if (IntrInst) {
+      if (IntrInst->getIntrinsicID() == Intrinsic::lifetime_start ||
+          IntrInst->getIntrinsicID() == Intrinsic::lifetime_end)
+        continue;
+    }
+
     if (CallInst *CI = dyn_cast<CallInst>(I)) {
       InlineCost += getCallsiteCost(CallSite(CI), DL);
       continue;
@@ -519,7 +555,13 @@ std::tuple<int, int, int> PartialInlinerImpl::computeOutliningCosts(
     Function *F, const FunctionOutliningInfo *OI, Function *OutlinedFunction,
     BasicBlock *OutliningCallBB) {
   // First compute the cost of the outlined region 'OI' in the original
-  // function 'F':
+  // function 'F'.
+  // FIXME: The code extractor (outliner) can now do code sinking/hoisting
+  // to reduce outlining cost. The hoisted/sunk code currently do not
+  // incur any runtime cost so it is still OK to compare the outlined
+  // function cost with the outlined region in the original function.
+  // If this ever changes, we will need to introduce new extractor api
+  // to pass the information.
   int OutlinedRegionCost = 0;
   for (BasicBlock &BB : *F) {
     if (&BB != OI->ReturnBlock &&
@@ -542,8 +584,14 @@ std::tuple<int, int, int> PartialInlinerImpl::computeOutliningCosts(
 
   assert(OutlinedFunctionCost >= OutlinedRegionCost &&
          "Outlined function cost should be no less than the outlined region");
-  int OutliningRuntimeOverhead =
-      OutliningFuncCallCost + (OutlinedFunctionCost - OutlinedRegionCost);
+  // The code extractor introduces a new root and exit stub blocks with
+  // additional unconditional branches. Those branches will be eliminated
+  // later with bb layout. The cost should be adjusted accordingly:
+  OutlinedFunctionCost -= 2 * InlineConstants::InstrCost;
+
+  int OutliningRuntimeOverhead = OutliningFuncCallCost +
+                                 (OutlinedFunctionCost - OutlinedRegionCost) +
+                                 ExtraOutliningPenalty;
 
   return std::make_tuple(OutliningFuncCallCost, OutliningRuntimeOverhead,
                          OutlinedRegionCost);
@@ -558,17 +606,17 @@ void PartialInlinerImpl::computeCallsiteToProfCountMap(
   std::vector<User *> Users(DuplicateFunction->user_begin(),
                             DuplicateFunction->user_end());
   Function *CurrentCaller = nullptr;
+  std::unique_ptr<BlockFrequencyInfo> TempBFI;
   BlockFrequencyInfo *CurrentCallerBFI = nullptr;
 
   auto ComputeCurrBFI = [&,this](Function *Caller) {
       // For the old pass manager:
       if (!GetBFI) {
-        if (CurrentCallerBFI)
-          delete CurrentCallerBFI;
         DominatorTree DT(*Caller);
         LoopInfo LI(DT);
         BranchProbabilityInfo BPI(*Caller, LI);
-        CurrentCallerBFI = new BlockFrequencyInfo(*Caller, BPI, LI);
+        TempBFI.reset(new BlockFrequencyInfo(*Caller, BPI, LI));
+        CurrentCallerBFI = TempBFI.get();
       } else {
         // New pass manager:
         CurrentCallerBFI = &(*GetBFI)(*Caller);
@@ -590,10 +638,6 @@ void PartialInlinerImpl::computeCallsiteToProfCountMap(
       CallSiteToProfCountMap[User] = *Count;
     else
       CallSiteToProfCountMap[User] = 0;
-  }
-  if (!GetBFI) {
-    if (CurrentCallerBFI)
-      delete CurrentCallerBFI;
   }
 }
 
@@ -656,12 +700,21 @@ Function *PartialInlinerImpl::unswitchFunction(Function *F) {
   // only split block when necessary:
   PHINode *FirstPhi = getFirstPHI(PreReturn);
   unsigned NumPredsFromEntries = OI->ReturnBlockPreds.size();
+  auto IsTrivialPhi = [](PHINode *PN) -> Value * {
+    Value *CommonValue = PN->getIncomingValue(0);
+    if (all_of(PN->incoming_values(),
+               [&](Value *V) { return V == CommonValue; }))
+      return CommonValue;
+    return nullptr;
+  };
+
   if (FirstPhi && FirstPhi->getNumIncomingValues() > NumPredsFromEntries + 1) {
 
     NewReturnBlock = NewReturnBlock->splitBasicBlock(
         NewReturnBlock->getFirstNonPHI()->getIterator());
     BasicBlock::iterator I = PreReturn->begin();
     Instruction *Ins = &NewReturnBlock->front();
+    SmallVector<Instruction *, 4> DeadPhis;
     while (I != PreReturn->end()) {
       PHINode *OldPhi = dyn_cast<PHINode>(I);
       if (!OldPhi)
@@ -678,8 +731,22 @@ Function *PartialInlinerImpl::unswitchFunction(Function *F) {
         RetPhi->addIncoming(OldPhi->getIncomingValueForBlock(NewE), NewE);
         OldPhi->removeIncomingValue(NewE);
       }
+
+      // After incoming values splitting, the old phi may become trivial.
+      // Keeping the trivial phi can introduce definition inside the outline
+      // region which is live-out, causing necessary overhead (load, store
+      // arg passing etc).
+      if (auto *OldPhiVal = IsTrivialPhi(OldPhi)) {
+        OldPhi->replaceAllUsesWith(OldPhiVal);
+        DeadPhis.push_back(OldPhi);
+      }
+
       ++I;
     }
+
+    for (auto *DP : DeadPhis)
+      DP->eraseFromParent();
+
     for (auto E : OI->ReturnBlockPreds) {
       BasicBlock *NewE = cast<BasicBlock>(VMap[E]);
       NewE->getTerminator()->replaceUsesOfWith(PreReturn, NewReturnBlock);

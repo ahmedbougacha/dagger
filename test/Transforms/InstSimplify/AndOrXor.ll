@@ -735,11 +735,78 @@ define i32 @test54(i32 %a, i32 %b) {
   ret i32 %or
 }
 
+; (A & B) | ~(A ^ B) -> ~(A ^ B)
+
+define i32 @test55(i32 %a, i32 %b) {
+; CHECK-LABEL: @test55(
+; CHECK-NEXT:    [[AND:%.*]] = and i32 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[XOR:%.*]] = xor i32 [[A]], [[B]]
+; CHECK-NEXT:    [[XNOR:%.*]] = xor i32 [[XOR]], -1
+; CHECK-NEXT:    [[OR:%.*]] = or i32 [[AND]], [[XNOR]]
+; CHECK-NEXT:    ret i32 [[OR]]
+;
+  %and = and i32 %a, %b
+  %xor = xor i32 %a, %b
+  %xnor = xor i32 %xor, -1
+  %or = or i32 %and, %xnor
+  ret i32 %or
+}
+
+; ~(A ^ B) | (A & B) -> ~(A ^ B)
+
+define i32 @test56(i32 %a, i32 %b) {
+; CHECK-LABEL: @test56(
+; CHECK-NEXT:    [[AND:%.*]] = and i32 [[A:%.*]], [[B:%.*]]
+; CHECK-NEXT:    [[XOR:%.*]] = xor i32 [[A]], [[B]]
+; CHECK-NEXT:    [[XNOR:%.*]] = xor i32 [[XOR]], -1
+; CHECK-NEXT:    [[OR:%.*]] = or i32 [[XNOR]], [[AND]]
+; CHECK-NEXT:    ret i32 [[OR]]
+;
+  %and = and i32 %a, %b
+  %xor = xor i32 %a, %b
+  %xnor = xor i32 %xor, -1
+  %or = or i32 %xnor, %and
+  ret i32 %or
+}
+
+; (B & A) | ~(A ^ B) -> ~(A ^ B)
+
+define i32 @test57(i32 %a, i32 %b) {
+; CHECK-LABEL: @test57(
+; CHECK-NEXT:    [[AND:%.*]] = and i32 [[B:%.*]], [[A:%.*]]
+; CHECK-NEXT:    [[XOR:%.*]] = xor i32 [[A]], [[B]]
+; CHECK-NEXT:    [[XNOR:%.*]] = xor i32 [[XOR]], -1
+; CHECK-NEXT:    [[OR:%.*]] = or i32 [[AND]], [[XNOR]]
+; CHECK-NEXT:    ret i32 [[OR]]
+;
+  %and = and i32 %b, %a
+  %xor = xor i32 %a, %b
+  %xnor = xor i32 %xor, -1
+  %or = or i32 %and, %xnor
+  ret i32 %or
+}
+
+; ~(A ^ B) | (A & B) -> ~(A ^ B)
+
+define i32 @test58(i32 %a, i32 %b) {
+; CHECK-LABEL: @test58(
+; CHECK-NEXT:    [[AND:%.*]] = and i32 [[B:%.*]], [[A:%.*]]
+; CHECK-NEXT:    [[XOR:%.*]] = xor i32 [[A]], [[B]]
+; CHECK-NEXT:    [[XNOR:%.*]] = xor i32 [[XOR]], -1
+; CHECK-NEXT:    [[OR:%.*]] = or i32 [[XNOR]], [[AND]]
+; CHECK-NEXT:    ret i32 [[OR]]
+;
+  %and = and i32 %b, %a
+  %xor = xor i32 %a, %b
+  %xnor = xor i32 %xor, -1
+  %or = or i32 %xnor, %and
+  ret i32 %or
+}
+
 define i8 @lshr_perfect_mask(i8 %x) {
 ; CHECK-LABEL: @lshr_perfect_mask(
 ; CHECK-NEXT:    [[SH:%.*]] = lshr i8 %x, 5
-; CHECK-NEXT:    [[MASK:%.*]] = and i8 [[SH]], 7
-; CHECK-NEXT:    ret i8 [[MASK]]
+; CHECK-NEXT:    ret i8 [[SH]]
 ;
   %sh = lshr i8 %x, 5
   %mask = and i8 %sh, 7  ; 0x07
@@ -749,8 +816,7 @@ define i8 @lshr_perfect_mask(i8 %x) {
 define <2 x i8> @lshr_oversized_mask_splat(<2 x i8> %x) {
 ; CHECK-LABEL: @lshr_oversized_mask_splat(
 ; CHECK-NEXT:    [[SH:%.*]] = lshr <2 x i8> %x, <i8 5, i8 5>
-; CHECK-NEXT:    [[MASK:%.*]] = and <2 x i8> [[SH]], <i8 -121, i8 -121>
-; CHECK-NEXT:    ret <2 x i8> [[MASK]]
+; CHECK-NEXT:    ret <2 x i8> [[SH]]
 ;
   %sh = lshr <2 x i8> %x, <i8 5, i8 5>
   %mask = and <2 x i8> %sh, <i8 135, i8 135>  ; 0x87
@@ -771,8 +837,7 @@ define i8 @lshr_undersized_mask(i8 %x) {
 define <2 x i8> @shl_perfect_mask_splat(<2 x i8> %x) {
 ; CHECK-LABEL: @shl_perfect_mask_splat(
 ; CHECK-NEXT:    [[SH:%.*]] = shl <2 x i8> %x, <i8 6, i8 6>
-; CHECK-NEXT:    [[MASK:%.*]] = and <2 x i8> [[SH]], <i8 -64, i8 -64>
-; CHECK-NEXT:    ret <2 x i8> [[MASK]]
+; CHECK-NEXT:    ret <2 x i8> [[SH]]
 ;
   %sh = shl <2 x i8> %x, <i8 6, i8 6>
   %mask = and <2 x i8> %sh, <i8 192, i8 192>  ; 0xC0
@@ -782,8 +847,7 @@ define <2 x i8> @shl_perfect_mask_splat(<2 x i8> %x) {
 define i8 @shl_oversized_mask(i8 %x) {
 ; CHECK-LABEL: @shl_oversized_mask(
 ; CHECK-NEXT:    [[SH:%.*]] = shl i8 %x, 6
-; CHECK-NEXT:    [[MASK:%.*]] = and i8 [[SH]], -61
-; CHECK-NEXT:    ret i8 [[MASK]]
+; CHECK-NEXT:    ret i8 [[SH]]
 ;
   %sh = shl i8 %x, 6
   %mask = and i8 %sh, 195  ; 0xC3
@@ -801,3 +865,11 @@ define <2 x i8> @shl_undersized_mask_splat(<2 x i8> %x) {
   ret <2 x i8> %mask
 }
 
+define i32 @reversed_not(i32 %a) {
+; CHECK-LABEL: @reversed_not(
+; CHECK-NEXT:    ret i32 -1
+;
+  %nega = xor i32 -1, %a
+  %or = or i32 %a, %nega
+  ret i32 %or
+}

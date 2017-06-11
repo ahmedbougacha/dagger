@@ -161,7 +161,7 @@ symbol table entries. Here is an example of the "hello world" module:
 
     ; Definition of main function
     define i32 @main() {   ; i32()*
-      ; Convert [13 x i8]* to i8  *...
+      ; Convert [13 x i8]* to i8*...
       %cast210 = getelementptr [13 x i8], [13 x i8]* @.str, i64 0, i64 0
 
       ; Call puts function to write out the string to stdout.
@@ -4415,12 +4415,6 @@ The current supported vocabulary is limited:
   address space identifier.
 - ``DW_OP_stack_value`` marks a constant value.
 
-DIExpression nodes that contain a ``DW_OP_stack_value`` operator are standalone
-location descriptions that describe constant values. This form is used to
-describe global constants that have been optimized away. All other expressions
-are modifiers to another location: A debug intrinsic ties a location and a
-DIExpression together.
-
 DWARF specifies three kinds of simple location descriptions: Register, memory,
 and implicit location descriptions. Register and memory location descriptions
 describe the *location* of a source variable (in the sense that a debugger might
@@ -6697,15 +6691,14 @@ Semantics:
 The value produced is ``op1`` \* 2\ :sup:`op2` mod 2\ :sup:`n`,
 where ``n`` is the width of the result. If ``op2`` is (statically or
 dynamically) equal to or larger than the number of bits in
-``op1``, the result is undefined. If the arguments are vectors, each
-vector element of ``op1`` is shifted by the corresponding shift amount
-in ``op2``.
+``op1``, this instruction returns a :ref:`poison value <poisonvalues>`.
+If the arguments are vectors, each vector element of ``op1`` is shifted
+by the corresponding shift amount in ``op2``.
 
-If the ``nuw`` keyword is present, then the shift produces a :ref:`poison
-value <poisonvalues>` if it shifts out any non-zero bits. If the
-``nsw`` keyword is present, then the shift produces a :ref:`poison
-value <poisonvalues>` if it shifts out any bits that disagree with the
-resultant sign bit.
+If the ``nuw`` keyword is present, then the shift produces a poison
+value if it shifts out any non-zero bits.
+If the ``nsw`` keyword is present, then the shift produces a poison
+value it shifts out any bits that disagree with the resultant sign bit.
 
 Example:
 """"""""
@@ -6748,13 +6741,12 @@ Semantics:
 This instruction always performs a logical shift right operation. The
 most significant bits of the result will be filled with zero bits after
 the shift. If ``op2`` is (statically or dynamically) equal to or larger
-than the number of bits in ``op1``, the result is undefined. If the
-arguments are vectors, each vector element of ``op1`` is shifted by the
-corresponding shift amount in ``op2``.
+than the number of bits in ``op1``, this instruction returns a :ref:`poison
+value <poisonvalues>`. If the arguments are vectors, each vector element
+of ``op1`` is shifted by the corresponding shift amount in ``op2``.
 
 If the ``exact`` keyword is present, the result value of the ``lshr`` is
-a :ref:`poison value <poisonvalues>` if any of the bits shifted out are
-non-zero.
+a poison value if any of the bits shifted out are non-zero.
 
 Example:
 """"""""
@@ -6799,13 +6791,12 @@ Semantics:
 This instruction always performs an arithmetic shift right operation,
 The most significant bits of the result will be filled with the sign bit
 of ``op1``. If ``op2`` is (statically or dynamically) equal to or larger
-than the number of bits in ``op1``, the result is undefined. If the
-arguments are vectors, each vector element of ``op1`` is shifted by the
-corresponding shift amount in ``op2``.
+than the number of bits in ``op1``, this instruction returns a :ref:`poison
+value <poisonvalues>`. If the arguments are vectors, each vector element
+of ``op1`` is shifted by the corresponding shift amount in ``op2``.
 
 If the ``exact`` keyword is present, the result value of the ``ashr`` is
-a :ref:`poison value <poisonvalues>` if any of the bits shifted out are
-non-zero.
+a poison value if any of the bits shifted out are non-zero.
 
 Example:
 """"""""
@@ -9548,7 +9539,7 @@ Syntax:
 
 ::
 
-      declare i8  *@llvm.returnaddress(i32 <level>)
+      declare i8* @llvm.returnaddress(i32 <level>)
 
 Overview:
 """""""""
@@ -9586,7 +9577,7 @@ Syntax:
 
 ::
 
-      declare i8  *@llvm.addressofreturnaddress()
+      declare i8* @llvm.addressofreturnaddress()
 
 Overview:
 """""""""
@@ -12722,7 +12713,7 @@ Syntax:
       declare <type> 
       @llvm.experimental.constrained.fadd(<type> <op1>, <type> <op2>,
                                           metadata <rounding mode>,
-                                          metadata  <exception behavior>)
+                                          metadata <exception behavior>)
 
 Overview:
 """""""""
@@ -12759,7 +12750,7 @@ Syntax:
       declare <type> 
       @llvm.experimental.constrained.fsub(<type> <op1>, <type> <op2>,
                                           metadata <rounding mode>,
-                                          metadata  <exception behavior>)
+                                          metadata <exception behavior>)
 
 Overview:
 """""""""
@@ -12796,7 +12787,7 @@ Syntax:
       declare <type> 
       @llvm.experimental.constrained.fmul(<type> <op1>, <type> <op2>,
                                           metadata <rounding mode>,
-                                          metadata  <exception behavior>)
+                                          metadata <exception behavior>)
 
 Overview:
 """""""""
@@ -12833,7 +12824,7 @@ Syntax:
       declare <type> 
       @llvm.experimental.constrained.fdiv(<type> <op1>, <type> <op2>,
                                           metadata <rounding mode>,
-                                          metadata  <exception behavior>)
+                                          metadata <exception behavior>)
 
 Overview:
 """""""""
@@ -12870,7 +12861,7 @@ Syntax:
       declare <type> 
       @llvm.experimental.constrained.frem(<type> <op1>, <type> <op2>,
                                           metadata <rounding mode>,
-                                          metadata  <exception behavior>)
+                                          metadata <exception behavior>)
 
 Overview:
 """""""""
@@ -12897,6 +12888,461 @@ Semantics:
 The value produced is the floating point remainder from the division of the two
 value operands and has the same type as the operands.  The remainder has the
 same sign as the dividend. 
+
+
+Constrained libm-equivalent Intrinsics
+--------------------------------------
+
+In addition to the basic floating point operations for which constrained
+intrinsics are described above, there are constrained versions of various
+operations which provide equivalent behavior to a corresponding libm function.
+These intrinsics allow the precise behavior of these operations with respect to
+rounding mode and exception behavior to be controlled.
+
+As with the basic constrained floating point intrinsics, the rounding mode
+and exception behavior arguments only control the behavior of the optimizer.
+They do not change the runtime floating point environment.
+
+
+'``llvm.experimental.constrained.sqrt``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.sqrt(<type> <op1>,
+                                          metadata <rounding mode>,
+                                          metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.sqrt``' intrinsic returns the square root
+of the specified value, returning the same value as the libm '``sqrt``'
+functions would, but without setting ``errno``.
+
+Arguments:
+""""""""""
+
+The first argument and the return type are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the nonnegative square root of the specified value.
+If the value is less than negative zero, a floating point exception occurs
+and the the return value is architecture specific.
+
+
+'``llvm.experimental.constrained.pow``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.pow(<type> <op1>, <type> <op2>,
+                                         metadata <rounding mode>,
+                                         metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.pow``' intrinsic returns the first operand
+raised to the (positive or negative) power specified by the second operand.
+
+Arguments:
+""""""""""
+
+The first two arguments and the return value are floating point numbers of the
+same type.  The second argument specifies the power to which the first argument
+should be raised.
+
+The third and fourth arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the first value raised to the second power,
+returning the same values as the libm ``pow`` functions would, and
+handles error conditions in the same way.
+
+
+'``llvm.experimental.constrained.powi``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.powi(<type> <op1>, i32 <op2>,
+                                          metadata <rounding mode>,
+                                          metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.powi``' intrinsic returns the first operand
+raised to the (positive or negative) power specified by the second operand. The
+order of evaluation of multiplications is not defined. When a vector of floating
+point type is used, the second argument remains a scalar integer value.
+
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating point numbers of the same
+type.  The second argument is a 32-bit signed integer specifying the power to
+which the first argument should be raised.
+
+The third and fourth arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the first value raised to the second power with an
+unspecified sequence of rounding operations.
+
+
+'``llvm.experimental.constrained.sin``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.sin(<type> <op1>,
+                                         metadata <rounding mode>,
+                                         metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.sin``' intrinsic returns the sine of the
+first operand.
+
+Arguments:
+""""""""""
+
+The first argument and the return type are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the sine of the specified operand, returning the
+same values as the libm ``sin`` functions would, and handles error
+conditions in the same way.
+
+
+'``llvm.experimental.constrained.cos``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.cos(<type> <op1>,
+                                         metadata <rounding mode>,
+                                         metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.cos``' intrinsic returns the cosine of the
+first operand.
+
+Arguments:
+""""""""""
+
+The first argument and the return type are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the cosine of the specified operand, returning the
+same values as the libm ``cos`` functions would, and handles error
+conditions in the same way.
+
+
+'``llvm.experimental.constrained.exp``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.exp(<type> <op1>,
+                                         metadata <rounding mode>,
+                                         metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.exp``' intrinsic computes the base-e
+exponential of the specified value.
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``exp`` functions
+would, and handles error conditions in the same way.
+
+
+'``llvm.experimental.constrained.exp2``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.exp2(<type> <op1>,
+                                          metadata <rounding mode>,
+                                          metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.exp2``' intrinsic computes the base-2
+exponential of the specified value.
+
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``exp2`` functions
+would, and handles error conditions in the same way.
+
+
+'``llvm.experimental.constrained.log``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.log(<type> <op1>,
+                                         metadata <rounding mode>,
+                                         metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.log``' intrinsic computes the base-e
+logarithm of the specified value.
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``log`` functions
+would, and handles error conditions in the same way.
+
+
+'``llvm.experimental.constrained.log10``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.log10(<type> <op1>,
+                                           metadata <rounding mode>,
+                                           metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.log10``' intrinsic computes the base-10
+logarithm of the specified value.
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``log10`` functions
+would, and handles error conditions in the same way.
+
+
+'``llvm.experimental.constrained.log2``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.log2(<type> <op1>,
+                                          metadata <rounding mode>,
+                                          metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.log2``' intrinsic computes the base-2
+logarithm of the specified value.
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``log2`` functions
+would, and handles error conditions in the same way.
+
+
+'``llvm.experimental.constrained.rint``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.rint(<type> <op1>,
+                                          metadata <rounding mode>,
+                                          metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.rint``' intrinsic returns the first
+operand rounded to the nearest integer. It may raise an inexact floating point
+exception if the operand is not an integer.
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``rint`` functions
+would, and handles error conditions in the same way.  The rounding mode is
+described, not determined, by the rounding mode argument.  The actual rounding
+mode is determined by the runtime floating point environment.  The rounding
+mode argument is only intended as information to the compiler.
+
+
+'``llvm.experimental.constrained.nearbyint``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type> 
+      @llvm.experimental.constrained.nearbyint(<type> <op1>,
+                                               metadata <rounding mode>,
+                                               metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.nearbyint``' intrinsic returns the first
+operand rounded to the nearest integer. It will not raise an inexact floating
+point exception if the operand is not an integer.
+
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``nearbyint`` functions
+would, and handles error conditions in the same way.  The rounding mode is
+described, not determined, by the rounding mode argument.  The actual rounding
+mode is determined by the runtime floating point environment.  The rounding
+mode argument is only intended as information to the compiler.
 
 
 General Intrinsics

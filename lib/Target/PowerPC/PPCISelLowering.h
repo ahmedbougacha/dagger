@@ -90,6 +90,10 @@ namespace llvm {
       ///
       VECSHL,
 
+      /// XXPERMDI - The PPC XXPERMDI instruction
+      ///
+      XXPERMDI,
+
       /// The CMPB instruction (takes two operands of i32 or i64).
       CMPB,
 
@@ -450,7 +454,15 @@ namespace llvm {
     /// a VMRGEW or VMRGOW instruction
     bool isVMRGEOShuffleMask(ShuffleVectorSDNode *N, bool CheckEven,
                              unsigned ShuffleKind, SelectionDAG &DAG);
-  
+    /// isXXSLDWIShuffleMask - Return true if this is a shuffle mask suitable
+    /// for a XXSLDWI instruction.
+    bool isXXSLDWIShuffleMask(ShuffleVectorSDNode *N, unsigned &ShiftElts,
+                              bool &Swap, bool IsLE);
+    /// isXXPERMDIShuffleMask - Return true if this is a shuffle mask suitable
+    /// for a XXPERMDI instruction.
+    bool isXXPERMDIShuffleMask(ShuffleVectorSDNode *N, unsigned &ShiftElts,
+                              bool &Swap, bool IsLE);
+
     /// isVSLDOIShuffleMask - If this is a vsldoi shuffle mask, return the
     /// shift amount, otherwise return -1.
     int isVSLDOIShuffleMask(SDNode *N, unsigned ShuffleKind,
@@ -905,6 +917,7 @@ namespace llvm {
     SDValue LowerINSERT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerINTRINSIC_VOID(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSCALAR_TO_VECTOR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSIGN_EXTEND_INREG(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerMUL(SDValue Op, SelectionDAG &DAG) const;

@@ -11,6 +11,7 @@ add_llvm_unittest(SupportTests
   BlockFrequencyTest.cpp
   BranchProbabilityTest.cpp
   CachePruningTest.cpp
+  CrashRecoveryTest.cpp
   Casting.cpp
   Chrono.cpp
   CommandLineTest.cpp
@@ -18,7 +19,6 @@ add_llvm_unittest(SupportTests
   ConvertUTFTest.cpp
   DataExtractorTest.cpp
   DebugTest.cpp
-  DwarfTest.cpp
   EndianStreamTest.cpp
   EndianTest.cpp
   ErrorOrTest.cpp
@@ -65,6 +65,11 @@ add_llvm_unittest(SupportTests
   raw_sha1_ostream_test.cpp
   xxhashTest.cpp
   )
+
+# Disable all warning for AlignOfTest.cpp,
+# as it does things intentionally, and there is no reliable way of
+# disabling all warnings for all the compilers by using pragmas.
+set_source_files_properties(AlignOfTest.cpp PROPERTIES COMPILE_FLAGS -w)
 
 # ManagedStatic.cpp uses <pthread>.
 target_link_libraries(SupportTests ${LLVM_PTHREAD_LIB})

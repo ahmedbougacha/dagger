@@ -16,10 +16,10 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/OptimizationDiagnosticInfo.h"
-#include "llvm/CodeGen/GlobalISel/CallLowering.h"
 #include "llvm/CodeGen/Analysis.h"
-#include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/GlobalISel/CallLowering.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -339,6 +339,15 @@ bool IRTranslator::translateExtractValue(const User &U,
   const Value *Src = U.getOperand(0);
   Type *Int32Ty = Type::getInt32Ty(U.getContext());
   SmallVector<Value *, 1> Indices;
+
+  // If Src is a single element ConstantStruct, translate extractvalue
+  // to that element to avoid inserting a cast instruction.
+  if (auto CS = dyn_cast<ConstantStruct>(Src))
+    if (CS->getNumOperands() == 1) {
+      unsigned Res = getOrCreateVReg(*CS->getOperand(0));
+      ValToVReg[&U] = Res;
+      return true;
+    }
 
   // getIndexedOffsetInType is designed for GEPs, so the first index is the
   // usual array element rather than looking into the actual aggregate.
@@ -775,6 +784,21 @@ bool IRTranslator::translateCall(const User &U, MachineIRBuilder &MIRBuilder) {
       return false;
     MIB.addUse(getOrCreateVReg(*Arg));
   }
+
+  // Add a MachineMemOperand if it is a target mem intrinsic.
+  const TargetLowering &TLI = *MF->getSubtarget().getTargetLowering();
+  TargetLowering::IntrinsicInfo Info;
+  // TODO: Add a GlobalISel version of getTgtMemIntrinsic.
+  if (TLI.getTgtMemIntrinsic(Info, CI, ID)) {
+    MachineMemOperand::Flags Flags =
+        Info.vol ? MachineMemOperand::MOVolatile : MachineMemOperand::MONone;
+    Flags |=
+        Info.readMem ? MachineMemOperand::MOLoad : MachineMemOperand::MOStore;
+    uint64_t Size = Info.memVT.getSizeInBits() >> 3;
+    MIB.addMemOperand(MF->getMachineMemOperand(MachinePointerInfo(Info.ptrVal),
+                                               Flags, Size, Info.align));
+  }
+
   return true;
 }
 
@@ -1108,6 +1132,23 @@ bool IRTranslator::translate(const Constant &C, unsigned Reg) {
     default:
       return false;
     }
+  } else if (auto CS = dyn_cast<ConstantStruct>(&C)) {
+    // Return the element if it is a single element ConstantStruct.
+    if (CS->getNumOperands() == 1) {
+      unsigned EltReg = getOrCreateVReg(*CS->getOperand(0));
+      EntryBuilder.buildCast(Reg, EltReg);
+      return true;
+    }
+    SmallVector<unsigned, 4> Ops;
+    SmallVector<uint64_t, 4> Indices;
+    uint64_t Offset = 0;
+    for (unsigned i = 0; i < CS->getNumOperands(); ++i) {
+      unsigned OpReg = getOrCreateVReg(*CS->getOperand(i));
+      Ops.push_back(OpReg);
+      Indices.push_back(Offset);
+      Offset += MRI->getType(OpReg).getSizeInBits();
+    }
+    EntryBuilder.buildSequence(Reg, Ops, Indices);
   } else if (auto CV = dyn_cast<ConstantVector>(&C)) {
     if (CV->getNumOperands() == 1)
       return translate(*CV->getOperand(0), Reg);
@@ -1129,6 +1170,11 @@ void IRTranslator::finalizeFunction() {
   ValToVReg.clear();
   FrameIndices.clear();
   MachinePreds.clear();
+  // MachineIRBuilder::DebugLoc can outlive the DILocation it holds. Clear it
+  // to avoid accessing free’d memory (in runOnMachineFunction) and to avoid
+  // destroying it twice (in ~IRTranslator() and ~LLVMContext())
+  EntryBuilder = MachineIRBuilder();
+  CurBuilder = MachineIRBuilder();
 }
 
 bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
