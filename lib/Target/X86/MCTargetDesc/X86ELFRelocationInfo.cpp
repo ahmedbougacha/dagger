@@ -8,13 +8,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "MCTargetDesc/X86MCTargetDesc.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler/MCRelocationInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Object/ELFObjectFile.h"
-#include "llvm/Support/ELF.h"
 
 using namespace llvm;
 using namespace object;

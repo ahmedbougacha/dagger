@@ -14,6 +14,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/BinaryFormat/MachO.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
 #include "llvm/MC/MCAnalysis/MCObjectSymbolizer.h"
@@ -22,7 +23,6 @@
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/MachO.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
