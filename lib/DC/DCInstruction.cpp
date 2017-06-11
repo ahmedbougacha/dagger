@@ -717,6 +717,9 @@ bool DCInstruction::translatePredicate(unsigned PredicateKind) {
   case TargetOpcode::Predicate::alignedload:
   case TargetOpcode::Predicate::alignedload256:
   case TargetOpcode::Predicate::alignedload512:
+  case TargetOpcode::Predicate::vec128load:
+  case TargetOpcode::Predicate::vec256load:
+  case TargetOpcode::Predicate::vec512load:
   // FIXME: Take advantage of the implied alignment.
   case TargetOpcode::Predicate::load: {
     Type *ResPtrTy = getResultTy(0)->getPointerTo();
