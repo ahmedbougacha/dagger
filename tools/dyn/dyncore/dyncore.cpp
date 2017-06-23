@@ -7,12 +7,14 @@
 #include "llvm/DC/DCTranslator.h"
 #include "llvm/DC/DCTranslatorUtils.h"
 #include "llvm/DC/LowerDCTranslateAt.h"
+#include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/LambdaResolver.h"
 #include "llvm/ExecutionEngine/Orc/LazyEmittingLayer.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
-#include "llvm/ExecutionEngine/ExecutionEngine.h"
+#include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
+#include "llvm/ExecutionEngine/SectionMemoryManager.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/MC/MCAnalysis/MCFunction.h"
 #include "llvm/MC/MCAnalysis/MCModule.h"
@@ -139,8 +141,8 @@ static std::vector<T> singletonSet(T t) {
 
 class DYNJIT {
 public:
-  typedef RTDyldObjectLinkingLayer<> ObjLayerT;
-  typedef IRCompileLayer<ObjLayerT> CompileLayerT;
+  typedef RTDyldObjectLinkingLayer ObjLayerT;
+  typedef IRCompileLayer<ObjLayerT, SimpleCompiler> CompileLayerT;
   typedef LazyEmittingLayer<CompileLayerT> LazyEmitLayerT;
 
   typedef LazyEmitLayerT::ModuleSetHandleT ModuleHandleT;
