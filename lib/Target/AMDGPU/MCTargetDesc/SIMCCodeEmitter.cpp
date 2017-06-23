@@ -69,14 +69,14 @@ public:
   unsigned getSOPPBrEncoding(const MCInst &MI, unsigned OpNo,
                              SmallVectorImpl<MCFixup> &Fixups,
                              const MCSubtargetInfo &STI) const override;
+ 
+  unsigned getSDWASrcEncoding(const MCInst &MI, unsigned OpNo,
+                              SmallVectorImpl<MCFixup> &Fixups,
+                              const MCSubtargetInfo &STI) const override;
 
-  unsigned getSDWA9SrcEncoding(const MCInst &MI, unsigned OpNo,
-                               SmallVectorImpl<MCFixup> &Fixups,
-                               const MCSubtargetInfo &STI) const override;
-
-  unsigned getSDWA9VopcDstEncoding(const MCInst &MI, unsigned OpNo,
-                                   SmallVectorImpl<MCFixup> &Fixups,
-                                   const MCSubtargetInfo &STI) const override;
+  unsigned getSDWAVopcDstEncoding(const MCInst &MI, unsigned OpNo,
+                                  SmallVectorImpl<MCFixup> &Fixups,
+                                  const MCSubtargetInfo &STI) const override;
 };
 
 } // end anonymous namespace
@@ -252,9 +252,7 @@ uint32_t SIMCCodeEmitter::getLitEncoding(const MCOperand &MO,
   case AMDGPU::OPERAND_REG_INLINE_C_V2INT16:
   case AMDGPU::OPERAND_REG_INLINE_C_V2FP16: {
     uint16_t Lo16 = static_cast<uint16_t>(Imm);
-    assert(Lo16 == static_cast<uint16_t>(Imm >> 16));
     uint32_t Encoding = getLit16Encoding(Lo16, STI);
-    assert(Encoding != 255 && "packed constants can only be inline immediates");
     return Encoding;
   }
   default:
@@ -328,11 +326,11 @@ unsigned SIMCCodeEmitter::getSOPPBrEncoding(const MCInst &MI, unsigned OpNo,
 }
 
 unsigned
-SIMCCodeEmitter::getSDWA9SrcEncoding(const MCInst &MI, unsigned OpNo,
-                                     SmallVectorImpl<MCFixup> &Fixups,
-                                     const MCSubtargetInfo &STI) const {
+SIMCCodeEmitter::getSDWASrcEncoding(const MCInst &MI, unsigned OpNo,
+                                    SmallVectorImpl<MCFixup> &Fixups,
+                                    const MCSubtargetInfo &STI) const {
   using namespace AMDGPU::SDWA;
-  
+
   uint64_t RegEnc = 0;
 
   const MCOperand &MO = MI.getOperand(OpNo);
@@ -347,9 +345,9 @@ SIMCCodeEmitter::getSDWA9SrcEncoding(const MCInst &MI, unsigned OpNo,
 }
 
 unsigned
-SIMCCodeEmitter::getSDWA9VopcDstEncoding(const MCInst &MI, unsigned OpNo,
-                                         SmallVectorImpl<MCFixup> &Fixups,
-                                         const MCSubtargetInfo &STI) const {
+SIMCCodeEmitter::getSDWAVopcDstEncoding(const MCInst &MI, unsigned OpNo,
+                                        SmallVectorImpl<MCFixup> &Fixups,
+                                        const MCSubtargetInfo &STI) const {
   using namespace AMDGPU::SDWA;
 
   uint64_t RegEnc = 0;

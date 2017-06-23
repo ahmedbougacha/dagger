@@ -273,6 +273,20 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   return Reserved;
 }
 
+bool PPCRegisterInfo::isCallerPreservedPhysReg(unsigned PhysReg,
+                                               const MachineFunction &MF) const {
+  assert(TargetRegisterInfo::isPhysicalRegister(PhysReg));
+  if (TM.isELFv2ABI() && PhysReg == PPC::X2) {
+    // X2 is guaranteed to be preserved within a function if it is reserved.
+    // The reason it's reserved is that it's the TOC pointer (and the function
+    // uses the TOC). In functions where it isn't reserved (i.e. leaf functions
+    // with no TOC access), we can't claim that it is preserved.
+    return (getReservedRegs(MF).test(PPC::X2));
+  } else {
+    return false;
+  }
+}
+
 unsigned PPCRegisterInfo::getRegPressureLimit(const TargetRegisterClass *RC,
                                               MachineFunction &MF) const {
   const PPCFrameLowering *TFI = getFrameLowering(MF);
@@ -375,9 +389,14 @@ void PPCRegisterInfo::lowerDynamicAlloc(MachineBasicBlock::iterator II) const {
   unsigned Reg = MF.getRegInfo().createVirtualRegister(LP64 ? G8RC : GPRC);
 
   if (MaxAlign < TargetAlign && isInt<16>(FrameSize)) {
-    BuildMI(MBB, II, dl, TII.get(PPC::ADDI), Reg)
-      .addReg(PPC::R31)
-      .addImm(FrameSize);
+    if (LP64)
+      BuildMI(MBB, II, dl, TII.get(PPC::ADDI8), Reg)
+        .addReg(PPC::X31)
+        .addImm(FrameSize);
+    else
+      BuildMI(MBB, II, dl, TII.get(PPC::ADDI), Reg)
+        .addReg(PPC::R31)
+        .addImm(FrameSize);
   } else if (LP64) {
     BuildMI(MBB, II, dl, TII.get(PPC::LD), Reg)
       .addImm(0)
@@ -464,8 +483,10 @@ void PPCRegisterInfo::lowerDynamicAreaOffset(
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
 
   unsigned maxCallFrameSize = MFI.getMaxCallFrameSize();
+  bool is64Bit = TM.isPPC64();
   DebugLoc dl = MI.getDebugLoc();
-  BuildMI(MBB, II, dl, TII.get(PPC::LI), MI.getOperand(0).getReg())
+  BuildMI(MBB, II, dl, TII.get(is64Bit ? PPC::LI8 : PPC::LI),
+          MI.getOperand(0).getReg())
       .addImm(maxCallFrameSize);
   MBB.erase(II);
 }

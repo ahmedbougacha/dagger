@@ -737,19 +737,15 @@ def alignedloadv8f64  : PatFrag<(ops node:$ptr),
 def alignedloadv8i64  : PatFrag<(ops node:$ptr),
                                 (v8i64  (alignedload512 node:$ptr))>;
 
-// Like 'load', but uses special alignment checks suitable for use in
+// Like 'vec128load', but uses special alignment checks suitable for use in
 // memory operands in most SSE instructions, which are required to
 // be naturally aligned on some targets but not on others.  If the subtarget
 // allows unaligned accesses, match any load, though this may require
 // setting a feature bit in the processor (on startup, for example).
 // Opteron 10h and later implement such a feature.
-// Avoid non-temporal aligned loads on supported targets.
-def memop : PatFrag<(ops node:$ptr), (load node:$ptr), [{
-  return (Subtarget->hasSSEUnalignedMem() ||
-          cast<LoadSDNode>(N)->getAlignment() >= 16) &&
-         (!Subtarget->hasSSE41() ||
-          !(cast<LoadSDNode>(N)->getAlignment() >= 16 &&
-            cast<LoadSDNode>(N)->isNonTemporal()));
+def memop : PatFrag<(ops node:$ptr), (vec128load node:$ptr), [{
+  return Subtarget->hasSSEUnalignedMem() ||
+         cast<LoadSDNode>(N)->getAlignment() >= 16;
 }]>;
 
 // 128-bit memop pattern fragments
@@ -777,6 +773,9 @@ def memop64 : PatFrag<(ops node:$ptr), (load node:$ptr), [{
 
 def memopmmx  : PatFrag<(ops node:$ptr), (x86mmx  (memop64 node:$ptr))>;
 
+def X86masked_gather  : SDNode<"X86ISD::MGATHER",  SDTMaskedGather,
+                       [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
+
 def mgatherv4i32 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
   (masked_gather node:$src1, node:$src2, node:$src3) , [{
   if (MaskedGatherSDNode *Mgt = dyn_cast<MaskedGatherSDNode>(N))
@@ -798,6 +797,15 @@ def mgatherv2i64 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
   if (MaskedGatherSDNode *Mgt = dyn_cast<MaskedGatherSDNode>(N))
     return (Mgt->getIndex().getValueType() == MVT::v2i64 ||
             Mgt->getBasePtr().getValueType() == MVT::v2i64);
+  return false;
+}]>;
+def X86mgatherv2i64 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
+  (X86masked_gather node:$src1, node:$src2, node:$src3) , [{
+  if (X86MaskedGatherSDNode *Mgt = dyn_cast<X86MaskedGatherSDNode>(N))
+    return (Mgt->getIndex().getValueType() == MVT::v2i64 ||
+            Mgt->getBasePtr().getValueType() == MVT::v2i64) &&
+           (Mgt->getMemoryVT() == MVT::v2i32 ||
+            Mgt->getMemoryVT() == MVT::v2f32);
   return false;
 }]>;
 def mgatherv4i64 : PatFrag<(ops node:$src1, node:$src2, node:$src3),

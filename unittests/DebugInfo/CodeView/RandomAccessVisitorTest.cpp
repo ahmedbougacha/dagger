@@ -7,8 +7,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "ErrorChecking.h"
-
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
 #include "llvm/DebugInfo/CodeView/LazyRandomTypeCollection.h"
@@ -22,6 +20,7 @@
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/BinaryItemStream.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Testing/Support/Error.h"
 
 #include "gtest/gtest.h"
 
@@ -219,7 +218,8 @@ TEST_F(RandomAccessVisitorTest, MultipleVisits) {
   for (uint32_t I : IndicesToVisit) {
     TypeIndex TI = TypeIndex::fromArrayIndex(I);
     CVType T = Types.getType(TI);
-    EXPECT_NO_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks));
+    EXPECT_THAT_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks),
+                      Succeeded());
   }
 
   // [0,8) should be present
@@ -247,7 +247,8 @@ TEST_F(RandomAccessVisitorTest, DescendingWithinChunk) {
   for (uint32_t I : IndicesToVisit) {
     TypeIndex TI = TypeIndex::fromArrayIndex(I);
     CVType T = Types.getType(TI);
-    EXPECT_NO_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks));
+    EXPECT_THAT_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks),
+                      Succeeded());
   }
 
   // [0, 7]
@@ -275,7 +276,8 @@ TEST_F(RandomAccessVisitorTest, AscendingWithinChunk) {
   for (uint32_t I : IndicesToVisit) {
     TypeIndex TI = TypeIndex::fromArrayIndex(I);
     CVType T = Types.getType(TI);
-    EXPECT_NO_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks));
+    EXPECT_THAT_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks),
+                      Succeeded());
   }
 
   // [0, 7]
@@ -305,7 +307,8 @@ TEST_F(RandomAccessVisitorTest, StopPrematurelyInChunk) {
   for (uint32_t I : IndicesToVisit) {
     TypeIndex TI = TypeIndex::fromArrayIndex(I);
     CVType T = Types.getType(TI);
-    EXPECT_NO_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks));
+    EXPECT_THAT_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks),
+                      Succeeded());
   }
 
   // [0, 8) should be visited.
@@ -334,7 +337,8 @@ TEST_F(RandomAccessVisitorTest, InnerChunk) {
   for (uint32_t I : IndicesToVisit) {
     TypeIndex TI = TypeIndex::fromArrayIndex(I);
     CVType T = Types.getType(TI);
-    EXPECT_NO_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks));
+    EXPECT_THAT_ERROR(codeview::visitTypeRecord(T, TI, TestState->Callbacks),
+                      Succeeded());
   }
 
   // [4, 9)
@@ -346,4 +350,56 @@ TEST_F(RandomAccessVisitorTest, InnerChunk) {
   EXPECT_EQ(2u, TestState->Callbacks.count());
   for (auto &I : enumerate(IndicesToVisit))
     EXPECT_TRUE(ValidateVisitedRecord(I.index(), I.value()));
+}
+
+TEST_F(RandomAccessVisitorTest, CrossChunkName) {
+  TypeTableBuilder Builder(GlobalState->Allocator);
+
+  // TypeIndex 0
+  ClassRecord Class(TypeRecordKind::Class);
+  Class.Name = "FooClass";
+  Class.Options = ClassOptions::None;
+  Class.MemberCount = 0;
+  Class.Size = 4U;
+  Class.DerivationList = TypeIndex::fromArrayIndex(0);
+  Class.FieldList = TypeIndex::fromArrayIndex(0);
+  Class.VTableShape = TypeIndex::fromArrayIndex(0);
+  TypeIndex IndexZero = Builder.writeKnownType(Class);
+
+  // TypeIndex 1 refers to type index 0.
+  ModifierRecord Modifier(TypeRecordKind::Modifier);
+  Modifier.ModifiedType = TypeIndex::fromArrayIndex(0);
+  Modifier.Modifiers = ModifierOptions::Const;
+  TypeIndex IndexOne = Builder.writeKnownType(Modifier);
+
+  // set up a type stream that refers to the above two serialized records.
+  std::vector<CVType> TypeArray;
+  TypeArray.push_back(
+      CVType(static_cast<TypeLeafKind>(Class.Kind), Builder.records()[0]));
+  TypeArray.push_back(
+      CVType(static_cast<TypeLeafKind>(Modifier.Kind), Builder.records()[1]));
+  BinaryItemStream<CVType> ItemStream(llvm::support::little);
+  ItemStream.setItems(TypeArray);
+  VarStreamArray<CVType> TypeStream(ItemStream);
+
+  // Figure out the byte offset of the second item.
+  auto ItemOneIter = TypeStream.begin();
+  ++ItemOneIter;
+
+  // Set up a partial offsets buffer that contains the first and second items
+  // in separate chunks.
+  std::vector<TypeIndexOffset> TIO;
+  TIO.push_back({IndexZero, ulittle32_t(0u)});
+  TIO.push_back({IndexOne, ulittle32_t(ItemOneIter.offset())});
+  ArrayRef<uint8_t> Buffer(reinterpret_cast<const uint8_t *>(TIO.data()),
+                           TIO.size() * sizeof(TypeIndexOffset));
+
+  BinaryStreamReader Reader(Buffer, llvm::support::little);
+  FixedStreamArray<TypeIndexOffset> PartialOffsets;
+  ASSERT_THAT_ERROR(Reader.readArray(PartialOffsets, 2), Succeeded());
+
+  LazyRandomTypeCollection Types(TypeStream, 2, PartialOffsets);
+
+  StringRef Name = Types.getTypeName(IndexOne);
+  EXPECT_EQ("const FooClass", Name);
 }

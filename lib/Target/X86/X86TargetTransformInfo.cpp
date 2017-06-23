@@ -2178,17 +2178,6 @@ int X86TTIImpl::getGatherScatterOpCost(unsigned Opcode, Type *SrcVTy,
   return getGSVectorCost(Opcode, SrcVTy, Ptr, Alignment, AddressSpace);
 }
 
-bool X86TTIImpl::isLSRCostLess(TargetTransformInfo::LSRCost &C1,
-                               TargetTransformInfo::LSRCost &C2) {
-    // X86 specific here are "instruction number 1st priority".
-    return std::tie(C1.Insns, C1.NumRegs, C1.AddRecCost,
-                    C1.NumIVMuls, C1.NumBaseAdds,
-                    C1.ScaleCost, C1.ImmCost, C1.SetupCost) <
-           std::tie(C2.Insns, C2.NumRegs, C2.AddRecCost,
-                    C2.NumIVMuls, C2.NumBaseAdds,
-                    C2.ScaleCost, C2.ImmCost, C2.SetupCost);
-}
-
 bool X86TTIImpl::isLegalMaskedLoad(Type *DataTy) {
   Type *ScalarTy = DataTy->getScalarType();
   int DataWidth = isa<PointerType>(ScalarTy) ?
@@ -2241,6 +2230,12 @@ bool X86TTIImpl::areInlineCompatible(const Function *Caller,
   // that we might not care about for inlining, but it is conservatively
   // correct.
   return (CallerBits & CalleeBits) == CalleeBits;
+}
+
+bool X86TTIImpl::expandMemCmp(Instruction *I, unsigned &MaxLoadSize) {
+  // TODO: We can increase these based on available vector ops.
+  MaxLoadSize = ST->is64Bit() ? 8 : 4;
+  return true;
 }
 
 bool X86TTIImpl::enableInterleavedAccessVectorization() {

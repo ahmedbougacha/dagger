@@ -368,6 +368,7 @@ def ProcThunderXT83 : SubtargetFeature<"thunderxt83", "ARMProcFamily",
 
 def : ProcessorModel<"generic", NoSchedModel, [
                      FeatureFPARMv8,
+                     FeatureFuseAES,
                      FeatureNEON,
                      FeaturePerfMon,
                      FeaturePostRAScheduler

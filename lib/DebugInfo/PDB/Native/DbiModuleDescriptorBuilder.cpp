@@ -51,6 +51,7 @@ DbiModuleDescriptorBuilder::DbiModuleDescriptorBuilder(StringRef ModuleName,
                                                        uint32_t ModIndex,
                                                        msf::MSFBuilder &Msf)
     : MSF(Msf), ModuleName(ModuleName) {
+  ::memset(&Layout, 0, sizeof(Layout));
   Layout.Mod = ModIndex;
 }
 
@@ -102,6 +103,7 @@ template <typename T> struct Foo {
 template <typename T> Foo<T> makeFoo(T &&t) { return Foo<T>(std::move(t)); }
 
 void DbiModuleDescriptorBuilder::finalize() {
+  Layout.SC.ModuleIndex = Layout.Mod;
   Layout.FileNameOffs = 0; // TODO: Fix this
   Layout.Flags = 0;        // TODO: Fix this
   Layout.C11Bytes = 0;
@@ -177,8 +179,14 @@ Error DbiModuleDescriptorBuilder::commit(BinaryStreamWriter &ModiWriter,
 }
 
 void DbiModuleDescriptorBuilder::addDebugSubsection(
-    std::unique_ptr<DebugSubsection> Subsection) {
+    std::shared_ptr<DebugSubsection> Subsection) {
   assert(Subsection);
   C13Builders.push_back(llvm::make_unique<DebugSubsectionRecordBuilder>(
       std::move(Subsection), CodeViewContainer::Pdb));
+}
+
+void DbiModuleDescriptorBuilder::addDebugSubsection(
+    const DebugSubsectionRecord &SubsectionContents) {
+  C13Builders.push_back(llvm::make_unique<DebugSubsectionRecordBuilder>(
+      SubsectionContents, CodeViewContainer::Pdb));
 }

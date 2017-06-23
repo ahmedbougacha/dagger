@@ -337,12 +337,13 @@ void SelectionDAGISel::getAnalysisUsage(AnalysisUsage &AU) const {
 /// SplitCriticalSideEffectEdges - Look for critical edges with a PHI value that
 /// may trap on it.  In this case we have to split the edge so that the path
 /// through the predecessor block that doesn't go to the phi block doesn't
-/// execute the possibly trapping instruction. If available, we pass a
-/// dominator tree to be updated when we split critical edges. This is because
-/// SelectionDAGISel preserves the DominatorTree.
+/// execute the possibly trapping instruction. If available, we pass domtree
+/// and loop info to be updated when we split critical edges. This is because
+/// SelectionDAGISel preserves these analyses.
 /// This is required for correctness, so it must be done at -O0.
 ///
-static void SplitCriticalSideEffectEdges(Function &Fn, DominatorTree *DT) {
+static void SplitCriticalSideEffectEdges(Function &Fn, DominatorTree *DT,
+                                         LoopInfo *LI) {
   // Loop for blocks with phi nodes.
   for (BasicBlock &BB : Fn) {
     PHINode *PN = dyn_cast<PHINode>(BB.begin());
@@ -368,7 +369,7 @@ static void SplitCriticalSideEffectEdges(Function &Fn, DominatorTree *DT) {
         // Okay, we have to split this edge.
         SplitCriticalEdge(
             Pred->getTerminator(), GetSuccessorNumber(Pred, &BB),
-            CriticalEdgeSplittingOptions(DT).setMergeIdenticalEdges());
+            CriticalEdgeSplittingOptions(DT, LI).setMergeIdenticalEdges());
         goto ReprocessBlock;
       }
   }
@@ -406,10 +407,12 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
   ORE = make_unique<OptimizationRemarkEmitter>(&Fn);
   auto *DTWP = getAnalysisIfAvailable<DominatorTreeWrapperPass>();
   DominatorTree *DT = DTWP ? &DTWP->getDomTree() : nullptr;
+  auto *LIWP = getAnalysisIfAvailable<LoopInfoWrapperPass>();
+  LoopInfo *LI = LIWP ? &LIWP->getLoopInfo() : nullptr;
 
   DEBUG(dbgs() << "\n\n\n=== " << Fn.getName() << "\n");
 
-  SplitCriticalSideEffectEdges(const_cast<Function &>(Fn), DT);
+  SplitCriticalSideEffectEdges(const_cast<Function &>(Fn), DT, LI);
 
   CurDAG->init(*MF, *ORE);
   FuncInfo->set(Fn, *MF, CurDAG);
@@ -1055,6 +1058,7 @@ static void setupSwiftErrorVals(const Function &Fn, const TargetLowering *TLI,
   FuncInfo->SwiftErrorVals.clear();
   FuncInfo->SwiftErrorVRegDefMap.clear();
   FuncInfo->SwiftErrorVRegUpwardsUse.clear();
+  FuncInfo->SwiftErrorVRegDefUses.clear();
   FuncInfo->SwiftErrorArg = nullptr;
 
   // Check if function has a swifterror argument.
@@ -1278,6 +1282,80 @@ static void propagateSwiftErrorVRegs(FunctionLoweringInfo *FuncInfo) {
   }
 }
 
+void preassignSwiftErrorRegs(const TargetLowering *TLI,
+                             FunctionLoweringInfo *FuncInfo,
+                             BasicBlock::const_iterator Begin,
+                             BasicBlock::const_iterator End) {
+  if (!TLI->supportSwiftError() || FuncInfo->SwiftErrorVals.empty())
+    return;
+
+  // Iterator over instructions and assign vregs to swifterror defs and uses.
+  for (auto It = Begin; It != End; ++It) {
+    ImmutableCallSite CS(&*It);
+    if (CS) {
+      // A call-site with a swifterror argument is both use and def.
+      const Value *SwiftErrorAddr = nullptr;
+      for (auto &Arg : CS.args()) {
+        if (!Arg->isSwiftError())
+          continue;
+        // Use of swifterror.
+        assert(!SwiftErrorAddr && "Cannot have multiple swifterror arguments");
+        SwiftErrorAddr = &*Arg;
+        assert(SwiftErrorAddr->isSwiftError() &&
+               "Must have a swifterror value argument");
+        unsigned VReg; bool CreatedReg;
+        std::tie(VReg, CreatedReg) = FuncInfo->getOrCreateSwiftErrorVRegUseAt(
+          &*It, FuncInfo->MBB, SwiftErrorAddr);
+        assert(CreatedReg);
+      }
+      if (!SwiftErrorAddr)
+        continue;
+
+      // Def of swifterror.
+      unsigned VReg; bool CreatedReg;
+      std::tie(VReg, CreatedReg) =
+          FuncInfo->getOrCreateSwiftErrorVRegDefAt(&*It);
+      assert(CreatedReg);
+      FuncInfo->setCurrentSwiftErrorVReg(FuncInfo->MBB, SwiftErrorAddr, VReg);
+
+    // A load is a use.
+    } else if (const LoadInst *LI = dyn_cast<const LoadInst>(&*It)) {
+      const Value *V = LI->getOperand(0);
+      if (!V->isSwiftError())
+        continue;
+
+      unsigned VReg; bool CreatedReg;
+      std::tie(VReg, CreatedReg) =
+          FuncInfo->getOrCreateSwiftErrorVRegUseAt(LI, FuncInfo->MBB, V);
+      assert(CreatedReg);
+
+    // A store is a def.
+    } else if (const StoreInst *SI = dyn_cast<const StoreInst>(&*It)) {
+      const Value *SwiftErrorAddr = SI->getOperand(1);
+      if (!SwiftErrorAddr->isSwiftError())
+        continue;
+
+      // Def of swifterror.
+      unsigned VReg; bool CreatedReg;
+      std::tie(VReg, CreatedReg) =
+          FuncInfo->getOrCreateSwiftErrorVRegDefAt(&*It);
+      assert(CreatedReg);
+      FuncInfo->setCurrentSwiftErrorVReg(FuncInfo->MBB, SwiftErrorAddr, VReg);
+
+    // A return in a swiferror returning function is a use.
+    } else if (const ReturnInst *R = dyn_cast<const ReturnInst>(&*It)) {
+      const Function *F = R->getParent()->getParent();
+      if(!F->getAttributes().hasAttrSomewhere(Attribute::SwiftError))
+        continue;
+
+      unsigned VReg; bool CreatedReg;
+      std::tie(VReg, CreatedReg) = FuncInfo->getOrCreateSwiftErrorVRegUseAt(
+          R, FuncInfo->MBB, FuncInfo->SwiftErrorArg);
+      assert(CreatedReg);
+    }
+  }
+}
+
 void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
   FastISelFailed = false;
   // Initialize the Fast-ISel state, if needed.
@@ -1384,6 +1462,10 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
         FastIS->startNewBlock();
 
       unsigned NumFastIselRemaining = std::distance(Begin, End);
+
+      // Pre-assign swifterror vregs.
+      preassignSwiftErrorRegs(TLI, FuncInfo, Begin, End);
+
       // Do FastISel on as many instructions as possible.
       for (; BI != Begin; --BI) {
         const Instruction *Inst = &*std::prev(BI);

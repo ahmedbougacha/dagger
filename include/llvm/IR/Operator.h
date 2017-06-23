@@ -35,7 +35,6 @@ public:
   Operator() = delete;
   ~Operator() = delete;
 
-  void *operator new(size_t, unsigned) = delete;
   void *operator new(size_t s) = delete;
 
   /// Return the opcode for this Instruction or ConstantExpr.
@@ -329,8 +328,15 @@ public:
     return I->getType()->isFPOrFPVectorTy() ||
       I->getOpcode() == Instruction::FCmp;
   }
+
+  static inline bool classof(const ConstantExpr *CE) {
+    return CE->getType()->isFPOrFPVectorTy() ||
+           CE->getOpcode() == Instruction::FCmp;
+  }
+
   static inline bool classof(const Value *V) {
-    return isa<Instruction>(V) && classof(cast<Instruction>(V));
+    return (isa<Instruction>(V) && classof(cast<Instruction>(V))) ||
+           (isa<ConstantExpr>(V) && classof(cast<ConstantExpr>(V)));
   }
 };
 

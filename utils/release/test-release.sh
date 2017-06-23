@@ -38,7 +38,7 @@ do_test_suite="yes"
 do_openmp="yes"
 do_lld="yes"
 do_lldb="no"
-do_polly="no"
+do_polly="yes"
 BuildDir="`pwd`"
 ExtraConfigureFlags=""
 ExportBranch=""
@@ -68,8 +68,7 @@ function usage() {
     echo " -no-lld              Disable check-out & build lld"
     echo " -lldb                Enable check-out & build lldb"
     echo " -no-lldb             Disable check-out & build lldb (default)"
-    echo " -polly               Enable check-out & build Polly"
-    echo " -no-polly            Disable check-out & build Polly (default)"
+    echo " -no-polly            Disable check-out & build Polly"
 }
 
 while [ $# -gt 0 ]; do
@@ -153,9 +152,6 @@ while [ $# -gt 0 ]; do
             ;;
         -no-lldb )
             do_lldb="no"
-            ;;
-        -polly )
-            do_polly="yes"
             ;;
         -no-polly )
             do_polly="no"
@@ -416,7 +412,8 @@ function test_llvmCore() {
       $SandboxDir/bin/python $BuildDir/llvm.src/utils/lit/setup.py install
       mkdir -p $TestSuiteBuildDir
       cd $TestSuiteBuildDir
-      cmake $TestSuiteSrcDir -DTEST_SUITE_LIT=$Lit
+      env CC="$c_compiler" CXX="$cxx_compiler" \
+          cmake $TestSuiteSrcDir -DTEST_SUITE_LIT=$Lit
       if ! ( ${MAKE} -j $NumJobs -k check \
           2>&1 | tee $LogDir/llvm.check-Phase$Phase-$Flavor.log ) ; then
         deferred_error $Phase $Flavor "test suite failed"
@@ -548,6 +545,8 @@ for Flavor in $Flavors ; do
 
     ########################################################################
     # Testing: Test phase 3
+    c_compiler=$llvmCore_phase3_destdir/usr/local/bin/clang
+    cxx_compiler=$llvmCore_phase3_destdir/usr/local/bin/clang++
     echo "# Testing - built with clang"
     test_llvmCore 3 $Flavor $llvmCore_phase3_objdir
 

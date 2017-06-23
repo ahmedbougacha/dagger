@@ -1631,6 +1631,7 @@ multiclass avx512_icmp_packed<bits<8> opc, string OpcodeStr, SDNode OpNode,
              [(set _.KRC:$dst, (OpNode (_.VT _.RC:$src1),
                                      (_.VT (bitconvert (_.LdFrag addr:$src2)))))],
              IIC_SSE_ALU_F32P_RM>, EVEX_4V;
+  let isCommutable = IsCommutable in
   def rrk : AVX512BI<opc, MRMSrcReg,
               (outs _.KRC:$dst), (ins _.KRCWM:$mask, _.RC:$src1, _.RC:$src2),
               !strconcat(OpcodeStr, "\t{$src2, $src1, $dst {${mask}}|",
@@ -1764,6 +1765,7 @@ multiclass avx512_icmp_cc<bits<8> opc, string Suffix, SDNode OpNode,
                               (_.VT (bitconvert (_.LdFrag addr:$src2))),
                               imm:$cc))],
              IIC_SSE_ALU_F32P_RM>, EVEX_4V;
+  let isCommutable = 1 in
   def rrik : AVX512AIi8<opc, MRMSrcReg,
               (outs _.KRC:$dst), (ins _.KRCWM:$mask, _.RC:$src1, _.RC:$src2,
                                       AVX512ICC:$cc),
@@ -7867,7 +7869,7 @@ let Predicates = [HasVLX] in {
   defm NAME##D##SUFF##Z128: avx512_gather<dopc, OpcodeStr##"d", _.info128,
                                           vx128xmem, mgatherv4i32>, EVEX_V128;
   defm NAME##Q##SUFF##Z128: avx512_gather<qopc, OpcodeStr##"q", _.info128,
-                                          vx64xmem, mgatherv2i64>, EVEX_V128;
+                                          vx64xmem, X86mgatherv2i64>, EVEX_V128;
 }
 }
 

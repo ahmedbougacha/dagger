@@ -2192,19 +2192,6 @@ static bool isSinCosLibcallAvailable(SDNode *Node, const TargetLowering &TLI) {
   return TLI.getLibcallName(LC) != nullptr;
 }
 
-/// Return true if sincos libcall is available and can be used to combine sin
-/// and cos.
-static bool canCombineSinCosLibcall(SDNode *Node, const TargetLowering &TLI,
-                                    const TargetMachine &TM) {
-  if (!isSinCosLibcallAvailable(Node, TLI))
-    return false;
-  // GNU sin/cos functions set errno while sincos does not. Therefore
-  // combining sin and cos is only safe if unsafe-fpmath is enabled.
-  if (TM.getTargetTriple().isGNUEnvironment() && !TM.Options.UnsafeFPMath)
-    return false;
-  return true;
-}
-
 /// Only issue sincos libcall if both sin and cos are needed.
 static bool useSinCos(SDNode *Node) {
   unsigned OtherOpcode = Node->getOpcode() == ISD::FSIN
@@ -3247,7 +3234,7 @@ bool SelectionDAGLegalize::ExpandNode(SDNode *Node) {
     // Turn fsin / fcos into ISD::FSINCOS node if there are a pair of fsin /
     // fcos which share the same operand and both are used.
     if ((TLI.isOperationLegalOrCustom(ISD::FSINCOS, VT) ||
-         canCombineSinCosLibcall(Node, TLI, TM))
+         isSinCosLibcallAvailable(Node, TLI))
         && useSinCos(Node)) {
       SDVTList VTs = DAG.getVTList(VT, VT);
       Tmp1 = DAG.getNode(ISD::FSINCOS, dl, VTs, Node->getOperand(0));
@@ -3543,17 +3530,24 @@ bool SelectionDAGLegalize::ExpandNode(SDNode *Node) {
         LC = RTLIB::MUL_I128;
       assert(LC != RTLIB::UNKNOWN_LIBCALL && "Cannot expand this operation!");
 
-      // The high part is obtained by SRA'ing all but one of the bits of low
-      // part.
-      unsigned LoSize = VT.getSizeInBits();
-      SDValue HiLHS =
-          DAG.getNode(ISD::SRA, dl, VT, LHS,
-                      DAG.getConstant(LoSize - 1, dl,
-                                      TLI.getPointerTy(DAG.getDataLayout())));
-      SDValue HiRHS =
-          DAG.getNode(ISD::SRA, dl, VT, RHS,
-                      DAG.getConstant(LoSize - 1, dl,
-                                      TLI.getPointerTy(DAG.getDataLayout())));
+      SDValue HiLHS;
+      SDValue HiRHS;
+      if (isSigned) {
+        // The high part is obtained by SRA'ing all but one of the bits of low
+        // part.
+        unsigned LoSize = VT.getSizeInBits();
+        HiLHS =
+            DAG.getNode(ISD::SRA, dl, VT, LHS,
+                        DAG.getConstant(LoSize - 1, dl,
+                                        TLI.getPointerTy(DAG.getDataLayout())));
+        HiRHS =
+            DAG.getNode(ISD::SRA, dl, VT, RHS,
+                        DAG.getConstant(LoSize - 1, dl,
+                                        TLI.getPointerTy(DAG.getDataLayout())));
+      } else {
+          HiLHS = DAG.getConstant(0, dl, VT);
+          HiRHS = DAG.getConstant(0, dl, VT);
+      }
 
       // Here we're passing the 2 arguments explicitly as 4 arguments that are
       // pre-lowered to the correct types. This all depends upon WideVT not

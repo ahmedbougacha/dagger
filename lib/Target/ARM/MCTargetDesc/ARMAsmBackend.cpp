@@ -759,6 +759,7 @@ void ARMAsmBackend::processFixupValue(const MCAssembler &Asm,
         IsResolved = false;
       if (!Asm.isThumbFunc(Sym) && (FixupKind == ARM::fixup_arm_thumb_br ||
                                     FixupKind == ARM::fixup_arm_thumb_bl ||
+                                    FixupKind == ARM::fixup_t2_condbranch ||
                                     FixupKind == ARM::fixup_t2_uncondbranch))
         IsResolved = false;
     }
@@ -875,8 +876,8 @@ static unsigned getFixupKindContainerSizeBytes(unsigned Kind) {
   }
 }
 
-void ARMAsmBackend::applyFixup(const MCFixup &Fixup, char *Data,
-                               unsigned DataSize, uint64_t Value, bool IsPCRel,
+void ARMAsmBackend::applyFixup(const MCFixup &Fixup, MutableArrayRef<char> Data,
+                               uint64_t Value, bool IsPCRel,
                                MCContext &Ctx) const {
   unsigned NumBytes = getFixupKindNumBytes(Fixup.getKind());
   Value = adjustFixupValue(Fixup, Value, IsPCRel, Ctx, IsLittleEndian, true);
@@ -884,13 +885,13 @@ void ARMAsmBackend::applyFixup(const MCFixup &Fixup, char *Data,
     return; // Doesn't change encoding.
 
   unsigned Offset = Fixup.getOffset();
-  assert(Offset + NumBytes <= DataSize && "Invalid fixup offset!");
+  assert(Offset + NumBytes <= Data.size() && "Invalid fixup offset!");
 
   // Used to point to big endian bytes.
   unsigned FullSizeBytes;
   if (!IsLittleEndian) {
     FullSizeBytes = getFixupKindContainerSizeBytes(Fixup.getKind());
-    assert((Offset + FullSizeBytes) <= DataSize && "Invalid fixup size!");
+    assert((Offset + FullSizeBytes) <= Data.size() && "Invalid fixup size!");
     assert(NumBytes <= FullSizeBytes && "Invalid fixup size!");
   }
 

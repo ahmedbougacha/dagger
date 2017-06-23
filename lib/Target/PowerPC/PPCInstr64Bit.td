@@ -683,6 +683,16 @@ def DIVDE : XOForm_1<31, 425, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
                      "divde $rT, $rA, $rB", IIC_IntDivD,
                      [(set i64:$rT, (int_ppc_divde g8rc:$rA, g8rc:$rB))]>,
                      isPPC64, Requires<[HasExtDiv]>;
+
+let Predicates = [IsISA3_0] in {
+def MODSD : XForm_8<31, 777, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
+                        "modsd $rT, $rA, $rB", IIC_IntDivW,
+                        [(set i64:$rT, (srem i64:$rA, i64:$rB))]>;
+def MODUD : XForm_8<31, 265, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
+                        "modud $rT, $rA, $rB", IIC_IntDivW,
+                        [(set i64:$rT, (urem i64:$rA, i64:$rB))]>;
+}
+
 let Defs = [CR0] in
 def DIVDEo : XOForm_1<31, 425, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
                       "divde. $rT, $rA, $rB", IIC_IntDivD,
@@ -962,13 +972,15 @@ def LDMX : XForm_1<31, 309, (outs g8rc:$rD), (ins memrr:$src),
 
 // Support for medium and large code model.
 let hasSideEffects = 0 in {
+let isReMaterializable = 1 in {
 def ADDIStocHA: Pseudo<(outs g8rc:$rD), (ins g8rc_nox0:$reg, tocentry:$disp),
                        "#ADDIStocHA", []>, isPPC64;
+def ADDItocL: Pseudo<(outs g8rc:$rD), (ins g8rc_nox0:$reg, tocentry:$disp),
+                     "#ADDItocL", []>, isPPC64;
+}
 let mayLoad = 1 in
 def LDtocL: Pseudo<(outs g8rc:$rD), (ins tocentry:$disp, g8rc_nox0:$reg),
                    "#LDtocL", []>, isPPC64;
-def ADDItocL: Pseudo<(outs g8rc:$rD), (ins g8rc_nox0:$reg, tocentry:$disp),
-                     "#ADDItocL", []>, isPPC64;
 }
 
 // Support for thread-local storage.
@@ -984,7 +996,7 @@ def LDgotTprelL: Pseudo<(outs g8rc:$rD), (ins s16imm64:$disp, g8rc_nox0:$reg),
                           (PPCldGotTprelL tglobaltlsaddr:$disp, i64:$reg))]>,
                  isPPC64;
 
-let isBarrier = 1, isPseudo = 1, Defs = [CR7], Itinerary = IIC_LdStSync in
+let isPseudo = 1, Defs = [CR7], Itinerary = IIC_LdStSync in
 def CFENCE8 : Pseudo<(outs), (ins g8rc:$cr), "#CFENCE8", []>;
 
 def : Pat<(PPCaddTls i64:$in, tglobaltlsaddr:$g),

@@ -30,7 +30,6 @@
 #define LLVM_INCLUDE_LLVM_OBJECT_RESFILE_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/Error.h"
@@ -44,14 +43,9 @@
 #include <map>
 
 namespace llvm {
-
-class FileOutputBuffer;
-
 namespace object {
 
 class WindowsResource;
-
-enum class Machine { UNKNOWN, ARM, X64, X86 };
 
 class ResourceEntryRef {
 public:
@@ -118,7 +112,7 @@ public:
   class TreeNode;
   WindowsResourceParser();
   Error parse(WindowsResource *WR);
-  void printTree() const;
+  void printTree(raw_ostream &OS) const;
   const TreeNode &getTree() const { return Root; }
   const ArrayRef<std::vector<uint8_t>> getData() const { return Data; }
   const ArrayRef<std::vector<UTF16>> getStringTable() const {
@@ -159,14 +153,16 @@ public:
     TreeNode(uint16_t MajorVersion, uint16_t MinorVersion,
              uint32_t Characteristics);
 
-    void addEntry(const ResourceEntryRef &Entry);
-    TreeNode &addTypeNode(const ResourceEntryRef &Entry);
-    TreeNode &addNameNode(const ResourceEntryRef &Entry);
+    void addEntry(const ResourceEntryRef &Entry, bool &IsNewTypeString,
+                  bool &IsNewNameString);
+    TreeNode &addTypeNode(const ResourceEntryRef &Entry, bool &IsNewTypeString);
+    TreeNode &addNameNode(const ResourceEntryRef &Entry, bool &IsNewNameString);
     TreeNode &addLanguageNode(const ResourceEntryRef &Entry);
     TreeNode &addChild(uint32_t ID, bool IsDataNode = false,
                        uint16_t MajorVersion = 0, uint16_t MinorVersion = 0,
                        uint32_t Characteristics = 0);
-    TreeNode &addChild(ArrayRef<UTF16> NameRef);
+    TreeNode &addChild(ArrayRef<UTF16> NameRef, bool &IsNewString);
+
     bool IsDataNode = false;
     uint32_t StringIndex;
     uint32_t DataIndex;
@@ -183,8 +179,9 @@ private:
   std::vector<std::vector<UTF16>> StringTable;
 };
 
-Error writeWindowsResourceCOFF(StringRef OutputFile, Machine MachineType,
-                               const WindowsResourceParser &Parser);
+Expected<std::unique_ptr<MemoryBuffer>>
+writeWindowsResourceCOFF(llvm::COFF::MachineTypes MachineType,
+                         const WindowsResourceParser &Parser);
 
 } // namespace object
 } // namespace llvm

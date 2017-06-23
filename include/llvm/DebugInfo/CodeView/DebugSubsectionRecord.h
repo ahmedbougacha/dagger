@@ -49,13 +49,25 @@ private:
 
 class DebugSubsectionRecordBuilder {
 public:
-  DebugSubsectionRecordBuilder(std::unique_ptr<DebugSubsection> Subsection,
+  DebugSubsectionRecordBuilder(std::shared_ptr<DebugSubsection> Subsection,
                                CodeViewContainer Container);
+
+  /// Use this to copy existing subsections directly from source to destination.
+  /// For example, line table subsections in an object file only need to be
+  /// relocated before being copied into the PDB.
+  DebugSubsectionRecordBuilder(const DebugSubsectionRecord &Contents,
+                               CodeViewContainer Container);
+
   uint32_t calculateSerializedLength();
   Error commit(BinaryStreamWriter &Writer) const;
 
 private:
-  std::unique_ptr<DebugSubsection> Subsection;
+  /// The subsection to build. Will be null if Contents is non-empty.
+  std::shared_ptr<DebugSubsection> Subsection;
+
+  /// The bytes of the subsection. Only non-empty if Subsection is null.
+  DebugSubsectionRecord Contents;
+
   CodeViewContainer Container;
 };
 
@@ -64,6 +76,9 @@ private:
 template <> struct VarStreamArrayExtractor<codeview::DebugSubsectionRecord> {
   Error operator()(BinaryStreamRef Stream, uint32_t &Length,
                    codeview::DebugSubsectionRecord &Info) {
+    // FIXME: We need to pass the container type through to this function.  In
+    // practice this isn't super important since the subsection header describes
+    // its length and we can just skip it.  It's more important when writing.
     if (auto EC = codeview::DebugSubsectionRecord::initialize(
             Stream, Info, codeview::CodeViewContainer::Pdb))
       return EC;

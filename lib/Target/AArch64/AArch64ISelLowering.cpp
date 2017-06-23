@@ -9366,7 +9366,7 @@ static SDValue splitStores(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
     return SDValue();
 
   StoreSDNode *S = cast<StoreSDNode>(N);
-  if (S->isVolatile())
+  if (S->isVolatile() || S->isIndexed())
     return SDValue();
 
   SDValue StVal = S->getValue();
@@ -10563,11 +10563,20 @@ AArch64TargetLowering::shouldExpandAtomicLoadInIR(LoadInst *LI) const {
 TargetLowering::AtomicExpansionKind
 AArch64TargetLowering::shouldExpandAtomicRMWInIR(AtomicRMWInst *AI) const {
   unsigned Size = AI->getType()->getPrimitiveSizeInBits();
-  return Size <= 128 ? AtomicExpansionKind::LLSC : AtomicExpansionKind::None;
+  if (Size > 128) return AtomicExpansionKind::None;
+  // Nand not supported in LSE.
+  if (AI->getOperation() == AtomicRMWInst::Nand) return AtomicExpansionKind::LLSC;
+  // Currently leaving And and Sub to LLSC
+  if ((AI->getOperation() == AtomicRMWInst::And) || (AI->getOperation() == AtomicRMWInst::Sub))
+    return AtomicExpansionKind::LLSC;
+  // Leave 128 bits to LLSC.
+  return (Subtarget->hasLSE() && Size < 128) ? AtomicExpansionKind::None : AtomicExpansionKind::LLSC;
 }
 
 bool AArch64TargetLowering::shouldExpandAtomicCmpXchgInIR(
     AtomicCmpXchgInst *AI) const {
+  // If subtarget has LSE, leave cmpxchg intact for codegen.
+  if (Subtarget->hasLSE()) return false;
   // At -O0, fast-regalloc cannot cope with the live vregs necessary to
   // implement cmpxchg without spilling. If the address being exchanged is also
   // on the stack and close enough to the spill slot, this can lead to a

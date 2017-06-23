@@ -27,6 +27,8 @@ uint32_t getTypeLength(const PDBSymbolData &Symbol);
 
 namespace opts {
 
+enum class DumpLevel { None, Basic, Verbose };
+
 enum class ModuleSubsection {
   Unknown,
   Lines,
@@ -40,15 +42,6 @@ enum class ModuleSubsection {
   CoffSymbolRVAs,
   All
 };
-
-bool checkModuleSubsection(ModuleSubsection Kind);
-
-template <typename... Ts>
-bool checkModuleSubsection(ModuleSubsection K1, ModuleSubsection K2,
-                           Ts &&... Rest) {
-  return checkModuleSubsection(K1) ||
-         checkModuleSubsection(K2, std::forward<Ts>(Rest)...);
-}
 
 namespace pretty {
 
@@ -99,37 +92,42 @@ extern llvm::cl::opt<ClassDefinitionFormat> ClassFormat;
 extern llvm::cl::opt<uint32_t> ClassRecursionDepth;
 }
 
-namespace raw {
+namespace bytes {
 struct BlockRange {
   uint32_t Min;
   llvm::Optional<uint32_t> Max;
 };
-
 extern llvm::Optional<BlockRange> DumpBlockRange;
 extern llvm::cl::list<std::string> DumpStreamData;
+} // namespace bytes
 
-extern llvm::cl::opt<bool> CompactRecords;
-extern llvm::cl::opt<bool> DumpGlobals;
-extern llvm::cl::opt<bool> DumpHeaders;
-extern llvm::cl::opt<bool> DumpStreamBlocks;
-extern llvm::cl::opt<bool> DumpStreamSummary;
-extern llvm::cl::opt<bool> DumpPageStats;
-extern llvm::cl::opt<bool> DumpTpiHash;
-extern llvm::cl::opt<bool> DumpTpiRecordBytes;
-extern llvm::cl::opt<bool> DumpTpiRecords;
-extern llvm::cl::opt<bool> DumpIpiRecords;
-extern llvm::cl::opt<bool> DumpIpiRecordBytes;
+namespace dump {
+
+extern llvm::cl::opt<bool> DumpSummary;
+extern llvm::cl::opt<bool> DumpStreams;
+
+extern llvm::cl::opt<bool> DumpLines;
+extern llvm::cl::opt<bool> DumpInlineeLines;
+extern llvm::cl::opt<bool> DumpXmi;
+extern llvm::cl::opt<bool> DumpXme;
+extern llvm::cl::opt<bool> DumpStringTable;
+extern llvm::cl::opt<bool> DumpTypes;
+extern llvm::cl::opt<bool> DumpTypeData;
+extern llvm::cl::opt<bool> DumpTypeExtras;
+extern llvm::cl::list<uint32_t> DumpTypeIndex;
+
+extern llvm::cl::opt<bool> DumpIds;
+extern llvm::cl::opt<bool> DumpIdData;
+extern llvm::cl::opt<bool> DumpIdExtras;
+extern llvm::cl::list<uint32_t> DumpIdIndex;
+extern llvm::cl::opt<bool> DumpSymbols;
+extern llvm::cl::opt<bool> DumpSymRecordBytes;
 extern llvm::cl::opt<bool> DumpPublics;
 extern llvm::cl::opt<bool> DumpSectionContribs;
 extern llvm::cl::opt<bool> DumpSectionMap;
-extern llvm::cl::opt<bool> DumpSymRecordBytes;
-extern llvm::cl::opt<bool> DumpSectionHeaders;
-extern llvm::cl::opt<bool> DumpFpo;
-extern llvm::cl::opt<bool> DumpStringTable;
-}
-
-namespace diff {
-extern llvm::cl::opt<bool> Pedantic;
+extern llvm::cl::opt<bool> DumpModules;
+extern llvm::cl::opt<bool> DumpModuleFiles;
+extern llvm::cl::opt<bool> RawAll;
 }
 
 namespace pdb2yaml {
@@ -144,14 +142,11 @@ extern llvm::cl::opt<bool> DbiStream;
 extern llvm::cl::opt<bool> TpiStream;
 extern llvm::cl::opt<bool> IpiStream;
 extern llvm::cl::list<std::string> InputFilename;
-}
-
-namespace shared {
 extern llvm::cl::opt<bool> DumpModules;
 extern llvm::cl::opt<bool> DumpModuleFiles;
 extern llvm::cl::list<ModuleSubsection> DumpModuleSubsections;
 extern llvm::cl::opt<bool> DumpModuleSyms;
-} // namespace shared
+} // namespace pdb2yaml
 }
 
 #endif
