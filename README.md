@@ -12,6 +12,7 @@ As an LLVM fork, Dagger is built the same way; assuming you have a reasonably re
 
       $ cd dagger
       $ mkdir build
+      $ cd build
       $ cmake ..
       $ make
 
